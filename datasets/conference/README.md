@@ -1,3 +1,8 @@
+# Conference Dataset
+> From this [paper](https://arxiv.org/abs/1205.6233)
+
+[DBLP collaboration network and ground-truth communities.](http://snap.stanford.edu/data/com-DBLP.html)
+
 | File                         | Description                           |
 |------------------------------|---------------------------------------|
 | com-dblp.ungraph.txt.gz      | Undirected DBLP co-authorship network |
