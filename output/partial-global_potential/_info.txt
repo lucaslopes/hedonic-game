@@ -1,4 +1,0 @@
-Alpha        -> 0.95
-Dataset      -> datasets/terrorists.csv
-Max Clusters -> 2
-Converged in -> 0:00:04.432385
