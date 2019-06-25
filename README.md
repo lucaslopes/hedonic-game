@@ -1,6 +1,6 @@
 # Hedonic Games for Clustering
-- A research experiment of Giovanni^, Kostya^, Daniel`, Lucas` (ack Eduardo`)
-- ^INRIA ∣ `Federal University of Rio de Janeiro
+- A research experiment of ^Giovanni, ^Kostya^, ´Daniel, ´Lucas (ack ´Eduardo)
+- ^INRIA ∣ ´Federal University of Rio de Janeiro
 - [Demonstration](https://github.com/lucaslopes/hedonic)
 
 ## To Run
