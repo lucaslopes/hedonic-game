@@ -1,153 +1,153 @@
-01,04
-02,04
-03,04
-04,05
-04,06
-04,07
-04,09
-04,10
-05,07
-05,10
-06,07
-06,08
-06,09
-07,09
-08,09
-09,10
-09,11
-09,26
-09,30
-10,15
-10,23
-11,12
-12,13
-12,19
-13,16
-13,19
-14,15
-14,19
-15,16
-15,18
-15,19
-15,23
-16,17
-16,19
-17,19
-18,19
-19,20
-19,21
-19,22
-19,30
-23,26
-23,30
-24,26
-24,27
-25,30
-26,27
-26,28
-26,29
-26,30
-26,53
-26,54
-26,55
-27,30
-27,53
-27,54
-28,30
-28,53
-28,55
-29,30
-29,53
-29,54
-29,55
-30,31
-30,32
-30,33
-30,34
-30,36
-30,43
-30,51
-30,52
-30,53
-30,54
-30,55
-30,56
-30,58
-30,59
-32,33
-32,35
-32,53
-33,34
-33,35
-33,36
-33,37
-33,52
-33,53
-34,35
-34,36
-34,52
-34,53
-35,36
-35,52
-35,53
-36,38
-36,39
-36,52
-36,53
-37,41
-38,39
-38,40
-39,40
-39,50
-40,41
-40,42
-40,43
-40,51
-41,42
-41,43
-41,50
-41,51
-41,53
-42,43
-43,44
-43,45
-43,46
-43,47
-43,48
-43,49
-43,59
-45,46
-45,47
-46,47
-47,48
-47,49
-47,59
-48,49
-48,59
-49,50
-49,52
-49,53
-49,54
-49,59
-50,52
-50,59
-51,54
-52,53
-52,59
-53,54
-53,55
-53,56
-53,58
-53,59
-54,55
-54,58
-54,59
-55,56
-56,57
-58,59
-58,61
-59,60
-59,61
-59,62
-60,61
-61,62
+Abu Zubeida,Djamal Beghal
+Jean-Marc Grandvisir,Djamal Beghal
+Nizar Trabelsi,Djamal Beghal
+Djamal Beghal,Abu Walid
+Djamal Beghal,Jerome Courtaillier
+Djamal Beghal,Kamel Daoudi
+Djamal Beghal,Zacarias Moussaoui
+Djamal Beghal,Abu Qatada
+Abu Walid,Kamel Daoudi
+Abu Walid,Abu Qatada
+Jerome Courtaillier,Kamel Daoudi
+Jerome Courtaillier,David Courtaillier
+Jerome Courtaillier,Zacarias Moussaoui
+Kamel Daoudi,Zacarias Moussaoui
+David Courtaillier,Zacarias Moussaoui
+Zacarias Moussaoui,Abu Qatada
+Zacarias Moussaoui,Ahmed Ressam
+Zacarias Moussaoui,Ramzi Bin al-Shibh
+Zacarias Moussaoui,Mohamed Atta
+Abu Qatada,Tarek Maaroufi
+Abu Qatada,Imad Eddin Barakat Yarkas
+Ahmed Ressam,Haydar Aby Doha
+Haydar Aby Doha,Mehdi Khammoun
+Haydar Aby Doha,Essid Sami Ben Khemais
+Mehdi Khammoun,Mohamed Bensakhria
+Mehdi Khammoun,Essid Sami Ben Khemais
+Essoussi Laaroussi,Tarek Maaroufi
+Essoussi Laaroussi,Essid Sami Ben Khemais
+Tarek Maaroufi,Mohamed Bensakhria
+Tarek Maaroufi,Seifallah Ben Hassine
+Tarek Maaroufi,Essid Sami Ben Khemais
+Tarek Maaroufi,Imad Eddin Barakat Yarkas
+Mohamed Bensakhria,Tased Ben Heni
+Mohamed Bensakhria,Essid Sami Ben Khemais
+Tased Ben Heni,Essid Sami Ben Khemais
+Seifallah Ben Hassine,Essid Sami Ben Khemais
+Essid Sami Ben Khemais,Fahid al Shakri
+Essid Sami Ben Khemais,Madjid Sahoune
+Essid Sami Ben Khemais,Samir Kishk
+Essid Sami Ben Khemais,Mohamed Atta
+Imad Eddin Barakat Yarkas,Ramzi Bin al-Shibh
+Imad Eddin Barakat Yarkas,Mohamed Atta
+Mohammed Belfas,Ramzi Bin al-Shibh
+Mohammed Belfas,Agus Budiman
+Abdelghani Mzoudi,Mohamed Atta
+Ramzi Bin al-Shibh,Agus Budiman
+Ramzi Bin al-Shibh,Mounir El Motassadeq
+Ramzi Bin al-Shibh,Zakariya Essabar
+Ramzi Bin al-Shibh,Mohamed Atta
+Ramzi Bin al-Shibh,Marwan Al-Shehhi
+Ramzi Bin al-Shibh,Ziad Jarrah
+Ramzi Bin al-Shibh,Said Bahaji
+Agus Budiman,Mohamed Atta
+Agus Budiman,Marwan Al-Shehhi
+Agus Budiman,Ziad Jarrah
+Mounir El Motassadeq,Mohamed Atta
+Mounir El Motassadeq,Marwan Al-Shehhi
+Mounir El Motassadeq,Said Bahaji
+Zakariya Essabar,Mohamed Atta
+Zakariya Essabar,Marwan Al-Shehhi
+Zakariya Essabar,Ziad Jarrah
+Zakariya Essabar,Said Bahaji
+Mohamed Atta,Ahmed Khalil Ibrahim Samir Al-Ani
+Mohamed Atta,Mustafa Ahmed al-Hisawi
+Mohamed Atta,Fayez Ahmed
+Mohamed Atta,Wail Alshehri
+Mohamed Atta,Satam Suqami
+Mohamed Atta,Nawaf Alhazmi
+Mohamed Atta,Ahmed Al Haznawi
+Mohamed Atta,Abdul Aziz Al-Omari
+Mohamed Atta,Marwan Al-Shehhi
+Mohamed Atta,Ziad Jarrah
+Mohamed Atta,Said Bahaji
+Mohamed Atta,Mamoun Darkazanli
+Mohamed Atta,Lotfi Raissi
+Mohamed Atta,Hani Hanjour
+Mustafa Ahmed al-Hisawi,Fayez Ahmed
+Mustafa Ahmed al-Hisawi,Waleed Alshehri
+Mustafa Ahmed al-Hisawi,Marwan Al-Shehhi
+Fayez Ahmed,Wail Alshehri
+Fayez Ahmed,Waleed Alshehri
+Fayez Ahmed,Satam Suqami
+Fayez Ahmed,Mohand Alshehri
+Fayez Ahmed,Abdul Aziz Al-Omari
+Fayez Ahmed,Marwan Al-Shehhi
+Wail Alshehri,Waleed Alshehri
+Wail Alshehri,Satam Suqami
+Wail Alshehri,Abdul Aziz Al-Omari
+Wail Alshehri,Marwan Al-Shehhi
+Waleed Alshehri,Satam Suqami
+Waleed Alshehri,Abdul Aziz Al-Omari
+Waleed Alshehri,Marwan Al-Shehhi
+Satam Suqami,Raed Hijazi
+Satam Suqami,Nabil al-Marabh
+Satam Suqami,Abdul Aziz Al-Omari
+Satam Suqami,Marwan Al-Shehhi
+Mohand Alshehri,Hamza Alghamdi
+Raed Hijazi,Nabil al-Marabh
+Raed Hijazi,Saeed Alghamdi
+Nabil al-Marabh,Saeed Alghamdi
+Nabil al-Marabh,Ahmed Alghamdi
+Saeed Alghamdi,Hamza Alghamdi
+Saeed Alghamdi,Ahmed Alnami
+Saeed Alghamdi,Nawaf Alhazmi
+Saeed Alghamdi,Ahmed Al Haznawi
+Hamza Alghamdi,Ahmed Alnami
+Hamza Alghamdi,Nawaf Alhazmi
+Hamza Alghamdi,Ahmed Alghamdi
+Hamza Alghamdi,Ahmed Al Haznawi
+Hamza Alghamdi,Marwan Al-Shehhi
+Ahmed Alnami,Nawaf Alhazmi
+Nawaf Alhazmi,Mohamed Abdi
+Nawaf Alhazmi,Abdussattar Shaikh
+Nawaf Alhazmi,Osama Awadallah
+Nawaf Alhazmi,Khalid Al-Mihdhar
+Nawaf Alhazmi,Majed Moqed
+Nawaf Alhazmi,Salem Alhazmi
+Nawaf Alhazmi,Hani Hanjour
+Abdussattar Shaikh,Osama Awadallah
+Abdussattar Shaikh,Khalid Al-Mihdhar
+Osama Awadallah,Khalid Al-Mihdhar
+Khalid Al-Mihdhar,Majed Moqed
+Khalid Al-Mihdhar,Salem Alhazmi
+Khalid Al-Mihdhar,Hani Hanjour
+Majed Moqed,Salem Alhazmi
+Majed Moqed,Hani Hanjour
+Salem Alhazmi,Ahmed Alghamdi
+Salem Alhazmi,Abdul Aziz Al-Omari
+Salem Alhazmi,Marwan Al-Shehhi
+Salem Alhazmi,Ziad Jarrah
+Salem Alhazmi,Hani Hanjour
+Ahmed Alghamdi,Abdul Aziz Al-Omari
+Ahmed Alghamdi,Hani Hanjour
+Ahmed Al Haznawi,Ziad Jarrah
+Abdul Aziz Al-Omari,Marwan Al-Shehhi
+Abdul Aziz Al-Omari,Hani Hanjour
+Marwan Al-Shehhi,Ziad Jarrah
+Marwan Al-Shehhi,Said Bahaji
+Marwan Al-Shehhi,Mamoun Darkazanli
+Marwan Al-Shehhi,Lotfi Raissi
+Marwan Al-Shehhi,Hani Hanjour
+Ziad Jarrah,Said Bahaji
+Ziad Jarrah,Lotfi Raissi
+Ziad Jarrah,Hani Hanjour
+Said Bahaji,Mamoun Darkazanli
+Mamoun Darkazanli,Mamduh Mahmud Salim
+Lotfi Raissi,Hani Hanjour
+Lotfi Raissi,Rayed Mohammed Abdullah
+Hani Hanjour,Bandar Alhazmi
+Hani Hanjour,Rayed Mohammed Abdullah
+Hani Hanjour,Faisal Al Salmi
+Bandar Alhazmi,Rayed Mohammed Abdullah
+Rayed Mohammed Abdullah,Faisal Al Salmi

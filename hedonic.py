@@ -313,8 +313,8 @@ def timestamp(node, increased):
     files['accur'].write(s[:-1])
     files['state'].write(stringify_state())
     if p['print']:
-        print('move: {:02d} | from: {} | to: {} | increased: {:.2f}'.format(
-            int(node), f, t, increased))
+        print('move: {} | from: {} | to: {} | increased: {:.2f}'.format(
+            node, f, t, increased))
 
 def results(duration):
     info = open(game.folder + 'infos.md', 'w+')
