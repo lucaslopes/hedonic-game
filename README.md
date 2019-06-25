@@ -1,7 +1,7 @@
 # Hedonic Games for Clustering
-- Finding Clusters with Cooperative Game Theory
-- A research experiment of Giovanni$^\dagger$, Kostya$^\dagger$, Daniel$^\ddagger$, Lucas$^\ddagger$ (ack Eduardo$^\ddagger$)
-- $^\dagger$INRIA $\mid$ $^\ddagger$Federal University of Rio de Janeiro
+- A research experiment of Giovanni^, Kostya^, Daniel`, Lucas` (ack Eduardo`)
+- ^INRIA ∣ `Federal University of Rio de Janeiro
+- [Demonstration](https://github.com/lucaslopes/hedonic)
 
 ## To Run
 
@@ -77,7 +77,7 @@ You're reading it.
 A Jupyter Notebook that plot visualizations of each experiment.
 
 ### `index.html`
-The [Jupyter Notebook](#TO-DO) containing visualizations of the experiments, converted in `.html` and hosted at github.io/lucaslopes/hedonic.
+The [Jupyter Notebook](#TO-DO) containing visualizations of the experiments, converted in `.html` and hosted at https://github.com/lucaslopes/hedonic.
 
 ### `hedonic.py`
 
