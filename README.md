@@ -1,7 +1,7 @@
 # Hedonic Games for Clustering
 - A research experiment of ^Giovanni, ^Kostya, ´Daniel, ´Lucas (ack ´Eduardo)
 - ^INRIA ∣ ´Federal University of Rio de Janeiro
-- [Demonstration](https://github.com/lucaslopes/hedonic)
+- [Demonstration](https://lucaslopes.github.io/hedonic/)
 
 ## To Run
 
@@ -77,7 +77,7 @@ You're reading it.
 A Jupyter Notebook that plot visualizations of each experiment.
 
 ### `index.html`
-The [Jupyter Notebook](#TO-DO) containing visualizations of the experiments, converted in `.html` and hosted at https://github.com/lucaslopes/hedonic.
+The [Jupyter Notebook](#TO-DO) containing visualizations of the experiments, converted in `.html` and hosted at https://lucaslopes.github.io/hedonic/.
 
 ### `hedonic.py`
 
