@@ -7,11 +7,11 @@ There are 2 graphs:
 
 1. Sample **1**
 
-![Graph 1](./datasets/details/imgs/sample-1.png)
+![Graph 1](details/imgs/sample-1.png)
 
 2. Sample **2**
 
-![Graph 2](./datasets/details/imgs/sample-2.png)
+![Graph 2](details/imgs/sample-2.png)
 
 
 <!--------------------------------------------------------------->
@@ -22,12 +22,12 @@ There are 2 graphs:
 
 Network from [Figure 4](https://journals.uic.edu/ojs/index.php/fm/rt/printerFriendly/941/863#fig4):
 
-![Graph](./datasets/details/imgs/network-graph.jpg)
+![Graph](details/imgs/network-graph.jpg)
 
 And its representation with numbers:
 _(the .csv file is in numeric representation)_
 
-![Graph](./datasets/details/imgs/network-numbers.jpg)
+![Graph](details/imgs/network-numbers.jpg)
 
 As well in table format for better readability:
 
