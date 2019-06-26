@@ -24,7 +24,7 @@ p = {
 
     'print' : True, # Print each iteration in the terminal?
     'freq'  : 1,    # Probability that Accuracy will be computed at each iteration
-    'note'  : '' } # Free space to comment about the experiment
+    'note'  : 'None' } # Free space to comment about the experiment
 
 ## Import Dependecies ##########################################################
 

@@ -1,0 +1,5 @@
+in x Mr. Hi,,,,in x Officer,,,,out x Mr. Hi,,,,out x Officer,,,
+True Positive,True Negative,False Positive,False Negative,True Positive,True Negative,False Positive,False Negative,True Positive,True Negative,False Positive,False Negative,True Positive,True Negative,False Positive,False Negative
+17,17,0,0,0,0,17,17,0,0,17,17,17,17,0,0
+16,17,0,1,0,1,16,17,1,0,17,16,17,16,1,0
+16,16,1,1,1,1,16,16,1,1,16,16,16,16,1,1
