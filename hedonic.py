@@ -14,11 +14,11 @@ p = {
     'graph' : 'conference', # Choose one above
     'alpha' : 0.95, # Fragmentation Factor | 0 <= alpha <= 1
     'init'  : {
-        'mode': 'e', # Initial Modes:
+        'mode': 'r', # Initial Modes:
             # - Random (r): Nodes will be randomly selected to start inside cluster
             # - Select (s): Chose which nodes will start inside cluster
             # - Any other: Start with an empty cluster
-        'params': None },
+        'params': 0.5 },
             # - Random (r): Number of nodes - If is between 0 and 1 will be multiply by quantity of nodes
             # - Select (s): List of selected nodes - [node indice, ..., node indice]
 
@@ -131,17 +131,19 @@ def set_classes(param, nodes):
     for n in nodes: c[n] = 'out'
     if param['mode'].lower() == 'r':
         amount = param['params']
-        if type(amount) is not int or type(amount) is not float:
+        if type(amount) is not int and type(amount) is not float:
             print('2nd parameter of `Random` is wrong.')
         if amount < 0: amount *= -1
         if amount > 0 and amount < 1: amount *= len(nodes)
         if amount > len(nodes): amount = len(nodes)
         amount = int(amount)
+        remain = list(c)
         while amount > 0:
-            r = random.choice(list(c))
-            if c[r] == 'out':
-                c[r] = 'in'
-                amount -= 1
+            r = random.randrange(0, len(remain))
+            c[remain[r]] = 'in'
+            remain[r], remain[-1] = remain[-1], remain[r]
+            remain.pop()
+            amount -= 1
     if param['mode'].lower() == 's':
         for node in param['params']:
             if c[node] == 'out':
