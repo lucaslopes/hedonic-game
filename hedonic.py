@@ -58,7 +58,7 @@ class Game:
             nodes = list(game.graph)
             find = False
             while find is False:
-                i = random.randint(0, len(nodes) - 1)
+                i = random.randrange(0, len(nodes))
                 p = profit(nodes[i])
                 if p > 0:
                     find = True
@@ -67,7 +67,7 @@ class Game:
                     nodes[i], nodes[-1] = nodes[-1], nodes[i]
                     nodes.pop()
                     if len(nodes) == 0:
-                        done = True
+                        done = find = True
                         print('Done!')
 
 ## Load the Network ############################################################
@@ -130,7 +130,7 @@ def set_classes(param, nodes):
     c = {}
     for n in nodes: c[n] = 'out'
     if param['mode'].lower() == 'r':
-        amount = param['ops']
+        amount = param['params']
         if type(amount) is not int or type(amount) is not float:
             print('2nd parameter of `Random` is wrong.')
         if amount < 0: amount *= -1
@@ -138,7 +138,7 @@ def set_classes(param, nodes):
         if amount > len(nodes): amount = len(nodes)
         amount = int(amount)
         while amount > 0:
-            r = random.choice(c.keys())
+            r = random.choice(list(c))
             if c[r] == 'out':
                 c[r] = 'in'
                 amount -= 1
@@ -334,6 +334,7 @@ def results(duration):
     info.write('- Final Potential:        {:.2f}\n'.format(game.potential))
     info.write('- Accumulated Gain:       {:.2f}\n'.format(game.score))
     info.write('- ²Potential Gain in %:   {:.2f}%\n'.format(game.score / abs(game.potential) * 100))
+    info.write('- Proportion Cluster In:  {:.2f}%\n'.format(game.clusters['in']['verts'] / len(game.graph) * 100))
     info.write('- Iterations:             {}\n'.format(game.iteration))
     info.write('\n# Legend\n')
     info.write('- ¹Initial Configuration\n')
