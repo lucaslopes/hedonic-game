@@ -11,7 +11,7 @@
 # sample_3 |  dolphins  |
 
 p = {
-    'graph' : 'terrorists', # Choose one above
+    'graph' : 'conference', # Choose one above
     'alpha' : 0.95, # Fragmentation Factor | 0 <= alpha <= 1
     'init'  : {
         'mode': 'e', # Initial Modes:
@@ -55,18 +55,20 @@ class Game:
         print_parameters()
         done = False
         while done is False:
-            current_record  = 0
-            profitable_node = None
-            for node in game.graph.keys():
-                p = profit(node)
-                if p > current_record:
-                    current_record  = p
-                    profitable_node = node
-            if profitable_node is not None:
-                move(profitable_node, current_record)
-            else:
-                done = True
-                print('Done!')
+            nodes = list(game.graph)
+            find = False
+            while find is False:
+                i = random.randint(0, len(nodes) - 1)
+                p = profit(nodes[i])
+                if p > 0:
+                    find = True
+                    move(nodes[i], p)
+                else:
+                    nodes[i], nodes[-1] = nodes[-1], nodes[i]
+                    nodes.pop()
+                    if len(nodes) == 0:
+                        done = True
+                        print('Done!')
 
 ## Load the Network ############################################################
 
