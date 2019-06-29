@@ -302,8 +302,8 @@ def print_parameters():
     print('Go!!!'.format(p['freq']))
 
 def timestamp(node, increased):
-    f, t = 'out', 'in'
-    if game.classes[node] == 'out': f, t = 'in', 'out'
+    f, t = 'out', ' in'
+    if game.classes[node] == 'out': f, t = ' in', 'out'
     files['props'].write('\n{},{},{},{}'.format(
         game.clusters['in']['verts'],  game.clusters['in']['edges'],
         game.clusters['out']['verts'], game.clusters['out']['edges']))
