@@ -8,7 +8,7 @@
 # ----------- Networks -----------
 # sample_1 |   karate   | football
 # sample_2 | terrorists | conference
-# sample_3 |  dolphins  |
+# sample_3 |  dolphins  | simple
 
 p = {
     'graph' : 'conference', # Choose one above
