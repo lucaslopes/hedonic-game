@@ -5,10 +5,10 @@
 
 ## Parameters ##################################################################
 
-# ----------- Networks -----------
-# sample_1 |   karate   | football
+# ----------- Networks ------------
+# sample_1 |   karate   |  football
 # sample_2 | terrorists | conference
-# sample_3 |  dolphins  | simple
+#  square  |  dolphins  |   simple
 
 p = {
     'graph' : 'conference', # Choose one above
