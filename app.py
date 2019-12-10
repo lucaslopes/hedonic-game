@@ -26,7 +26,7 @@ from players import sequential
 ################################################################################
 
 game = Game()
-table_results = pd.read_csv('experiments/results.csv')
+# table_results = pd.read_csv('experiments/results.csv')
 # game_data = None
 
 ################################################################################
