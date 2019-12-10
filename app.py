@@ -45,366 +45,407 @@ server = app.server
 
 ## Get list of Networks ########################################################
 
-def get_existing_networks():
-    options = []
-    networks = Game.show_networks(get=True)
-    for net in networks:
-        option = {'label': net, 'value': net[:3].upper()}
-        options.append(option)
-    return options
-
-## From game to Pandas #########################################################
-
-def get_iteration_data(game):
-    total_verts = game.infos['verts']
-    total_edges = game.infos['edges']
-    acc = np.array(game.hist['accumulated'])
-    verts_yes = np.array(game.hist['verts_yes'])
-    edges_yes = np.array(game.hist['edges_yes'])
-    edges_no  = np.array(game.hist['edges_no'])
-
-    pot_yes, pot_no = game.global_potential(verts_yes, edges_yes, edges_no, sum=False)
-    potential_prop = pot_yes / (pot_yes + pot_no)
-
-    edges_yes_prop = edges_yes / total_edges
-    edges_off_prop = ((total_edges - edges_yes - edges_no) / total_edges) + edges_yes_prop
-
-    verts_yes_prop = verts_yes / total_verts
-
-    iterations, instant = [0], []
-    for i in range(len(acc)-1):
-        iterations.append(i+1)
-        instant.append(acc[i+1]-acc[i])
-
-    return {
-        'iterations': iterations,
-        'instantaneous' : instant,
-        'accumulated' : acc,
-        'potential_prop': potential_prop,
-        'verts_yes_prop': verts_yes_prop,
-        'edges_yes_prop': edges_yes_prop,
-        'edges_off_prop': edges_off_prop }
-
-## Plot a Graph ################################################################
-
-def plot_graph(G = nx.random_geometric_graph(200, 0.125)): # nx.karate_club_graph()): #
-    # V=range(N)# list of vertices
-    # g=nx.Graph()
-    # g.add_nodes_from(V)
-    # g.add_edges_from(E)# E is the list of edges
-    # pos=nx.fruchterman_reingold_layout(g)
-
-    edge_x = []
-    edge_y = []
-    for edge in G.edges():
-        # print(G.node[edge[0]])
-        x0, y0 = G.node[edge[0]]['pos']
-        x1, y1 = G.node[edge[1]]['pos']
-        edge_x.append(x0)
-        edge_x.append(x1)
-        edge_x.append(None)
-        edge_y.append(y0)
-        edge_y.append(y1)
-        edge_y.append(None)
-    edge_trace = go.Scatter(
-        x=edge_x, y=edge_y,
-        line=dict(width=0.5, color='#888'),
-        hoverinfo='none',
-        mode='lines')
-    node_x = []
-    node_y = []
-    for node in G.nodes():
-        x, y = G.node[node]['pos']
-        node_x.append(x)
-        node_y.append(y)
-    node_trace = go.Scatter(
-        x=node_x, y=node_y,
-        mode='markers',
-        hoverinfo='text',
-        marker=dict(
-            showscale=True,
-            # colorscale options
-            #'Greys' | 'YlGnBu' | 'Greens' | 'YlOrRd' | 'Bluered' | 'RdBu' |
-            #'Reds' | 'Blues' | 'Picnic' | 'Rainbow' | 'Portland' | 'Jet' |
-            #'Hot' | 'Blackbody' | 'Earth' | 'Electric' | 'Viridis' |
-            colorscale='YlGnBu',
-            reversescale=True,
-            color=[],
-            size=10,
-            colorbar=dict(
-                thickness=15,
-                title='Node Connections',
-                xanchor='left',
-                titleside='right'
-            ),
-            line_width=2))
-    node_adjacencies = []
-    node_text = []
-    for node, adjacencies in enumerate(G.adjacency()):
-        node_adjacencies.append(len(adjacencies[1]))
-        node_text.append('# of connections: '+str(len(adjacencies[1])))
-    node_trace.marker.color = node_adjacencies
-    node_trace.text = node_text
-    # Another option would be to size points by the number of connections i.e. node_trace.marker.size = node_adjacencies
-    fig = go.Figure(data=[edge_trace, node_trace],
-             layout=go.Layout(
-                title='<br>Visualize the Network',
-                titlefont_size=16,
-                showlegend=False,
-                hovermode='closest',
-                margin=dict(b=20,l=5,r=5,t=40),
-                annotations=[ dict(
-                    text="Verts: V and Edges: E",
-                    showarrow=False,
-                    xref="paper", yref="paper",
-                    x=0.005, y=-0.002 ) ],
-                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
-    return fig
-
-################################################################################
-## Graphs ######################################################################
-################################################################################
-
-## Instantaneous Gain ##########################################################
-
-def graph_instant_gain(game_data):
-    return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['instantaneous']))
-
-## 2.3 Accumulated Gain ########################################################
-
-def graph_accumulated_gain(game_data):
-    return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['accumulated']))
-
-## 2.4 Potential Proportion ####################################################
-
-def graph_potential_proportion(game_data):
-    return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['potential_prop']))
-
-## 2.5 Vertices Proportion #####################################################
-
-def graph_vertices_proportion(game_data):
-    return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['verts_yes_prop']))
-
-## 2.5 Edges Proportion ########################################################
-
-def graph_edges_proportion(game_data):
-    return go.Figure(data=[
-        go.Scatter(x=game_data['iterations'], y=game_data['edges_yes_prop'], name='Edges Yes Proportion'),
-        go.Scatter(x=game_data['iterations'], y=game_data['edges_off_prop'], name='Edges Off Proportion')])
-
-## 2.6 Number of moves #########################################################
-
-
-################################################################################
-## Dash Divs ###################################################################
-################################################################################
-
-## 1. Header ###################################################################
-
-Header = html.Div(children=[
-    html.H1('Hedonic Games'),
-    html.Div([
-        html.P("Detecting communities in networks with cooperative game theory."),
-        html.P("A research experiment in colaboration between *UFRJ and ^INRIA."),
-        html.P("*Lucas Lopes, *Daniel Sadoc, ^Kostya and ^Giovanni."),
-        html.P("December 2019")]),
-    html.H2('Run an Experiment')],
-    style={'textAlign': 'center'})
-
-## 1.1 Run and Experiments #####################################################
-
-RunExperiments = html.Div(style={'columnCount': 2}, children=[
-    html.Label('Choose a Network:'), # Choose a Network
-    dcc.Dropdown(
-        id='network-selection',
-        options=get_existing_networks(),
-        multi=False,
-        value='DAG'),
-    html.Label('Or upload yours:'), # Upload a Network - TO_DO: update dropdown
-    dcc.Upload(
-        id='upload-network',
-        children=html.Div([ # Add a new experiment by
-            'Drag and Drop or ',
-            html.A('Select .CSV')]),
-        style={
-            'width': '100%',
-            'height': '50px',
-            'lineHeight': '60px',
-            'borderWidth': '1px',
-            'borderStyle': 'dashed',
-            'borderRadius': '5px',
-            'textAlign': 'center',
-            'margin': '10px'},
-        multiple=True), # Allow multiple files to be uploaded
-    html.Label('Alpha', id='alpha-value'),
-    dcc.Slider(
-        id='alpha-slider',
-        min=0,
-        max=1,
-        step=0.05,
-        value=0.95),
-    dcc.Tabs(id="tabs-init-mode", value='select-init-mode', children=[
-        dcc.Tab(
-            label="Initial mode: 'Select'",
-            value='select-init-mode',
-            children=[
-                html.Label('Select Nodes: ', id='select-nodes-value'),
-                dcc.Input(
-                    id="nodes-selected",
-                    type='text',
-                    placeholder="['node', 'name', '...']")]),
-        dcc.Tab(
-            label="Initial mode: 'Random'",
-            value='random-init-mode',
-            children=[
-                html.Label('Random Classification: ', id='random-value'),
-                dcc.Slider(
-                    id='init-random-slider',
-                    min=0,
-                    max=1,
-                    step=0.05,
-                    value=0.5)])]),
-    html.Label('Options:'),
-    dcc.Checklist(
-        options=[
-            {'label': 'Verbose', 'value': 'ver'},
-            {'label': 'Export', 'value': 'exp'} ],
-        value=['ver', 'exp']),
-    html.Button('Run!', id='run-button', style={'width': '100%'}),
-    html.Textarea( # TODO: only show when running
-        id='running-message',
-        style={'width':'100%','margin':'10px'}),
-    dcc.Graph(
-        id='network-preview',
-        figure=go.Figure(plot_graph()))])
-
-## 2. Vizualize Experiments ####################################################
-
-## 2.1 Table Results ###########################################################
-
-TableResults = html.Div(children=[
-    html.H2('Visualize Experiments Results', style={'textAlign': 'center'}), # H1?
-    html.H3('Experiments Results', style={'textAlign': 'center'}),
-    dash_table.DataTable(
-        id='experiments-datatable',
-        columns=[
-            {"name": i, "id": i, "deletable": False, "selectable": True} for i in table_results.columns],
-        data=table_results.to_dict('records'),
-        style_cell_conditional=[ {
-            'if': {'column_id': c},
-            'textAlign': 'left'
-        } for c in ['Date', 'Region'] ],
-        style_header={
-            'backgroundColor': 'light_blue',
-            'fontWeight': 'bold' },
-        filter_action="native",
-        sort_action="native",
-        sort_mode="multi",
-        row_selectable="single",
-        selected_rows=[0],
-        style_table={
-            'overflowX': 'scroll',
-            'overflowY': 'scroll',
-            'maxHeight': '450px',
-            'minWidth': '100%'},
-        fixed_columns={ 'headers': True, 'data': 1 },
-        fixed_rows={ 'headers': True, 'data': 0 },
-        style_cell={
-            'minWidth': '180px', 'width': '180px', 'maxWidth': '360px', # all three widths are needed
-            'overflow': 'hidden', 'padding': '7px',
-            'textOverflow': 'ellipsis'}),
-    html.Div(id='datatable-interactivity-container'),
-    html.Label('Or upload yours:'), # Upload a Network
-    dcc.Upload(
-        id='upload-experiment',
-        children=html.Div([ # Add a new experiment by
-            'Drag and Drop or ',
-            html.A('Select .PKL')]),
-        style={
-            'width': '100%',
-            'height': '60px',
-            'lineHeight': '60px',
-            'borderWidth': '1px',
-            'borderStyle': 'dashed',
-            'borderRadius': '5px',
-            'textAlign': 'center',
-            'margin': '10px'},
-        multiple=True)])
-
-################################################################################
-
-game_data = get_iteration_data(game)
-
-## 2.2 Instantaneous Gain ######################################################
-
-InstantGain = html.Div(children=[
-    html.H4('Instantaneous Gain', style={'textAlign': 'center'}),
-    # dcc.Graph(id="instant-graph")]) # figure=instant
-    dcc.Graph(
-        id='instant-gain-graph',
-        figure=graph_instant_gain(game_data))])
-
-## 2.3 Accumulated Gain ########################################################
-
-AccumulatedGain = html.Div(children=[
-    html.H4('Accumulated Gain', style={'textAlign': 'center'}),
-    dcc.Graph(
-        id='accumulated-gain-graph',
-        figure=graph_accumulated_gain(game_data))])
-
-## 2.4 Potential Proportion ####################################################
-
-PotentialProportion = html.Div(children=[
-    html.H4('Potential Proportion', style={'textAlign': 'center'}),
-    dcc.Graph(
-        id='potential-proportion-graph',
-        figure=graph_potential_proportion(game_data))])
-
-## 2.5 Vertices Proportion #####################################################
-
-VerticesProportion = html.Div(children=[
-    html.H4('Vertices Proportion', style={'textAlign': 'center'}),
-    dcc.Graph(
-        id='vertices-proportion-graph',
-        figure=graph_vertices_proportion(game_data))])
-
-## 2.5 Edges Proportion ########################################################
-
-EdgesProportion = html.Div(children=[
-    html.H4('Edges Proportion', style={'textAlign': 'center'}),
-    dcc.Graph(
-        id='edges-proportion-graph',
-        figure=graph_edges_proportion(game_data))])
-
-## 2.6 Number of moves #########################################################
-
-################################################################################
-## Layout ######################################################################
-################################################################################
-
-## App Layout ##################################################################
-
-app.layout = html.Div(children=[
-        Header,RunExperiments,
-        TableResults,InstantGain,AccumulatedGain,PotentialProportion,VerticesProportion,EdgesProportion])
-        #Experiments,TableResults,Networks,Iterations])
-
-################################################################################
-## Decorators ##################################################################
-################################################################################
-
-@app.callback(
-    Output(component_id='alpha-value', component_property='children'),
-    [Input(component_id='alpha-slider', component_property='value')])
-def update_alpha_value(alpha_value):
-    return f'Alpha: {alpha_value}'
-
-@app.callback(
-    Output(component_id='random-value', component_property='children'),
-    [Input(component_id='init-random-slider', component_property='value')])
-def update_random_mode_value(random_value):
-    return f'Random Classification: {random_value}'
+# def get_existing_networks():
+#     options = []
+#     networks = Game.show_networks(get=True)
+#     for net in networks:
+#         option = {'label': net, 'value': net[:3].upper()}
+#         options.append(option)
+#     return options
+#
+# ## From game to Pandas #########################################################
+#
+# def get_iteration_data(game):
+#     total_verts = game.infos['verts']
+#     total_edges = game.infos['edges']
+#     acc = np.array(game.hist['accumulated'])
+#     verts_yes = np.array(game.hist['verts_yes'])
+#     edges_yes = np.array(game.hist['edges_yes'])
+#     edges_no  = np.array(game.hist['edges_no'])
+#
+#     pot_yes, pot_no = game.global_potential(verts_yes, edges_yes, edges_no, sum=False)
+#     potential_prop = pot_yes / (pot_yes + pot_no)
+#
+#     edges_yes_prop = edges_yes / total_edges
+#     edges_off_prop = ((total_edges - edges_yes - edges_no) / total_edges) + edges_yes_prop
+#
+#     verts_yes_prop = verts_yes / total_verts
+#
+#     iterations, instant = [0], []
+#     for i in range(len(acc)-1):
+#         iterations.append(i+1)
+#         instant.append(acc[i+1]-acc[i])
+#
+#     return {
+#         'iterations': iterations,
+#         'instantaneous' : instant,
+#         'accumulated' : acc,
+#         'potential_prop': potential_prop,
+#         'verts_yes_prop': verts_yes_prop,
+#         'edges_yes_prop': edges_yes_prop,
+#         'edges_off_prop': edges_off_prop }
+#
+# ## Plot a Graph ################################################################
+#
+# def plot_graph(G = nx.random_geometric_graph(200, 0.125)): # nx.karate_club_graph()): #
+#     # V=range(N)# list of vertices
+#     # g=nx.Graph()
+#     # g.add_nodes_from(V)
+#     # g.add_edges_from(E)# E is the list of edges
+#     # pos=nx.fruchterman_reingold_layout(g)
+#
+#     edge_x = []
+#     edge_y = []
+#     for edge in G.edges():
+#         # print(G.node[edge[0]])
+#         x0, y0 = G.node[edge[0]]['pos']
+#         x1, y1 = G.node[edge[1]]['pos']
+#         edge_x.append(x0)
+#         edge_x.append(x1)
+#         edge_x.append(None)
+#         edge_y.append(y0)
+#         edge_y.append(y1)
+#         edge_y.append(None)
+#     edge_trace = go.Scatter(
+#         x=edge_x, y=edge_y,
+#         line=dict(width=0.5, color='#888'),
+#         hoverinfo='none',
+#         mode='lines')
+#     node_x = []
+#     node_y = []
+#     for node in G.nodes():
+#         x, y = G.node[node]['pos']
+#         node_x.append(x)
+#         node_y.append(y)
+#     node_trace = go.Scatter(
+#         x=node_x, y=node_y,
+#         mode='markers',
+#         hoverinfo='text',
+#         marker=dict(
+#             showscale=True,
+#             # colorscale options
+#             #'Greys' | 'YlGnBu' | 'Greens' | 'YlOrRd' | 'Bluered' | 'RdBu' |
+#             #'Reds' | 'Blues' | 'Picnic' | 'Rainbow' | 'Portland' | 'Jet' |
+#             #'Hot' | 'Blackbody' | 'Earth' | 'Electric' | 'Viridis' |
+#             colorscale='YlGnBu',
+#             reversescale=True,
+#             color=[],
+#             size=10,
+#             colorbar=dict(
+#                 thickness=15,
+#                 title='Node Connections',
+#                 xanchor='left',
+#                 titleside='right'
+#             ),
+#             line_width=2))
+#     node_adjacencies = []
+#     node_text = []
+#     for node, adjacencies in enumerate(G.adjacency()):
+#         node_adjacencies.append(len(adjacencies[1]))
+#         node_text.append('# of connections: '+str(len(adjacencies[1])))
+#     node_trace.marker.color = node_adjacencies
+#     node_trace.text = node_text
+#     # Another option would be to size points by the number of connections i.e. node_trace.marker.size = node_adjacencies
+#     fig = go.Figure(data=[edge_trace, node_trace],
+#              layout=go.Layout(
+#                 title='<br>Visualize the Network',
+#                 titlefont_size=16,
+#                 showlegend=False,
+#                 hovermode='closest',
+#                 margin=dict(b=20,l=5,r=5,t=40),
+#                 annotations=[ dict(
+#                     text="Verts: V and Edges: E",
+#                     showarrow=False,
+#                     xref="paper", yref="paper",
+#                     x=0.005, y=-0.002 ) ],
+#                 xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+#                 yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
+#     return fig
+#
+# ################################################################################
+# ## Graphs ######################################################################
+# ################################################################################
+#
+# ## Instantaneous Gain ##########################################################
+#
+# def graph_instant_gain(game_data):
+#     return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['instantaneous']))
+#
+# ## 2.3 Accumulated Gain ########################################################
+#
+# def graph_accumulated_gain(game_data):
+#     return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['accumulated']))
+#
+# ## 2.4 Potential Proportion ####################################################
+#
+# def graph_potential_proportion(game_data):
+#     return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['potential_prop']))
+#
+# ## 2.5 Vertices Proportion #####################################################
+#
+# def graph_vertices_proportion(game_data):
+#     return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['verts_yes_prop']))
+#
+# ## 2.5 Edges Proportion ########################################################
+#
+# def graph_edges_proportion(game_data):
+#     return go.Figure(data=[
+#         go.Scatter(x=game_data['iterations'], y=game_data['edges_yes_prop'], name='Edges Yes Proportion'),
+#         go.Scatter(x=game_data['iterations'], y=game_data['edges_off_prop'], name='Edges Off Proportion')])
+#
+# ## 2.6 Number of moves #########################################################
+#
+#
+# ################################################################################
+# ## Dash Divs ###################################################################
+# ################################################################################
+#
+# ## 1. Header ###################################################################
+#
+# Header = html.Div(children=[
+#     html.H1('Hedonic Games'),
+#     html.Div([
+#         html.P("Detecting communities in networks with cooperative game theory."),
+#         html.P("A research experiment in colaboration between *UFRJ and ^INRIA."),
+#         html.P("*Lucas Lopes, *Daniel Sadoc, ^Kostya and ^Giovanni."),
+#         html.P("December 2019")]),
+#     html.H2('Run an Experiment')],
+#     style={'textAlign': 'center'})
+#
+# ## 1.1 Run and Experiments #####################################################
+#
+# RunExperiments = html.Div(style={'columnCount': 2}, children=[
+#     html.Label('Choose a Network:'), # Choose a Network
+#     dcc.Dropdown(
+#         id='network-selection',
+#         options=get_existing_networks(),
+#         multi=False,
+#         value='DAG'),
+#     html.Label('Or upload yours:'), # Upload a Network - TO_DO: update dropdown
+#     dcc.Upload(
+#         id='upload-network',
+#         children=html.Div([ # Add a new experiment by
+#             'Drag and Drop or ',
+#             html.A('Select .CSV')]),
+#         style={
+#             'width': '100%',
+#             'height': '50px',
+#             'lineHeight': '60px',
+#             'borderWidth': '1px',
+#             'borderStyle': 'dashed',
+#             'borderRadius': '5px',
+#             'textAlign': 'center',
+#             'margin': '10px'},
+#         multiple=True), # Allow multiple files to be uploaded
+#     html.Label('Alpha', id='alpha-value'),
+#     dcc.Slider(
+#         id='alpha-slider',
+#         min=0,
+#         max=1,
+#         step=0.05,
+#         value=0.95),
+#     dcc.Tabs(id="tabs-init-mode", value='select-init-mode', children=[
+#         dcc.Tab(
+#             label="Initial mode: 'Select'",
+#             value='select-init-mode',
+#             children=[
+#                 html.Label('Select Nodes: ', id='select-nodes-value'),
+#                 dcc.Input(
+#                     id="nodes-selected",
+#                     type='text',
+#                     placeholder="['node', 'name', '...']")]),
+#         dcc.Tab(
+#             label="Initial mode: 'Random'",
+#             value='random-init-mode',
+#             children=[
+#                 html.Label('Random Classification: ', id='random-value'),
+#                 dcc.Slider(
+#                     id='init-random-slider',
+#                     min=0,
+#                     max=1,
+#                     step=0.05,
+#                     value=0.5)])]),
+#     html.Label('Options:'),
+#     dcc.Checklist(
+#         options=[
+#             {'label': 'Verbose', 'value': 'ver'},
+#             {'label': 'Export', 'value': 'exp'} ],
+#         value=['ver', 'exp']),
+#     html.Button('Run!', id='run-button', style={'width': '100%'}),
+#     html.Textarea( # TODO: only show when running
+#         id='running-message',
+#         style={'width':'100%','margin':'10px'}),
+#     dcc.Graph(
+#         id='network-preview',
+#         figure=go.Figure(plot_graph()))])
+#
+# ## 2. Vizualize Experiments ####################################################
+#
+# ## 2.1 Table Results ###########################################################
+#
+# TableResults = html.Div(children=[
+#     html.H2('Visualize Experiments Results', style={'textAlign': 'center'}), # H1?
+#     html.H3('Experiments Results', style={'textAlign': 'center'}),
+#     dash_table.DataTable(
+#         id='experiments-datatable',
+#         columns=[
+#             {"name": i, "id": i, "deletable": False, "selectable": True} for i in table_results.columns],
+#         data=table_results.to_dict('records'),
+#         style_cell_conditional=[ {
+#             'if': {'column_id': c},
+#             'textAlign': 'left'
+#         } for c in ['Date', 'Region'] ],
+#         style_header={
+#             'backgroundColor': 'light_blue',
+#             'fontWeight': 'bold' },
+#         filter_action="native",
+#         sort_action="native",
+#         sort_mode="multi",
+#         row_selectable="single",
+#         selected_rows=[0],
+#         style_table={
+#             'overflowX': 'scroll',
+#             'overflowY': 'scroll',
+#             'maxHeight': '450px',
+#             'minWidth': '100%'},
+#         fixed_columns={ 'headers': True, 'data': 1 },
+#         fixed_rows={ 'headers': True, 'data': 0 },
+#         style_cell={
+#             'minWidth': '180px', 'width': '180px', 'maxWidth': '360px', # all three widths are needed
+#             'overflow': 'hidden', 'padding': '7px',
+#             'textOverflow': 'ellipsis'}),
+#     html.Div(id='datatable-interactivity-container'),
+#     html.Label('Or upload yours:'), # Upload a Network
+#     dcc.Upload(
+#         id='upload-experiment',
+#         children=html.Div([ # Add a new experiment by
+#             'Drag and Drop or ',
+#             html.A('Select .PKL')]),
+#         style={
+#             'width': '100%',
+#             'height': '60px',
+#             'lineHeight': '60px',
+#             'borderWidth': '1px',
+#             'borderStyle': 'dashed',
+#             'borderRadius': '5px',
+#             'textAlign': 'center',
+#             'margin': '10px'},
+#         multiple=True)])
+#
+# ################################################################################
+#
+# game_data = get_iteration_data(game)
+#
+# ## 2.2 Instantaneous Gain ######################################################
+#
+# InstantGain = html.Div(children=[
+#     html.H4('Instantaneous Gain', style={'textAlign': 'center'}),
+#     # dcc.Graph(id="instant-graph")]) # figure=instant
+#     dcc.Graph(
+#         id='instant-gain-graph',
+#         figure=graph_instant_gain(game_data))])
+#
+# ## 2.3 Accumulated Gain ########################################################
+#
+# AccumulatedGain = html.Div(children=[
+#     html.H4('Accumulated Gain', style={'textAlign': 'center'}),
+#     dcc.Graph(
+#         id='accumulated-gain-graph',
+#         figure=graph_accumulated_gain(game_data))])
+#
+# ## 2.4 Potential Proportion ####################################################
+#
+# PotentialProportion = html.Div(children=[
+#     html.H4('Potential Proportion', style={'textAlign': 'center'}),
+#     dcc.Graph(
+#         id='potential-proportion-graph',
+#         figure=graph_potential_proportion(game_data))])
+#
+# ## 2.5 Vertices Proportion #####################################################
+#
+# VerticesProportion = html.Div(children=[
+#     html.H4('Vertices Proportion', style={'textAlign': 'center'}),
+#     dcc.Graph(
+#         id='vertices-proportion-graph',
+#         figure=graph_vertices_proportion(game_data))])
+#
+# ## 2.5 Edges Proportion ########################################################
+#
+# EdgesProportion = html.Div(children=[
+#     html.H4('Edges Proportion', style={'textAlign': 'center'}),
+#     dcc.Graph(
+#         id='edges-proportion-graph',
+#         figure=graph_edges_proportion(game_data))])
+#
+# ## 2.6 Number of moves #########################################################
+#
+# ################################################################################
+# ## Layout ######################################################################
+# ################################################################################
+#
+# ## App Layout ##################################################################
+#
+# app.layout = html.Div(children=[
+#         Header,RunExperiments,
+#         TableResults,InstantGain,AccumulatedGain,PotentialProportion,VerticesProportion,EdgesProportion])
+#         #Experiments,TableResults,Networks,Iterations])
+#
+# ################################################################################
+# ## Decorators ##################################################################
+# ################################################################################
+#
+# @app.callback(
+#     Output(component_id='alpha-value', component_property='children'),
+#     [Input(component_id='alpha-slider', component_property='value')])
+# def update_alpha_value(alpha_value):
+#     return f'Alpha: {alpha_value}'
+#
+# @app.callback(
+#     Output(component_id='random-value', component_property='children'),
+#     [Input(component_id='init-random-slider', component_property='value')])
+# def update_random_mode_value(random_value):
+#     return f'Random Classification: {random_value}'
+#
+# @app.callback(
+#     Output(component_id='running-message', component_property='children'),
+#     [Input(component_id='run-button', component_property='n_clicks')],
+#     [State('network-selection', 'value'), State('alpha-slider', 'value'),
+#     State('nodes-selected', 'value'), State('init-random-slider', 'value')]) # todo: options checkbox
+# def run_game(n_clicks, network, alpha, init_mode, random_mode):
+#     if n_clicks is None:
+#         raise PreventUpdate
+#     else:
+#         global table_results
+#         game.load_network(network)
+#         game.set_alpha(alpha)
+#         if init_mode:
+#             game.set_initial_state('s', init_mode)
+#         else:
+#             game.set_initial_state('r', random_mode)
+#         game.play(sequential) # todo: better way to pass player
+#         table_results = pd.read_csv('experiments/results.csv') # todo: update
+#         return "End"
+#
+# @app.callback(
+#     [Output('instant-gain-graph', 'figure'),
+#      Output('accumulated-gain-graph', 'figure'),
+#      Output('potential-proportion-graph', 'figure'),
+#      Output('vertices-proportion-graph', 'figure'),
+#      Output('edges-proportion-graph', 'figure')],
+#     [Input('experiments-datatable', 'selected_rows'),
+#     Input('experiments-datatable', 'data')])
+# def callback_a(experiment, rows):
+#     global game, game_data
+#     row = rows[experiment[0]]
+#     exp = row['Nomenclature'] + '.pickle'
+#     game.replay(exp)
+#     game_data = get_iteration_data(game)
+#     return (
+#     graph_instant_gain(game_data),
+#     graph_accumulated_gain(game_data),
+#     graph_potential_proportion(game_data),
+#     graph_vertices_proportion(game_data),
+#     graph_edges_proportion(game_data))
 
 
 # @app.callback(
@@ -414,47 +455,6 @@ def update_random_mode_value(random_value):
 #     pass
 #     # net = nx.read_edgelist(f'networks/{network}.csv')
 #     # return plot_graph(net)
-
-@app.callback(
-    Output(component_id='running-message', component_property='children'),
-    [Input(component_id='run-button', component_property='n_clicks')],
-    [State('network-selection', 'value'), State('alpha-slider', 'value'),
-    State('nodes-selected', 'value'), State('init-random-slider', 'value')]) # todo: options checkbox
-def run_game(n_clicks, network, alpha, init_mode, random_mode):
-    if n_clicks is None:
-        raise PreventUpdate
-    else:
-        global table_results
-        game.load_network(network)
-        game.set_alpha(alpha)
-        if init_mode:
-            game.set_initial_state('s', init_mode)
-        else:
-            game.set_initial_state('r', random_mode)
-        game.play(sequential) # todo: better way to pass player
-        table_results = pd.read_csv('experiments/results.csv') # todo: update
-        return "End"
-
-@app.callback(
-    [Output('instant-gain-graph', 'figure'),
-     Output('accumulated-gain-graph', 'figure'),
-     Output('potential-proportion-graph', 'figure'),
-     Output('vertices-proportion-graph', 'figure'),
-     Output('edges-proportion-graph', 'figure')],
-    [Input('experiments-datatable', 'selected_rows'),
-    Input('experiments-datatable', 'data')])
-def callback_a(experiment, rows):
-    global game, game_data
-    row = rows[experiment[0]]
-    exp = row['Nomenclature'] + '.pickle'
-    game.replay(exp)
-    game_data = get_iteration_data(game)
-    return (
-    graph_instant_gain(game_data),
-    graph_accumulated_gain(game_data),
-    graph_potential_proportion(game_data),
-    graph_vertices_proportion(game_data),
-    graph_edges_proportion(game_data))
 
 
 # todo: importar csv from id=upload-network
@@ -565,9 +565,9 @@ def callback_a(experiment, rows):
 
 if __name__ == '__main__':
 
-    if 'DYNO' in os.environ:
-        app_name = os.environ['DASH_APP_NAME']
-    else:
-        app_name = 'Hedonic Dashboard'
+    # if 'DYNO' in os.environ:
+    #     app_name = os.environ['DASH_APP_NAME']
+    # else:
+    #     app_name = 'Hedonic Dashboard'
 
     app.run_server(debug=True)
