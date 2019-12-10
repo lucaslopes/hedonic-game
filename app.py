@@ -6,6 +6,7 @@
 
 ## Import Dependecies ##########################################################
 
+import os
 import dash
 import dash_table
 import dash_core_components as dcc
@@ -564,9 +565,9 @@ def callback_a(experiment, rows):
 
 if __name__ == '__main__':
 
-    # if 'DYNO' in os.environ:
-    #     app_name = os.environ['DASH_APP_NAME']
-    # else:
-    #     app_name = 'Hedonic Ploting'
+    if 'DYNO' in os.environ:
+        app_name = os.environ['DASH_APP_NAME']
+    else:
+        app_name = 'Hedonic Dashboard'
 
     app.run_server(debug=True)
