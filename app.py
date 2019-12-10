@@ -2,7 +2,7 @@
 # Detecting communities in networks with cooperative game theory
 # A research experiment in colaboration between *UFRJ and ^INRIA
 # *Lucas Lopes, *Daniel Sadoc, ^Kostya and ^Giovanni
-# October 2019
+# December 2019
 
 ## Import Dependecies ##########################################################
 
@@ -158,7 +158,7 @@ Header = html.Div(children=[
         html.P("Detecting communities in networks with cooperative game theory."),
         html.P("A research experiment in colaboration between *UFRJ and ^INRIA."),
         html.P("*Lucas Lopes, *Daniel Sadoc, ^Kostya and ^Giovanni."),
-        html.P("October 2019")]),
+        html.P("December 2019")]),
     html.H2('Run an Experiment')],
     style={'textAlign': 'center'})
 
