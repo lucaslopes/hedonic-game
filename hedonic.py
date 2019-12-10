@@ -428,6 +428,8 @@ class Game:
         else:
             for n in networks: print(f'- {n[:-4]}')
 
+    # todo: create first row (columns)
+    # Nomenclature,Network,Alpha,Player,Initial mode,Initial parameter,Accumulated gain,Absolute gain in %,Initial potential,Final potential,Initial Potential proportion,Final Potential proportion,Initial Verts proportion,Final Verts proportion,Initial Edges proportion,Final Edges proportion,Initial Edges-off proportion,Final Edges-off proportion,Num of iterations,Eficiency to converged state,Eficiency to closest sink,Profit consults,Profitables per consults,Moves per consults,Reach equilibrium,Found new sink,Verbose,Export,Import duration,Run duration,Export duration,Total duration,Started at,Finished at
     def append_result(self, game_nomenclature, converged, found_unique_state):
         total_duration = self.stats['import_duration'] + self.stats['run_duration'] + self.stats['export_duration']
         total_consults = sum(self.hist['consults'])
@@ -457,10 +459,10 @@ class Game:
             total_consults, # Profit consults
             0 if total_consults == 0 else round(sum(self.hist['profitables']) / total_consults, 2), # Profitables per consult
             0 if total_consults == 0 else round(len(self.hist['nodes_moved']) / total_consults, 2), # Moves per consult
-            str(converged).lower(), # Reach equilibrium
-            str(found_unique_state).lower(), # Found new sink
-            str(self.infos['verbose']).lower(), # Verbose
-            str(self.infos['export']).lower(), # Export
+            'yes' if converged else 'not', # Reach equilibrium
+            'yes' if found_unique_state else 'not', # Found new sink
+            'yes' if self.infos['verbose'] else 'not', # Verbose
+            'yes' if self.infos['export'] else 'not', # Export
             self.stats['import_duration'], # Import duration
             self.stats['run_duration'], # Run duration
             self.stats['export_duration'], # Export duration

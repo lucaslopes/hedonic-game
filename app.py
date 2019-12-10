@@ -16,15 +16,21 @@ import networkx as nx
 import pandas as pd
 import numpy as np
 from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
 from hedonic import Game
 from players import sequential
 
 ################################################################################
-## Helper Functions ############################################################
+## Global Variables ############################################################
 ################################################################################
 
 game = Game()
-game.replay('KAR_0.95_GRE_r0.5_i13_v52.50_e23.43_abs14.75.pickle')
+table_results = pd.read_csv('experiments/results.csv')
+game_data = None
+
+################################################################################
+## Helper Functions ############################################################
+################################################################################
 
 ## Get list of Networks ########################################################
 
@@ -36,8 +42,9 @@ def get_existing_networks():
         options.append(option)
     return options
 
+## From game to Pandas #########################################################
 
-def get_iteration_data():
+def get_iteration_data(game):
     total_verts = game.infos['verts']
     total_edges = game.infos['edges']
     acc = np.array(game.hist['accumulated'])
@@ -66,8 +73,6 @@ def get_iteration_data():
         'verts_yes_prop': verts_yes_prop,
         'edges_yes_prop': edges_yes_prop,
         'edges_off_prop': edges_off_prop }
-
-game_data = get_iteration_data()
 
 ## Plot a Graph ################################################################
 
@@ -145,6 +150,40 @@ def plot_graph(G = nx.random_geometric_graph(200, 0.125)): # nx.karate_club_grap
                 xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                 yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
     return fig
+
+################################################################################
+## Graphs ######################################################################
+################################################################################
+
+## Instantaneous Gain ##########################################################
+
+def graph_instant_gain(game_data):
+    return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['instantaneous']))
+
+## 2.3 Accumulated Gain ########################################################
+
+def graph_accumulated_gain(game_data):
+    return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['accumulated']))
+
+## 2.4 Potential Proportion ####################################################
+
+def graph_potential_proportion(game_data):
+    return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['potential_prop']))
+
+## 2.5 Vertices Proportion #####################################################
+
+def graph_vertices_proportion(game_data):
+    return go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['verts_yes_prop']))
+
+## 2.5 Edges Proportion ########################################################
+
+def graph_edges_proportion(game_data):
+    return go.Figure(data=[
+        go.Scatter(x=game_data['iterations'], y=game_data['edges_yes_prop'], name='Edges Yes Proportion'),
+        go.Scatter(x=game_data['iterations'], y=game_data['edges_off_prop'], name='Edges Off Proportion')])
+
+## 2.6 Number of moves #########################################################
+
 
 ################################################################################
 ## Dash Divs ###################################################################
@@ -233,16 +272,14 @@ RunExperiments = html.Div(style={'columnCount': 2}, children=[
 
 ## 2.1 Table Results ###########################################################
 
-df = pd.read_csv('experiments/results.csv')
-
 TableResults = html.Div(children=[
     html.H2('Visualize Experiments Results', style={'textAlign': 'center'}), # H1?
     html.H3('Experiments Results', style={'textAlign': 'center'}),
     dash_table.DataTable(
         id='experiments-datatable',
         columns=[
-            {"name": i, "id": i, "deletable": False, "selectable": True} for i in df.columns],
-        data=df.to_dict('records'),
+            {"name": i, "id": i, "deletable": False, "selectable": True} for i in table_results.columns],
+        data=table_results.to_dict('records'),
         style_cell_conditional=[ {
             'if': {'column_id': c},
             'textAlign': 'left'
@@ -285,38 +322,50 @@ TableResults = html.Div(children=[
             'margin': '10px'},
         multiple=True)])
 
+################################################################################
+
+game_data = get_iteration_data(game)
+
 ## 2.2 Instantaneous Gain ######################################################
 
 InstantGain = html.Div(children=[
     html.H4('Instantaneous Gain', style={'textAlign': 'center'}),
     # dcc.Graph(id="instant-graph")]) # figure=instant
-    dcc.Graph(figure=go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['instantaneous'])))])
+    dcc.Graph(
+        id='instant-gain-graph',
+        figure=graph_instant_gain(game_data))])
 
 ## 2.3 Accumulated Gain ########################################################
 
 AccumulatedGain = html.Div(children=[
     html.H4('Accumulated Gain', style={'textAlign': 'center'}),
-    dcc.Graph(figure=go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['accumulated'])))])
+    dcc.Graph(
+        id='accumulated-gain-graph',
+        figure=graph_accumulated_gain(game_data))])
 
 ## 2.4 Potential Proportion ####################################################
 
 PotentialProportion = html.Div(children=[
     html.H4('Potential Proportion', style={'textAlign': 'center'}),
-    dcc.Graph(figure=go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['potential_prop'])))])
+    dcc.Graph(
+        id='potential-proportion-graph',
+        figure=graph_potential_proportion(game_data))])
 
 ## 2.5 Vertices Proportion #####################################################
 
 VerticesProportion = html.Div(children=[
     html.H4('Vertices Proportion', style={'textAlign': 'center'}),
-    dcc.Graph(figure=go.Figure(data=go.Scatter(x=game_data['iterations'], y=game_data['verts_yes_prop'])))])
+    dcc.Graph(
+        id='vertices-proportion-graph',
+        figure=graph_vertices_proportion(game_data))])
 
 ## 2.5 Edges Proportion ########################################################
 
 EdgesProportion = html.Div(children=[
     html.H4('Edges Proportion', style={'textAlign': 'center'}),
-    dcc.Graph(figure=go.Figure(data=[
-        go.Scatter(x=game_data['iterations'], y=game_data['edges_yes_prop'], name='Edges Yes Proportion'),
-        go.Scatter(x=game_data['iterations'], y=game_data['edges_off_prop'], name='Edges Off Proportion')]))])
+    dcc.Graph(
+        id='edges-proportion-graph',
+        figure=graph_edges_proportion(game_data))])
 
 ## 2.6 Number of moves #########################################################
 
@@ -358,8 +407,9 @@ def update_random_mode_value(random_value):
     Output(component_id='network-preview', component_property='figure'),
     [Input(component_id='network-selection', component_property='value')])
 def update_network(network):
-    net = nx.read_edgelist(f'networks/{network}.csv')
-    return plot_graph(net)
+    pass
+    # net = nx.read_edgelist(f'networks/{network}.csv')
+    # return plot_graph(net)
 
 @app.callback(
     Output(component_id='running-message', component_property='children'),
@@ -379,10 +429,29 @@ def run_game(n_clicks, network, alpha, init_mode, random_mode):
         game.play(sequential) # todo: better way to pass player
         return "Elephants are the only animal that can't jump"
 
+@app.callback(
+    [Output('instant-gain-graph', 'figure'),
+     Output('accumulated-gain-graph', 'figure'),
+     Output('potential-proportion-graph', 'figure'),
+     Output('vertices-proportion-graph', 'figure'),
+     Output('edges-proportion-graph', 'figure')],
+    [Input('experiments-datatable', 'selected_rows'),
+    Input('experiments-datatable', 'data')])
+def callback_a(experiment, rows):
+    global game, game_data
+    row = rows[experiment[0]]
+    exp = row['Nomenclature'] + '.pickle'
+    game.replay(exp)
+    game_data = get_iteration_data(game)
+    return (
+    graph_instant_gain(game_data),
+    graph_accumulated_gain(game_data),
+    graph_potential_proportion(game_data),
+    graph_vertices_proportion(game_data),
+    graph_edges_proportion(game_data))
 
 
 # todo: importar csv from id=upload-network
-
 
 
 # @app.callback(
