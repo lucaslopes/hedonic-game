@@ -25,7 +25,7 @@ from players import sequential
 ## Global Variables ############################################################
 ################################################################################
 
-game = Game()
+# game = Game()
 # table_results = pd.read_csv('experiments/results.csv')
 # game_data = None
 
@@ -202,15 +202,15 @@ server = app.server
 #
 # ## 1. Header ###################################################################
 #
-# Header = html.Div(children=[
-#     html.H1('Hedonic Games'),
-#     html.Div([
-#         html.P("Detecting communities in networks with cooperative game theory."),
-#         html.P("A research experiment in colaboration between *UFRJ and ^INRIA."),
-#         html.P("*Lucas Lopes, *Daniel Sadoc, ^Kostya and ^Giovanni."),
-#         html.P("December 2019")]),
-#     html.H2('Run an Experiment')],
-#     style={'textAlign': 'center'})
+Header = html.Div(children=[
+    html.H1('Hedonic Games'),
+    html.Div([
+        html.P("Detecting communities in networks with cooperative game theory."),
+        html.P("A research experiment in colaboration between *UFRJ and ^INRIA."),
+        html.P("*Lucas Lopes, *Daniel Sadoc, ^Kostya and ^Giovanni."),
+        html.P("December 2019")]),
+    html.H2('Run an Experiment')],
+    style={'textAlign': 'center'})
 #
 # ## 1.1 Run and Experiments #####################################################
 #
@@ -385,7 +385,7 @@ server = app.server
 #
 # ## App Layout ##################################################################
 #
-# app.layout = html.Div(children=[
+app.layout = html.Div(children=[Header])
 #         Header,RunExperiments,
 #         TableResults,InstantGain,AccumulatedGain,PotentialProportion,VerticesProportion,EdgesProportion])
 #         #Experiments,TableResults,Networks,Iterations])
