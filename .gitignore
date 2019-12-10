@@ -5,3 +5,6 @@ __pycache__
 /tests
 /olds
 /ignore
+venv
+*.pyc
+.env
