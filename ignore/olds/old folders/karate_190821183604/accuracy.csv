@@ -1,0 +1,15 @@
+iteration,yes x Mr. Hi,,,,yes x Officer,,,,no x Mr. Hi,,,,no x Officer,,,
+iteration,True Positive,True Negative,False Positive,False Negative,True Positive,True Negative,False Positive,False Negative,True Positive,True Negative,False Positive,False Negative,True Positive,True Negative,False Positive,False Negative
+0,8,9,                      8,9,8,9,                      8,9,9,8,                      9,8,9,8,                      9,8
+1,9,9,                       8,8,8,8,                       9,9,8,8,                       9,9,9,9,                       8,8
+2,10,9,                       8,7,8,7,                       10,9,7,8,                       9,10,9,10,                       7,8
+3,9,9,                       8,8,8,8,                       9,9,8,8,                       9,9,9,9,                       8,8
+4,10,9,                       8,7,8,7,                       10,9,7,8,                       9,10,9,10,                       7,8
+5,11,9,                       8,6,8,6,                       11,9,6,8,                       9,11,9,11,                       6,8
+6,10,9,                       8,7,8,7,                       10,9,7,8,                       9,10,9,10,                       7,8
+7,10,8,                       9,7,9,7,                       10,8,7,9,                       8,10,8,10,                       7,9
+8,10,9,                       8,7,8,7,                       10,9,7,8,                       9,10,9,10,                       7,8
+9,10,8,                       9,7,9,7,                       10,8,7,9,                       8,10,8,10,                       7,9
+10,10,9,                       8,7,8,7,                       10,9,7,8,                       9,10,9,10,                       7,8
+11,10,8,                       9,7,9,7,                       10,8,7,9,                       8,10,8,10,                       7,9
+12,10,9,                       8,7,8,7,                       10,9,7,8,                       9,10,9,10,                       7,8

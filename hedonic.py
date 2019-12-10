@@ -1,364 +1,576 @@
-# Hedonic Games for Clustering
-# A research experiment of Giovanni^, Kostya^, Daniel`, Lucas` (ack Eduardo`)
-# ^INRIA ∣ `Federal University of Rio de Janeiro
-# June 2019
-
-## Parameters ##################################################################
-
-# ----------- Networks ------------
-# sample_1 |   karate   |  football
-# sample_2 | terrorists | conference
-#  square  |  dolphins  |   simple
-
-p = {
-    'graph' : 'conference', # Choose one above
-    'alpha' : 0.95, # Fragmentation Factor | 0 <= alpha <= 1
-    'init'  : {
-        'mode': 'r', # Initial Modes:
-            # - Random (r): Nodes will be randomly selected to start inside cluster
-            # - Select (s): Chose which nodes will start inside cluster
-            # - Any other: Start with an empty cluster
-        'params': 0.5 },
-            # - Random (r): Number of nodes - If is between 0 and 1 will be multiply by quantity of nodes
-            # - Select (s): List of selected nodes - [node indice, ..., node indice]
-
-    'print' : True, # Print each iteration in the terminal?
-    'freq'  : 1,    # Probability that Accuracy will be computed at each iteration
-    'note'  : 'None' } # Free space to comment about the experiment
+# Clustering with Hedonic Games
+# Detecting communities in networks with cooperative game theory
+# A research experiment in colaboration between *UFRJ and ^INRIA
+# *Lucas Lopes, *Daniel Sadoc, ^Kostya and ^Giovanni
+# October 2019
 
 ## Import Dependecies ##########################################################
 
-from datetime import datetime
-from pathlib import Path
-import random
-import json
+from players  import sequential, stochastic, greedy, pique_pega
+from datetime import datetime, timedelta
+from random import random
+from pathlib  import Path
+import pickle
 import csv
 import os
+
+# from copy import deepcopy
+# import json
+
+## Node ########################################################################
+
+class Node:
+
+    def __init__(self, friend, initial_group = False, ground_truth = None):
+        self.friends = { friend : True } # weight avaiable
+        self.set_with_me(0)
+        self.set_initial_group(initial_group)
+        self.set_ground_truth(ground_truth)
+
+    def add(self, friend):
+        self.friends[friend] = True
+
+    def group(self):
+        if len(self.moved_at) % 2 == 0: return self.initial_group
+        else: return not self.initial_group
+
+    def set_with_me(self, quantity):
+        self.with_me = quantity
+
+    def set_ground_truth(self, name):
+        self.ground_truth = name
+
+    def set_initial_group(self, initial_group):
+        self.initial_group = initial_group
+        self.moved_at = []
+
+    def get_gt(self):
+        return self.ground_truth
+
+    def update_with_me(self, what_happened):
+        if what_happened == 'join' : self.with_me += 1
+        if what_happened == 'lost' : self.with_me -= 1
+        if what_happened == 'flip' : self.with_me = len(self.friends) - self.with_me
+
+    # def binary_search(arr, element):
+    #     margin_left, margin_right = 0, len(arr) - 1
+    #     while (margin_left <= margin_right):
+    #         pointer = int((margin_left + margin_right) / 2)
+    #         if element > arr[pointer]:
+    #             margin_left = pointer + 1
+    #         elif element < arr[pointer]:
+    #             margin_right = pointer - 1
+    #         elif element == arr[pointer]:
+    #             return pointer
+    #     if arr[pointer] > element:
+    #         return pointer - 1
+    #     else:
+    #         return pointer
 
 ## A Hedonic Game ##############################################################
 
 class Game:
 
-    def __init__(self, p):
-        self.graph     = load_network('networks/'+p['graph']+'.csv')
-        self.folder    = set_game_path(p['graph'])
-        self.g_truth   = set_ground_truth('networks/ground_truth/'+p['graph']+'.csv', self.graph)
-        self.classes   = set_classes(p['init'], self.graph.keys())
-        self.clusters  = count_verts_edges(self.classes, self.graph)
-        self.potential = global_potential(self.clusters)
-        self.accuracy  = set_accuracy(self.g_truth.items(), self.clusters.keys())
-        self.iteration = 0
-        self.score     = 0
+    def __init__(self, network='dag', alpha=.95, init_mode='s', init_param=[],
+                 verbose=True, export=True, gt_col=1):
 
-    def start(self):
-        self.begin = datetime.now()
-        print_parameters()
-        done = False
-        while done is False:
-            nodes = list(game.graph)
-            find = False
-            while find is False:
-                i = random.randrange(0, len(nodes))
-                p = profit(nodes[i])
-                if p > 0:
-                    find = True
-                    move(nodes[i], p)
-                else:
-                    nodes[i], nodes[-1] = nodes[-1], nodes[i]
-                    nodes.pop()
-                    if len(nodes) == 0:
-                        done = find = True
-                        print('Done!')
+        self.infos = { 'verbose': verbose, 'export': export, 'player': None }
+        self.set_alpha(alpha)
+        self.load_network(network, init_mode, init_param, gt_col)
 
-## Load the Network ############################################################
+    ## Load the Network ########################################################
 
-def load_network(file):
-    dict = 'networks/converted/' + p['graph'] + '.txt'
-    if Path(dict).is_file():
-        return json.load(open(dict))
-    else:
-        graph = csv2dict(file)
-        with open(dict, 'w') as f:
-            json.dump(graph, f)
-        return graph
-
-def csv2dict(file):
-    d = {}
-    def insert(d, a, b):
-        if a not in d:
-            d[a] = [b]
-        elif b not in d[a]:
-            d[a].append(b)
-        return d
-    with open(file, 'r') as f:
-        table = csv.reader(f)
-        for row in table:
-            a = row[0]
-            b = row[1]
-            d = insert(d, a, b)
-            d = insert(d, b, a)
-    return d
-
-## Setters #####################################################################
-
-def set_game_path(graph):
-    now = str(datetime.now())[2:-7]
-    for _ in ': -': now = now.replace(_, '')
-    return 'experiments/' + graph + '_' + now  + '/'
-
-def set_ground_truth(file, graph):
-    g_t = {}
-    if Path(file).is_file():
-        with open(file, newline='') as f:
+    def load_network(self, network, init_mode='s', init_param=[], gt_col=1):
+        self.nodes, self.stats, duration = {}, {}, datetime.now()
+        self.infos['network'] = network
+        file = f'networks/csv/{network}.csv'
+        with open(file, 'r') as f:
             table = csv.reader(f)
-            row = next(table)
-            nodes = []
-            for node in row:
-                nodes.append(node)
-            row = next(table)
-            clusters = []
-            for cluster in row:
-                clusters.append(cluster)
-            for i in range(len(nodes)):
-                g_t[nodes[i]] = clusters[i]
-    else:
-        for node in graph.keys():
-            g_t[node] = 'none'
-    return g_t
+            for row in table:
+                a = row[0]
+                b = row[1]
+                if self.nodes.get(a): self.nodes[a].add(b) # add new friend
+                else: self.nodes[a] = Node(b) # create a new node
+                if self.nodes.get(b): self.nodes[b].add(a)
+                else: self.nodes[b] = Node(a)
+        self.import_ground_truth(file.replace('csv','ground_truth'), gt_col)
+        skip = True if init_mode == 's' and len(init_param) == 0 else False
+        self.set_initial_state(init_mode, init_param, skip)
+        self.stats['import_duration'] = datetime.now() - duration
+        # with open('CONFERENCE_NODES.pickle', 'wb') as output:
+        #     pickle.dump(nodes, output, pickle.HIGHEST_PROTOCOL)
 
-def set_classes(param, nodes):
-    c = {}
-    for n in nodes: c[n] = 'out'
-    if param['mode'].lower() == 'r':
-        amount = param['params']
-        if type(amount) is not int and type(amount) is not float:
-            print('2nd parameter of `Random` is wrong.')
-        if amount < 0: amount *= -1
-        if amount > 0 and amount < 1: amount *= len(nodes)
-        if amount > len(nodes): amount = len(nodes)
-        amount = int(amount)
-        remain = list(c)
-        while amount > 0:
-            r = random.randrange(0, len(remain))
-            c[remain[r]] = 'in'
-            remain[r], remain[-1] = remain[-1], remain[r]
-            remain.pop()
-            amount -= 1
-    if param['mode'].lower() == 's':
-        for node in param['params']:
-            if c[node] == 'out':
-                c[node] = 'in'
-    return c
+    def import_ground_truth(self, file, gt_col=1):
+        if Path(file).is_file():
+            with open(file, 'r') as f:
+                table = csv.reader(f)
+                for row in table:
+                    node = row[0]
+                    g_t  = row[gt_col] # multiple g_truths avaiable
+                    self.nodes[node].set_ground_truth(g_t)
 
-def set_accuracy(g_truth, clusters):
-    accuracy = {}
-    g_truths = {}
-    for node, cluster in g_truth:
-        g_truths[cluster] = None
-    g_truths = g_truths.keys()
-    for c in clusters:
-        for gt in g_truths:
-            s = '{} x {}'.format(c, gt)
-            accuracy[s] = {'TP': 0, 'TN': 0, 'FP': 0, 'FN': 0}
-    return accuracy
+    ## Setters #################################################################
 
-## Counting ####################################################################
+    def set_alpha(self, alpha):
+        self.infos['alpha'] = max(0, min(1, alpha))
 
-def check_friends(node):
-    us = them = 0
-    for friend in game.graph[node]:
-        if game.classes[str(friend)] == game.classes[node]:
-            us += 1
-        else: them += 1
-    return us, them
+    def set_initial_state(self, mode='s', param=[], skip=False):
+        if mode.lower() == 's' and not skip:
+            for node in self.nodes:
+                self.nodes[node].set_initial_group(False)
+            for node in param:
+                self.nodes[node].set_initial_group(True)
+        if mode.lower() == 'r':
+            for node in self.nodes:
+                if random() <= param: self.nodes[node].set_initial_group(True)
+                else: self.nodes[node].set_initial_group(False)
+        self.infos['init_mode']  = mode
+        self.infos['init_param'] = len(param) if mode == 's' else param
+        self.reset_history()
 
-def count_verts_edges(Class, graph):
-    cluster  = {'verts': 0, 'edges': 0}
-    remainer = {'verts': 0, 'edges': 0}
-    def increment(coalition, node):
-        coalition['verts'] += 1
-        for friend in graph[node]:
-            if Class[str(friend)] == Class[node]: coalition['edges'] += 1
-        return coalition
-    for node in Class:
-        if Class[node] == 'in':  cluster  = increment(cluster, node)
-        if Class[node] == 'out': remainer = increment(remainer, node)
-    cluster['edges']  = int(cluster['edges'] / 2)
-    remainer['edges'] = int(remainer['edges'] / 2)
-    return {'in': cluster, 'out': remainer}
+    ## Helpers #################################################################
 
-## Hedonic Functions ###########################################################
+    def reset_history(self):
+        verts_edges = self.count_verts_edges()
+        self.hist = {
+            'nodes_moved' : [],
+            'moved_to'    : [],
+            'consults'    : [],
+            'profitables' : [],
+            'accumulated' : [0],
+            'verts_yes'   : [verts_edges[0]],
+            'edges_yes'   : [verts_edges[1]],
+            'edges_no'    : [verts_edges[2]] }
+        self.stats = {
+            'start_at'        : datetime.now(),
+            'import_duration' : timedelta(0),
+            'run_duration'    : timedelta(0),
+            'export_duration' : timedelta(0),
+            'potential'       : self.global_potential(verts_edges[0],verts_edges[1],verts_edges[2]),
+            'iteration'       : 0,
+            'profit_consults' : 0,
+            'found_profitable': 0 }
 
-def hedonic(neighbors, strangers, alpha=p['alpha']):
-    return (1 - alpha) * neighbors - alpha * strangers
+    def separate_nodes(self):
+        yes, no = [], []
+        for key, node in self.nodes.items():
+            if node.group():
+                yes.append(node)
+            else:
+                no.append(node)
+        return [yes, no]
 
-def global_potential(clusters, alpha=p['alpha']):
-    pot = 0
-    for name, c in clusters.items():
-        pot += c['edges'] - alpha * c['verts'] * (c['verts'] - 1) / 2
-    p['inital potential'] = pot
-    return pot
+    ## Computations ############################################################
 
-def profit(node, us=None, them=None, alpha=p['alpha']):
-    if us == None: us, them = check_friends(node)
-    f, t = 'in', 'out' # from & to
-    if game.classes[node] == 'out': f, t = 'out', 'in' # invert if is from other cluster
-    us   = hedonic(us,   game.clusters[f]['verts'] - us - 1)
-    them = hedonic(them, game.clusters[t]['verts'] - them)
-    return them - us
+    def check_friends(self, node):
+        with_me = 0
+        for friend in self.nodes[node].friends:
+            if self.nodes[node].group() == self.nodes[friend].group():
+                with_me += 1
+        self.nodes[node].set_with_me(with_me)
+        return with_me
 
-## Accuracy ####################################################################
+    def count_verts_edges(self):
+        verts_yes, total_edges, edges_yes, edges_no = 0, 0, 0, 0
+        for node in self.nodes:
+            total_edges += len(self.nodes[node].friends)
+            friends_with_node = self.check_friends(node)
+            if self.nodes[node].group():
+                verts_yes += 1
+                edges_yes += friends_with_node
+            else: edges_no += friends_with_node
+        self.infos['verts'] = len(self.nodes)
+        self.infos['edges'] = int(total_edges/2)
+        return verts_yes, int(edges_yes/2), int(edges_no/2)
 
-def accuracy():
-    clusters = game.clusters.keys()
-    g_truths = {}
-    for node, cluster in game.g_truth.items():
-        g_truths[cluster] = None
-    g_truths = g_truths.keys()
-    acc = {}
-    for c in clusters:
-        for gt in g_truths:
-            tp = tn = fp = fn = 0
-            for node, Class in game.classes.items():
-                if Class == c and game.g_truth[node] == gt:
-                    tp += 1
-                    continue
-                if Class != c and game.g_truth[node] != gt:
-                    tn += 1
-                    continue
-                if Class == c and game.g_truth[node] != gt:
-                    fp += 1
-                    continue
-                if Class != c and game.g_truth[node] == gt:
-                    fn += 1
-                    continue
-            s = '{} x {}'.format(c, gt)
-            acc[s] = {'TP': tp, 'TN': tn, 'FP': fp, 'FN': fn}
-    return acc
+    def calc_accuracy(self): #> call function and timestamp at each iteration
+        g_truths, acc = {}, {}
+        for key, node in self.nodes.items():
+            g_truths[node.ground_truth] = None
+        g_truths = g_truths.keys() # All clusters of Ground Truth
+        for c in ['Yes', 'No']: # Name of Game's clusters
+            for gt in g_truths:
+                tp = tn = fp = fn = 0
+                for key, node in self.nodes.items():
+                    if node.group() == c and node.get_gt() == gt:
+                        tp += 1
+                        continue
+                    if node.group() != c and node.get_gt() != gt:
+                        tn += 1
+                        continue
+                    if node.group() == c and node.get_gt() != gt:
+                        fp += 1
+                        continue
+                    if node.group() != c and node.get_gt() == gt:
+                        fn += 1
+                        continue
+                s = f'{c} x {gt}'
+                acc[s] = {'TP': tp, 'TN': tn, 'FP': fp, 'FN': fn}
+        self.accuracy = acc
 
-## Move a Node #################################################################
+    ## Hedonic Functions #######################################################
 
-def move(node, increased=None):
-    past_friends, future_friend = check_friends(node)
-    if increased == None:
-        increased = profit(node, past_friends, future_friend)
-    game.clusters[game.classes[node]]['verts'] -= 1
-    game.clusters[game.classes[node]]['edges'] -= past_friends
-    if game.classes[node] == 'out': game.classes[node] = 'in'
-    else: game.classes[node] = 'out'
-    game.clusters[game.classes[node]]['verts'] += 1
-    game.clusters[game.classes[node]]['edges'] += future_friend
-    game.score     += increased
-    game.potential += increased
-    game.iteration += 1
-    if random.random() <= p['freq']:
-        game.accuracy = accuracy()
-    timestamp(node, increased)
+    def hedonic(self, have, total, alpha):
+        return have - total * alpha
 
-## Export Results ##############################################################
+    def local_potential(self, verts, edges):
+        max_edges_possible = verts * (verts - 1) / 2
+        return self.hedonic(edges, max_edges_possible, self.infos['alpha'])
 
-files = {
-    'iters' : None,
-    'props' : None,
-    'accur' : None,
-    'state' : None }
+    def global_potential(self, verts_yes, edges_yes, edges_no, sum=True):
+        yes = self.local_potential(verts_yes, edges_yes)
+        no  = self.local_potential(len(self.nodes) - verts_yes, edges_no)
+        if sum: return yes + no
+        else:   return yes,  no
 
-def create_files(path, cluster_combinations):
-    os.makedirs(os.path.dirname(path), exist_ok = True)
-    files['iters'] = open(path + 'iterations.csv', 'w+')
-    files['props'] = open(path + 'properties.csv', 'w+')
-    files['state'] = open(path + 'states.csv',    'w+')
-    files['accur'] = open(path + 'accuracy.csv',   'w+')
-    files['props'].write('Verts In,Edges In,Verts Out,Edges Out')
-    files['iters'].write('Node Moved,From Cluster,To Cluster,Instantaneous Gain,Accumulated Gain,Potential')
-    c = ''
-    for cluster in game.accuracy.keys():
-        c += '{},,,,'.format(cluster)
-    files['accur'].write(c[:-1])
-    s = 'True Positive,True Negative,False Positive,False Negative,' * cluster_combinations
-    files['accur'].write('\n' + s[:-1])
-    files['state'].write(stringify_nodes())
-    files['state'].write(stringify_state())
+    ## Operations ##############################################################
 
-def stringify_nodes():
-    nodes = ''
-    for n in game.classes.keys():
-        nodes += n + ','
-    return nodes[:-1]
+    def play(self, player):
+        duration = datetime.now()
+        self.infos['player'] = player.__name__
+        self.show_info()
+        print(f'\nGo!!! {datetime.now()}\n')
+        player(self)
+        print(f'\nDone!!! {datetime.now() - duration}')
+        self.stats['run_duration'] = datetime.now() - duration
+        self.end_game()
 
-def stringify_state():
-    s = '\n'
-    for node, cluster in game.classes.items():
-        s += cluster + ','
-    return s[:-1]
+    def replay(self, game):
+        duration = datetime.now()
+        with open(f'experiments/{game}', "rb") as f:
+            game = pickle.load(f)
+        # print(game['nodes_moved'])
+        self.load_network(game['network'], init_param=game['nodes_inside'])
+        self.set_alpha(game['alpha'])
+        self.infos['verbose'] = False
+        for node in game['nodes_moved']:
+            self.move(str(node))
+        self.hist['consults']    = game['consults']
+        self.hist['profitables'] = game['profitables']
+        print(f'replay done in {datetime.now() - duration}')
+        print(f'reach equilibrium: {self.reach_equilibrium()}')
 
-def print_parameters():
-    print('# Parameters:')
-    print('- Graph:                 {}'.format(p['graph']))
-    print('- Alpha:                 {}'.format(p['alpha']))
-    print('- Initial Configuration: {}'.format(p['init']))
-    print('- Verbose Mode:          {}'.format(p['print']))
-    print('- Accuracy Frequency:    {}'.format(p['freq']))
-    print('Go!!!'.format(p['freq']))
+    def reach_equilibrium(self, inspec=False):
+        for node in self.nodes:
+            if self.profit(node) > 0:
+                return node if inspec else False
+        return True
 
-def timestamp(node, increased):
-    f, t = 'out', ' in'
-    if game.classes[node] == 'out': f, t = ' in', 'out'
-    files['props'].write('\n{},{},{},{}'.format(
-        game.clusters['in']['verts'],  game.clusters['in']['edges'],
-        game.clusters['out']['verts'], game.clusters['out']['edges']))
-    files['iters'].write('\n{},{},{},{:.2f},{:.2f},{:.2f}'.format(
-        node, f, t, increased, game.score, game.potential))
-    s = '\n'
-    for pairs in game.accuracy.keys():
-        s += '{},{},{},{},'.format(
-            game.accuracy[pairs]['TP'], game.accuracy[pairs]['TN'],
-            game.accuracy[pairs]['FP'], game.accuracy[pairs]['FN'])
-    files['accur'].write(s[:-1])
-    files['state'].write(stringify_state())
-    if p['print']:
-        print('move: {} | from: {} | to: {} | increased: {:.2f}'.format(
-            node, f, t, increased))
+    def communicate_friends(self, node):
+        self.nodes[node].update_with_me('flip')
+        for friend in self.nodes[node].friends:
+            if self.nodes[node].group() == self.nodes[friend].group():
+                self.nodes[friend].update_with_me('join') # += 1
+            else:
+                self.nodes[friend].update_with_me('lost') # -= 1
 
-def results(duration):
-    info = open(game.folder + 'infos.md', 'w+')
-    info.write('# Parameters\n')
-    info.write('- Graph:                  {}\n'.format(p['graph']))
-    info.write('- Alpha:                  {}\n'.format(p['alpha']))
-    info.write('- ¹Initial Configuration: {}\n'.format(p['init']))
-    info.write('- Verbose Mode:           {}\n'.format(p['print']))
-    info.write('- Accuracy Frequency:     {}\n'.format(p['freq']))
-    info.write('- commentaries:           {}\n'.format(p['note']))
-    info.write('\n# Results\n')
-    info.write('- Finished at:            {}\n'.format(str(datetime.now())[:-7]))
-    info.write('- Converged in:           {}\n'.format(duration))
-    info.write('- Initial Potential:      {:.2f}\n'.format(p['inital potential']))
-    info.write('- Final Potential:        {:.2f}\n'.format(game.potential))
-    info.write('- Accumulated Gain:       {:.2f}\n'.format(game.score))
-    info.write('- ²Potential Gain in %:   {:.2f}%\n'.format(game.score / abs(game.potential) * 100))
-    info.write('- Proportion Cluster In:  {:.2f}%\n'.format(game.clusters['in']['verts'] / len(game.graph) * 100))
-    info.write('- Iterations:             {}\n'.format(game.iteration))
-    info.write('\n# Legend\n')
-    info.write('- ¹Initial Configuration\n')
-    info.write('  - Modes Configurations:\n')
-    info.write('    - Random (r): Nodes will be randomly selected to start inside cluster\n')
-    info.write('    - Select (s): Chose which nodes will start inside cluster\n')
-    info.write('    - Any other:  Start with an empty cluster\n')
-    info.write('  - Modes Parameters:\n')
-    info.write('    - Random (r): Number of nodes - If it is between 0 and 1 will be multiply by the number of nodes\n')
-    info.write('    - Select (s): List of selected nodes. e.g. [node indice, ..., node indice]\n')
-    info.write('- ²Potential Gain in %\n')
-    info.write('  - Accumulated Gain / Initial Potential * 100\n')
-    info.close()
+    def profit(self, node):
+        us   = self.nodes[node].with_me
+        them = len(self.nodes[node].friends) - us
+        all_yes = self.hist['verts_yes'][-1]
+        all_no  = len(self.nodes) - all_yes
+        if self.nodes[node].group(): all_here, all_there = all_yes, all_no
+        else: all_here, all_there = all_no, all_yes
+        here  = self.hedonic(us, all_here - 1, self.infos['alpha']) # excluding me
+        there = self.hedonic(them, all_there, self.infos['alpha'])
+        self.stats['profit_consults'] += 1
+        if there - here > 0: self.stats['found_profitable'] += 1
+        return there - here
 
-    files['iters'].close()
-    files['props'].close()
-    files['accur'].close()
-    files['state'].close()
+    def move(self, node):
+        self.stats['iteration'] += 1
+        self.hist['nodes_moved'].append(node)
+        self.hist['consults'].append(self.stats['profit_consults'])
+        self.hist['profitables'].append(self.stats['found_profitable'])
+        increased = self.profit(node)
+        self.stats['profit_consults'] = 0
+        self.stats['found_profitable'] = 0
+        self.hist['moved_to'].append(self.nodes[node].group())
+        self.nodes[node].moved_at.append(self.stats['iteration'])
+        self.communicate_friends(node)
+        if self.nodes[node].group():
+            self.hist['verts_yes'].append(self.hist['verts_yes'][-1] + 1)
+            self.hist['edges_yes'].append(self.hist['edges_yes'][-1] + self.nodes[node].with_me)
+            self.hist['edges_no'].append(self.hist['edges_no'][-1] - len(self.nodes[node].friends) + self.nodes[node].with_me)
+        else:
+            self.hist['verts_yes'].append(self.hist['verts_yes'][-1] - 1)
+            self.hist['edges_yes'].append(self.hist['edges_yes'][-1] - len(self.nodes[node].friends) + self.nodes[node].with_me)
+            self.hist['edges_no'].append(self.hist['edges_no'][-1] + self.nodes[node].with_me)
+        self.hist['accumulated'].append(self.hist['accumulated'][-1] + increased)
+        if self.infos['verbose']: self.timestamp(node, increased)
 
-## Initiate Experiment #########################################################
+    ## Functions ###############################################################
 
-game = Game(p)
-create_files(game.folder, len(game.accuracy.keys()))
-game.start()
-results(datetime.now() - game.begin)
+    def get_all_states(self, nodes): # receive list of nodes
+    	states = []
+    	for k in range(1, int(2 ** (len(nodes) - 1))):
+    		num = list(bin(k))[2:]
+    		num.reverse()
+    		positions = []
+    		for pos, value in enumerate(num):
+    			if int(value) == 1:
+    				positions.append(nodes[pos])
+    		states.append(positions)
+    	return states
+
+    def get_stable_states(self):
+        pass
+
+    def bruteforce_stable_states(self, network, alpha=.95):
+        duration = datetime.now()
+        stable_states = []
+        game = Game(network, alpha)
+        nodes = list(game.nodes)
+        combinations = get_all_states(nodes)
+        for comb in combinations:
+            game.set_initial_state(param=comb)
+            if game.reach_equilibrium():
+                stable_states.append(comb)
+        print(f'Found stable states of {network} in {datetime.now() - duration}')
+        return stable_states
+
+    def check_dist(self, inside, reference, length=False): # reference = [[...],[...]]
+        corrects = [node for node in inside if node in reference]
+        distance = len(inside) + len(reference) - 2 * len(corrects)
+        if length: return distance
+        else: return [node for node in inside+reference if node not in corrects]
+
+    def find_short_dist(self, inside, states, length=False): # states = [ [[...],[...]], [[],[]] ]
+        short_dist, need_move = float('inf'), []
+        for clusters in states:
+            nodes2move = check_dist(inside, clusters)
+            if len(nodes2move) < short_dist:
+                short_dist = len(nodes2move)
+                need_move  = nodes2move
+        if length: return distance
+        else: return need_move
+
+    def show_distances(self, graph, gt):
+        result = 'combination,distance,greedy,diffe,non_profit\n'
+        p['graph'] = graph
+        nodes = list(Game(p).graph)
+        combinations = get_all_states(nodes)
+        for comb in combinations:
+            p['init']['params'] = comb
+            greedy = Game(p)
+            game = Game(p)
+            # inicio da gambiarra
+            dist, need_move = float('inf'), []
+            for g in gt:
+                temp = check_dist(comb, g)
+                if len(temp) < dist:
+                    dist = len(temp)
+                    need_move = temp
+            # fim da gambiarra
+            dist = len(need_move)
+            non_profit = 0
+            while len(need_move) > 0:
+                best_profit, best_node = float('-inf'), None
+                for node in need_move:
+                    profit = game.profit(node)
+                    if profit > best_profit:
+                        best_profit = profit
+                        best_node = node
+                if best_profit < 0: non_profit += 1
+                game.move(node)
+                need_move.remove(node)
+            if game.has_move() is False: print(f'{comb} chegou no sumidouro')
+            else: print('terminou mas não convergiu')
+            comb_str = str(comb).replace(',','')
+            greedy.start()
+            g_moves = greedy.iteration
+            diff = g_moves - dist
+            if dist != greedy.iteration:
+                result += f'{comb_str},{dist},{g_moves},{diff},{non_profit}\n'
+        return result
+
+    ## Export ##################################################################
+
+    def timestamp(self, node, increased):
+        print(f'{datetime.now()} | move: {node} | to: {self.nodes[node].group()} | increased: {increased:.2f}')
+
+    def define_game_nomenclature(self):
+        init_verts_propor  = int(self.hist['verts_yes'][0]  / len(self.nodes) * 100)
+        final_verts_propor = int(self.hist['verts_yes'][-1] / len(self.nodes) * 100)
+        init_edges_propor  = int(self.hist['edges_yes'][0]  / self.infos['edges'] * 100)
+        final_edges_propor = int(self.hist['edges_yes'][-1] / self.infos['edges'] * 100)
+        infos = [
+            self.infos['network'][:3].upper(), # First 3 letters of network name
+            round(self.infos['alpha'], 2), # Value of Alpha (with 2 decimal plates)
+            self.infos['player'][:3].upper(), # First 3 letters of player/strategy name
+            f"{self.infos['init_mode'].lower()}{self.infos['init_param']}", # Initial configurations
+            f"i{len(self.hist['nodes_moved'])}", # Number of Iterations
+            f"v{init_verts_propor}.{final_verts_propor}", # Initial and Final Vertices proportion
+            f"e{init_edges_propor}.{final_edges_propor}",
+            f"abs{round(self.hist['accumulated'][-1] / abs(self.stats['potential']) * 100, 2)}" ] # Initial and Final Edges proportion
+        nomenclature = ''
+        for info in infos: nomenclature += f'{info}_'
+        return nomenclature[:-1]
+
+    def show_info(self):
+        print('# Network:')
+        print(f"- Network:    {self.infos['network']}")
+        print(f"- Verts:      {self.infos['edges']}")
+        print(f"- Edges:      {self.infos['verts']}")
+        print('# Parameters:')
+        print(f"- Alpha:      {self.infos['alpha']}")
+        print(f"- Player:     {self.infos['player']}")
+        print(f"- Init Mode:  {self.infos['init_mode']}")
+        print(f"- Init Param: {self.infos['init_param']}")
+        print(f"- Verbose:    {self.infos['verbose']}")
+        print(f"- Export:     {self.infos['export']}")
+
+    def show_networks(get=False):
+        path = './networks/csv/'
+        networks = [n for n in os.listdir(path) if n.endswith('.csv')]
+        if get:
+            return [n[:-4] for n in networks]
+        else:
+            for n in networks: print(f'- {n[:-4]}')
+
+    def append_result(self, game_nomenclature, converged, found_unique_state):
+        total_duration = self.stats['import_duration'] + self.stats['run_duration'] + self.stats['export_duration']
+        total_consults = sum(self.hist['consults'])
+        nodes_on_initial = [node for node in self.nodes if self.nodes[node].initial_group]
+        cols = [
+            game_nomenclature, # Nomenclature
+            self.infos['network'], # Network
+            self.infos['alpha'], # Alpha
+            self.infos['player'], # Player
+            self.infos['init_mode'], # Initial mode
+            self.infos['init_param'], # Initial parameter
+            round(self.hist['accumulated'][-1], 2), # Accumulated gain
+            round(self.hist['accumulated'][-1] / abs(self.stats['potential']) * 100, 2), # Absolute gain in %
+            round(self.stats['potential'], 2), # Initial potential
+            round(self.stats['potential'] + self.hist['accumulated'][-1], 2), # Final potential
+            round(self.local_potential(self.hist['verts_yes'][0],  self.hist['edges_yes'][0])  / self.stats['potential'] * 100, 2), # Initial Potential proportion
+            round(self.local_potential(self.hist['verts_yes'][-1], self.hist['edges_yes'][-1]) / self.stats['potential'] * 100, 2), # Final   Potential proportion
+            round(self.hist['verts_yes'][0]  / len(self.nodes) * 100, 2), # Initial Verts proportion
+            round(self.hist['verts_yes'][-1] / len(self.nodes) * 100, 2), # Final   Verts proportion
+            round(self.hist['edges_yes'][0]  / self.infos['edges'] * 100, 2), # Initial Edges proportion
+            round(self.hist['edges_yes'][-1] / self.infos['edges'] * 100, 2), # Final   Edges proportion
+            round((self.infos['edges'] - self.hist['edges_yes'][0]  - self.hist['edges_no'][0])  / self.infos['edges'] * 100, 2), # Initial Edges-off proportion
+            round((self.infos['edges'] - self.hist['edges_yes'][-1] - self.hist['edges_no'][-1]) / self.infos['edges'] * 100, 2), # Final   Edges-off proportion
+            len(self.hist['nodes_moved']), # Num of iterations
+            'TO_DO: dist(init-end)/num_moves', # self.check_dist(nodes_on_initial, self.separate_nodes(), length=True) / len(self.hist['nodes_moved']), #> Eficiency to converged state
+            'TO_DO: dist(init-closest_sink)/num_moves', # self.find_short_dist(nodes_on_initial, self.get_stable_states(), length=True) / len(self.hist['nodes_moved']), #> Eficiency to closest sink -> num de movimentos / dist(init,end)
+            total_consults, # Profit consults
+            0 if total_consults == 0 else round(sum(self.hist['profitables']) / total_consults, 2), # Profitables per consult
+            0 if total_consults == 0 else round(len(self.hist['nodes_moved']) / total_consults, 2), # Moves per consult
+            str(converged).lower(), # Reach equilibrium
+            str(found_unique_state).lower(), # Found new sink
+            str(self.infos['verbose']).lower(), # Verbose
+            str(self.infos['export']).lower(), # Export
+            self.stats['import_duration'], # Import duration
+            self.stats['run_duration'], # Run duration
+            self.stats['export_duration'], # Export duration
+            total_duration, # Total duration
+            self.stats['start_at'], # Started at
+            self.stats['start_at'] + total_duration ] # Finished at
+        result = '\n'
+        for col in cols:
+            result += f'{col},'
+        with open('experiments/results.csv', 'a') as fd:
+            fd.write(result[:-1])
+
+    def append_sink(self):
+        file = f"networks/sinks/{self.infos['network']}.csv"
+        nodes = ''
+        if not Path(file).is_file(): # create new file
+            for node in self.nodes:
+                nodes += f'{node},'
+            with open(file, 'w+') as f:
+                f.write(nodes[:-1])
+            nodes = nodes[:-1].split(',')
+        else:
+            with open(file, newline='') as f:
+                nodes = next(csv.reader(f))
+        unique = True  # verify if state already exist
+        with open(file, 'r') as f:
+            table = csv.reader(f)
+            next(table, None)
+            for row in table:
+                if unique:
+                    for i, group in enumerate(row):
+                        node_group = 1 if self.nodes[nodes[i]].group() else 0
+                        if group != str(node_group):
+                            break
+                        elif i == len(row) - 1:
+                            unique = False
+                else: break
+        if unique:
+            groups, inverse = '\n', '\n' # add its complement too
+            for node in nodes:
+                node_group = self.nodes[node].group()
+                groups  += f'{1 if node_group else 0},'
+                inverse += f'{0 if node_group else 1},'
+            with open(file, 'a') as fd:
+                fd.write(groups[:-1])
+                fd.write(inverse[:-1])
+        return unique
+
+    def end_game(self):
+        game_nomenclature = self.define_game_nomenclature()
+        converged = self.reach_equilibrium()
+        found_unique_state = self.append_sink()
+        if self.infos['export']: self.export_game(game_nomenclature)
+        self.append_result(game_nomenclature, converged, found_unique_state)
+        print(f'Has Converged: {converged}\n')
+
+    def export_game(self, game_nomenclature):
+        duration = datetime.now()
+        nodes_inside = []
+        verts_yes = self.hist['verts_yes'][0]
+        verts_no  = len(self.nodes) - verts_yes
+        smallest = True if verts_yes < verts_no else False
+        for node, value in self.nodes.items():
+            if value.initial_group == smallest:
+                nodes_inside.append(node)
+        game = {
+            'network'      : self.infos['network'],
+            'nodes_inside' : nodes_inside,
+            'alpha'        : self.infos['alpha'],
+            'nodes_moved'  : self.hist['nodes_moved'],
+            'consults'     : self.hist['consults'],
+            'profitables'  : self.hist['profitables']}
+        with open(f'experiments/{game_nomenclature}.pickle', 'wb') as output:
+            pickle.dump(game, output, pickle.HIGHEST_PROTOCOL)
+        self.stats['export_duration'] = datetime.now() - duration
+
+## Do an Experiment ############################################################
+
+# -------------------------------- Networks ------------------------------------
+# sample_1 |   karate   |  football  |   human   |  1k  |
+# sample_2 | terrorists | conference |    dag    |  10k |
+#  square  |  dolphins  | 2triangles | 2trig_mid | 100k |
+
+if __name__ == '__main__':
+
+    # kwargs = {"arg3": 3, "arg2": "two","arg1":5}
+    # test_args_kwargs(**kwargs)
+
+    # game = Game(network = 'terrorists', # choose one above
+    #             alpha   = .95,    # 0 > alpha < 1
+    #             verbose = False,   # if True will print each move
+    #             export  = True,   # if True will export the game history for future replay
+    #             init_mode  = 'r', # 'r' for random classification and 's' for select nodes
+    #             init_param = .5)  # if 'r' is between 0 and 1; elif 's' is a list of str(nodes)
+    # game.play(sequential) # sequential, stochastic, greedy, pique_pega
+
+    networks = Game.show_networks(get=True)
+    players  = [sequential, stochastic, greedy, pique_pega]
+    game = Game(verbose=False) # network='dag', alpha=.95, init_mode='s', init_param=[],verbose=True, export=True, gt_col=1
+    for net in networks:
+        game.load_network(net) # init_mode='r', init_param=.5, gt_col=1
+        for player in players:
+            game.set_initial_state('r', .5) # mode='s', param=[], skip=False
+            game.play(player)
+
+    # set_alpha(self, alpha)
+    # replay(self, game)
+
+    # get_all_states(self, nodes)
+    # bruteforce_stable_states(self, network, alpha=.95)
+    # check_dist(self, inside, reference, length=False)
+    # find_short_dist(self, inside, states, length=False)
+    # show_distances(self, graph, gt)

@@ -5,10 +5,12 @@
 
 ## To Run
 
-1. Open `hedonic.py`
+1. run `python app.py` in the terminal
+
+<!-- 1. Open `hedonic.py`
 2. Set the parameters
 3. Save the file
-4. run `python hedonic.py` in the terminal
+4. run `python hedonic.py` in the terminal -->
 
 ## Folders
 
@@ -167,3 +169,15 @@ results(datetime.now() - game.begin) # 4.
 2. Create the files where the output of experiment will be saved
 3. Initiate the experiment
 4. Saved results
+
+####  Legend (to-do)
+- ¹Initial params:
+  - Modes Commands:
+    - Random (r): Nodes will be randomly selected to start inside cluster
+    - Select (s): Chose which nodes will start inside cluster
+    - Any other:  Start with an empty cluster
+  - Modes Parameters:
+    - Random (r): Number of nodes - If it is between 0 and 1 will be multiply by the number of nodes
+    - Select (s): List of selected nodes. e.g. [node indice, ..., node indice]
+- ²Potential Gain in %
+  - Accumulated Gain / Initial Potential * 100"

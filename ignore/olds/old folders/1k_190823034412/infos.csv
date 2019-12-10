@@ -1,0 +1,29 @@
+### PARAMETERS ###
+Network,1k
+Alpha,0.95
+Player,sequential
+¹Initial params,{'mode': 'r' and 'param': 0.5}
+Verbose,True
+Export,True
+Commentaries,None
+
+### RESULTS ###
+Initial potential,-230033.95
+Final potential,-227444.95
+Accumulated gain,+2589.00
+²Abs gain in %,+1.13%
+Num of iterations,684
+Finished at,2019-08-23 03:44:12.550981
+Import duration,0:00:00.049572
+Run duration,0:00:00.139827
+Export duration,0:00:00.662324
+Total duration,0:00:00.851734
+Initial Verts proportion,52.90%
+Final Verts proportion,50.00%
+Initial Edges proportion,56.26%
+Final Edges proportion,49.76%
+Initial Potential proportion,55.77%
+Final Potential proportion,50.01%
+Profit consults,17555
+Performance,3.90%
+Converged,True

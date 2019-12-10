@@ -1,0 +1,29 @@
+### PARAMETERS ###
+Network,karate
+Alpha,0.95
+Player,sequential
+¹Initial params,{'mode': 'r' and 'param': 0.5}
+Verbose,True
+Export,True
+Commentaries,None
+
+### RESULTS ###
+Initial potential,-223.35
+Final potential,-208.35
+Accumulated gain,+15.00
+²Abs gain in %,+6.72%
+Num of iterations,12
+Finished at,2019-08-21 18:36:04.323750
+Import duration,0:00:00.000458
+Run duration,0:00:00.002179
+Export duration,0:00:00.003448
+Total duration,0:00:00.006096
+Initial Verts proportion,52.94%
+Final Verts proportion,44.12%
+Initial Edges proportion,41.67%
+Final Edges proportion,13.21%
+Initial Potential proportion,58.36%
+Final Potential proportion,44.52%
+Profit consults,68
+Performance,17.65%
+Converged,True
