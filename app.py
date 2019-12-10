@@ -18,8 +18,8 @@ import pandas as pd
 import numpy as np
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
-from hedonic import Game
-from players import sequential
+# from hedonic import Game
+# from players import sequential
 
 ################################################################################
 ## Global Variables ############################################################
