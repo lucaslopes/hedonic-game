@@ -29,6 +29,16 @@ table_results = pd.read_csv('experiments/results.csv')
 game_data = None
 
 ################################################################################
+## App Server ##################################################################
+################################################################################
+
+external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
+
+app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
+
+server = app.server
+
+################################################################################
 ## Helper Functions ############################################################
 ################################################################################
 
@@ -370,16 +380,10 @@ EdgesProportion = html.Div(children=[
 ## 2.6 Number of moves #########################################################
 
 ################################################################################
-## App Server ##################################################################
+## Layout ######################################################################
 ################################################################################
 
 ## App Layout ##################################################################
-
-external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
-
-app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
-
-server = app.server
 
 app.layout = html.Div(children=[
         Header,RunExperiments,
@@ -412,7 +416,8 @@ def update_network(network):
     # return plot_graph(net)
 
 @app.callback(
-    Output(component_id='running-message', component_property='children'),
+    [Output(component_id='running-message', component_property='children'),
+    Output('experiments-datatable', 'data')],
     [Input(component_id='run-button', component_property='n_clicks')],
     [State('network-selection', 'value'), State('alpha-slider', 'value'),
     State('nodes-selected', 'value'), State('init-random-slider', 'value')]) # todo: options checkbox
@@ -420,6 +425,7 @@ def run_game(n_clicks, network, alpha, init_mode, random_mode):
     if n_clicks is None:
         raise PreventUpdate
     else:
+        global table_results
         game.load_network(network)
         game.set_alpha(alpha)
         if init_mode:
@@ -427,7 +433,8 @@ def run_game(n_clicks, network, alpha, init_mode, random_mode):
         else:
             game.set_initial_state('r', random_mode)
         game.play(sequential) # todo: better way to pass player
-        return "Elephants are the only animal that can't jump"
+        table_results = pd.read_csv('experiments/results.csv')
+        return "End", table_results
 
 @app.callback(
     [Output('instant-gain-graph', 'figure'),
