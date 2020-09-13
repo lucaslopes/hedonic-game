@@ -1,10 +1,7 @@
 .DS_Store
 __pycache__
 */__pycache__
-.ipynb_checkpoints
-/tests
-/olds
-/ignore
-venv
-*.pyc
-.env
+ignore/
+outputs/
+Procfile
+Icon
