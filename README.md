@@ -3,7 +3,7 @@
 
 ## To read the full paper (with appendix)
 
-1. Go to: https://lucaslopes.github.io/test/paper.pdf
+1. Go to: https://lucaslopes.github.io/hedonic/paper.pdf
 
 ## To run experiments
 
@@ -19,10 +19,10 @@ It will generate:
 
 1. Figure 1 
 
-![](fig1.png)
+![https://lucaslopes.github.io/hedonic/fig1.png](fig1.png)
 
 2. Fig 1 (a) but for all noises (saved in `./outputs/noises/plots/`)
 
 3. A GIF with all plots of Fig 1 (a) (all noises)
 
-![](noises.gif)
+![https://lucaslopes.github.io/hedonic/noises.gif](noises.gif)
