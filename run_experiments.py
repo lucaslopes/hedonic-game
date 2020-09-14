@@ -55,6 +55,17 @@ def one_pass_neighbors(G):
 #################################################################################################
 ## Functions #################################################################################################
 
+def satisfied_for_alpha(G, node, alpha=.5, return_profit=False):
+	here, there, dis_here, dis_there = get_node_atributes(G, node)
+	value_here  = here  * (1-alpha) - dis_here  * alpha
+	value_there = there * (1-alpha) - dis_there * alpha
+	return value_there - value_here if return_profit else value_here >= value_there
+
+def load_ground_truth(G, values, label='gt', replace={'0':0,'1':1}):
+	for node, cluster in zip(G.nodes, values):
+		G.nodes[node][label] = replace[cluster]
+	return G
+
 def initialize(G, labels=[], prob=.5):
 	G.clusters_nodes = [0, 0] # c1 = total_nodes - nodes_c0
 	G.clusters_edges = [0, 0]
@@ -74,11 +85,6 @@ def initialize(G, labels=[], prob=.5):
 			G.nodes[n2]['here'] += 1
 			if c_n1 == 0: G.clusters_edges[0] += 1
 			else:         G.clusters_edges[1] += 1
-	return G
-
-def load_ground_truth(G, values, label='gt', replace={'0':0,'1':1}):
-	for node, cluster in zip(G.nodes, values):
-		G.nodes[node][label] = replace[cluster]
 	return G
 
 def move(G, node):
@@ -231,7 +237,7 @@ def exp_1(
 						if not spectral_answered:
 							spectral_answer = run_algorithm(G, GT, alg='spectral')
 						onepass_answer = run_algorithm(G, GT, noise=noi, alg='onepass')
-						hedonic_answer = run_algorithm(G, GT, noise=noi, alg='hedonic')
+						hedonic_answer = run_algorithm(G, GT, noise=noi, alg='naive') # here
 
 						went += 1
 						df_results = df_results.append({
@@ -264,7 +270,7 @@ def exp_1(
 ## Experiment 2: Real Networks with Noise #############################################################
 
 def exp_2(
-	algorithms = ['onepass', 'hedonic'], noises=np.linspace(0,.5,11),
+	algorithms = ['onepass', 'naive'], noises=np.linspace(0,.5,11), # here
 	networks=get_real_nets(), repetitions = 1000):
 
 	df = pd.DataFrame(columns=['network', 'algorithm'])
@@ -302,13 +308,13 @@ def exp_2(
 # spell run --pip-req requirements.txt 'python planted_partition.py' # --machine-type cpu
 
 if __name__ == "__main__":
-	# exp_1()
-	# exp_2()
+	exp_1()
+	exp_2()
 
-	exp_1(
-		noises=np.linspace(0,.5,3), multipliers=np.linspace(0.001,1,3), ps=np.linspace(.01,.1,3),
-		instances=3, repetitions=3, communities=2, nodes_per_cluster=50)
+	# exp_1(
+	# 	noises=np.linspace(0,.5,3), multipliers=np.linspace(0.001,1,3), ps=np.linspace(.01,.1,3),
+	# 	instances=3, repetitions=3, communities=2, nodes_per_cluster=50)
 
-	exp_2(
-		algorithms = ['onepass', 'hedonic'], noises=np.linspace(0,.5,2),
-		networks=get_real_nets(), repetitions = 10)
+	# exp_2(
+	# 	algorithms = ['onepass', 'hedonic'], noises=np.linspace(0,.5,2),
+	# 	networks=get_real_nets(), repetitions = 10)
