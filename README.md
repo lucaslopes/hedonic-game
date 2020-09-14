@@ -1,9 +1,9 @@
 # Hedonic Games
-> Submission for [WAIN workshop](https://www.performance2020.deib.polimi.it/wain-3/)
+> Community detection using game theory and alternative approaches
 
-## To read the full paper (with appendix)
+## Full paper (technical report)
 
-1. Go to: https://lucaslopes.github.io/hedonic/paper.pdf
+Available at: https://lucaslopes.github.io/hedonic/paper.pdf
 
 ## To run experiments
 
@@ -17,12 +17,12 @@ If you want to change experiment parameters, change it at the end of the file.
 
 It will generate:
 
-1. Figure 1 
+1. [Figure 1](https://lucaslopes.github.io/hedonic/fig1.png)
 
 ![https://lucaslopes.github.io/hedonic/fig1.png](fig1.png)
 
-2. Fig 1 (a) but for all noises (saved in `./outputs/noises/plots/`)
+2. Fig 1 (a) is considered at multiple noise levels (saved in `./outputs/noises/plots/`)
 
-3. A GIF with all plots of Fig 1 (a) (all noises)
+3. An [animated gif](https://lucaslopes.github.io/hedonic/noises.gif) accounting for all noise levels is shown below
 
 ![https://lucaslopes.github.io/hedonic/noises.gif](noises.gif)
