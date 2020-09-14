@@ -76,7 +76,10 @@ def get_ax(font_size=45, n_cols=4, width=50):
 	matplotlib.rc('ytick', labelsize=font_size*.9)
 	return plt.subplots(nrows=1, ncols=n_cols, figsize=(width,10)) # num=None , dpi=250 , figsize=(7.8*4, 6.3)
 
-def save_plot(ax, title='no title', x_label='', y_label='', f_name='', font_size=45, n_col=1, labels_handles=None, has_legend=True):
+def save_plot(ax, title='no title', x_label='', y_label='', f_name='',
+		font_size=45, n_col=1, labels_handles=None, has_legend=True,
+		leg_loc=0, title_loc='center', title_y=-.275):
+
 	handles, labels = ax.get_legend_handles_labels()
 	if labels_handles is None:
 		handles, labels = handles[1:], labels[1:]
@@ -84,8 +87,8 @@ def save_plot(ax, title='no title', x_label='', y_label='', f_name='', font_size
 		handles = [handles[i] for key, i in labels_handles.items()]
 		labels  = list(labels_handles)
 	if has_legend:
-		ax.legend(fontsize=font_size*.8, ncol=n_col, handles=handles, labels=labels, loc=0) # loc='lower left' or 0
-	ax.set_title(title, fontsize=font_size, y=-.275) # 
+		ax.legend(fontsize=font_size*.8, ncol=n_col, handles=handles, labels=labels, loc=leg_loc)
+	ax.set_title(title, fontsize=font_size, loc=title_loc, y=title_y)
 	ax.set_xlabel(x_label, fontsize=font_size)
 	ax.set_ylabel(y_label, fontsize=font_size)
 	ax.grid(True)
@@ -96,11 +99,12 @@ def save_plot(ax, title='no title', x_label='', y_label='', f_name='', font_size
 def generate_noises_plot():
 	for noise_graph, data in dfs_noise.items():
 		fig, ax = get_ax(n_cols=1, width=12.5)
-		ax.set_ylim(.5,1.01)
+		ax.set_ylim(.499,1.01)
 		g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=data, marker='o', linewidth=4, ax=ax) # , style="event"
 		ax.axhline(1-noise_graph, c='red')
 		# ax.annotate('1-noise', (.85, 1.005-noise_graph), fontsize=40)
-		save_plot(ax, title=f'(a) accuracy vs q/p (noise={round(noise_graph,3)})', x_label='q/p', y_label='accuracy', f_name=f'{file_name_prefix}_n{round(noise_graph,3)}')
+		noise_name = str(round(noise_graph,3))+'00000000'
+		save_plot(ax, title=f'noise={noise_name[:5]}', x_label='q/p', y_label='accuracy', f_name=f'{file_name_prefix}_n{round(noise_graph,3)}', leg_loc='lower left', title_loc='right', title_y=.9)
 		plt.tight_layout()
 		fig.savefig(create_noises_plot_dir(f'noise_{noise_graph}.png'))
 		# break
@@ -111,6 +115,9 @@ def generate_gif():
 	frames = []
 	folder = './outputs/noises/plots/'
 	imgs = [png for png in os.listdir(folder) if png[-3:] == 'png'] # get_all_files()#glob.glob('.outputs/noises/*.png')
+	imgs = [(img, eval(img[6:-4])) for img in imgs]
+	imgs.sort(key= lambda x: x[1])
+	imgs = [img[0] for img in imgs]
 	for i in imgs:
 		new_frame = Image.open(folder+i)
 		frames.append(new_frame)
