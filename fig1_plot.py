@@ -3,15 +3,14 @@ import numpy as np
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import seaborn as sns; sns.set(style="whitegrid")
-
 from PIL import Image
-import glob
 
 ##############################################################################
 ## Load Data ############################################################################
 
-algorithms = { 'spectral':'spectral\nclustering', 'onepass':'local\nimprovement', 'hedonic':'hedonic\nrobust' }
+algorithms = { 'spectral':'spectral clustering', 'onepass':'local improvement', 'hedonic':'hedonic robust' }
 prefix = 'outputs/noises/'
 file_name_prefix = ''
 df = pd.concat([pd.read_csv(f'{prefix}{csv}') for csv in os.listdir(prefix) if csv[-3:] == 'csv'])
@@ -21,7 +20,18 @@ df['p_in-p_out'] = df['p_in'] - df['p_out']
 
 dfs_noise = dict(tuple(df.groupby('noise')))
 for noise, data in dfs_noise.items():
-	df_noise = data.loc[:, ['mult']+[f'{alg}_accuracy' for alg in algorithms]]
+	df_noise = pd.DataFrame(columns=['mult']+[f'{alg}_accuracy' for alg in algorithms])
+	algs = [f'{alg}_accuracy' for alg in algorithms]
+	for mult in data['mult'].unique():
+		# print('noise =', noise, '-- mult =', mult)
+		for inst in data['instance'].unique():
+			df_noise = df_noise.append({
+				'mult'  : mult,
+				algs[0] : np.mean(data.loc[(data['mult'] == mult) & (data['instance'] == inst), [algs[0]]].values),
+				algs[1] : np.mean(data.loc[(data['mult'] == mult) & (data['instance'] == inst), [algs[1]]].values),
+				algs[2] : np.mean(data.loc[(data['mult'] == mult) & (data['instance'] == inst), [algs[2]]].values),
+			}, ignore_index=True)
+	# df_noise = data.loc[:, ['mult']+[f'{alg}_accuracy' for alg in algorithms]]
 	df_noise = df_noise.melt('mult', var_name='algorithm', value_name='accuracy')
 	df_noise['algorithm'] = [alg.split('_')[0] for alg in df_noise['algorithm'].values]
 	df_noise['algorithm'] = [algorithms[alg] for alg in df_noise['algorithm'].values]
@@ -33,7 +43,7 @@ for noise, data in dfs_noise.items():
 speed = df.loc[:, ['noise']+[f'{alg}_time' for alg in algorithms]]
 speed = speed.melt('noise', var_name='algorithm', value_name='seconds')
 speed['algorithm'] = [alg.split('_')[0] for alg in speed['algorithm'].values]
-speed['algorithm'] = [algorithms[alg] for alg in speed['algorithm'].values]
+speed['algorithm'] = [algorithms[alg].replace(' ','\n') for alg in speed['algorithm'].values]
 
 ##############################################################################
 
@@ -84,10 +94,12 @@ def save_plot(ax, title='no title', x_label='', y_label='', f_name='',
 	if labels_handles is None:
 		handles, labels = handles[1:], labels[1:]
 	else:
-		handles = [handles[i] for key, i in labels_handles.items()]
+		handles = [mpatches.Patch(color=c, label=key) for key, c in labels_handles.items()]
 		labels  = list(labels_handles)
 	if has_legend:
-		ax.legend(fontsize=font_size*.8, ncol=n_col, handles=handles, labels=labels, loc=leg_loc)
+		for h in handles:
+			h.set_linewidth(5)
+		leg = ax.legend(fontsize=font_size*.8, ncol=n_col, handles=handles, labels=labels, loc=leg_loc)
 	ax.set_title(title, fontsize=font_size, loc=title_loc, y=title_y)
 	ax.set_xlabel(x_label, fontsize=font_size)
 	ax.set_ylabel(y_label, fontsize=font_size)
@@ -100,9 +112,9 @@ def generate_noises_plot():
 	for noise_graph, data in dfs_noise.items():
 		fig, ax = get_ax(n_cols=1, width=12.5)
 		ax.set_ylim(.499,1.01)
-		g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=data, marker='o', linewidth=4, ax=ax) # , style="event"
-		ax.axhline(1-noise_graph, c='red')
-		# ax.annotate('1-noise', (.85, 1.005-noise_graph), fontsize=40)
+		g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=data, marker='o', linewidth=4.5, ax=ax, ci=95) # , style="event"
+		ax.axhline(1-noise_graph, c='red', alpha=.75, ls='--', lw=2.5)
+		# ax.annotate('$1$-noise', (.85, 1.005-noise_graph), fontsize=40)
 		noise_name = str(round(noise_graph,3))+'00000000'
 		save_plot(ax, title=f'noise={noise_name[:5]}', x_label='q/p', y_label='accuracy', f_name=f'{file_name_prefix}_n{round(noise_graph,3)}', leg_loc='lower left', title_loc='right', title_y=.9)
 		plt.tight_layout()
@@ -131,22 +143,24 @@ def generate_gif():
 def generate_fig_1():
 	fig, axes = get_ax()
 
-	noise_graph = .5 # Choose one noise for be in Fig 1 (a)
-	axes[0].set_ylim(.5,1.01)
-	g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=dfs_noise[noise_graph], marker='o', linewidth=4, ax=axes[0]) # , style="event"
-	axes[0].axhline(1-noise_graph, c='red')
-	axes[0].annotate('1-noise', (.85, 1.005-noise_graph), fontsize=40)
-	save_plot(axes[0], title=f'(a) accuracy vs q/p (noise={round(noise_graph,3)})', x_label='q/p', y_label='accuracy', f_name=f'{file_name_prefix}_n{round(noise_graph,3)}')
+	noise_graph = .35 # Choose one noise for be in Fig 1 (a)
+	axes[0].set_ylim(.499,1.01)
+	g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=dfs_noise[noise_graph], marker='o', linewidth=4.5, ci=95, ax=axes[0]) # , style="event"
+	axes[0].axhline(1-noise_graph, c='red', alpha=.75, ls='--', lw=2.5)
+	axes[0].annotate('$1$-noise', (.85, 1.005-noise_graph), fontsize=40)
+	plt.text(0, 0.1, '', bbox=dict(boxstyle="round", fc="white", ec="red", pad=0.2))
+	noise_name = str(round(noise_graph,3))+'00000000'
+	save_plot(axes[0], title=f'(a) accuracy vs q/p (noise={noise_name[:5]})', x_label='q/p', y_label='accuracy', f_name=f'{file_name_prefix}_n{round(noise_graph,3)}')
 
 	##############################################################################
 
-	g = sns.lineplot(x="noise", y="r = maximum tolerated q/p", hue="algorithm", data=df_A, marker='o', linewidth=4, ax=axes[1])
-	save_plot(axes[1], title='(b) max q/p such that accuracy$\geq$1-noise', x_label='noise', y_label='r = maximum tolerated q/p', f_name='cross')
+	g = sns.lineplot(x="noise", y="r = maximum tolerated q/p", hue="algorithm", data=df_A, marker='o', linewidth=4.5, ax=axes[1])
+	save_plot(axes[1], title='(b) max q/p such that accuracy$\geq1$-noise', x_label='noise', y_label='r = maximum tolerated q/p', f_name='cross')
 
 	##############################################################################
 
-	not_spectral = len(realnets_df['algorithm'].unique())-1
-	cor = sns.color_palette("Blues", n_colors=1)+sns.color_palette("Oranges", n_colors=int(not_spectral/2))+sns.color_palette("Greens", n_colors=int(not_spectral/2)) # #5975A4 #CC8964 #5F9E6E
+	alg_repetition = int((len(realnets_df['algorithm'].unique())-1)/2) # #5975A4 sns.color_palette("Blues", n_colors=1)
+	cor = [('#5975A4')]+sns.color_palette("Oranges", n_colors=alg_repetition)+sns.color_palette("Greens", n_colors=alg_repetition) # #5975A4 #CC8964 #5F9E6E
 	g = sns.barplot(x="network", y="accuracy", hue="algorithm", data=realnets_df, palette=cor, ax=axes[2])
 	max_acc = []
 	for net in ['karate', 'dolphins', 'pol_blogs', 'pol_books']:
@@ -156,11 +170,15 @@ def generate_fig_1():
 			max_acc.append(nets_alg_df['accuracy'].max())
 	x_pos = [p.get_x() for p in axes[2].patches]
 	x_pos.sort()
-	for pos, maxx in zip(x_pos, max_acc):
-		axes[2].annotate('_', (pos, maxx)) # p.get_height() * 1.005)
-	axes[2].set_ylim(0,1.01)
-	labls = {'spectral clustering':0, 'local improvement\n(0$\leq$noise$\leq$0.5)':1+int(1/3*not_spectral), 'hedonic robust\n(0$\leq$noise$\leq$0.5)':1+int(2/3*not_spectral)}
+	colors = ['#5975A4']+['#CC8964' for _ in range(alg_repetition)]+['#5F9E6E' for _ in range(alg_repetition)]
+	for pos, maxx, c in zip(x_pos, max_acc, colors*4):
+		axes[2].annotate('_', (pos, maxx), c=c, weight=1000) # p.get_height() * 1.005)
+	axes[2].set_ylim(0.499,1.01)
+	labls = {'spectral clustering':'#5975A4', 'local improvement\n(0$\leq$noise$\leq$0.5)':'#CC8964', 'hedonic robust\n(0$\leq$noise$\leq$0.5)':'#5F9E6E'}
 	save_plot(axes[2], title='(c) real networks', x_label='network', y_label='accuracy', f_name='real_nets_bar_plot', n_col=1, labels_handles=labls)
+	
+	##############################################################################
+
 	g = sns.violinplot(x="algorithm", y="seconds", data=speed, fontsize=27.5, ax=axes[3])
 	save_plot(axes[3], title='(d) time efficiency', x_label='', y_label='seconds', f_name='time', has_legend=False) # algorithm
 

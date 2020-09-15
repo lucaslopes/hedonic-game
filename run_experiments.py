@@ -213,7 +213,7 @@ def get_real_nets(nets=['karate', 'dolphins', 'pol_blogs', 'pol_books']):
 ## Experiment 1: synthetic Networks with Noise #############################################################
 
 def exp_1(
-	noises=np.linspace(0,.5,11), multipliers=np.linspace(0.001,1,11), ps=np.linspace(.01,.1,10),
+	noises=np.linspace(0,.5,11), multipliers=np.concatenate(([.001], np.linspace(0,1,11)[1:])), ps=np.linspace(.01,.1,10),
 	instances=25, repetitions=25, communities=2, nodes_per_cluster=500):
 
 	total = len(noises) * len(multipliers) * len(ps) * instances * repetitions
@@ -312,9 +312,9 @@ if __name__ == "__main__":
 	exp_2()
 
 	# exp_1(
-	# 	noises=np.linspace(0,.5,3), multipliers=np.linspace(0.001,1,3), ps=np.linspace(.01,.1,3),
+	# 	noises=np.linspace(0,.5,3), multipliers=np.linspace(0.001,1,5), ps=np.linspace(.01,.1,3),
 	# 	instances=3, repetitions=3, communities=2, nodes_per_cluster=50)
 
 	# exp_2(
-	# 	algorithms = ['onepass', 'hedonic'], noises=np.linspace(0,.5,2),
+	# 	algorithms = ['onepass', 'hedonic'], noises=np.linspace(0,.5,5),
 	# 	networks=get_real_nets(), repetitions = 10)
