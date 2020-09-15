@@ -13,18 +13,18 @@ If you want to change experiment parameters, change it at the end of the file.
 
 ## To visualize results
 
-1. Run the python file: `$ python fig1_plot.py`
+1. Run the python file: `$ python plot_results.py`
 
 It will generate:
 
 1. [Figure 1](https://lucaslopes.github.io/hedonic/doc/fig1.png)
 
-![https://lucaslopes.github.io/hedonic/fig1.png](./doc/fig1.png)
-<!-- <img src="./doc/fig1.png" alt="fig 1" width="200"/> -->
+<!-- ![https://lucaslopes.github.io/hedonic/fig1.png](./doc/fig1.png) -->
+<img src="./doc/fig1.png" alt="fig 1"/>
 
 2. Fig 1 (a) is considered at multiple noise levels (saved in `./outputs/noises/plots/`)
 
-3. An [animated gif](https://lucaslopes.github.io/hedonic/noises.gif) accounting for all noise levels is shown below
+3. An [animated gif](https://lucaslopes.github.io/hedonic/doc/noises.gif) accounting for all noise levels is shown below
 
 <!-- ![https://lucaslopes.github.io/hedonic/noises.gif](./doc/noises.gif) -->
 <img src="./doc/noises.gif" alt="noises" width="500"/>
