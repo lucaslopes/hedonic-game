@@ -88,7 +88,7 @@ def get_ax(font_size=45, n_cols=4, width=50):
 
 def save_plot(ax, title='no title', x_label='', y_label='', f_name='',
 		font_size=45, n_col=1, labels_handles=None, has_legend=True,
-		leg_loc=0, title_loc='center', title_y=-.275):
+		font_scale=.8, leg_loc=0, title_loc='center', title_y=-.275):
 
 	handles, labels = ax.get_legend_handles_labels()
 	if labels_handles is None:
@@ -99,7 +99,7 @@ def save_plot(ax, title='no title', x_label='', y_label='', f_name='',
 	if has_legend:
 		for h in handles:
 			h.set_linewidth(5)
-		leg = ax.legend(fontsize=font_size*.8, ncol=n_col, handles=handles, labels=labels, loc=leg_loc)
+		leg = ax.legend(fontsize=font_size*font_scale, ncol=n_col, handles=handles, labels=labels, loc=leg_loc)
 	ax.set_title(title, fontsize=font_size, loc=title_loc, y=title_y)
 	ax.set_xlabel(x_label, fontsize=font_size)
 	ax.set_ylabel(y_label, fontsize=font_size)
@@ -175,7 +175,7 @@ def generate_fig_1():
 		axes[2].annotate('_', (pos, maxx), c=c, weight=1000) # p.get_height() * 1.005)
 	axes[2].set_ylim(0.499,1.01)
 	labls = {'spectral clustering':'#5975A4', 'local improvement\n(0$\leq$noise$\leq$0.5)':'#CC8964', 'hedonic robust\n(0$\leq$noise$\leq$0.5)':'#5F9E6E'}
-	save_plot(axes[2], title='(c) real networks', x_label='network', y_label='accuracy', f_name='real_nets_bar_plot', n_col=1, labels_handles=labls)
+	save_plot(axes[2], title='(c) real networks', x_label='network', y_label='accuracy', f_name='real_nets_bar_plot', n_col=1, labels_handles=labls, font_scale=.7)
 	
 	##############################################################################
 
