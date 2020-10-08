@@ -586,7 +586,7 @@ def exp_5(alphas=5, inits=5, ps=5, insts=5, reps=5, in_cluster=50):
 ## Main ###############################################################################################
 
 # Spell command:
-# spell run --pip-req requirements.txt 'python planted_partition.py' # --machine-type cpu
+# spell run --pip-req requirements.txt 'python run_experiments.py' # --machine-type cpu
 
 if __name__ == "__main__":
 	# exp_1()
