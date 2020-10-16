@@ -4,4 +4,4 @@ pandas
 matplotlib
 seaborn
 networkx
-igraph
+python-igraph

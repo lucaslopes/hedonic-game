@@ -206,16 +206,24 @@ def generate_fig_1():
 ## Plot Comparison ############################################################################
 
 def generate_plot_comparion(filename=''):
+	font_size = 45
+	plt.clf()
+	matplotlib.rc('xtick', labelsize=font_size*.9)
+	matplotlib.rc('ytick', labelsize=font_size*.9)
+	fig, axes = plt.subplots(nrows=2, ncols=4, figsize=(50,20)) # num=None , dpi=250 , figsize=(7.8*4, 6.3)
+	i, j = 0, 0
 	df = pd.read_csv(filename)
 	methods = df['method'].unique()
 	for method in methods:
 		df_method = df[df['method']==method]
-		plt.clf()
-		sns.lineplot(x='mult', y='accuracy', hue='algorithm', data=df_method, marker='o', linewidth=4.5) # , ax=axes[1]
+		sns.lineplot(x='mult', y='accuracy', hue='algorithm', data=df_method, marker='o', linewidth=4.5, ax=axes[i][j])
 		plt.savefig(f'{filename[:-4]}_{method}.png')
-	plt.clf()
-	sns.violinplot(x='algorithm', y='seconds', data=df, fontsize=27.5) # , ax=axes[2]
-	plt.savefig(f'{filename[:-4]}_time.png')
+		j += 1
+		if j == 4:
+			j  = 0
+			i += 1
+	sns.violinplot(x='algorithm', y='seconds', data=df, fontsize=27.5, ax=axes[i][j])
+	plt.savefig(f'{filename[:-4]}_junto.png')
 
 ##############################################################################
 ## Main ############################################################################
