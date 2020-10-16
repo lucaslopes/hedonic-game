@@ -1,4 +1,3 @@
-
 import os
 import networkx as nx
 import numpy as np
@@ -201,6 +200,8 @@ def compare(noises=np.linspace(.5,.5,1),
 
 #################################################################################################
 ## Main #########################################################################################
+
+# spell run --pip-req requirements.txt 'python compare.py'
 
 if __name__ == "__main__":
 	compare()
