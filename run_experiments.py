@@ -294,7 +294,7 @@ def exp_1(
 	begin = time()
 	print(f'\n\nExp 1 begin at:{begin} -- TOTAL = {total}\n\n')
 	for noi in noises:
-		df_results = pd.DataFrame(columns=['noise','mult','p_in','p_out','instance','repetition'])
+		df_results = pd.DataFrame(columns=['noise','q_over_p','p_in','p_out','instance','repetition'])
 		for mult in multipliers:
 			for p in ps:
 				for i in range(instances):
@@ -313,7 +313,7 @@ def exp_1(
 						went += 1
 						df_results = df_results.append({
 							'noise' : noi,
-							'mult'  : mult,
+							'q_over_p' : mult,
 							'p_in'  : p,
 							'p_out' : p*mult,
 							'instance' : i,
@@ -524,12 +524,22 @@ def show_net(G, labels):
 # 	infos = (answer.clusters_nodes, answer.clusters_edges, len(answer.edges))
 # 	return seconds, acc, robustness, infos, answer
 
+def int2bin(value=0, tam=0):
+	return ('0'*tam+'{0:b}'.format(value))[-tam:]
+
 def label2int(label):
 	state, reverse = '', ''
 	for s in label:
 		state   += str(s)
 		reverse += str(1-int(s))
 	return min(int(state,2), int(reverse,2))
+
+def neighbors_states(state): # in binary # 2 clusters (eixo x e y) (z = potencial)
+	neighbors = []
+	for i in range(len(state)):
+		change = state[:i]+str(1-int(state[i]))+state[i+1:]
+		neighbors.append(label2int(change))
+	return neighbors
 
 def converge(G, K=1, alpha=1, init=.5, tolerance=10):
 	G = initialize(G, prob=init)
@@ -578,10 +588,38 @@ def exp_5(alphas=5, inits=5, ps=5, insts=5, reps=5, in_cluster=50):
 				'avg' : np.mean(values)
 			}, ignore_index=True)
 	states.to_csv(f'exp5_a{alphas}_i{inits}_p{ps}_in{inst}_r{reps}_n{in_cluster}.csv')
-	# sns.scatterplot(data=states, x="alpha", y="init_prop", hue="avg", palette='coolwarm', s=1000, marker='s') # sizes=[100]*len(states), markers=['s']*len(states)
+	# sns.scatterplot(data=states, x="alpha", y="init_prop", hue="avg", palette='coolwarm', s=1000, marker='s', legend=False) # sizes=[100]*len(states), markers=['s']*len(states)
 	# plt.show()
 
 # await sleep()
+
+##### todo: speed test (compare nx with python naive)
+
+def exp_6(alphas=5, inits=5, ps=5, insts=5, reps=5, in_cluster=50):
+	went, total = 0, (alphas * inits * ps * insts * reps)
+	for alpha in np.linspace(0,1,alphas):
+		for init in np.linspace(0,.5,inits):
+			values = []
+			for p in np.linspace(.5, 1, ps):
+				for inst in range(insts):
+					G = PPG(2, in_cluster, p, 1-p)
+					for rep in range(reps):
+						print(f'{round(went/total*100,2)}%')
+						if converge(G, K=len(G.nodes), alpha=alpha, init=init):
+							values.append(0)
+						else:
+							values.append(1)
+						went += 1
+			states = states.append({
+				'alpha' : alpha,
+				'init_prop' : init,
+				'avg' : np.mean(values)
+			}, ignore_index=True)
+	states.to_csv(f'exp5_a{alphas}_i{inits}_p{ps}_in{inst}_r{reps}_n{in_cluster}.csv')
+	# sns.scatterplot(data=states, x="alpha", y="init_prop", hue="avg", palette='coolwarm', s=1000, marker='s', legend=False) # sizes=[100]*len(states), markers=['s']*len(states)
+	# plt.show()
+
+
 
 ## Main ###############################################################################################
 
@@ -616,4 +654,6 @@ if __name__ == "__main__":
 
 	equal = 11
 	# exp_5(alphas=equal, inits=equal, ps=equal, insts=equal, reps=equal)
-	exp_5(alphas=equal, inits=equal, ps=5, insts=5, reps=5)
+	# exp_5(alphas=equal, inits=equal, ps=5, insts=5, reps=5)
+
+	print(neighbors_states(int2bin(value=75, tam=100)))
