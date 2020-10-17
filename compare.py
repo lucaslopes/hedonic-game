@@ -38,7 +38,7 @@ def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min
 # 'min': pairwise similarity normalized with the minimum function
 # 'max': pairwise similarity normalized with the maximum function
 # Each measure can be adjusted (recommended) 
-def get_answers(g, algs=['ml','ecg','hedonic','naive','spectral'], spectral_ans=None):
+def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None): # naive
 	answers = {}
 	for alg in algs:
 		answers[alg], duration = {}, None
