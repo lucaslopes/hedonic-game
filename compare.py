@@ -190,8 +190,8 @@ def spectral(G):
 #################################################################################################
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
-def compare(multipliers=np.concatenate(([.01], np.linspace(0,1,11)[1:])),
-	ps=5, instances=5, repetitions=5, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
+def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
+	ps=11, instances=11, repetitions=11, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
 
 	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
@@ -228,9 +228,7 @@ def compare(multipliers=np.concatenate(([.01], np.linspace(0,1,11)[1:])),
 								'method': mthd,
 								'seconds':sec }, ignore_index=True)
 					went += 1
-					# infos and robustness
-	# df_results['q_over_p'] = df_results['p_out'] / df_results['p_in']
-	df_results.to_csv(f'comparison_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results.to_csv(f'ps={ps}_mults={multipliers}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################

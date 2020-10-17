@@ -249,7 +249,7 @@ if __name__ == "__main__":
 	# generate_gif()
 	# generate_fig_1()
 
-	generate_plot_comparion('outputs/comparisons/comparison_commSize=111.csv')
+	generate_plot_comparion('outputs/comparisons/comparison_commSize=50_naive.csv')
 
 	# df = pd.read_csv('outputs/comparisons/comparison_commSize=111.csv')
 	# for alg in df['algorithm'].unique():
