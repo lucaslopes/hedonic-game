@@ -240,6 +240,26 @@ def generate_plot_comparion(filename=''):
 
 	plt.savefig(f'{filename[:-4]}_junto.png')
 
+##########################
+## Hedonic Robust vs Naive
+
+def plot_robust_vs_naive():
+	df = pd.read_csv('outputs/comparisons/rob_vs_naive__ps=10_mults=11_inst=10_reps=10_nComm=2_commSize=50.csv')
+	plt.clf()
+	print(np.mean(df[df['algorithm']=='hedonic']['accuracy']))
+	print(np.mean(df[df['algorithm']=='naive']['accuracy']))
+	print(len(df))
+	# sns.jointplot(data=df, x="robustness", y="accuracy", hue="algorithm", kind="scatter") # scatter kde hist hex reg resid
+	# sns.violinplot(x='algorithm', y='seconds', data=df, fontsize=27.5) # [df['method']=='rand']
+	sec0 = df[df['algorithm']=='naive']['seconds']
+	sec0 = [s for s in sec0 if s > .01]
+	sec1 = df[df['algorithm']=='hedonic']['seconds']
+	sec1 = [s for s in sec1 if s > .01]
+	# plt.hist(sec) # [df['method']=='rand']
+	sns.violinplot(sec0, alpha=.1, color='green') # [df['method']=='rand']
+	sns.violinplot(sec1, alpha=.1, color='red') # [df['method']=='rand']
+	plt.show()
+
 ##############################################################################
 ## Main ############################################################################
 
@@ -249,7 +269,7 @@ if __name__ == "__main__":
 	# generate_gif()
 	# generate_fig_1()
 
-	generate_plot_comparion('outputs/comparisons/comparison_commSize=50_naive.csv')
+	# generate_plot_comparion('outputs/comparisons/comparison_commSize=50_naive.csv')
 
 	# df = pd.read_csv('outputs/comparisons/comparison_commSize=111.csv')
 	# for alg in df['algorithm'].unique():
@@ -257,4 +277,6 @@ if __name__ == "__main__":
 	# 	plt.violinplot(df[df['algorithm']==alg]['seconds'])
 	# 	plt.savefig(f'{alg}.png')
 	# sns.violinplot(x='algorithm', y='seconds', data=df[df['method']=='rand'], fontsize=27.5, ax=ax)
+
+	plot_robust_vs_naive()
  

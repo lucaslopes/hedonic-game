@@ -21,7 +21,7 @@ def from_label_to_dict(labels):
 	return {val:idx for idx, part in enumerate(clusters) for val in part}
 
 def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min','max','diff']):
-	algs=['ml','ecg','hedonic','spectral']
+	# algs=['ml','ecg','hedonic','spectral']
 	result = []
 	for i, ans in enumerate(answers):
 		acc = {}
@@ -45,8 +45,8 @@ def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None): #
 		begin = time()
 		if alg is 'ml':       answers[alg]['ans'] = g.community_multilevel()
 		if alg is 'ecg':      answers[alg]['ans'] = g.community_ecg(ens_size=32)
-		if alg is 'hedonic':  answers[alg]['ans'], duration = hedonic_solve_igrpah(g)
-		if alg is 'naive':    answers[alg]['ans'], duration = hedonic_solve_igrpah(g, naive=True)
+		if alg is 'hedonic':  answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igrpah(g)
+		if alg is 'naive':    answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igrpah(g, naive=True)
 		if alg is 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
 		answers[alg]['sec'] = duration if duration else time() - begin
 	for alg in [a for a in algs if a == 'ml' or a == 'ecg']:
@@ -106,7 +106,52 @@ def get_ppg_fully_connected(numComm, commSize, p, q):
 	G.add_edges(g.edges())
 	return G, GT
 
+def subset_sum(numbers, target, partial=[]):
+	s = sum(partial)
+
+	# check if the partial sum is equals to target
+	if s == target:
+		print("sum(%s)=%s" % (partial, target))
+	if s >= target:
+		return  # if we reach the number why bother to continue
+
+	for i in range(len(numbers)):
+		n = numbers[i]
+		remaining = numbers[i + 1:]
+		subset_sum(remaining, target, partial + [n])
+
+def two_communities_reciprocity(G, clusters):
+	now = time()
+	while len(clusters) > 2:
+		modul_pairs = [[0 for _ in range(len(clusters))] for _ in range(len(clusters))]
+		for i in range(len(clusters)-1):
+			for j in range(i+1, len(clusters)):
+				new_membership = [i if g == j else g for g in clusters.membership]
+				max_cluster = max(set(new_membership))
+				if j < max_cluster:
+					new_membership = [j if g == max_cluster else g for g in new_membership]
+				modul = ig.clustering.VertexClustering(G, new_membership).modularity
+				modul_pairs[i][j] = modul
+				modul_pairs[j][i] = modul
+		joins = []
+		for i, row in enumerate(modul_pairs):
+			want = np.argmax(row)
+			if np.argmax(modul_pairs[want]) == i:
+				pair = (min(i,want), max(i,want))
+				if pair not in joins:
+					joins.append(pair)
+		best_membership = []
+		for i, j in joins:
+			best_membership = [i if g == j else g for g in clusters.membership]
+			max_cluster = max(set(best_membership))
+			if j < max_cluster:
+				best_membership = [j if g == max_cluster else g for g in best_membership]
+		clusters = ig.clustering.VertexClustering(G, best_membership)
+	print(time()-now)
+	return clusters
+
 def two_communities(G, clusters):
+	# now = time()
 	while len(clusters) > 2:
 		best_modularity, best_membership = 0, None
 		for i in range(len(clusters)-1):
@@ -120,9 +165,11 @@ def two_communities(G, clusters):
 					best_modularity = ans.modularity
 					best_membership = new_membership
 		clusters = ig.clustering.VertexClustering(G, best_membership)
+	# print(time()-now)
 	return clusters
 
 def two_communities_old(G, clusters): # compara todas as possiveis combinações de 2 grupos
+	now = time()
 	best_modularity, answer = 0, None
 	if len(clusters) > 2:
 		combinations = []
@@ -141,6 +188,7 @@ def two_communities_old(G, clusters): # compara todas as possiveis combinações
 			if ans.modularity > best_modularity:
 				best_modularity = ans.modularity
 				answer = ans
+	print(time()-now)
 	return answer if answer else clusters
 
 #################################################################################################
@@ -164,7 +212,7 @@ def hedonic_solve_igrpah(g, naive=False):
 	duration = time()
 	game.play(naive=naive)
 	duration = time() - duration
-	return from_label_to_dict(game.labels), duration
+	return from_label_to_dict(game.labels), duration, game.calc_robustness()
 
 def spectral(G):
 	# A = nx.adjacency_matrix(G).toarray() # networkx
@@ -191,7 +239,7 @@ def spectral(G):
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=10, instances=10, repetitions=10, numComm=2, commSize=500): # noises=, #np.linspace(.5,.5,1)
+	ps=10, instances=10, repetitions=10, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
 
 	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
@@ -199,7 +247,7 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 	print(f'\n\nComparison Experiment - begin at:{begin} -- TOTAL = {total}\n\n')
 # for noi in noises:
 	# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
-	df_results = pd.DataFrame(columns=['p_in','mult','instance','repetition','algorithm','accuracy','method','seconds'])
+	columns={'p_in':[], 'mult':[], 'instance':[], 'repetition':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}
 	for mult in multipliers:
 		for i_p, p in enumerate(np.linspace(.01,.1,ps)):
 			for i in range(instances):
@@ -210,25 +258,29 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 					if not spectral_ans:
 						spectral_ans = {}
 						spectral_ans['ans'], spectral_ans['time'] = spectral(G)
-					answers = get_answers(G, algs=['hedonic','spectral'] , spectral_ans=spectral_ans)
+					answers = get_answers(G, spectral_ans=spectral_ans) #  algs=['hedonic','naive']
 					ans_order = list(answers)
 					seconds = [answers[alg]['sec'] for alg in ans_order]
+					robust  = [answers[alg]['rob'] if 'rob' in answers[alg] else 0 for alg in ans_order] # only hedonics
 					answers = [answers[alg]['ans'] for alg in ans_order]
-					scores = accuracies(G, answers, GT)
+					scores = accuracies(G, answers, GT) # , methods=['diff']
 					# print(scores)
-					for alg, score, sec in zip(ans_order, scores, seconds):
+					for alg, score, rob, sec in zip(ans_order, scores, robust, seconds):
 						for mthd, acc in score.items():
-							df_results = df_results.append({ # todo: colocar infos e robustez ?
-								'p_in':p,
-								'mult':mult,
-								'instance':i,
-								'repetition':r,
-								'algorithm':alg,
-								'accuracy':acc,
-								'method': mthd,
-								'seconds':sec }, ignore_index=True)
+							columns['p_in'].append(p)
+							columns['mult'].append(mult)
+							columns['instance'].append(i)
+							columns['repetition'].append(r)
+							columns['algorithm'].append(alg)
+							columns['accuracy'].append(acc)
+							columns['robustness'].append(rob)
+							columns['method'].append(mthd)
+							columns['seconds'].append(sec)
 					went += 1
-	df_results.to_csv(f'hed_vs_spectral__ps={ps}_mults={multipliers}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results = pd.DataFrame()
+	for col, values in columns.items():
+		df_results[col] = values
+	df_results.to_csv(f'ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################

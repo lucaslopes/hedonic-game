@@ -238,6 +238,9 @@ class Game:
             columns['accuracy'].append(self.accuracy())
         return columns
 
+    def calc_robustness(self):
+        return np.mean([self.equilibrium_for(alpha, inspect=True) for alpha in np.linspace(0,1,11)])
+
     def find_eq_in_O_Edges(self):
         # percorre a lista de edges e vai decidindo se ela será intra ou inter cluster
         # se a partir de uma lista de edges, saber-se se cada uma delas será 'intra' OU 'inter' conectada, é possível montar tal particionamento facilmente?
