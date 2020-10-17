@@ -239,7 +239,7 @@ def spectral(G):
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=10, instances=10, repetitions=10, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
+	ps=10, instances=10, repetitions=10, numComm=2, commSize=150): # noises=, #np.linspace(.5,.5,1)
 
 	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
