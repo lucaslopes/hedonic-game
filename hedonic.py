@@ -137,17 +137,20 @@ class Game:
         self.clusters['edges'][1-l] -= there
         # print(node, self.get_node_atributes(node), l)
 
-    def play(self):
+    def play(self, alpha=None, naive=False):
         moved, nodes_list = True, list(range(len(self.labels)))
         while moved is True:
             moved = False
             shuffle(nodes_list)
             for node in nodes_list:
-                pft_A0 = self.satisfied(node, alpha=0, profit=True)
-                pft_A1 = self.satisfied(node, alpha=1, profit=True)
-                # if not self.satisfied(node): # naive
-                if ((pft_A0  > 0 and pft_A1 >= 0) or
-                    (pft_A0 <= 0 and pft_A1  > 0)): # almos robust
+                want_move = False
+                if naive:
+                    want_move = not self.satisfied(node, alpha)
+                else: # almos robust
+                    pft_A0 = self.satisfied(node, alpha=0, profit=True)
+                    pft_A1 = self.satisfied(node, alpha=1, profit=True)
+                    want_move = ((pft_A0  > 0 and pft_A1 >= 0) or (pft_A0 <= 0 and pft_A1  > 0))
+                if want_move:
                     self.move(node)
                     moved = True
                     # print('moved', node)

@@ -38,14 +38,15 @@ def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min
 # 'min': pairwise similarity normalized with the minimum function
 # 'max': pairwise similarity normalized with the maximum function
 # Each measure can be adjusted (recommended) 
-def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None):
+def get_answers(g, algs=['ml','ecg','hedonic','naive','spectral'], spectral_ans=None):
 	answers = {}
 	for alg in algs:
 		answers[alg], duration = {}, None
 		begin = time()
-		if alg is 'ml': answers[alg]['ans'] = g.community_multilevel()
-		if alg is 'ecg': answers[alg]['ans'] = g.community_ecg(ens_size=32)
-		if alg is 'hedonic': answers[alg]['ans'], duration = hedonic_solve_igrpah(g)
+		if alg is 'ml':       answers[alg]['ans'] = g.community_multilevel()
+		if alg is 'ecg':      answers[alg]['ans'] = g.community_ecg(ens_size=32)
+		if alg is 'hedonic':  answers[alg]['ans'], duration = hedonic_solve_igrpah(g)
+		if alg is 'naive':    answers[alg]['ans'], duration = hedonic_solve_igrpah(g, naive=True)
 		if alg is 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
 		answers[alg]['sec'] = duration if duration else time() - begin
 	for alg in ['ml','ecg']:
@@ -158,10 +159,10 @@ def two_communities_old(G, clusters): # compara todas as possiveis combinações
 # 		# [{n0},{n1}]
 # 		# [{n1},{n0}]
 
-def hedonic_solve_igrpah(g):
+def hedonic_solve_igrpah(g, naive=False):
 	game = Game(g.get_edgelist())
 	duration = time()
-	game.play()
+	game.play(naive=naive)
 	duration = time() - duration
 	return from_label_to_dict(game.labels), duration
 
