@@ -38,7 +38,7 @@ def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min
 # 'min': pairwise similarity normalized with the minimum function
 # 'max': pairwise similarity normalized with the maximum function
 # Each measure can be adjusted (recommended) 
-def get_answers(g, algs=['ml','ecg','hedonic','spectral']):
+def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None):
 	answers = {}
 	for alg in algs:
 		answers[alg], duration = {}, None
@@ -46,8 +46,10 @@ def get_answers(g, algs=['ml','ecg','hedonic','spectral']):
 		if alg is 'ml': answers[alg]['ans'] = g.community_multilevel()
 		if alg is 'ecg': answers[alg]['ans'] = g.community_ecg(ens_size=32)
 		if alg is 'hedonic': answers[alg]['ans'], duration = hedonic_solve_igrpah(g)
-		if alg is 'spectral': answers[alg]['ans'], duration = spectral(g)
+		if alg is 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
 		answers[alg]['sec'] = duration if duration else time() - begin
+	for alg in ['ml','ecg']:
+		answers[alg]['ans'] = two_communities(g, answers[alg]['ans'])
 	return answers
 
 def get_file_name(folder='', outname='no_name'): # to output csv result
@@ -60,7 +62,6 @@ def get_file_name(folder='', outname='no_name'): # to output csv result
 	fullname = os.path.join(outdir, outname) 
 	return fullname
 
-# todo: nem sempre converge
 def get_ppg_fully_connected(numComm, commSize, p, q):
 	g = PPG(numComm, commSize, p, q) # g = ig.Graph.Famous('Zachary')
 	nodes2connect = [set() for _ in range(len(set([g.nodes[node]['block'] for node in g.nodes()])))]
@@ -104,11 +105,45 @@ def get_ppg_fully_connected(numComm, commSize, p, q):
 	G.add_edges(g.edges())
 	return G, GT
 
+def two_communities(G, clusters):
+	while len(clusters) > 2:
+		best_modularity, best_membership = 0, None
+		for i in range(len(clusters)-1):
+			for j in range(i, len(clusters)):
+				new_membership = [i if g == j else g for g in clusters.membership]
+				max_cluster = max(set(new_membership))
+				if j < max_cluster:
+					new_membership = [j if g == max_cluster else g for g in new_membership]
+				ans = ig.clustering.VertexClustering(G, new_membership)
+				if ans.modularity > best_modularity:
+					best_modularity = ans.modularity
+					best_membership = new_membership
+		clusters = ig.clustering.VertexClustering(G, best_membership)
+	return clusters
+
+def two_communities_old(G, clusters): # compara todas as possiveis combinações de 2 grupos
+	best_modularity, answer = 0, None
+	if len(clusters) > 2:
+		combinations = []
+		for i in range(2**(len(clusters)-1)): # fica inviavel pra muitos clusters, então unir o par que resulta na maior modularidade até ter apenas 2 clusters
+			combinations.append(('0'*len(clusters)+f'{i:b}')[-len(clusters):])
+		combinations = combinations[1:]
+		for comb in combinations:
+			groups = [[],[]]
+			for i, g in enumerate(comb):
+				groups[int(g)] += clusters[i]
+			membership = [0 for _ in range(len(clusters.membership))]
+			g = 0 if len(groups[0]) < len(groups[1]) else 1
+			for node in groups[g]:
+				membership[node] = 1
+			ans = ig.clustering.VertexClustering(G, membership)
+			if ans.modularity > best_modularity:
+				best_modularity = ans.modularity
+				answer = ans
+	return answer if answer else clusters
+
 #################################################################################################
 ## Algoritms #################################################################################################
-
-# todo: ver se ultimo level tem apenas 2 comunidades:
-# g.community_multilevel(weights=weights, return_levels=True)[0].membership
 
 # def solve_from_edgelist(edgelist):
 # 	clusters = [{},{}]
@@ -154,48 +189,47 @@ def spectral(G):
 #################################################################################################
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
-def compare(noises=np.linspace(.5,.5,1),
-	multipliers=np.concatenate(([.001], np.linspace(0,1,11)[1:])),
-	ps=np.linspace(.01,.1,11), instances=11, repetitions=11, numComm=2, commSize=111):
+def compare(multipliers=np.concatenate(([.01], np.linspace(0,1,11)[1:])),
+	ps=5, instances=5, repetitions=5, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
 
-	total = len(noises) * len(multipliers) * len(ps) * instances * repetitions
+	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
 	begin = time()
 	print(f'\n\nComparison Experiment - begin at:{begin} -- TOTAL = {total}\n\n')
-	for noi in noises:
-		# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
-		df_results = pd.DataFrame(columns=['p_in','mult','instance','repetition','algorithm','accuracy','method','seconds'])
-		for mult in multipliers:
-			for p in ps:
-				for i in range(instances):
-					G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult)
-					# spectral_answered, spectral_answer = False, None
-					for r in range(repetitions):
-						print(f'% = {round(went/total*100, 2)}%\tNoise = {np.where(noises==noi)[0][0]+1}/{len(noises)}\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {np.where(ps==p)[0][0]+1}/{len(ps)}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
-						# if not spectral_answered:
-						# 	spectral_answer = run_algorithm(G, GT, alg='spectral')
-						# onepass_answer = run_algorithm(G, GT, noise=noi, alg='onepass')
-						# hedonic_answer = run_algorithm(G, GT, noise=noi, alg='naive') # here
-						answers = get_answers(G)
-						ans_order = list(answers)
-						seconds = [answers[alg]['sec'] for alg in ans_order]
-						answers = [answers[alg]['ans'] for alg in ans_order]
-						scores = accuracies(G, answers, GT)
-						for alg, score, sec in zip(ans_order, scores, seconds):
-							for mthd, acc in score.items():
-								df_results = df_results.append({ # todo: colocar segundos, infos e robustez?
-									'p_in':p,
-									'mult':mult,
-									'instance':i,
-									'repetition':r,
-									'algorithm':alg,
-									'accuracy':acc,
-									'method': mthd,
-									'seconds':sec }, ignore_index=True)
-						went += 1
-						# infos and robustness
-		# df_results['q_over_p'] = df_results['p_out'] / df_results['p_in']
-		df_results.to_csv(get_file_name('comparisons', f'comparison_commSize={commSize}.csv'), index=False)
+# for noi in noises:
+	# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
+	df_results = pd.DataFrame(columns=['p_in','mult','instance','repetition','algorithm','accuracy','method','seconds'])
+	for mult in multipliers:
+		for p in np.linspace(.01,.1,ps):
+			for i in range(instances):
+				G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult)
+				spectral_ans = None
+				for r in range(repetitions):
+					print(f'% = {round(went/total*100, 2)}%\tNoise = {np.where(noises==noi)[0][0]+1}/{len(noises)}\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {np.where(ps==p)[0][0]+1}/{len(ps)}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
+					if not spectral_ans:
+						spectral_ans = {}
+						spectral_ans['ans'], spectral_ans['time'] = spectral(G)
+					answers = get_answers(G, spectral_ans=spectral_ans)
+					ans_order = list(answers)
+					seconds = [answers[alg]['sec'] for alg in ans_order]
+					answers = [answers[alg]['ans'] for alg in ans_order]
+					scores = accuracies(G, answers, GT)
+					# print(scores)
+					for alg, score, sec in zip(ans_order, scores, seconds):
+						for mthd, acc in score.items():
+							df_results = df_results.append({ # todo: colocar infos e robustez ?
+								'p_in':p,
+								'mult':mult,
+								'instance':i,
+								'repetition':r,
+								'algorithm':alg,
+								'accuracy':acc,
+								'method': mthd,
+								'seconds':sec }, ignore_index=True)
+					went += 1
+					# infos and robustness
+	# df_results['q_over_p'] = df_results['p_out'] / df_results['p_in']
+	df_results.to_csv(f'comparison_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
@@ -206,6 +240,10 @@ def compare(noises=np.linspace(.5,.5,1),
 if __name__ == "__main__":
 	compare()
 
-	# G, GT = get_ppg_fully_connected(2, 50, .2, .05)
+	# G, GT = get_ppg_fully_connected(2, 111, .05, .01)
 	# print(list(G.get_edgelist()))
 	# solve_from_edgelist(list(G.get_edgelist()))
+
+	# a = G.community_multilevel()
+	# a = two_communities(G, a)
+	# print(accuracies(G, [a], GT))

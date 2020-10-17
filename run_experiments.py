@@ -173,16 +173,16 @@ def move(G, node):
 	return G
 
 def check_status(here, there, dis_here, dis_there):
-	if   (here <  there) and (dis_here >  dis_there):
-		return 'move_ambos'
-	elif (here <  there) and (dis_here == dis_there):
-		return 'move_alpha0'
-	elif (here == there) and (dis_here >  dis_there):
-		return 'move_alpha1'
+	if   (here <  there) and (dis_here >  dis_there): # pa0>0 and pa1>0
+		return 'move_ambos' # almost robust
+	elif (here <  there) and (dis_here == dis_there): # pa0>0 and pa1==0
+		return 'move_alpha0' # almost robust
+	elif (here == there) and (dis_here >  dis_there): # pa0==0 and pa1>0
+		return 'move_alpha1' # almost robust
 	elif (here <  there) and (dis_here <  dis_there):
 		return 'depende_alpha0'
-	elif (here >  there) and (dis_here >  dis_there):
-		return 'depende_alpha1'
+	elif (here >  there) and (dis_here >  dis_there): # pa0<0 and pa1>0
+		return 'depende_alpha1' # almost robust
 	elif (here == there) and (dis_here == dis_there):
 		return 'independe'
 	elif (here >  there) and (dis_here <  dis_there):

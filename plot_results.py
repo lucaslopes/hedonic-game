@@ -208,21 +208,36 @@ def generate_fig_1():
 def generate_plot_comparion(filename=''):
 	font_size = 45
 	plt.clf()
-	matplotlib.rc('xtick', labelsize=font_size*.9)
-	matplotlib.rc('ytick', labelsize=font_size*.9)
-	fig, axes = plt.subplots(nrows=2, ncols=4, figsize=(50,20)) # num=None , dpi=250 , figsize=(7.8*4, 6.3)
+	matplotlib.rc('xtick', labelsize=font_size*.8)
+	matplotlib.rc('ytick', labelsize=font_size*.8)
+	fig, axes = plt.subplots(nrows=2, ncols=4, figsize=(60,30)) # num=None , dpi=250 , figsize=(7.8*4, 6.3)
 	i, j = 0, 0
 	df = pd.read_csv(filename)
 	methods = df['method'].unique()
 	for method in methods:
 		df_method = df[df['method']==method]
-		sns.lineplot(x='mult', y='accuracy', hue='algorithm', data=df_method, marker='o', linewidth=4.5, ax=axes[i][j])
-		plt.savefig(f'{filename[:-4]}_{method}.png')
+		ax = axes[i][j]
+		sns.lineplot(x='mult', y='accuracy', hue='algorithm', data=df_method, marker='o', linewidth=4, ax=ax)
+		ax.set_title(method, fontsize=font_size)
+		ax.set_xlabel('q/p', fontsize=font_size*.9)
+		ax.set_ylabel('accuracy', fontsize=font_size*.9)
+		ax.grid(True)
+		handles, labels = ax.get_legend_handles_labels()
+		handles, labels = handles[1:], labels[1:]
+		for h in handles:
+			h.set_linewidth(5)
+		ax.legend(fontsize=font_size*.7, handles=handles, labels=labels, loc='upper right')
 		j += 1
 		if j == 4:
 			j  = 0
 			i += 1
-	sns.violinplot(x='algorithm', y='seconds', data=df, fontsize=27.5, ax=axes[i][j])
+	ax = axes[i][j]
+	ax.set_title('speed', fontsize=font_size)
+	ax.set_xlabel('algorithms', fontsize=font_size*.9)
+	ax.set_ylabel('seconds', fontsize=font_size*.9)
+	ax.set(ylim=(0, .15))
+	sns.violinplot(x='algorithm', y='seconds', data=df, fontsize=27.5, ax=ax) # [df['method']=='rand']
+
 	plt.savefig(f'{filename[:-4]}_junto.png')
 
 ##############################################################################
@@ -234,5 +249,12 @@ if __name__ == "__main__":
 	# generate_gif()
 	# generate_fig_1()
 
-	generate_plot_comparion('outputs/comparisons/comparison_commSize=50.csv')
+	generate_plot_comparion('outputs/comparisons/comparison_commSize=111.csv')
+
+	# df = pd.read_csv('outputs/comparisons/comparison_commSize=111.csv')
+	# for alg in df['algorithm'].unique():
+	# 	plt.clf()
+	# 	plt.violinplot(df[df['algorithm']==alg]['seconds'])
+	# 	plt.savefig(f'{alg}.png')
+	# sns.violinplot(x='algorithm', y='seconds', data=df[df['method']=='rand'], fontsize=27.5, ax=ax)
  

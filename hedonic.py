@@ -115,11 +115,11 @@ class Game:
         else:
             return True
 
-    def satisfied(self, node, alpha=None):
+    def satisfied(self, node, alpha=None, profit=False):
         friends_here, friends_there, strangers_here, strangers_there = self.get_node_atributes(node)
         value_here  = self.hedonic_value(friends_here, strangers_here, alpha)
         value_there = self.hedonic_value(friends_there, strangers_there, alpha)
-        return value_here >= value_there
+        return value_there - value_here if profit else value_here >= value_there
     
     def move(self, node):
         there, here, _, _ = self.get_node_atributes(node)
@@ -143,7 +143,11 @@ class Game:
             moved = False
             shuffle(nodes_list)
             for node in nodes_list:
-                if not self.satisfied(node):
+                pft_A0 = self.satisfied(node, alpha=0, profit=True)
+                pft_A1 = self.satisfied(node, alpha=1, profit=True)
+                # if not self.satisfied(node): # naive
+                if ((pft_A0  > 0 and pft_A1 >= 0) or
+                    (pft_A0 <= 0 and pft_A1  > 0)): # almos robust
                     self.move(node)
                     moved = True
                     # print('moved', node)
@@ -172,7 +176,7 @@ class Game:
 
     def all_possible_states(self):
         possible_states = range(2 ** (len(self.labels)-1))
-        return [('0'*len(self.labels)+'{0:b}'.format(state))[-len(self.labels):] for state in possible_states]
+        return [('0'*len(self.labels)+f'{state:b}')[-len(self.labels):] for state in possible_states]
 	
     def potential_robustness_accuracy(self, possible_states=None):
 
