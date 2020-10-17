@@ -49,7 +49,7 @@ def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None): #
 		if alg is 'naive':    answers[alg]['ans'], duration = hedonic_solve_igrpah(g, naive=True)
 		if alg is 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
 		answers[alg]['sec'] = duration if duration else time() - begin
-	for alg in ['ml','ecg']:
+	for alg in [a for a in algs if a == 'ml' or a == 'ecg']:
 		answers[alg]['ans'] = two_communities(g, answers[alg]['ans'])
 	return answers
 
@@ -191,7 +191,7 @@ def spectral(G):
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=10, instances=10, repetitions=10, numComm=2, commSize=60): # noises=, #np.linspace(.5,.5,1)
+	ps=10, instances=10, repetitions=10, numComm=2, commSize=500): # noises=, #np.linspace(.5,.5,1)
 
 	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
@@ -210,7 +210,7 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 					if not spectral_ans:
 						spectral_ans = {}
 						spectral_ans['ans'], spectral_ans['time'] = spectral(G)
-					answers = get_answers(G, spectral_ans=spectral_ans)
+					answers = get_answers(G, algs=['hedonic','spectral'] , spectral_ans=spectral_ans)
 					ans_order = list(answers)
 					seconds = [answers[alg]['sec'] for alg in ans_order]
 					answers = [answers[alg]['ans'] for alg in ans_order]
@@ -228,7 +228,7 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 								'method': mthd,
 								'seconds':sec }, ignore_index=True)
 					went += 1
-	df_results.to_csv(f'ps={ps}_mults={multipliers}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results.to_csv(f'hed_vs_spectral__ps={ps}_mults={multipliers}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
