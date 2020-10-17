@@ -200,12 +200,12 @@ def compare(multipliers=np.concatenate(([.01], np.linspace(0,1,11)[1:])),
 	# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
 	df_results = pd.DataFrame(columns=['p_in','mult','instance','repetition','algorithm','accuracy','method','seconds'])
 	for mult in multipliers:
-		for p in np.linspace(.01,.1,ps):
+		for i_p, p in enumerate(np.linspace(.01,.1,ps)):
 			for i in range(instances):
 				G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult)
 				spectral_ans = None
 				for r in range(repetitions):
-					print(f'% = {round(went/total*100, 2)}%\tNoise = {np.where(noises==noi)[0][0]+1}/{len(noises)}\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {np.where(ps==p)[0][0]+1}/{len(ps)}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
+					print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{ps}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
 					if not spectral_ans:
 						spectral_ans = {}
 						spectral_ans['ans'], spectral_ans['time'] = spectral(G)
