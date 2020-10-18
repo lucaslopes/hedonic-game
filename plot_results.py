@@ -206,13 +206,13 @@ def generate_fig_1():
 ## Plot Comparison ############################################################################
 
 def generate_plot_comparion(filename=''):
+	df = pd.read_csv(filename)
 	font_size = 45
 	plt.clf()
 	matplotlib.rc('xtick', labelsize=font_size*.8)
 	matplotlib.rc('ytick', labelsize=font_size*.8)
 	fig, axes = plt.subplots(nrows=2, ncols=4, figsize=(60,30)) # num=None , dpi=250 , figsize=(7.8*4, 6.3)
 	i, j = 0, 0
-	df = pd.read_csv(filename)
 	methods = df['method'].unique()
 	for method in methods:
 		df_method = df[df['method']==method]
@@ -269,7 +269,7 @@ if __name__ == "__main__":
 	# generate_gif()
 	# generate_fig_1()
 
-	name = 'ps=3_mults=11_inst=3_reps=3_nComm=2_commSize=25.csv'
+	name = 'ps=10_mults=11_inst=10_reps=10_nComm=2_commSize=500.csv'
 	generate_plot_comparion(f'outputs/comparisons/{name}')
 
 	# df = pd.read_csv('outputs/comparisons/comparison_commSize=111.csv')

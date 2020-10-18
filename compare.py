@@ -66,6 +66,18 @@ def get_file_name(folder='', outname='no_name'): # to output csv result
 	fullname = os.path.join(outdir, outname) 
 	return fullname
 
+def get_ppg_max_components(numComm, commSize, p, q):
+	g = PPG(numComm, commSize, p, q)
+	g = nx.convert_node_labels_to_integers(g.subgraph(max(nx.connected_components(g), key=len)))
+	GT = {}
+	for node in g.nodes:
+		GT[node] = (g.nodes[node]['block'])
+	# convert graph 'G' from nx to igraph format:
+	G = ig.Graph(directed=False)
+	G.add_vertices(g.nodes())
+	G.add_edges(g.edges())
+	return G, GT
+
 def get_ppg_fully_connected(numComm, commSize, p, q):
 	g = PPG(numComm, commSize, p, q) # g = ig.Graph.Famous('Zachary')
 	nodes2connect = [set() for _ in range(len(set([g.nodes[node]['block'] for node in g.nodes()])))]
@@ -241,8 +253,8 @@ def spectral(G):
 #################################################################################################
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
-def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=10, instances=10, repetitions=10, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
+def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
+	ps=5, instances=30, repetitions=30, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
 
 	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
@@ -254,7 +266,8 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 	for mult in multipliers:
 		for i_p, p in enumerate(np.linspace(.1,1,ps)): # default: .01 to .1
 			for i in range(instances):
-				G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult)
+				# G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult)
+				G, GT = get_ppg_max_components(numComm, commSize, p, p*mult)
 				spectral_ans = None
 				for r in range(repetitions):
 					print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{ps}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
@@ -283,7 +296,7 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 	df_results = pd.DataFrame()
 	for col, values in columns.items():
 		df_results[col] = values
-	df_results.to_csv(f'ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results.to_csv(f'max_components__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
