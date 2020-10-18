@@ -44,16 +44,18 @@ def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None): #
 		answers[alg], duration = {}, None
 		begin = time()
 		if alg is 'ml':       answers[alg]['ans'] = g.community_multilevel()
-		if alg is 'ecg':      answers[alg]['ans'] = g.community_ecg(ens_size=32)
+		if alg is 'ecg':      answers[alg]['ans'] = g.community_ecg() # ens_size=32
 		if alg is 'hedonic':  answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igrpah(g)
 		if alg is 'naive':    answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igrpah(g, naive=True)
 		if alg is 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
 		answers[alg]['sec'] = duration if duration else time() - begin
-	for alg in ['ml_s1','ml_s2','ecg_s1','ecg_s2']: # [a for a in algs if a == 'ml' or a == 'ecg']:
-		ref = alg.split('_')[0]
-		answers[alg] = {'ans':None, 'sec':answers[ref]['sec']}
-		if alg[-1] == '1': answers[alg]['ans'] = two_communities_old(g, answers[ref]['ans'])
-		if alg[-1] == '2': answers[alg]['ans'] = two_communities(g, answers[ref]['ans'])
+	for alg in [a for a in algs if a == 'ml' or a == 'ecg']:
+		answers[alg]['ans'] = two_communities(g, answers[alg]['ans'])
+	# for alg in ['ml_s1','ml_s2','ecg_s1','ecg_s2']: # [a for a in algs if a == 'ml' or a == 'ecg']:
+	# 	ref = alg.split('_')[0]
+	# 	answers[alg] = {'ans':None, 'sec':answers[ref]['sec']}
+	# 	if alg[-1] == '1': answers[alg]['ans'] = two_communities_old(g, answers[ref]['ans'])
+	# 	if alg[-1] == '2': answers[alg]['ans'] = two_communities(g, answers[ref]['ans'])
 	return answers
 
 def get_file_name(folder='', outname='no_name'): # to output csv result
@@ -266,15 +268,15 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 	for mult in multipliers:
 		for i_p, p in enumerate(np.linspace(.1,1,ps)): # default: .01 to .1
 			for i in range(instances):
-				# G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult)
-				G, GT = get_ppg_max_components(numComm, commSize, p, p*mult)
+				G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult)
+				# G, GT = get_ppg_max_components(numComm, commSize, p, p*mult)
 				spectral_ans = None
 				for r in range(repetitions):
 					print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{ps}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
 					if not spectral_ans:
 						spectral_ans = {}
 						spectral_ans['ans'], spectral_ans['time'] = spectral(G)
-					answers = get_answers(G, spectral_ans=spectral_ans, algs=['ml','ecg']) #  algs=['hedonic','naive']
+					answers = get_answers(G, spectral_ans=spectral_ans) #  algs=['hedonic','naive'] , algs=['ml','ecg']
 					ans_order = list(answers)
 					seconds = [answers[alg]['sec'] for alg in ans_order]
 					robust  = [answers[alg]['rob'] if 'rob' in answers[alg] else 0 for alg in ans_order] # only hedonics
@@ -296,7 +298,7 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 	df_results = pd.DataFrame()
 	for col, values in columns.items():
 		df_results[col] = values
-	df_results.to_csv(f'max_components__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results.to_csv(f'fully_connected__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
