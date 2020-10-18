@@ -223,7 +223,7 @@ def generate_plot_comparion(filename=''):
 		ax.set_ylabel('accuracy', fontsize=font_size*.9)
 		ax.grid(True)
 		handles, labels = ax.get_legend_handles_labels()
-		handles, labels = handles[1:], labels[1:]
+		# handles, labels = handles[1:], labels[1:]
 		for h in handles:
 			h.set_linewidth(5)
 		ax.legend(fontsize=font_size*.7, handles=handles, labels=labels, loc='upper right')
@@ -269,7 +269,7 @@ if __name__ == "__main__":
 	# generate_gif()
 	# generate_fig_1()
 
-	# generate_plot_comparion('outputs/comparisons/comparison_commSize=50_naive.csv')
+	generate_plot_comparion('outputs/comparisons/ps=10_mults=11_inst=10_reps=10_nComm=2_commSize=150.csv')
 
 	# df = pd.read_csv('outputs/comparisons/comparison_commSize=111.csv')
 	# for alg in df['algorithm'].unique():
@@ -278,5 +278,5 @@ if __name__ == "__main__":
 	# 	plt.savefig(f'{alg}.png')
 	# sns.violinplot(x='algorithm', y='seconds', data=df[df['method']=='rand'], fontsize=27.5, ax=ax)
 
-	plot_robust_vs_naive()
+	# plot_robust_vs_naive()
  
