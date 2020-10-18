@@ -239,7 +239,7 @@ def spectral(G):
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=10, instances=10, repetitions=10, numComm=2, commSize=500): # noises=, #np.linspace(.5,.5,1)
+	ps=19, instances=10, repetitions=10, numComm=2, commSize=150): # noises=, #np.linspace(.5,.5,1)
 
 	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
@@ -249,7 +249,7 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 	# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
 	columns={'p_in':[], 'mult':[], 'instance':[], 'repetition':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}
 	for mult in multipliers:
-		for i_p, p in enumerate(np.linspace(.01,.1,ps)):
+		for i_p, p in enumerate(np.linspace(.1,1,ps)): # default: .01 to .1
 			for i in range(instances):
 				G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult)
 				spectral_ans = None
