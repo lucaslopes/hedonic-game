@@ -30,12 +30,11 @@ class Game:
         self.edge_list = edge_list
         self.labels = [0] * len(nodes)
         self.neighbors = neighbors
-        self.GT = [0] * int(len(self.labels)/2) + [1] * int(len(self.labels)/2) # todo: load GT
+        # self.GT = [0] * int(len(self.labels)/2) + [1] * int(len(self.labels)/2) # todo: load GT
 
     def set_labels(self, labels=[], prob=.5):
         if len(labels) != len(self.labels):
-            for _ in range(len(self.labels)):
-                labels.append(0 if prob > random() else 1)
+            labels = [0 if prob > random() else 1 for _ in range(len(self.labels))]
         on_c0 = labels.count(0)
         with_me = [0] * len(self.labels)
         edges = [0, 0]
@@ -96,7 +95,12 @@ class Game:
         else: return pot_c0 + pot_c1
 
     def get_node_atributes(self, node):
-        friends_here  = self.with_me[node]
+        try:
+            friends_here  = self.with_me[node]
+        except:
+            print(node, len(self.labels))
+            print(len(self.with_me), self.with_me)
+            print(self.labels)
         friends_there = len(self.neighbors[node]) - friends_here
         strangers_here  = self.clusters['nodes'][self.labels[node]]-1 - friends_here
         strangers_there = self.clusters['nodes'][1-self.labels[node]] - friends_there
