@@ -20,7 +20,7 @@ def from_label_to_dict(labels):
 		clusters[label].add(i)
 	return {val:idx for idx, part in enumerate(clusters) for val in part}
 
-def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min','max','diff']):
+def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min','max','dist']):
 	# algs=['ml','ecg','hedonic','spectral']
 	result = []
 	for i, ans in enumerate(answers):
@@ -49,8 +49,11 @@ def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None): #
 		if alg is 'naive':    answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igrpah(g, naive=True)
 		if alg is 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
 		answers[alg]['sec'] = duration if duration else time() - begin
-	for alg in [a for a in algs if a == 'ml' or a == 'ecg']:
-		answers[alg]['ans'] = two_communities(g, answers[alg]['ans'])
+	for alg in ['ml_s1','ml_s2','ecg_s1','ecg_s2']: # [a for a in algs if a == 'ml' or a == 'ecg']:
+		ref = alg.split('_')[0]
+		answers[alg] = {'ans':None, 'sec':answers[ref]['sec']}
+		if alg[-1] == '1': answers[alg]['ans'] = two_communities_old(g, answers[ref]['ans'])
+		if alg[-1] == '2': answers[alg]['ans'] = two_communities(g, answers[ref]['ans'])
 	return answers
 
 def get_file_name(folder='', outname='no_name'): # to output csv result
@@ -188,7 +191,7 @@ def two_communities_old(G, clusters): # compara todas as possiveis combinações
 			if ans.modularity > best_modularity:
 				best_modularity = ans.modularity
 				answer = ans
-	print(time()-now)
+	# print(time()-now)
 	return answer if answer else clusters
 
 #################################################################################################
@@ -239,7 +242,7 @@ def spectral(G):
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=19, instances=10, repetitions=10, numComm=2, commSize=150): # noises=, #np.linspace(.5,.5,1)
+	ps=10, instances=10, repetitions=10, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
 
 	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
@@ -258,12 +261,12 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 					if not spectral_ans:
 						spectral_ans = {}
 						spectral_ans['ans'], spectral_ans['time'] = spectral(G)
-					answers = get_answers(G, spectral_ans=spectral_ans) #  algs=['hedonic','naive']
+					answers = get_answers(G, spectral_ans=spectral_ans, algs=['ml','ecg']) #  algs=['hedonic','naive']
 					ans_order = list(answers)
 					seconds = [answers[alg]['sec'] for alg in ans_order]
 					robust  = [answers[alg]['rob'] if 'rob' in answers[alg] else 0 for alg in ans_order] # only hedonics
 					answers = [answers[alg]['ans'] for alg in ans_order]
-					scores = accuracies(G, answers, GT) # , methods=['diff']
+					scores = accuracies(G, answers, GT) # , methods=['dist']
 					# print(scores)
 					for alg, score, rob, sec in zip(ans_order, scores, robust, seconds):
 						for mthd, acc in score.items():

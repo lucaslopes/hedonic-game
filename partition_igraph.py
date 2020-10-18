@@ -5,7 +5,7 @@ import igraph
 # from compare import hedonic_solve_igrpah
 from hedonic import Game
 
-def calc_score_diff(u, v):
+def calc_score_dist(u, v):
 	x = [0 for _ in range(len(u))]
 	y = [0 for _ in range(len(v))]
 	# print('u:', type(u), u, '\n'*2)
@@ -92,8 +92,8 @@ def gam(self, u, v, method="rand", adjusted=True):
 		if method=="max":
 			if (np.max([su,sv])-su*sv/m) == 0: return 0
 			else: return((suv-su*sv/m)/(np.max([su,sv])-su*sv/m))
-		if method=="diff":
-			return calc_score_diff(d1, d2)
+		if method=="dist":
+			return calc_score_dist(d1, d2)
 		else:
 			print('Wrong method!')
 
@@ -112,8 +112,8 @@ def gam(self, u, v, method="rand", adjusted=True):
 			return(suv/np.min([su,sv]))
 		if method=="max":
 			return(suv/np.max([su,sv]))
-		if method=="diff":
-			return calc_score_diff(d1, d2)
+		if method=="dist":
+			return calc_score_dist(d1, d2)
 		else:
 			print('Wrong method!')
 		
@@ -199,5 +199,5 @@ if __name__ == "__main__":
 	part3 = hedonic_solve_igrpah(g)[0]
 	print(part2)
 	print(part3)
-	print(g.gam(part1, part2, method='diff'))
-	print(g.gam(part3, part2, method='diff'))
+	print(g.gam(part1, part2, method='dist'))
+	print(g.gam(part3, part2, method='dist'))
