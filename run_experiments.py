@@ -16,7 +16,8 @@ import scipy.sparse.linalg
 #################################################################################################
 ## Algoritms #################################################################################################
 
-def almost_robust(G): # Hedonic (almost) Robust
+def almost_robust(G, inspect=False): # Hedonic (almost) Robust
+	# now = time()
 	moved, nodes_list = True, list(G.nodes)
 	while moved is True:
 		moved = False
@@ -25,9 +26,11 @@ def almost_robust(G): # Hedonic (almost) Robust
 			if check_status(*get_node_atributes(G, node)) in ['move_ambos', 'move_alpha0', 'move_alpha1', 'depende_alpha1']:
 				G = move(G, node)
 				moved = True
-	for node in G.nodes:
-		if not satisfied(G, node):
-			print('>>> ROBUST NOT FOUND!', node, get_node_atributes(G, node), G.nodes[node]['cluster'], G.clusters_nodes, check_status(*get_node_atributes(G, node)))
+	if inspect:
+		for node in G.nodes:
+			if not satisfied(G, node):
+				print('>>> ROBUST NOT FOUND!', node, get_node_atributes(G, node), G.nodes[node]['cluster'], G.clusters_nodes, check_status(*get_node_atributes(G, node)))
+	# print('networkx:', time()-now)
 	return G
 
 def find_equilibrium_shuffle(G, alpha=0): # Hedonic Naive

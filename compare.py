@@ -9,6 +9,8 @@ from hedonic import Game
 from time import time
 from random import random, choice, shuffle, sample
 
+from run_experiments import run_algorithm
+
 #################################################################################################
 ## Functions #################################################################################################
 
@@ -45,8 +47,8 @@ def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None): #
 		begin = time()
 		if alg is 'ml':       answers[alg]['ans'] = g.community_multilevel()
 		if alg is 'ecg':      answers[alg]['ans'] = g.community_ecg() # ens_size=32
-		if alg is 'hedonic':  answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igrpah(g)
-		if alg is 'naive':    answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igrpah(g, naive=True)
+		if alg is 'hedonic':  answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igraph(g)
+		if alg is 'naive':    answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igraph(g, naive=True)
 		if alg is 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
 		answers[alg]['sec'] = duration if duration else time() - begin
 	for alg in [a for a in algs if a == 'ml' or a == 'ecg']:
@@ -68,19 +70,24 @@ def get_file_name(folder='', outname='no_name'): # to output csv result
 	fullname = os.path.join(outdir, outname) 
 	return fullname
 
-def get_ppg_max_components(numComm, commSize, p, q):
-	g = PPG(numComm, commSize, p, q)
-	g = nx.convert_node_labels_to_integers(g.subgraph(max(nx.connected_components(g), key=len)))
+def convert_from_netx_to_igraph(netx_G): # convert graph 'G' from nx to igraph format:
 	GT = {}
-	for node in g.nodes:
-		GT[node] = (g.nodes[node]['block'])
-	# convert graph 'G' from nx to igraph format:
+	for node in netx_G.nodes:
+		GT[node] = (netx_G.nodes[node]['block'])
 	G = ig.Graph(directed=False)
-	G.add_vertices(g.nodes())
-	G.add_edges(g.edges())
+	G.add_vertices(netx_G.nodes())
+	G.add_edges(netx_G.edges())
 	return G, GT
 
-def get_ppg_fully_connected(numComm, commSize, p, q):
+def get_ppg_max_components(numComm, commSize, p, q):
+	g = PPG(numComm, commSize, p, q)
+	infos = {'nodes':len(g.nodes), 'edges':len(g.edges)}
+	g = nx.convert_node_labels_to_integers(g.subgraph(max(nx.connected_components(g), key=len)))
+	infos['max_comp'] = len(g.nodes)
+	infos['gt_balance'] = [g.nodes[node]['block'] for node in g.nodes].count(0)/len(g.nodes)
+	return convert_from_netx_to_igraph(g), infos
+
+def get_ppg_fully_connected(numComm, commSize, p, q, netx=False):
 	g = PPG(numComm, commSize, p, q) # g = ig.Graph.Famous('Zachary')
 	nodes2connect = [set() for _ in range(len(set([g.nodes[node]['block'] for node in g.nodes()])))]
 	for node in g.nodes(): # print(node, [friend for friend in g.neighbors(node)])
@@ -115,13 +122,12 @@ def get_ppg_fully_connected(numComm, commSize, p, q):
 					nodes2connect[i].remove(friend)
 				sizes = [len(cluster) for cluster in nodes2connect]
 				break
-	true_comm = [set(list(range(commSize*i, commSize*(i+1)))) for i in range(numComm)]
-	GT = {val:idx for idx, part in enumerate(true_comm) for val in part}
-	# convert graph 'G' from nx to igraph format:
-	G = ig.Graph(directed=False)
-	G.add_vertices(g.nodes())
-	G.add_edges(g.edges())
-	return G, GT
+	
+	infos = {'nodes':len(g.nodes), 'max_comp':len(g.nodes), 'edges':len(g.edges), 'gt_balance':}
+	if netx: # networkx
+		return (g, [g.nodes[node]['block'] for node in g.nodes]), infos
+	else: # igraph
+		return convert_from_netx_to_igraph(g), infos
 
 def subset_sum(numbers, target, partial=[]):
 	s = sum(partial)
@@ -224,7 +230,14 @@ def two_communities_old(G, clusters): # compara todas as possiveis combinações
 # 		# [{n0},{n1}]
 # 		# [{n1},{n0}]
 
-def hedonic_solve_igrpah(g, naive=False):
+def hedonic_solve_networkx(g, naive=False):
+	game = Game(g.edges())
+	duration = time()
+	game.play(naive=naive)
+	duration = time() - duration
+	return game.labels, duration, game.calc_robustness()
+
+def hedonic_solve_igraph(g, naive=False):
 	game = Game(g.get_edgelist())
 	duration = time()
 	game.play(naive=naive)
@@ -253,10 +266,41 @@ def spectral(G):
 # 	return G
 
 #################################################################################################
+## Compare speed: Networkx vs Python naive ######################################################
+
+def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
+	ps=5, instances=10, repetitions=10, numComm=2, commSize=250):
+	
+	total = len(multipliers) * ps * instances * repetitions # len(noises) 
+	went  = 0
+	begin = time()
+	print(f'\n\nComparison Experiment - begin at:{begin} -- TOTAL = {total}\n\n')
+
+	cols = {'ps':[], 'mults':[], 'secs':[], 'alg':[]}
+	for mult in multipliers:
+		for i_p, p in enumerate(np.linspace(.01,.1,ps)): # ps
+			for i in range(instances):
+				G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult, netx=True)
+				for r in range(repetitions):
+					print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{ps}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
+					sec0 = run_algorithm(G, GT, alg='hedonic')[0]
+					sec1 = hedonic_solve_networkx(G)[1]
+					for alg, sec in zip(['netx','python'], [sec0,sec1]):
+						cols['ps'].append(p)
+						cols['mults'].append(mult)
+						cols['secs'].append(sec)
+						cols['alg'].append(alg)
+					went += 1
+	df_results = pd.DataFrame()
+	for col, values in cols.items():
+		df_results[col] = values
+	df_results.to_csv(f'speed_test__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+
+#################################################################################################
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
-	ps=5, instances=30, repetitions=30, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
+	ps=5, instances=20, repetitions=20, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
 
 	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
@@ -264,12 +308,12 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 	print(f'\n\nComparison Experiment - begin at:{begin} -- TOTAL = {total}\n\n')
 # for noi in noises:
 	# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
-	columns={'p_in':[], 'mult':[], 'instance':[], 'repetition':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}
+	columns={'nodes':[], 'max_comp':[], 'edges':[], 'gt_balance':[], 'p_in':[], 'mult':[], 'instance':[], 'repetition':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}
 	for mult in multipliers:
-		for i_p, p in enumerate(np.linspace(.1,1,ps)): # default: .01 to .1
+		for i_p, p in enumerate(np.linspace(.01,.1,ps)): # default: .01 to .1
 			for i in range(instances):
-				# G, GT = get_ppg_fully_connected(numComm, commSize, p, p*mult)
-				G, GT = get_ppg_max_components(numComm, commSize, p, p*mult)
+				(G, GT), infos = get_ppg_fully_connected(numComm, commSize, p, p*mult)
+				# (G, GT), infos = get_ppg_max_components(numComm, commSize, p, p*mult)
 				spectral_ans = None
 				for r in range(repetitions):
 					print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{ps}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
@@ -285,6 +329,10 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 					# print(scores)
 					for alg, score, rob, sec in zip(ans_order, scores, robust, seconds):
 						for mthd, acc in score.items():
+							columns['nodes'].append(infos['nodes'])
+							columns['max_comp'].append(infos['max_comp'])
+							columns['edges'].append(infos['edges'])
+							columns['gt_balance'].append(infos['gt_balance'])
 							columns['p_in'].append(p)
 							columns['mult'].append(mult)
 							columns['instance'].append(i)
@@ -298,7 +346,7 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 	df_results = pd.DataFrame()
 	for col, values in columns.items():
 		df_results[col] = values
-	df_results.to_csv(f'max_components__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results.to_csv(f'fully_connected__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
@@ -309,10 +357,12 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 if __name__ == "__main__":
 	compare()
 
-	# G, GT = get_ppg_fully_connected(2, 111, .05, .01)
+	# G, GT = get_ppg_fully_connected(2, 111, .05, .01, netx=True)
 	# print(list(G.get_edgelist()))
 	# solve_from_edgelist(list(G.get_edgelist()))
 
 	# a = G.community_multilevel()
 	# a = two_communities(G, a)
 	# print(accuracies(G, [a], GT))
+
+	# speed_test()

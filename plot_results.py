@@ -207,6 +207,12 @@ def generate_fig_1():
 
 def generate_plot_comparion(filename=''):
 	df = pd.read_csv(filename)
+	
+	print(len(df))
+	df['q'] = df['p_in'] * df['mult']
+	df = df[(df['p_in']+df['q']) / 2 > np.log2(500*2)] # ( p+q ) / 2 > log n
+	print(len(df))
+
 	font_size = 45
 	plt.clf()
 	matplotlib.rc('xtick', labelsize=font_size*.8)
@@ -233,12 +239,20 @@ def generate_plot_comparion(filename=''):
 			i += 1
 	ax = axes[i][j]
 	ax.set_title('speed', fontsize=font_size)
-	ax.set_xlabel('algorithms', fontsize=font_size*.9)
+	ax.set_xlabel('q/p', fontsize=font_size*.9) # algorithms
 	ax.set_ylabel('seconds', fontsize=font_size*.9)
-	ax.set(ylim=(0, .15))
-	sns.violinplot(x='algorithm', y='seconds', data=df, fontsize=27.5, ax=ax) # [df['method']=='rand']
+	# ax. # log scale
+	# ax.set(ylim=(0, .15))
+	# sns.violinplot(x='algorithm', y='seconds', data=df, fontsize=27.5, ax=ax) # [df['method']=='rand']
+	
+	sns.lineplot(x='mult', y='seconds', hue='algorithm', data=df[df['method']=='dist'], marker='o', linewidth=4, ax=ax)
+	ax.grid(True)
+	handles, labels = ax.get_legend_handles_labels()
+	for h in handles:
+		h.set_linewidth(5)
+	ax.legend(fontsize=font_size*.7, handles=handles, labels=labels, loc='upper left')
 
-	plt.savefig(f'{filename[:-4]}_junto.png')
+	plt.savefig(f'{filename[:-4]}_junto_filter.png')
 
 ##########################
 ## Hedonic Robust vs Naive
@@ -260,6 +274,26 @@ def plot_robust_vs_naive():
 	sns.violinplot(sec1, alpha=.1, color='red') # [df['method']=='rand']
 	plt.show()
 
+##########################
+## Python Naive vs Networkx
+
+def plot_python_vs_netx(filename=''):
+	df = pd.read_csv(filename)
+	plt.clf()
+	# matplotlib.rc('xtick', labelsize=font_size*.8)
+	# matplotlib.rc('ytick', labelsize=font_size*.8)
+	fig, ax = plt.subplots(dpi=200) # nrows=2, ncols=4, figsize=(60,30)  num=None , dpi=250 , figsize=(7.8*4, 6.3)
+	sns.lineplot(x='mults', y='secs', hue='alg', data=df, marker='o', linewidth=4, ax=ax) # , ax=ax
+	ax.set_title('time comparison between implementations') # , fontsize=font_size
+	ax.set_xlabel('q/p') # algorithms , fontsize=font_size*.9
+	ax.set_ylabel('seconds') # , fontsize=font_size*.9
+	handles, labels = ax.get_legend_handles_labels()
+	labels = ['previous','current'] # 'implementations'
+	for h in handles:
+		h.set_linewidth(4)
+	leg = ax.legend(handles=handles, labels=labels) # , loc=leg_loc
+	plt.savefig(f'{filename[:-4]}_time.png')
+
 ##############################################################################
 ## Main ############################################################################
 
@@ -280,4 +314,5 @@ if __name__ == "__main__":
 	# sns.violinplot(x='algorithm', y='seconds', data=df[df['method']=='rand'], fontsize=27.5, ax=ax)
 
 	# plot_robust_vs_naive()
- 
+
+	# plot_python_vs_netx('outputs/speed_python_vs_netx/speed_test__ps=5_mults=6_inst=10_reps=10_nComm=2_commSize=250.csv')

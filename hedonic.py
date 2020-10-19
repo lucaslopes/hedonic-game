@@ -95,12 +95,7 @@ class Game:
         else: return pot_c0 + pot_c1
 
     def get_node_atributes(self, node):
-        try:
-            friends_here  = self.with_me[node]
-        except:
-            print(node, len(self.labels))
-            print(len(self.with_me), self.with_me)
-            print(self.labels)
+        friends_here  = self.with_me[node]
         friends_there = len(self.neighbors[node]) - friends_here
         strangers_here  = self.clusters['nodes'][self.labels[node]]-1 - friends_here
         strangers_there = self.clusters['nodes'][1-self.labels[node]] - friends_there
@@ -142,6 +137,7 @@ class Game:
         # print(node, self.get_node_atributes(node), l)
 
     def play(self, alpha=None, naive=False):
+        # now = time()
         moved, nodes_list = True, list(range(len(self.labels)))
         while moved is True:
             moved = False
@@ -158,6 +154,7 @@ class Game:
                     self.move(node)
                     moved = True
                     # print('moved', node)
+        # print('python naive:', time()-now)
 
     def accuracy(self, x=None,y=None): # WARNING: x and y must be only 0 or 1
         if x is None:
