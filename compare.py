@@ -299,8 +299,8 @@ def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 #################################################################################################
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
-def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
-	ps=5, instances=20, repetitions=20, numComm=2, commSize=50): # noises=, #np.linspace(.5,.5,1)
+def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
+	ps=10, instances=10, repetitions=10, numComm=2, commSize=500): # noises=, #np.linspace(.5,.5,1)
 
 	total = len(multipliers) * ps * instances * repetitions # len(noises) 
 	went  = 0
@@ -312,8 +312,8 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 	for mult in multipliers:
 		for i_p, p in enumerate(np.linspace(.01,.1,ps)): # default: .01 to .1
 			for i in range(instances):
-				(G, GT), infos = get_ppg_fully_connected(numComm, commSize, p, p*mult)
-				# (G, GT), infos = get_ppg_max_components(numComm, commSize, p, p*mult)
+				# (G, GT), infos = get_ppg_fully_connected(numComm, commSize, p, p*mult)
+				(G, GT), infos = get_ppg_max_components(numComm, commSize, p, p*mult)
 				spectral_ans = None
 				for r in range(repetitions):
 					print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{ps}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
@@ -346,7 +346,7 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 	df_results = pd.DataFrame()
 	for col, values in columns.items():
 		df_results[col] = values
-	df_results.to_csv(f'fully_connected__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results.to_csv(f'max_components__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################

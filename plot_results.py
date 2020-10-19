@@ -208,10 +208,10 @@ def generate_fig_1():
 def generate_plot_comparion(filename=''):
 	df = pd.read_csv(filename)
 	
-	print(len(df))
-	df['q'] = df['p_in'] * df['mult']
-	df = df[(df['p_in']+df['q']) / 2 > np.log2(500*2)] # ( p+q ) / 2 > log n
-	print(len(df))
+	# print(len(df))
+	# df['q'] = df['p_in'] * df['mult']
+	# df = df[(df['p_in']+df['q']) / 2 > np.log2(500*2)] # ( p+q ) / 2 > log n
+	# print(len(df))
 
 	font_size = 45
 	plt.clf()
@@ -303,7 +303,7 @@ if __name__ == "__main__":
 	# generate_gif()
 	# generate_fig_1()
 
-	name = 'ps=10_mults=11_inst=10_reps=10_nComm=2_commSize=500.csv'
+	name = 'max_components__ps=5_mults=6_inst=20_reps=20_nComm=2_commSize=50.csv'
 	generate_plot_comparion(f'outputs/comparisons/{name}')
 
 	# df = pd.read_csv('outputs/comparisons/comparison_commSize=111.csv')
