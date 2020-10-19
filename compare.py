@@ -16,12 +16,11 @@ from run_experiments import run_algorithm
 
 def from_label_to_dict(labels):
 	# funcoes de acc do gam recebem lista de sets, enquanto que nossa recebe lista com labels
-	num_clusters = len(set(labels))
-	clusters = [set() for _ in range(num_clusters)]
-	for i, label in enumerate(labels):
-		clusters[label].add(i)
-	return {val:idx for idx, part in enumerate(clusters) for val in part}
-
+	dict_labels = {}
+	for node, label in enumerate(labels):
+		dict_labels[node] = label
+	return dict_labels
+	
 def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min','max','dist']):
 	# algs=['ml','ecg','hedonic','spectral']
 	result = []
@@ -300,9 +299,9 @@ def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=10, instances=10, repetitions=10, numComm=2, commSize=500): # noises=, #np.linspace(.5,.5,1)
+	ps=np.linspace(.01,.1,10), instances=10, repetitions=10, numComm=2, commSize=500, output_name=''): # noises=, #np.linspace(.5,.5,1)
 
-	total = len(multipliers) * ps * instances * repetitions # len(noises) 
+	total = len(multipliers) * len(ps) * instances * repetitions # len(noises) 
 	went  = 0
 	begin = time()
 	print(f'\n\nComparison Experiment - begin at:{begin} -- TOTAL = {total}\n\n')
@@ -310,13 +309,13 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 	# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
 	columns={'nodes':[], 'max_comp':[], 'edges':[], 'gt_balance':[], 'p_in':[], 'mult':[], 'instance':[], 'repetition':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}
 	for mult in multipliers:
-		for i_p, p in enumerate(np.linspace(.01,.1,ps)): # default: .01 to .1
+		for i_p, p in enumerate(ps): # default: .01 to .1
 			for i in range(instances):
 				# (G, GT), infos = get_ppg_fully_connected(numComm, commSize, p, p*mult)
 				(G, GT), infos = get_ppg_max_components(numComm, commSize, p, p*mult)
 				spectral_ans = None
 				for r in range(repetitions):
-					print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{ps}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
+					print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{len(ps)}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
 					if not spectral_ans:
 						spectral_ans = {}
 						spectral_ans['ans'], spectral_ans['time'] = spectral(G)
@@ -346,7 +345,7 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 	df_results = pd.DataFrame()
 	for col, values in columns.items():
 		df_results[col] = values
-	df_results.to_csv(f'max_components__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results.to_csv(f'{output_name}__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
@@ -355,7 +354,9 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 # spell run --pip-req requirements.txt 'python compare.py'
 
 if __name__ == "__main__":
-	compare()
+	compare(output_name='dict_label_fix__max_components')
+
+	# compare(multipliers=np.array([1]), ps=np.array([.1]), instances=100, repetitions=100, numComm=2, commSize=250, output_name='tttest') # noises=, #np.linspace(.5,.5,1)
 
 	# G, GT = get_ppg_fully_connected(2, 111, .05, .01, netx=True)
 	# print(list(G.get_edgelist()))
