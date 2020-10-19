@@ -123,7 +123,7 @@ def get_ppg_fully_connected(numComm, commSize, p, q, netx=False):
 				sizes = [len(cluster) for cluster in nodes2connect]
 				break
 	
-	infos = {'nodes':len(g.nodes), 'max_comp':len(g.nodes), 'edges':len(g.edges), 'gt_balance':}
+	infos = {'nodes':len(g.nodes), 'max_comp':len(g.nodes), 'edges':len(g.edges), 'gt_balance':[g.nodes[node]['block'] for node in g.nodes].count(0)/len(g.nodes)}
 	if netx: # networkx
 		return (g, [g.nodes[node]['block'] for node in g.nodes]), infos
 	else: # igraph
