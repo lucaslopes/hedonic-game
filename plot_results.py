@@ -205,9 +205,18 @@ def generate_fig_1():
 ##############################################################################
 ## Plot Comparison ############################################################################
 
+def filter_gt_balanced(df):
+	print(df['max_comp'].max(), df['max_comp'].min())
+	# print(df.columns)
+	adasdadas()
+	# df = df[df['gt_balance'] ]
+
 def generate_plot_comparion(filename=''):
 	df = pd.read_csv(filename)
-	
+	# df = filter_gt_balanced(df)
+	plot_hists(df)
+	asdas()
+
 	# print(len(df))
 	# df['q'] = df['p_in'] * df['mult']
 	# df = df[(df['p_in']+df['q']) / 2 > np.log2(500*2)] # ( p+q ) / 2 > log n
@@ -294,6 +303,24 @@ def plot_python_vs_netx(filename=''):
 	leg = ax.legend(handles=handles, labels=labels) # , loc=leg_loc
 	plt.savefig(f'{filename[:-4]}_time.png')
 
+################################################################################
+
+def plot_hists(filename):
+	# ['nodes', 'max_comp', 'edges', 'gt_balance', 'p_in', 'mult', 'instance', 'repetition', 'algorithm', 'accuracy', 'robustness', 'method', 'seconds']
+	df = pd.read_csv(filename)
+
+	plt.clf()
+	plt.hist(df['gt_balance'])
+	plt.savefig('gt_balance.png')
+
+	plt.clf()
+	plt.hist(1-(df['max_comp']/df['nodes']))
+	plt.savefig('isolated_nodes.png')
+
+	plt.clf()
+	plt.hist(df['edges'] / (df['max_comp']*(df['max_comp']-1)/2))
+	plt.savefig('edge_density.png')
+
 ##############################################################################
 ## Main ############################################################################
 
@@ -303,8 +330,11 @@ if __name__ == "__main__":
 	# generate_gif()
 	# generate_fig_1()
 
-	name = 'max_components__ps=5_mults=6_inst=20_reps=20_nComm=2_commSize=50.csv'
-	generate_plot_comparion(f'outputs/comparisons/{name}')
+	name = 'max_components__ps=10_mults=11_inst=10_reps=10_nComm=2_commSize=500.csv'
+	fname = f'outputs/comparisons/news/{name}'
+	
+	# generate_plot_comparion(fname)
+	plot_hists(fname)
 
 	# df = pd.read_csv('outputs/comparisons/comparison_commSize=111.csv')
 	# for alg in df['algorithm'].unique():

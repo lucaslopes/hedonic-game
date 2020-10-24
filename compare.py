@@ -21,6 +21,13 @@ def from_label_to_dict(labels):
 		dict_labels[node] = label
 	return dict_labels
 	
+# 'rand': the RAND index # Graph-Aware Rand
+# 'jaccard': the Jaccard index # Jaccard Graph-Aware
+# 'mn': pairwise similarity normalized with the mean function
+# 'gmn': pairwise similarity normalized with the geometric mean function
+# 'min': pairwise similarity normalized with the minimum function
+# 'max': pairwise similarity normalized with the maximum function
+# Each measure can be adjusted (recommended) 
 def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min','max','dist']):
 	# algs=['ml','ecg','hedonic','spectral']
 	result = []
@@ -32,20 +39,16 @@ def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min
 		result.append(acc)
 	return result
 
-# 'rand': the RAND index # Graph-Aware Rand
-# 'jaccard': the Jaccard index # Jaccard Graph-Aware
-# 'mn': pairwise similarity normalized with the mean function
-# 'gmn': pairwise similarity normalized with the geometric mean function
-# 'min': pairwise similarity normalized with the minimum function
-# 'max': pairwise similarity normalized with the maximum function
-# Each measure can be adjusted (recommended) 
-def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None): # naive
+# spectral, hedonic, ml
+# hed_ecg_hed, hed_ecg_spec, hed_ecg_ml
+# ml_ecg_ml, ml_ecg_hed, ml_ecg_spec
+def get_answers(g, algs=['spectral', 'hedonic', 'ml', 'ecg'], spectral_ans=None): # naive algs=['ml','ecg','hedonic','spectral']    'hed_ecg_hed', 'hed_ecg_spec', 'hed_ecg_ml', 'ml_ecg_ml', 'ml_ecg_hed', 'ml_ecg_spec'
 	answers = {}
 	for alg in algs:
 		answers[alg], duration = {}, None
 		begin = time()
 		if alg is 'ml':       answers[alg]['ans'] = g.community_multilevel()
-		if alg is 'ecg':      answers[alg]['ans'] = g.community_ecg() # ens_size=32
+		if alg is 'ecg':      answers[alg]['ans'] = g.community_ecg(ens_size=32) # ens_size=32 default=16
 		if alg is 'hedonic':  answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igraph(g)
 		if alg is 'naive':    answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igraph(g, naive=True)
 		if alg is 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
@@ -59,6 +62,11 @@ def get_answers(g, algs=['ml','ecg','hedonic','spectral'], spectral_ans=None): #
 	# 	if alg[-1] == '2': answers[alg]['ans'] = two_communities(g, answers[ref]['ans'])
 	return answers
 
+def load_ground_truth(G, values, label='gt', replace={'0':0,'1':1}):
+	for node, cluster in zip(G.nodes, values):
+		G.nodes[node][label] = replace[cluster]
+	return G
+
 def get_file_name(folder='', outname='no_name'): # to output csv result
 	outdir = './outputs/'
 	if not os.path.exists(outdir):
@@ -69,22 +77,25 @@ def get_file_name(folder='', outname='no_name'): # to output csv result
 	fullname = os.path.join(outdir, outname) 
 	return fullname
 
-def convert_from_netx_to_igraph(netx_G): # convert graph 'G' from nx to igraph format:
+def convert_from_netx_to_igraph(netx_G, label='block'): # convert graph 'G' from nx to igraph format:
 	GT = {}
 	for node in netx_G.nodes:
-		GT[node] = (netx_G.nodes[node]['block'])
+		GT[node] = (netx_G.nodes[node][label])
 	G = ig.Graph(directed=False)
 	G.add_vertices(netx_G.nodes())
 	G.add_edges(netx_G.edges())
 	return G, GT
 
-def get_ppg_max_components(numComm, commSize, p, q):
+def get_ppg_max_components(numComm, commSize, p, q, netx=False):
 	g = PPG(numComm, commSize, p, q)
 	infos = {'nodes':len(g.nodes), 'edges':len(g.edges)}
 	g = nx.convert_node_labels_to_integers(g.subgraph(max(nx.connected_components(g), key=len)))
 	infos['max_comp'] = len(g.nodes)
 	infos['gt_balance'] = [g.nodes[node]['block'] for node in g.nodes].count(0)/len(g.nodes)
-	return convert_from_netx_to_igraph(g), infos
+	if netx: # networkx
+		return (g, [g.nodes[node]['block'] for node in g.nodes]), infos
+	else: # igraph
+		return convert_from_netx_to_igraph(g), infos
 
 def get_ppg_fully_connected(numComm, commSize, p, q, netx=False):
 	g = PPG(numComm, commSize, p, q) # g = ig.Graph.Famous('Zachary')
@@ -216,6 +227,44 @@ def two_communities_old(G, clusters): # compara todas as possiveis combinações
 #################################################################################################
 ## Algoritms #################################################################################################
 
+def edge_weights_to_AW(g, w):
+	Aw = np.zeros((g.vcount(),g.vcount()))
+	for (n0, n1), w in zip(g.get_edgelist(), w):
+		Aw[n0][n1] = w
+		Aw[n1][n0] = w
+	return Aw
+
+def get_memberships(g, alg='ml', ens_size=16):
+	memberships = []
+	for _ in range(ens_size):
+		if alg == 'hedonic':
+			memberships.append(hedonic_solve_igraph(g, only_membership=True))
+		else:
+			memberships.append(g.community_multilevel(return_levels=True)[0].membership) # default
+			# memberships.append(two_communities(g, g.community_multilevel(return_levels=True)[0]).membership)
+	return memberships
+
+def get_ecg_matrix(g, memberships, min_weight=0.05):
+	W = [0] * g.ecount()
+	for ms in memberships:
+		b = [ms[n0]==ms[n1] for n0, n1 in g.get_edgelist()]
+		W = [W[i]+b[i] for i in range(len(W))]
+	W = [min_weight + (1-min_weight)*W[i]/len(memberships) for i in range(len(W))]
+	core = g.shell_index()
+	ecore = [min(core[x.tuple[0]],core[x.tuple[1]]) for x in g.es] ## Force min_weight outside 2-core
+	return [W[i] if ecore[i]>1 else min_weight for i in range(len(ecore))]
+
+def get_answer_from_weights(g, w, alg='ml'):
+	if alg == 'hedonic':
+		return hedonic_solve_weighted(g, edge_weights_to_AW(g, w))[0]
+	elif alg == 'spectral':
+		return spectral(g, edge_weights_to_AW(g, w))[0]
+	else:
+		return two_communities(g, g.community_multilevel(weights=w)) # default
+
+def alg_with_ecg(g, alg1='ml', alg2='ml', size=16):
+	return get_answer_from_weights(g, get_ecg_matrix(g, get_memberships(g, alg=alg1, ens_size=size)), alg=alg2)
+
 # def solve_from_edgelist(edgelist):
 # 	clusters = [{},{}]
 # 	for n0, n1 in edgelist:
@@ -236,16 +285,29 @@ def hedonic_solve_networkx(g, naive=False):
 	duration = time() - duration
 	return game.labels, duration, game.calc_robustness()
 
-def hedonic_solve_igraph(g, naive=False):
+def hedonic_solve_weighted(g, W):
+	game = Game(g.get_edgelist())
+	duration = time()
+	game.hedonic_weighted(W)
+	duration = time() - duration
+	return from_label_to_dict(game.labels), duration, game.calc_robustness()
+
+def hedonic_solve_igraph(g, naive=False, only_membership=False):
 	game = Game(g.get_edgelist())
 	duration = time()
 	game.play(naive=naive)
 	duration = time() - duration
-	return from_label_to_dict(game.labels), duration, game.calc_robustness()
+	if only_membership:
+		return game.labels
+	else:
+		return from_label_to_dict(game.labels), duration, game.calc_robustness()
 
-def spectral(G):
-	# A = nx.adjacency_matrix(G).toarray() # networkx
-	A = np.array(list(G.get_adjacency())) # igraph
+def spectral(G, A=None, netx=False):
+	if A is None:
+		if netx:
+			A = nx.adjacency_matrix(G).toarray() # networkx
+		else:
+			A = np.array(list(G.get_adjacency())) # igraph
 	duration = time()
 	# w, v = np.linalg.eigh(A)
 	# ew_2 = v[:,-2]
@@ -349,16 +411,78 @@ def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
+## Real Nets #############################
+
+def get_real_nets(nets=['karate', 'dolphins', 'pol_blogs', 'pol_books']):
+	real_nets = {}
+	for net in nets:
+		csv = pd.read_csv(f'real_nets/csv/{net}.csv', names=['A', 'B'])
+		gt  = pd.read_csv(f'real_nets/gt/{net}.csv',  names=['N', 'GT'])
+		clusters = gt['GT'].unique()
+		G = nx.from_pandas_edgelist(csv, 'A', 'B')
+		G = load_ground_truth(G, gt['GT'].values, label='GT', replace={clusters[0]:0, clusters[1]:1})
+		# colors = ['red' if G.nodes[node]['gt'] == 0 else 'blue' for node in G.nodes]
+		# nx.draw(G, pos=nx.spring_layout(G), node_color=colors) # , node_color=colors, alpha=alpha, width=width, node_size=sizes, edge_color=edge_color
+		# plt.show()
+		G, GT = convert_from_netx_to_igraph(G, label='GT')
+		real_nets[net] = (G, GT)
+	return real_nets
+
+def compare_real_nets(networks=get_real_nets(), repetitions=10, output_name='real_nets'): # noises=, #np.linspace(.5,.5,1)
+
+	total = len(networks) * repetitions # len(noises) 
+	went  = 0
+	begin = time()
+	print(f'\n\nComparison Experiment - begin at:{begin} -- TOTAL = {total}\n\n')
+	# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
+	columns={'network':[], 'repetition':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}  # 'nodes':[], 'max_comp':[], 'edges':[], 'gt_balance':[],
+
+	for i, net in enumerate(list(networks)):
+		G, GT = networks[net]
+		spectral_ans = None
+		for r in range(repetitions):
+			print(f'% = {round(went/total*100, 2)}%\tNet = {i+1}/{len(networks)}\tRep = {r+1}/{repetitions}')
+			if not spectral_ans:
+				spectral_ans = {}
+				spectral_ans['ans'], spectral_ans['time'] = spectral(G)
+			answers = get_answers(G, spectral_ans=spectral_ans) #  algs=['hedonic','naive'] , algs=['ml','ecg']
+			ans_order = list(answers)
+			seconds = [answers[alg]['sec'] for alg in ans_order]
+			robust  = [answers[alg]['rob'] if 'rob' in answers[alg] else 0 for alg in ans_order] # only hedonics
+			answers = [answers[alg]['ans'] for alg in ans_order]
+			scores = accuracies(G, answers, GT) # , methods=['dist']
+			# print(scores)
+			for alg, score, rob, sec in zip(ans_order, scores, robust, seconds):
+				for mthd, acc in score.items():
+					# columns['nodes'].append(infos['nodes'])
+					# columns['max_comp'].append(infos['max_comp'])
+					# columns['edges'].append(infos['edges'])
+					# columns['gt_balance'].append(infos['gt_balance'])
+					columns['network'].append(net)
+					columns['repetition'].append(r)
+					columns['algorithm'].append(alg)
+					columns['accuracy'].append(acc)
+					columns['robustness'].append(rob)
+					columns['method'].append(mthd)
+					columns['seconds'].append(sec)
+			went += 1
+	df_results = pd.DataFrame()
+	for col, values in columns.items():
+		df_results[col] = values
+	df_results.to_csv(f'{output_name}__networks={len(networks)}_reps={repetitions}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
+
+#################################################################################################
 ## Main #########################################################################################
 
 # spell run --pip-req requirements.txt 'python compare.py'
 
 if __name__ == "__main__":
-	compare(output_name='dict_label_fix__max_components')
+	# compare(output_name='dict_label_fix__max_components')
 
 	# compare(multipliers=np.array([1]), ps=np.array([.1]), instances=100, repetitions=100, numComm=2, commSize=250, output_name='tttest') # noises=, #np.linspace(.5,.5,1)
 
-	# G, GT = get_ppg_fully_connected(2, 111, .05, .01, netx=True)
+	# G, GT = get_ppg_fully_connected(2, 500, .05, .01, netx=True)
 	# print(list(G.get_edgelist()))
 	# solve_from_edgelist(list(G.get_edgelist()))
 
@@ -367,3 +491,21 @@ if __name__ == "__main__":
 	# print(accuracies(G, [a], GT))
 
 	# speed_test()
+
+	# (g, GT), infos = get_ppg_max_components(2, 500, .02, .01)
+	# ans = alg_with_ecg(g, alg1='hedonic', alg2='hedonic', size=8)
+	# print(g.gam(ans, GT, method='dist'))
+
+	# A = np.array(list(G.get_adjacency())) # igraph
+
+	# labels, duration = spectral(G, A)
+	# part = G.community_ecg()
+	# AW = np.zeros((len(A),len(A)))
+	# for (n0, n1), w in zip(G.get_edgelist(), part.W):
+	# 	AW[n0][n1] = w
+	# 	AW[n1][n0] = w
+	# Wlabels, Wduration = spectral(G, AW)
+
+	## Real Nets ############
+
+	compare_real_nets(repetitions=1000)

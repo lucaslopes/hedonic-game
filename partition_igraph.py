@@ -124,7 +124,7 @@ igraph.Graph.gam = gam
 import igraph
 import numpy as np
 
-def community_ecg(self, weights=None, ens_size = 16, min_weight = 0.05):
+def community_ecg(self, weights=None, ens_size=16, min_weight=0.05):
 	"""
 	Stable ensemble-based graph clustering;
 	the ensemble consists of single-level randomized Louvain; 
@@ -177,7 +177,7 @@ def community_ecg(self, weights=None, ens_size = 16, min_weight = 0.05):
 	for i in range(ens_size):
 		p = np.random.permutation(self.vcount()).tolist()
 		g = self.permute_vertices(p)
-		l1 = g.community_multilevel(weights=weights, return_levels=True)[0].membership
+		l1 = g.community_multilevel(weights=weights, return_levels=True)[0].membership # default
 		b = [l1[p[x.tuple[0]]]==l1[p[x.tuple[1]]] for x in self.es]
 		W = [W[i]+b[i] for i in range(len(W))]
 	W = [min_weight + (1-min_weight)*W[i]/ens_size for i in range(len(W))]
@@ -185,19 +185,37 @@ def community_ecg(self, weights=None, ens_size = 16, min_weight = 0.05):
 	core = self.shell_index()
 	ecore = [min(core[x.tuple[0]],core[x.tuple[1]]) for x in self.es]
 	w = [W[i] if ecore[i]>1 else min_weight for i in range(len(ecore))]
-	part = self.community_multilevel(weights=w)
+	part = g.community_multilevel(weights=w) # default
 	part.W = w
 	part.CSI = 1-2*np.sum([min(1-i,i) for i in w])/len(w)
 	return part
 
 igraph.Graph.community_ecg = community_ecg
 
+#########################
+
 if __name__ == "__main__":
-	g = igraph.Graph.Famous('Zachary')
-	part1 = g.community_multilevel()
-	part2 = g.community_label_propagation()
-	part3 = hedonic_solve_igrpah(g)[0]
-	print(part2)
-	print(part3)
-	print(g.gam(part1, part2, method='dist'))
-	print(g.gam(part3, part2, method='dist'))
+	# g = igraph.Graph.Famous('Zachary')
+	# part1 = g.community_multilevel()
+	# part2 = g.community_label_propagation()
+	# part3 = hedonic_solve_igrpah(g)[0]
+	# print(part2)
+	# print(part3)
+	# print(g.gam(part1, part2, method='dist'))
+	# print(g.gam(part3, part2, method='dist'))
+
+	# part = g.community_ecg()
+	# print(part.W)
+	# print('\n'*2)
+	# print(len(g.ecount()), len(part.W))
+
+	(G, GT), infos = get_ppg_max_components(2, 500, .02, .01)
+	A = np.array(list(G.get_adjacency())) # igraph
+
+	labels, duration = spectral(G, A)
+	part = G.community_ecg()
+	AW = np.zeros((len(A),len(A)))
+	for (n0, n1), w in zip(G.get_edgelist(), part.W):
+		AW[n0][n1] = w
+		AW[n1][n0] = w
+	Wlabels, Wduration = spectral(G, AW)
