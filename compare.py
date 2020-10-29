@@ -392,7 +392,7 @@ def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(with_noise=True, multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=np.linspace(.01,.1,10), instances=25, repetitions=25, numComm=2, commSize=500, output_name='with_noises'): # noises=, #np.linspace(.5,.5,1)
+	ps=np.linspace(.01,.1,10), instances=15, repetitions=15, numComm=2, commSize=500, output_name='with_noises'): # noises=, #np.linspace(.5,.5,1)
 
 	if with_noise:
 		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
@@ -540,7 +540,7 @@ def compare_real_nets(networks=get_real_nets(), repetitions=1000, with_noise=Tru
 # spell run --pip-req requirements.txt 'python compare.py'
 
 if __name__ == "__main__":
-	# compare()
+	compare()
 	# compare(output_name='dict_label_fix__max_components')
 	# compare(multipliers=np.array([1]), ps=np.array([.1]), instances=100, repetitions=100, numComm=2, commSize=250, output_name='tttest') # noises=, #np.linspace(.5,.5,1)
 
@@ -570,4 +570,4 @@ if __name__ == "__main__":
 
 	## Real Nets ############
 
-	compare_real_nets() # repetitions=10
+	# compare_real_nets() # repetitions=10
