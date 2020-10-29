@@ -540,7 +540,7 @@ def compare_real_nets(networks=get_real_nets(), repetitions=1000, with_noise=Tru
 # spell run --pip-req requirements.txt 'python compare.py'
 
 if __name__ == "__main__":
-	compare()
+	# compare()
 	# compare(output_name='dict_label_fix__max_components')
 	# compare(multipliers=np.array([1]), ps=np.array([.1]), instances=100, repetitions=100, numComm=2, commSize=250, output_name='tttest') # noises=, #np.linspace(.5,.5,1)
 
@@ -570,4 +570,4 @@ if __name__ == "__main__":
 
 	## Real Nets ############
 
-	# compare_real_nets() # repetitions=10
+	compare_real_nets() # repetitions=10
