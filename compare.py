@@ -392,7 +392,7 @@ def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(with_noise=True, multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=np.linspace(.01,.1,10), instances=15, repetitions=15, numComm=2, commSize=500, output_name='with_noises'): # noises=, #np.linspace(.5,.5,1)
+	ps=np.linspace(.01,.1,5), instances=10, repetitions=10, numComm=2, commSize=500, output_name='with_noises'): # noises=, #np.linspace(.5,.5,1)
 
 	if with_noise:
 		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
