@@ -42,16 +42,17 @@ def accuracies(G, answers=[], gt=[{}], methods=['rand','jaccard','mn','gmn','min
 # spectral, hedonic, ml
 # hed_ecg_hed, hed_ecg_spec, hed_ecg_ml
 # ml_ecg_ml, ml_ecg_hed, ml_ecg_spec
-def get_answers(g, algs=['spectral', 'hedonic', 'ml', 'ecg'], spectral_ans=None): # naive algs=['ml','ecg','hedonic','spectral']    'hed_ecg_hed', 'hed_ecg_spec', 'hed_ecg_ml', 'ml_ecg_ml', 'ml_ecg_hed', 'ml_ecg_spec'
+def get_answers(g, algs=['spectral', 'hedonic', 'ml', 'ecg', 'local improve'], spectral_ans=None, init_labels=None): # naive algs=['ml','ecg','hedonic','spectral']    'hed_ecg_hed', 'hed_ecg_spec', 'hed_ecg_ml', 'ml_ecg_ml', 'ml_ecg_hed', 'ml_ecg_spec'
 	answers = {}
 	for alg in algs:
 		answers[alg], duration = {}, None
+		if alg == 'hedonic': answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igraph(g, init_labels)
+		if alg == 'naive': answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igraph(g, init_labels, naive=True)
+		if alg == 'local improve': answers[alg]['ans'], duration = local_improvement(g, init_labels)
+		if alg == 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
 		begin = time()
-		if alg is 'ml':       answers[alg]['ans'] = g.community_multilevel()
-		if alg is 'ecg':      answers[alg]['ans'] = g.community_ecg(ens_size=32) # ens_size=32 default=16
-		if alg is 'hedonic':  answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igraph(g)
-		if alg is 'naive':    answers[alg]['ans'], duration, answers[alg]['rob'] = hedonic_solve_igraph(g, naive=True)
-		if alg is 'spectral': answers[alg]['ans'], duration = spectral_ans['ans'], spectral_ans['time']
+		if alg == 'ml': answers[alg]['ans'] = g.community_multilevel()
+		if alg == 'ecg': answers[alg]['ans'] = g.community_ecg(ens_size=32) # ens_size=32 default=16
 		answers[alg]['sec'] = duration if duration else time() - begin
 	for alg in [a for a in algs if a == 'ml' or a == 'ecg']:
 		answers[alg]['ans'] = two_communities(g, answers[alg]['ans'])
@@ -154,6 +155,7 @@ def subset_sum(numbers, target, partial=[]):
 		subset_sum(remaining, target, partial + [n])
 
 def two_communities_reciprocity(G, clusters):
+	print('clusters', clusters)
 	now = time()
 	while len(clusters) > 2:
 		modul_pairs = [[0 for _ in range(len(clusters))] for _ in range(len(clusters))]
@@ -224,6 +226,12 @@ def two_communities_old(G, clusters): # compara todas as possiveis combinações
 	# print(time()-now)
 	return answer if answer else clusters
 
+def apply_noise(labels, noise=.5):
+	membership = [0] * len(labels)
+	for n, l in labels.items():
+		membership[n] = l 
+	return [1 - label if random() < noise else label for label in membership]
+
 #################################################################################################
 ## Algoritms #################################################################################################
 
@@ -292,8 +300,9 @@ def hedonic_solve_weighted(g, W):
 	duration = time() - duration
 	return from_label_to_dict(game.labels), duration, game.calc_robustness()
 
-def hedonic_solve_igraph(g, naive=False, only_membership=False):
+def hedonic_solve_igraph(g, init_labels=[], naive=False, only_membership=False):
 	game = Game(g.get_edgelist())
+	game.set_labels(init_labels)
 	duration = time()
 	game.play(naive=naive)
 	duration = time() - duration
@@ -315,6 +324,28 @@ def spectral(G, A=None, netx=False):
 	labels = np.array([1 if x > 0 else 0 for x in np.linalg.eigh(A)[1][:,-2]], dtype='int')
 	duration = time() - duration
 	return from_label_to_dict(labels), duration
+
+def local_improvement(G, labels, only_membership=False):
+	if len(labels) != len(G.vs):
+		labels = [0 if prob > random() else 1 for _ in range(len(self.labels))]
+	duration = time()
+	want_move = []
+	for node in G.vs.indices:
+		here, there = 0, 0
+		for friend in G.neighbors(node):
+			if labels[friend] == labels[node]:
+				here += 1
+			else:
+				there -= 1
+		if there > here:
+			want_move.append(node)
+	for node in want_move:
+		labels[node] = 1 - labels[node]
+	duration = time() - duration
+	if only_membership:
+		return labels
+	else:
+		return from_label_to_dict(labels), duration
 
 # def local_improvement(G):
 # 	want_move = []
@@ -360,54 +391,69 @@ def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 #################################################################################################
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
-def compare(multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=np.linspace(.01,.1,10), instances=10, repetitions=10, numComm=2, commSize=500, output_name=''): # noises=, #np.linspace(.5,.5,1)
+def compare(with_noise=True, multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
+	ps=np.linspace(.01,.1,10), instances=25, repetitions=25, numComm=2, commSize=500, output_name='with_noises'): # noises=, #np.linspace(.5,.5,1)
 
-	total = len(multipliers) * len(ps) * instances * repetitions # len(noises) 
+	if with_noise:
+		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
+		noises = [round(noi, 3) for noi in noises]
+	else:
+		noises = [.5]
+
+	total = len(noises) * len(multipliers) * len(ps) * instances * repetitions # len(noises) 
 	went  = 0
 	begin = time()
 	print(f'\n\nComparison Experiment - begin at:{begin} -- TOTAL = {total}\n\n')
-# for noi in noises:
 	# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
-	columns={'nodes':[], 'max_comp':[], 'edges':[], 'gt_balance':[], 'p_in':[], 'mult':[], 'instance':[], 'repetition':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}
+	columns={'nodes':[], 'max_comp':[], 'edges':[], 'gt_balance':[], 'p_in':[], 'mult':[], 'instance':[], 'repetition':[], 'noise':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}
 	for mult in multipliers:
 		for i_p, p in enumerate(ps): # default: .01 to .1
 			for i in range(instances):
 				# (G, GT), infos = get_ppg_fully_connected(numComm, commSize, p, p*mult)
 				(G, GT), infos = get_ppg_max_components(numComm, commSize, p, p*mult)
-				spectral_ans = None
-				for r in range(repetitions):
-					print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{len(ps)}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}')
-					if not spectral_ans:
-						spectral_ans = {}
-						spectral_ans['ans'], spectral_ans['time'] = spectral(G)
-					answers = get_answers(G, spectral_ans=spectral_ans) #  algs=['hedonic','naive'] , algs=['ml','ecg']
-					ans_order = list(answers)
-					seconds = [answers[alg]['sec'] for alg in ans_order]
-					robust  = [answers[alg]['rob'] if 'rob' in answers[alg] else 0 for alg in ans_order] # only hedonics
-					answers = [answers[alg]['ans'] for alg in ans_order]
-					scores = accuracies(G, answers, GT) # , methods=['dist']
-					# print(scores)
-					for alg, score, rob, sec in zip(ans_order, scores, robust, seconds):
-						for mthd, acc in score.items():
-							columns['nodes'].append(infos['nodes'])
-							columns['max_comp'].append(infos['max_comp'])
-							columns['edges'].append(infos['edges'])
-							columns['gt_balance'].append(infos['gt_balance'])
-							columns['p_in'].append(p)
-							columns['mult'].append(mult)
-							columns['instance'].append(i)
-							columns['repetition'].append(r)
-							columns['algorithm'].append(alg)
-							columns['accuracy'].append(acc)
-							columns['robustness'].append(rob)
-							columns['method'].append(mthd)
-							columns['seconds'].append(sec)
-					went += 1
+				spectral_ans = spectral(G)
+				ml_anss, ecg_anss = [], []
+				for noi, noise in enumerate(noises):
+					for r in range(repetitions):
+						print(f'% = {round(went/total*100, 2)}%\tMult = {np.where(multipliers==mult)[0][0]+1}/{len(multipliers)}\tP = {i_p+1}/{len(ps)}\tInst = {i+1}/{instances}\tRep = {r+1}/{repetitions}\tNoi = {noi+1}/{len(noises)}')
+						if noi == 0: # algs=['spectral', 'hedonic', 'ml', 'ecg', 'local improve']
+							answers = get_answers(G, algs=['hedonic', 'ml', 'ecg', 'local improve'], init_labels=apply_noise(GT, noise)) # algs=['hedonic','naive'] , algs=['ml','ecg']
+							ml_anss.append((answers['ml']['ans'],answers['ml']['sec']))
+							ecg_anss.append((answers['ecg']['ans'],answers['ecg']['sec']))
+						else:
+							answers = get_answers(G, algs=['hedonic', 'local improve'], spectral_ans=spectral_ans, init_labels=apply_noise(GT, noise)) # algs=['hedonic','naive'] , algs=['ml','ecg']
+							answers['ml'] = {'ans':ml_anss[r][0], 'sec':ml_anss[r][1]}
+							answers['ecg'] = {'ans':ecg_anss[r][0], 'sec':ecg_anss[r][1]}
+						answers['spectral'] = {'ans':spectral_ans[0], 'sec':spectral_ans[1]}
+						answers[f'hedonic_n{noise}'] = answers.pop('hedonic')
+						answers[f'local improve_n{noise}'] = answers.pop('local improve')
+						ans_order = list(answers)
+						seconds = [answers[alg]['sec'] for alg in ans_order]
+						robust  = [answers[alg]['rob'] if 'rob' in answers[alg] else 0 for alg in ans_order] # only hedonics
+						answers = [answers[alg]['ans'] for alg in ans_order]
+						scores = accuracies(G, answers, GT, methods=['dist','jaccard','rand']) # , methods=['dist']
+						# print(scores)
+						for alg, score, rob, sec in zip(ans_order, scores, robust, seconds):
+							for mthd, acc in score.items():
+								columns['nodes'].append(infos['nodes'])
+								columns['max_comp'].append(infos['max_comp'])
+								columns['edges'].append(infos['edges'])
+								columns['gt_balance'].append(infos['gt_balance'])
+								columns['p_in'].append(p)
+								columns['mult'].append(mult)
+								columns['instance'].append(i)
+								columns['repetition'].append(r)
+								columns['noise'].append(noise)
+								columns['algorithm'].append(alg)
+								columns['accuracy'].append(acc)
+								columns['robustness'].append(rob)
+								columns['method'].append(mthd)
+								columns['seconds'].append(sec)
+						went += 1
 	df_results = pd.DataFrame()
 	for col, values in columns.items():
 		df_results[col] = values
-	df_results.to_csv(f'{output_name}__ps={ps}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results.to_csv(f'{output_name}__ps={len(ps)}_mults={len(multipliers)}_inst={instances}_reps={repetitions}_noises={len(noises)}_nComm={numComm}_commSize={commSize}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
@@ -428,48 +474,64 @@ def get_real_nets(nets=['karate', 'dolphins', 'pol_blogs', 'pol_books']):
 		real_nets[net] = (G, GT)
 	return real_nets
 
-def compare_real_nets(networks=get_real_nets(), repetitions=10, output_name='real_nets'): # noises=, #np.linspace(.5,.5,1)
+def compare_real_nets(networks=get_real_nets(), repetitions=1000, with_noise=True, output_name='real_nets'): # noises=, #np.linspace(.5,.5,1)
 
-	total = len(networks) * repetitions # len(noises) 
+	if with_noise:
+		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
+		noises = [round(noi, 3) for noi in noises]
+	else:
+		noises = [.5]
+
+	total = len(networks) * repetitions * len(noises) # len(noises) 
 	went  = 0
 	begin = time()
 	print(f'\n\nComparison Experiment - begin at:{begin} -- TOTAL = {total}\n\n')
 	# columns = x=q/p, y=accuracy, hue=algorithm, method(each plot)
-	columns={'network':[], 'repetition':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}  # 'nodes':[], 'max_comp':[], 'edges':[], 'gt_balance':[],
+	columns={'network':[], 'repetition':[], 'noise':[], 'algorithm':[], 'accuracy':[], 'robustness':[], 'method':[], 'seconds':[]}  # 'nodes':[], 'max_comp':[], 'edges':[], 'gt_balance':[],
 
 	for i, net in enumerate(list(networks)):
 		G, GT = networks[net]
-		spectral_ans = None
-		for r in range(repetitions):
-			print(f'% = {round(went/total*100, 2)}%\tNet = {i+1}/{len(networks)}\tRep = {r+1}/{repetitions}')
-			if not spectral_ans:
-				spectral_ans = {}
-				spectral_ans['ans'], spectral_ans['time'] = spectral(G)
-			answers = get_answers(G, spectral_ans=spectral_ans) #  algs=['hedonic','naive'] , algs=['ml','ecg']
-			ans_order = list(answers)
-			seconds = [answers[alg]['sec'] for alg in ans_order]
-			robust  = [answers[alg]['rob'] if 'rob' in answers[alg] else 0 for alg in ans_order] # only hedonics
-			answers = [answers[alg]['ans'] for alg in ans_order]
-			scores = accuracies(G, answers, GT) # , methods=['dist']
-			# print(scores)
-			for alg, score, rob, sec in zip(ans_order, scores, robust, seconds):
-				for mthd, acc in score.items():
-					# columns['nodes'].append(infos['nodes'])
-					# columns['max_comp'].append(infos['max_comp'])
-					# columns['edges'].append(infos['edges'])
-					# columns['gt_balance'].append(infos['gt_balance'])
-					columns['network'].append(net)
-					columns['repetition'].append(r)
-					columns['algorithm'].append(alg)
-					columns['accuracy'].append(acc)
-					columns['robustness'].append(rob)
-					columns['method'].append(mthd)
-					columns['seconds'].append(sec)
-			went += 1
+		spectral_ans = spectral(G)
+		ml_anss, ecg_anss = [], []
+		for noi, noise in enumerate(noises):
+			for r in range(repetitions):
+				print(f'% = {round(went/total*100, 2)}%\tNet = {i+1}/{len(networks)}\tRep = {r+1}/{repetitions}\tNoi = {noi+1}/{len(noises)}')
+				if noi == 0: # algs=['spectral', 'hedonic', 'ml', 'ecg', 'local improve']
+					answers = get_answers(G, algs=['hedonic', 'ml', 'ecg', 'local improve'], init_labels=apply_noise(GT, noise)) # algs=['hedonic','naive'] , algs=['ml','ecg']
+					ml_anss.append((answers['ml']['ans'],answers['ml']['sec']))
+					ecg_anss.append((answers['ecg']['ans'],answers['ecg']['sec']))
+				else:
+					answers = get_answers(G, algs=['hedonic', 'local improve'], spectral_ans=spectral_ans, init_labels=apply_noise(GT, noise)) # algs=['hedonic','naive'] , algs=['ml','ecg']
+					answers['ml'] = {'ans':ml_anss[r][0], 'sec':ml_anss[r][1]}
+					answers['ecg'] = {'ans':ecg_anss[r][0], 'sec':ecg_anss[r][1]}
+				answers['spectral'] = {'ans':spectral_ans[0], 'sec':spectral_ans[1]}
+				answers[f'hedonic_n{noise}'] = answers.pop('hedonic')
+				answers[f'local improve_n{noise}'] = answers.pop('local improve')
+				ans_order = list(answers)
+				seconds = [answers[alg]['sec'] for alg in ans_order]
+				robust  = [answers[alg]['rob'] if 'rob' in answers[alg] else 0 for alg in ans_order] # only hedonics
+				answers = [answers[alg]['ans'] for alg in ans_order]
+				scores = accuracies(G, answers, GT, methods=['dist','jaccard','rand']) # , methods=['dist']
+				# print(scores)
+				for alg, score, rob, sec in zip(ans_order, scores, robust, seconds):
+					for mthd, acc in score.items():
+						# columns['nodes'].append(infos['nodes'])
+						# columns['max_comp'].append(infos['max_comp'])
+						# columns['edges'].append(infos['edges'])
+						# columns['gt_balance'].append(infos['gt_balance'])
+						columns['network'].append(net)
+						columns['repetition'].append(r)
+						columns['noise'].append(noise)
+						columns['algorithm'].append(alg)
+						columns['accuracy'].append(acc)
+						columns['robustness'].append(rob)
+						columns['method'].append(mthd)
+						columns['seconds'].append(sec)
+				went += 1
 	df_results = pd.DataFrame()
 	for col, values in columns.items():
 		df_results[col] = values
-	df_results.to_csv(f'{output_name}__networks={len(networks)}_reps={repetitions}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+	df_results.to_csv(f'{output_name}__networks={len(networks)}_reps={repetitions}_noises={len(noises)}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
@@ -478,8 +540,8 @@ def compare_real_nets(networks=get_real_nets(), repetitions=10, output_name='rea
 # spell run --pip-req requirements.txt 'python compare.py'
 
 if __name__ == "__main__":
+	compare()
 	# compare(output_name='dict_label_fix__max_components')
-
 	# compare(multipliers=np.array([1]), ps=np.array([.1]), instances=100, repetitions=100, numComm=2, commSize=250, output_name='tttest') # noises=, #np.linspace(.5,.5,1)
 
 	# G, GT = get_ppg_fully_connected(2, 500, .05, .01, netx=True)
@@ -508,4 +570,4 @@ if __name__ == "__main__":
 
 	## Real Nets ############
 
-	compare_real_nets(repetitions=1000)
+	# compare_real_nets() # repetitions=10
