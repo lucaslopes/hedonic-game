@@ -322,6 +322,9 @@ def hedonic_solve_igraph(g, init_labels=[], naive=False, only_membership=False):
 	duration = time()
 	game.play(naive=naive)
 	duration = time() - duration
+	eq = game.in_equilibrium_for(inspect=True)
+	if not eq: # Walrus Operator :=
+		print(f'game is not in equilibrium for alpha=edge density ({eq}')
 	if only_membership:
 		return game.labels
 	else:
@@ -343,7 +346,7 @@ def spectral(G, A=None, netx=False):
 
 def local_improvement(G, labels, prob=.5, only_membership=False):
 	if len(labels) != len(G.vs):
-		print('labels has different size of number of vertices.')
+		print('local_improvement: labels has different size of number of vertices.')
 		labels = [0 if prob > random() else 1 for _ in range(len(G.vs))]
 	# init = [l if labels[0] == 0 else 1 - l for l in labels]
 	duration = time()
@@ -630,4 +633,4 @@ if __name__ == "__main__":
 
 	## Real Nets ############
 
-	# compare_real_nets() # repetitions=10
+	# compare_real_nets(repetitions=100) # 

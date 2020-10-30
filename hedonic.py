@@ -35,7 +35,8 @@ class Game:
 
 	def set_labels(self, labels=[], prob=.5):
 		if len(labels) != len(self.labels):
-			print('labels has different size of number of vertices.')
+			if len(self.labels) != self.labels.count(0):
+				print('hedonic: labels has different size of number of vertices.')
 			labels = [0 if prob > random() else 1 for _ in range(len(self.labels))]
 		on_c0 = labels.count(0)
 		with_me = [0] * len(self.labels)
@@ -163,8 +164,6 @@ class Game:
 					moved = True
 					nodes_moved.append(node)
 					# print('moved', node)
-		if not self.in_equilibrium_for():
-			print('game is not in equilibrium for alpha=edge density')
 		# final = [l if self.labels[0] == 0 else 1 - l for l in self.labels]
 		# return init, nodes_moved, final
 		# print('python naive:', time()-now)
