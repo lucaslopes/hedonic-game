@@ -622,7 +622,7 @@ def test_acc_realnet():
 if __name__ == "__main__":
 	# test_acc_realnet()
 
-	compare() # run 2/3
+	compare() # run 3/3
 	# compare(output_name='dict_label_fix__max_components')
 	# compare(multipliers=np.array([1]), ps=np.array([.1]), instances=100, repetitions=100, numComm=2, commSize=250, output_name='tttest') # noises=, #np.linspace(.5,.5,1)
 

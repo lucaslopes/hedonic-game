@@ -353,7 +353,8 @@ def generate_fig_1():
 	# print('ki', speed['algorithm'].unique())
 	palette=alg_colors.copy()
 	palette['local\nimprove'] = palette.pop('local improve')
-	g = sns.violinplot(x="algorithm", y="seconds", data=speed, fontsize=27.5, palette=palette, ax=axes[2]) # hue_order=['spectral','local\nimprov','hedonic','louvain','ecg']
+	print(palette)
+	g = sns.violinplot(x="algorithm", y="seconds", data=speed, fontsize=27.5, palette=palette, order=['louvain','ecg','spectral','local\nimprov','hedonic'], ax=axes[2]) # hue_order=['spectral','local\nimprov','hedonic','louvain','ecg']
 	# g = sns.boxplot(x="algorithm", y="seconds", data=speed, ax=axes[2]) # , fontsize=27.5
 	# g = sns.swarmplot(x="algorithm", y="seconds", data=speed, color=".25", ax=axes[2])
 	axes[2].set(yscale="log") # xscale="log", 
@@ -380,7 +381,7 @@ def generate_fig_1():
 		axes[3].annotate('_', (pos, maxx), c=c, weight=1000) # p.get_height() * 1.005)
 	axes[3].set_ylim(0.499,1.01)
 	# labls = {'spectral clustering':'#5975A4', 'local improvement\n(0$\leq$noise$\leq$0.5)':'#CC8964', 'hedonic robust\n(0$\leq$noise$\leq$0.5)':'#5F9E6E'}
-	labls = {'spectral':alg_colors['spectral'], 'louvain':alg_colors['louvain'], 'ecg':alg_colors['ecg'], 'local improve':alg_colors['local improve'], 'hedonic':alg_colors['hedonic']} # \n(0$\leq$noise$\leq$0.5)
+	labls = {'louvain':alg_colors['louvain'], 'ecg':alg_colors['ecg'], 'spectral':alg_colors['spectral'], 'local improve':alg_colors['local improve'], 'hedonic':alg_colors['hedonic']} # \n(0$\leq$noise$\leq$0.5)
 	save_plot(axes[3], title='(d) real networks', x_label='network', y_label='accuracy', f_name='real_nets_bar_plot', n_col=2, labels_handles=labls, font_scale=.7)
 	print('plot 4')
 
