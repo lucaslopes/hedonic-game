@@ -94,6 +94,18 @@ def get_file_name(folder='', outname='no_name'): # to output csv result
 	fullname = os.path.join(outdir, outname) 
 	return fullname
 
+def get_network_info(G, GT):
+	infos = {}
+	cluster0 = from_dict_to_label(GT).count(0)
+	infos['nodes'] = len(G.vs)
+	infos['edges'] = len(G.es)
+	infos['edge_density'] = calc_edge_density(len(G.vs), len(G.es))
+	infos['smaller_cluster'] = min(cluster0, len(G.vs) - cluster0)
+	return infos
+
+def calc_edge_density(v, e):
+	return e / (v * (v-1) / 2)
+
 def convert_from_netx_to_igraph(netx_G, label='block'): # convert graph 'G' from nx to igraph format:
 	GT = {}
 	for node in netx_G.nodes:
@@ -415,7 +427,7 @@ def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(with_noise=True, multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=np.linspace(.01,.1,5), instances=20, repetitions=20, numComm=2, commSize=250, output_name='with_noises_fix'): # noises=, #np.linspace(.5,.5,1)
+	ps=np.linspace(.01,.1,5), instances=15, repetitions=15, numComm=2, commSize=250, output_name='with_noises_fix'): # noises=, #np.linspace(.5,.5,1)
 
 	if with_noise:
 		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
@@ -641,3 +653,8 @@ if __name__ == "__main__":
 	## Real Nets ############
 
 	# compare_real_nets(repetitions=100) # 
+
+	##############################
+
+	# for net, (G, GT) in get_real_nets().items():
+	# 	print(net, get_network_info(G, GT))
