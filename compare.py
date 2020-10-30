@@ -20,7 +20,23 @@ def from_label_to_dict(labels):
 	for node, label in enumerate(labels):
 		dict_labels[node] = label
 	return dict_labels
-	
+
+def from_dict_to_label(dict_label):
+	labels = [0] * len(dict_label)
+	for node, label in dict_label.items():
+		labels[node] = label
+	return labels
+
+def accuracy(x,y): # WARNING: x and y must be only 0 or 1
+	x, y = np.array(x), np.array(y)
+	if len(x) != len(y):
+		print(len(x), len(y))
+		raise ValueError('x and y must be arrays of the same size')
+	matches1 = sum(x == y)
+	matches2 = sum(x == 1-y)
+	score = max([matches1, matches2]) / len(x)
+	return score
+
 # 'rand': the RAND index # Graph-Aware Rand
 # 'jaccard': the Jaccard index # Jaccard Graph-Aware
 # 'mn': pairwise similarity normalized with the mean function
@@ -325,9 +341,11 @@ def spectral(G, A=None, netx=False):
 	duration = time() - duration
 	return from_label_to_dict(labels), duration
 
-def local_improvement(G, labels, only_membership=False):
+def local_improvement(G, labels, prob=.5, only_membership=False):
 	if len(labels) != len(G.vs):
-		labels = [0 if prob > random() else 1 for _ in range(len(self.labels))]
+		print('labels has different size of number of vertices.')
+		labels = [0 if prob > random() else 1 for _ in range(len(G.vs))]
+	# init = [l if labels[0] == 0 else 1 - l for l in labels]
 	duration = time()
 	want_move = []
 	for node in G.vs.indices:
@@ -336,16 +354,18 @@ def local_improvement(G, labels, only_membership=False):
 			if labels[friend] == labels[node]:
 				here += 1
 			else:
-				there -= 1
+				there += 1
 		if there > here:
 			want_move.append(node)
+	# print(want_move)
 	for node in want_move:
 		labels[node] = 1 - labels[node]
+	# final = [l if labels[0] == 0 else 1 - l for l in labels]
 	duration = time() - duration
 	if only_membership:
 		return labels
 	else:
-		return from_label_to_dict(labels), duration
+		return from_label_to_dict(labels), duration#, (init,want_move,final)
 
 # def local_improvement(G):
 # 	want_move = []
@@ -392,7 +412,7 @@ def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(with_noise=True, multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=np.linspace(.01,.1,5), instances=10, repetitions=10, numComm=2, commSize=500, output_name='with_noises'): # noises=, #np.linspace(.5,.5,1)
+	ps=np.linspace(.01,.1,5), instances=5, repetitions=5, numComm=2, commSize=250, output_name='with_noises_fix'): # noises=, #np.linspace(.5,.5,1)
 
 	if with_noise:
 		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
@@ -474,7 +494,7 @@ def get_real_nets(nets=['karate', 'dolphins', 'pol_blogs', 'pol_books']):
 		real_nets[net] = (G, GT)
 	return real_nets
 
-def compare_real_nets(networks=get_real_nets(), repetitions=1000, with_noise=True, output_name='real_nets'): # noises=, #np.linspace(.5,.5,1)
+def compare_real_nets(networks=get_real_nets(), repetitions=100, with_noise=True, output_name='real_nets_fix'): # noises=, #np.linspace(.5,.5,1)
 
 	if with_noise:
 		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
@@ -537,9 +557,49 @@ def compare_real_nets(networks=get_real_nets(), repetitions=1000, with_noise=Tru
 #################################################################################################
 ## Main #########################################################################################
 
+def test_acc_realnet():
+	# G, GT = get_real_nets(nets=['karate'])['karate']
+	(G, GT), infos = get_ppg_max_components(2, 500, .02, .01)
+	game = Game(G.get_edgelist())
+	noise = .5
+	for _ in range(100):
+		init_labels = apply_noise(GT, noise)
+		init_labels = [l if init_labels[0] == 0 else 1 - l for l in init_labels]
+		init_labels_copy = [l for l in init_labels]
+		print('0 obvio:', init_labels_copy == init_labels)
+		# print('init_labels:', init_labels)
+		# print('noise:', accuracy(from_dict_to_label(GT), init_labels), G.gam(from_label_to_dict(init_labels),GT,method='dist',adjusted=True))
+		labls = game.set_labels(init_labels)
+		labls = [l if labls[0] == 0 else 1 - l for l in labls]
+		# print('init eq:', labls == init_labels)
+		# print('labls:', labls)
+		hed_infos = game.play(naive=False)
+		ans_hedonic = from_label_to_dict(game.labels)
+		# print('hed init', hed_infos[0])
+		# print('hed eq:', labls == hed_infos[0])
+		# print('2 init eq:', labls == init_labels)
+		# print('o obvio:', init_labels_copy == init_labels)
+		
+
+		ans_local, _, local_infos = local_improvement(G, init_labels)
+
+		hed_infos[1].sort()
+		local_infos[1].sort()
+		print('inits equals?', hed_infos[0] == local_infos[0])
+		print('noves moved equals?', hed_infos[1] == local_infos[1])
+		print('final equals?', hed_infos[2] == local_infos[2])
+
+		# print(ans_hedonic == ans_local)
+		print(accuracy(from_dict_to_label(ans_hedonic), from_dict_to_label(ans_local)))
+
+		scores = accuracies(G, [ans_hedonic, ans_local], GT, methods=['dist']) # , methods=['dist']
+		print(scores)
+
 # spell run --pip-req requirements.txt 'python compare.py'
 
 if __name__ == "__main__":
+	# test_acc_realnet()
+
 	compare()
 	# compare(output_name='dict_label_fix__max_components')
 	# compare(multipliers=np.array([1]), ps=np.array([.1]), instances=100, repetitions=100, numComm=2, commSize=250, output_name='tttest') # noises=, #np.linspace(.5,.5,1)

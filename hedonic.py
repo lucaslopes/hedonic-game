@@ -35,6 +35,7 @@ class Game:
 
 	def set_labels(self, labels=[], prob=.5):
 		if len(labels) != len(self.labels):
+			print('labels has different size of number of vertices.')
 			labels = [0 if prob > random() else 1 for _ in range(len(self.labels))]
 		on_c0 = labels.count(0)
 		with_me = [0] * len(self.labels)
@@ -47,11 +48,14 @@ class Game:
 				with_me[n0] += 1
 				with_me[n1] += 1
 				edges[c_n0] += 1
-		self.labels = labels
+		self.labels = [l for l in labels]
 		self.with_me = with_me
 		self.clusters = {
 			'nodes' : [on_c0, len(self.labels)-on_c0],
 			'edges' : edges }
+		if labels != self.labels:
+			print('ta errado tbm!!!!')
+		# return labels
 
 	def set_alpha(self, alpha=None):
 		if alpha is None:
@@ -102,7 +106,8 @@ class Game:
 		strangers_there = self.clusters['nodes'][1-self.labels[node]] - friends_there
 		return friends_here, friends_there, strangers_here, strangers_there
 
-	def equilibrium_for(self, alpha=0, inspect=False):
+	def in_equilibrium_for(self, alpha=None, inspect=False):
+		alpha = self.alpha if alpha is None else alpha
 		dissatisfied = 0
 		for node in range(len(self.labels)):
 			if not self.satisfied(node, alpha):
@@ -139,7 +144,9 @@ class Game:
 
 	def play(self, alpha=None, naive=False):
 		# now = time()
+		# init = [l if self.labels[0] == 0 else 1 - l for l in self.labels]
 		moved, nodes_list = True, list(range(len(self.labels)))
+		nodes_moved = []
 		while moved is True:
 			moved = False
 			shuffle(nodes_list)
@@ -154,7 +161,12 @@ class Game:
 				if want_move:
 					self.move(node)
 					moved = True
+					nodes_moved.append(node)
 					# print('moved', node)
+		if not self.in_equilibrium_for():
+			print('game is not in equilibrium for alpha=edge density')
+		# final = [l if self.labels[0] == 0 else 1 - l for l in self.labels]
+		# return init, nodes_moved, final
 		# print('python naive:', time()-now)
 
 	def hedonic_weighted(self, W): # , alpha=0
@@ -275,7 +287,7 @@ class Game:
 			pot_c0, pot_c1 = self.potential(alpha=1, separated=True)
 			pot_c0, pot_c1 = abs(pot_c0), abs(pot_c1)
 			pot_prop = min(pot_c0, pot_c1)/(pot_c0+pot_c1)
-			satisfied = [self.equilibrium_for(alpha, inspect=True) for alpha in np.linspace(0,1,11)]
+			satisfied = [self.in_equilibrium_for(alpha, inspect=True) for alpha in np.linspace(0,1,11)]
 			zeros = state.count(0)
 			columns['vertices'].append(min(zeros,len(state)-zeros)/len(state))
 			columns['intra'].append(min(self.clusters['edges'][0],self.clusters['edges'][1])/(self.clusters['edges'][0]+self.clusters['edges'][1]))
@@ -288,7 +300,7 @@ class Game:
 		return columns
 
 	def calc_robustness(self):
-		return np.mean([self.equilibrium_for(alpha, inspect=True) for alpha in np.linspace(0,1,11)])
+		return np.mean([self.in_equilibrium_for(alpha, inspect=True) for alpha in np.linspace(0,1,11)])
 
 	def find_eq_in_O_Edges(self):
 		# percorre a lista de edges e vai decidindo se ela será intra ou inter cluster

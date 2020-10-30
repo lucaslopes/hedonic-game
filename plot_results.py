@@ -18,8 +18,8 @@ from tqdm import tqdm
 
 	# ['noise', 'mult', 'p_in', 'p_out', 'instance', 'repetition',
     #    'hedonic_accuracy', 'hedonic_infos', 'hedonic_robustness',
-    #    'hedonic_time', 'onepass_accuracy', 'onepass_infos',
-    #    'onepass_robustness', 'onepass_time', 'spectral_accuracy',
+    #    'hedonic_time', 'local improve_accuracy', 'local improve_infos',
+    #    'local improve_robustness', 'local improve_time', 'spectral_accuracy',
     #    'spectral_infos', 'spectral_robustness', 'spectral_time', 'algorithm',
     #    'accuracy', 'robustness', 'method', 'seconds'],
 	# ['p_in', 'mult', 'instance', 'repetition', 'algorithm', 'accuracy',
@@ -32,7 +32,7 @@ from tqdm import tqdm
 	# df3 = df.melt('mult', var_name='algorithm', value_name='noise')
 	# for index, row in tqdm(df.iterrows()):
 	# 	print(index, len(df), index/len(df)*100)
-	# 	for alg in ['hedonic', 'onepass', 'spectral']:
+	# 	for alg in ['hedonic', 'local improve', 'spectral']:
 	# 		pass
 			# old_rows['noise'].append(row['noise'])
 			# old_rows['p_in'].append(row['p_in'])
@@ -57,7 +57,7 @@ from tqdm import tqdm
 			# 	'method': 'dist'
 			# }, ignore_index=True)
 
-# clustering / improvement / robust / onepass == local improve
+# clustering / improvement / robust / local improve == local improve
 algorithms = { 'spectral':'spectral', 'local improve':'local improve', 'hedonic':'hedonic', 'ml':'louvain', 'ecg':'ecg' }
 alg_colors = { 'spectral':'#C44E53', 'local improve':'#DD8452', 'hedonic':'#55A869', 'louvain':'#4C72B0', 'ecg':'#8172B3' }
 file_name_prefix = ''
@@ -86,22 +86,24 @@ def adaptd_df_to_new_exp(df, prefix='outputs/noises/'):
 	df3['seconds'] = dfs_melted['time']['time']
 
 	df2 = pd.concat([df2, df3])
-	df2['algorithm'] = [algorithms[alg] for alg in df2['algorithm'].values]
+	df2['algorithm'] = ['local improve' if alg == 'onepass' else algorithms[alg] for alg in df2['algorithm'].values]
 	return df2
 
-# def load_df():
-# 	prefix = 'outputs/noises/'
-# 	df = pd.concat([pd.read_csv(f'{prefix}{csv}') for csv in os.listdir(prefix) if csv[-3:] == 'csv' and csv[:5] == 'noise'])
-# 	# df['p_in-p_out'] = df['p_in'] - df['p_out']
-# 	return adaptd_df_to_new_exp(df, prefix)
-
 def load_df():
-	df = pd.read_csv('test_noise__ps=5_mults=11_inst=5_reps=5_noises=13_nComm=2_commSize=50.csv')
-	df = df.loc[df['method'] == 'dist']
-	df.drop(columns=['p_in','instance','repetition','robustness','method'], inplace=True)
-	df['algorithm'] = [alg.split('_')[0] for alg in df['algorithm']]
-	df['algorithm'] = [algorithms[alg] for alg in df['algorithm'].values]
-	return df
+	prefix = 'outputs/noises/'
+	df = pd.concat([pd.read_csv(f'{prefix}{csv}') for csv in os.listdir(prefix) if csv[-3:] == 'csv' and csv[:5] == 'noise'])
+	# df['p_in-p_out'] = df['p_in'] - df['p_out']
+	return adaptd_df_to_new_exp(df, prefix)
+
+# def load_df():
+# 	prefix = 'outputs/recents'
+# 	csv_name = 'test_noise__ps=5_mults=11_inst=5_reps=5_noises=13_nComm=2_commSize=50'
+# 	df = pd.read_csv(f'{prefix}/{csv_name}.csv')
+# 	df = df.loc[df['method'] == 'dist']
+# 	df.drop(columns=['p_in','instance','repetition','robustness','method'], inplace=True)
+# 	df['algorithm'] = [alg.split('_')[0] for alg in df['algorithm']]
+# 	df['algorithm'] = [algorithms[alg] for alg in df['algorithm'].values]
+# 	return df
 
 ##############################################################################
 
@@ -180,7 +182,7 @@ def load_df_A(dfs_noise):
 	df_A.rename(columns={'r':'r = maximum tolerated q/p'}, inplace=True)
 	# denom = 1468.49
 	# df_A['spectral'] = [0,(denom-1028.25)/denom,(denom-900.48)/denom,(denom-710.51)/denom,(denom-600.57)/denom,(denom-536.37)/denom,(denom-474.91)/denom,(denom-414.02)/denom,(denom-370.85)/denom,(denom-325.62)/denom,(denom-245.38)/denom,(denom-170.39)/denom,1]
-	# df_A['onepass']  = [0,(denom-824.52)/denom,(denom-700.02)/denom,(denom-591.54)/denom,(denom-543.63)/denom,(denom-512.04)/denom,(denom-487.50)/denom,(denom-470.42)/denom,(denom-462.15)/denom,(denom-453.79)/denom,(denom-448.22)/denom,(denom-389.49)/denom,1]
+	# df_A['local improve']  = [0,(denom-824.52)/denom,(denom-700.02)/denom,(denom-591.54)/denom,(denom-543.63)/denom,(denom-512.04)/denom,(denom-487.50)/denom,(denom-470.42)/denom,(denom-462.15)/denom,(denom-453.79)/denom,(denom-448.22)/denom,(denom-389.49)/denom,1]
 	# df_A['hedonic']  = [0,(denom-857.10)/denom,(denom-715.39)/denom,(denom-575.51)/denom,(denom-502.74)/denom,(denom-438.50)/denom,(denom-397.13)/denom,(denom-362.14)/denom,(denom-338.83)/denom,(denom-302.52)/denom,(denom-303.45)/denom,(denom-217.39)/denom,1]
 	# df_A = df_A.melt('noise', var_name='algorithm', value_name='r = maximum tolerated q/p') # r is the maximum value of q/p for which we observe gains in the corresponding method when contrasted against simple replication of the input as the output, i.e., maximum value of q/p for which the accuracy of the method is greater than 1-noise
 	# df_A['algorithm'] = [algorithms[alg] for alg in df_A['algorithm'].values]
@@ -189,19 +191,38 @@ def load_df_A(dfs_noise):
 ##############################################################################
 
 def load_realnets_df():
-	prefix = 'outputs/real_nets'
-	csv_name = '4_networks_10_repts'
+	prefix = 'outputs/recents'
+	csv_name = 'real_nets__networks=4_reps=1000_noises=13'
 	realnets_df = pd.read_csv(f'{prefix}/{csv_name}.csv')
-	realnets_df.drop(columns=['infos','robustness'], inplace=True)
-	realnets_df.rename(columns={'time':'seconds'}, inplace=True)
+	realnets_df = realnets_df.loc[realnets_df['method'] == 'dist']
+	realnets_df.drop(columns=['repetition','robustness','method'], inplace=True)
 
-	new_realnets_df = pd.read_csv(f'{prefix}/real_nets__networks=4_reps=10.csv')
-	new_realnets_df = new_realnets_df.loc[new_realnets_df['method'] == 'dist']
-	new_realnets_df.drop(columns=['repetition','robustness','method'], inplace=True)
-	new_realnets_df = new_realnets_df.loc[new_realnets_df['algorithm'] != 'hedonic']
-	new_realnets_df = new_realnets_df.loc[new_realnets_df['algorithm'] != 'spectral']
+	# print(realnets_df['algorithm'].unique())
+	print(realnets_df.loc[realnets_df['algorithm'] == 'hedonic_n0'].mean())
+	print(realnets_df.loc[realnets_df['algorithm'] == 'local improve_n0'].mean())
 
-	realnets_df = pd.concat([realnets_df, new_realnets_df])
+	print(realnets_df.loc[realnets_df['algorithm'] == 'hedonic_n0'].max())
+	print(realnets_df.loc[realnets_df['algorithm'] == 'local improve_n0'].max())
+
+
+	####################
+
+	# prefix = 'outputs/real_nets'
+	# csv_name = '4_networks_10_repts'
+	# realnets_df = pd.read_csv(f'{prefix}/{csv_name}.csv')
+	# realnets_df.drop(columns=['infos','robustness'], inplace=True)
+	# realnets_df.rename(columns={'time':'seconds'}, inplace=True)
+
+	# new_realnets_df = pd.read_csv(f'{prefix}/real_nets__networks=4_reps=10.csv')
+	# new_realnets_df = new_realnets_df.loc[new_realnets_df['method'] == 'dist']
+	# new_realnets_df.drop(columns=['repetition','robustness','method'], inplace=True)
+	# new_realnets_df = new_realnets_df.loc[new_realnets_df['algorithm'] != 'hedonic']
+	# new_realnets_df = new_realnets_df.loc[new_realnets_df['algorithm'] != 'spectral']
+
+	# realnets_df = pd.concat([realnets_df, new_realnets_df])
+	
+	####################
+
 	# print(realnets_df['algorithm'].unique())
 	# algs = []
 	# for alg in realnets_df['algorithm']:
@@ -308,6 +329,7 @@ def generate_fig_1():
 	fig, axes = get_ax()
 
 	noise_graph = .35 # Choose one noise to be in Fig 1 (a)
+	print(dfs_noise[noise_graph]['algorithm'].unique())
 	axes[0].set_ylim(.499,1.01)
 	g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=dfs_noise[noise_graph], marker='o', linewidth=4.5, ci=95, hue_order=['louvain','local improve','hedonic','spectral','ecg'], ax=axes[0]) # , style="event"
 	axes[0].axhline(1-noise_graph, c='red', alpha=.75, ls='--', lw=2.5)
@@ -340,13 +362,13 @@ def generate_fig_1():
 
 	alg_repetition = int((len(realnets_df['algorithm'].unique())-3)/2) # #5975A4 sns.color_palette("Blues", n_colors=1)
 	cor = [(alg_colors['louvain']),(alg_colors['ecg']),(alg_colors['spectral'])]+sns.color_palette("Oranges", n_colors=alg_repetition)+sns.color_palette("Greens", n_colors=alg_repetition) # #5975A4 #CC8964 #5F9E6E
-	realnets_order = ['ml','ecg','spectral','onepass_n0.0','onepass_n0.05','onepass_n0.1','onepass_n0.15','onepass_n0.2','onepass_n0.25','onepass_n0.3','onepass_n0.35','onepass_n0.4','onepass_n0.45','onepass_n0.5','hedonic_n0.0','hedonic_n0.05','hedonic_n0.1','hedonic_n0.15','hedonic_n0.2','hedonic_n0.25','hedonic_n0.3','hedonic_n0.35','hedonic_n0.4','hedonic_n0.45','hedonic_n0.5']
+	realnets_order = ['ml','ecg','spectral','local improve_n0','local improve_n0.025','local improve_n0.05','local improve_n0.1','local improve_n0.15','local improve_n0.2','local improve_n0.25','local improve_n0.3','local improve_n0.35','local improve_n0.4','local improve_n0.45','local improve_n0.475','local improve_n0.5','hedonic_n0','hedonic_n0.025','hedonic_n0.05','hedonic_n0.1','hedonic_n0.15','hedonic_n0.2','hedonic_n0.25','hedonic_n0.3','hedonic_n0.35','hedonic_n0.4','hedonic_n0.45','hedonic_n0.475','hedonic_n0.5']
 	g = sns.barplot(x="network", y="accuracy", hue="algorithm", data=realnets_df, palette=cor, hue_order=realnets_order, ax=axes[3]) # order=realnets_order
 	max_acc = [] # [0] * len(realnets_order) * 4
 	for net in ['karate', 'dolphins', 'pol_blogs', 'pol_books']:
-		nets_df = realnets_df[realnets_df['network'] == net]
+		nets_df = realnets_df.loc[realnets_df['network'] == net]
 		for alg in realnets_order: # nets_df['algorithm'].unique():
-			nets_alg_df = nets_df[nets_df['algorithm'] == alg] # .max()
+			nets_alg_df = nets_df.loc[nets_df['algorithm'] == alg] # .max()
 			max_acc.append(nets_alg_df['accuracy'].max())
 			# max_acc[realnets_order.index(alg)] = nets_alg_df['accuracy'].max()
 	x_pos = [p.get_x() for p in axes[3].patches]
@@ -490,11 +512,12 @@ def plot_hists(filename):
 
 if __name__ == "__main__":
 	# df = load_df()
-	
-	df, dfs_noise, speed, df_A, realnets_df = load_datas()
+	df = load_realnets_df()
+
+	# df, dfs_noise, speed, df_A, realnets_df = load_datas()
 	# generate_noises_plot()
 	# generate_gif()
-	generate_fig_1()
+	# generate_fig_1()
 
 	# name = 'max_components__ps=10_mults=11_inst=10_reps=10_nComm=2_commSize=500.csv'
 	# fname = f'outputs/comparisons/news/{name}'
