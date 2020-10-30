@@ -89,21 +89,21 @@ def adaptd_df_to_new_exp(df, prefix='outputs/noises/'):
 	df2['algorithm'] = ['local improve' if alg == 'onepass' else algorithms[alg] for alg in df2['algorithm'].values]
 	return df2
 
-# def load_df():
-# 	prefix = 'outputs/noises/'
-# 	df = pd.concat([pd.read_csv(f'{prefix}{csv}') for csv in os.listdir(prefix) if csv[-3:] == 'csv' and csv[:5] == 'noise'])
-# 	# df['p_in-p_out'] = df['p_in'] - df['p_out']
-# 	return adaptd_df_to_new_exp(df, prefix)
-
 def load_df():
-	prefix = 'outputs/recents'
-	csv_name = 'with_noises_fix__ps=5_mults=11_inst=5_reps=5_noises=13_nComm=2_commSize=250'
-	df = pd.read_csv(f'{prefix}/{csv_name}.csv')
-	df = df.loc[df['method'] == 'dist']
-	df.drop(columns=['p_in','instance','repetition','robustness','method'], inplace=True)
-	df['algorithm'] = [alg.split('_')[0] for alg in df['algorithm']]
-	df['algorithm'] = [algorithms[alg] for alg in df['algorithm'].values]
-	return df
+	prefix = 'outputs/noises/'
+	df = pd.concat([pd.read_csv(f'{prefix}{csv}') for csv in os.listdir(prefix) if csv[-3:] == 'csv' and csv[:5] == 'noise'])
+	# df['p_in-p_out'] = df['p_in'] - df['p_out']
+	return adaptd_df_to_new_exp(df, prefix)
+
+# def load_df():
+# 	prefix = 'outputs/recents'
+# 	csv_name = 'with_noises_fix__ps=5_mults=11_inst=5_reps=5_noises=13_nComm=2_commSize=250'
+# 	df = pd.read_csv(f'{prefix}/{csv_name}.csv')
+# 	df = df.loc[df['method'] == 'dist']
+# 	df.drop(columns=['p_in','instance','repetition','robustness','method'], inplace=True)
+# 	df['algorithm'] = [alg.split('_')[0] for alg in df['algorithm']]
+# 	df['algorithm'] = [algorithms[alg] for alg in df['algorithm'].values]
+# 	return df
 
 ##############################################################################
 
@@ -198,11 +198,11 @@ def load_realnets_df():
 	realnets_df.drop(columns=['repetition','robustness','method'], inplace=True)
 
 	# print(realnets_df['algorithm'].unique())
-	print(realnets_df.loc[realnets_df['algorithm'] == 'hedonic_n0'].mean())
-	print(realnets_df.loc[realnets_df['algorithm'] == 'local improve_n0'].mean())
+	# print(realnets_df.loc[realnets_df['algorithm'] == 'hedonic_n0'].mean())
+	# print(realnets_df.loc[realnets_df['algorithm'] == 'local improve_n0'].mean())
 
-	print(realnets_df.loc[realnets_df['algorithm'] == 'hedonic_n0'].max())
-	print(realnets_df.loc[realnets_df['algorithm'] == 'local improve_n0'].max())
+	# print(realnets_df.loc[realnets_df['algorithm'] == 'hedonic_n0'].max())
+	# print(realnets_df.loc[realnets_df['algorithm'] == 'local improve_n0'].max())
 
 
 	####################
@@ -329,7 +329,7 @@ def generate_fig_1():
 	fig, axes = get_ax()
 
 	noise_graph = .35 # Choose one noise to be in Fig 1 (a)
-	print(dfs_noise[noise_graph]['algorithm'].unique())
+	# print(dfs_noise[noise_graph]['algorithm'].unique())
 	axes[0].set_ylim(.499,1.01)
 	g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=dfs_noise[noise_graph], marker='o', linewidth=4.5, ci=95, hue_order=['louvain','local improve','hedonic','spectral','ecg'], ax=axes[0]) # , style="event"
 	axes[0].axhline(1-noise_graph, c='red', alpha=.75, ls='--', lw=2.5)
@@ -351,7 +351,9 @@ def generate_fig_1():
 	# order=['spectral','local\nimprov','hedonic','louvain','ecg']
 	# ['louvain' 'ecg' 'hedonic' 'local\nimprov' 'spectral']
 	# print('ki', speed['algorithm'].unique())
-	g = sns.violinplot(x="algorithm", y="seconds", data=speed, fontsize=27.5, hue_order=['spectral','local\nimprov','hedonic','louvain','ecg'], ax=axes[2])
+	palette=alg_colors.copy()
+	palette['local\nimprove'] = palette.pop('local improve')
+	g = sns.violinplot(x="algorithm", y="seconds", data=speed, fontsize=27.5, palette=palette, ax=axes[2]) # hue_order=['spectral','local\nimprov','hedonic','louvain','ecg']
 	# g = sns.boxplot(x="algorithm", y="seconds", data=speed, ax=axes[2]) # , fontsize=27.5
 	# g = sns.swarmplot(x="algorithm", y="seconds", data=speed, color=".25", ax=axes[2])
 	axes[2].set(yscale="log") # xscale="log", 
