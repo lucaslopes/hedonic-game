@@ -415,7 +415,7 @@ def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
 def compare(with_noise=True, multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=np.linspace(.01,.1,5), instances=5, repetitions=5, numComm=2, commSize=250, output_name='with_noises_fix'): # noises=, #np.linspace(.5,.5,1)
+	ps=np.linspace(.01,.1,5), instances=20, repetitions=20, numComm=2, commSize=250, output_name='with_noises_fix'): # noises=, #np.linspace(.5,.5,1)
 
 	if with_noise:
 		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
@@ -561,42 +561,49 @@ def compare_real_nets(networks=get_real_nets(), repetitions=100, with_noise=True
 ## Main #########################################################################################
 
 def test_acc_realnet():
-	# G, GT = get_real_nets(nets=['karate'])['karate']
-	(G, GT), infos = get_ppg_max_components(2, 500, .02, .01)
+	G, GT = get_real_nets(nets=['karate'])['karate']
+	# (G, GT), infos = get_ppg_max_components(2, 500, .02, .01)
 	game = Game(G.get_edgelist())
 	noise = .5
-	for _ in range(100):
+	results, res_local = [], []
+	for _ in range(1000):
 		init_labels = apply_noise(GT, noise)
 		init_labels = [l if init_labels[0] == 0 else 1 - l for l in init_labels]
-		init_labels_copy = [l for l in init_labels]
-		print('0 obvio:', init_labels_copy == init_labels)
+		# init_labels_copy = [l for l in init_labels]
+		# print('0 obvio:', init_labels_copy == init_labels)
 		# print('init_labels:', init_labels)
 		# print('noise:', accuracy(from_dict_to_label(GT), init_labels), G.gam(from_label_to_dict(init_labels),GT,method='dist',adjusted=True))
-		labls = game.set_labels(init_labels)
-		labls = [l if labls[0] == 0 else 1 - l for l in labls]
+		game.set_labels(init_labels)
+		# labls = [l if labls[0] == 0 else 1 - l for l in labls]
 		# print('init eq:', labls == init_labels)
 		# print('labls:', labls)
-		hed_infos = game.play(naive=False)
+		game.play(naive=True)
+		eq = game.in_equilibrium_for(inspect=True)
+		if not eq: # Walrus Operator :=
+			print(f'game is not in equilibrium for alpha=edge density ({eq}')
 		ans_hedonic = from_label_to_dict(game.labels)
+		results.append(accuracies(G, [ans_hedonic], GT, methods=['dist'])[0]['dist'])
 		# print('hed init', hed_infos[0])
 		# print('hed eq:', labls == hed_infos[0])
 		# print('2 init eq:', labls == init_labels)
 		# print('o obvio:', init_labels_copy == init_labels)
-		
+	
+		ans_local, _ = local_improvement(G, init_labels)
+		res_local.append(accuracies(G, [ans_local], GT, methods=['dist'])[0]['dist'])
 
-		ans_local, _, local_infos = local_improvement(G, init_labels)
-
-		hed_infos[1].sort()
-		local_infos[1].sort()
-		print('inits equals?', hed_infos[0] == local_infos[0])
-		print('noves moved equals?', hed_infos[1] == local_infos[1])
-		print('final equals?', hed_infos[2] == local_infos[2])
+		# hed_infos[1].sort()
+		# local_infos[1].sort()
+		# print('inits equals?', hed_infos[0] == local_infos[0])
+		# print('noves moved equals?', hed_infos[1] == local_infos[1])
+		# print('final equals?', hed_infos[2] == local_infos[2])
 
 		# print(ans_hedonic == ans_local)
-		print(accuracy(from_dict_to_label(ans_hedonic), from_dict_to_label(ans_local)))
+		# print(accuracy(from_dict_to_label(ans_hedonic), from_dict_to_label(ans_local)))
 
-		scores = accuracies(G, [ans_hedonic, ans_local], GT, methods=['dist']) # , methods=['dist']
-		print(scores)
+		# scores = accuracies(G, [ans_hedonic, ans_local], GT, methods=['dist']) # , methods=['dist']
+		# print(scores)
+	print('hedonic:', max(results), np.mean(results))
+	print('local:', max(res_local), np.mean(res_local))
 
 # spell run --pip-req requirements.txt 'python compare.py'
 

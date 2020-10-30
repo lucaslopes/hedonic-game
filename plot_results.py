@@ -89,21 +89,21 @@ def adaptd_df_to_new_exp(df, prefix='outputs/noises/'):
 	df2['algorithm'] = ['local improve' if alg == 'onepass' else algorithms[alg] for alg in df2['algorithm'].values]
 	return df2
 
-def load_df():
-	prefix = 'outputs/noises/'
-	df = pd.concat([pd.read_csv(f'{prefix}{csv}') for csv in os.listdir(prefix) if csv[-3:] == 'csv' and csv[:5] == 'noise'])
-	# df['p_in-p_out'] = df['p_in'] - df['p_out']
-	return adaptd_df_to_new_exp(df, prefix)
-
 # def load_df():
-# 	prefix = 'outputs/recents'
-# 	csv_name = 'test_noise__ps=5_mults=11_inst=5_reps=5_noises=13_nComm=2_commSize=50'
-# 	df = pd.read_csv(f'{prefix}/{csv_name}.csv')
-# 	df = df.loc[df['method'] == 'dist']
-# 	df.drop(columns=['p_in','instance','repetition','robustness','method'], inplace=True)
-# 	df['algorithm'] = [alg.split('_')[0] for alg in df['algorithm']]
-# 	df['algorithm'] = [algorithms[alg] for alg in df['algorithm'].values]
-# 	return df
+# 	prefix = 'outputs/noises/'
+# 	df = pd.concat([pd.read_csv(f'{prefix}{csv}') for csv in os.listdir(prefix) if csv[-3:] == 'csv' and csv[:5] == 'noise'])
+# 	# df['p_in-p_out'] = df['p_in'] - df['p_out']
+# 	return adaptd_df_to_new_exp(df, prefix)
+
+def load_df():
+	prefix = 'outputs/recents'
+	csv_name = 'with_noises_fix__ps=5_mults=11_inst=5_reps=5_noises=13_nComm=2_commSize=250'
+	df = pd.read_csv(f'{prefix}/{csv_name}.csv')
+	df = df.loc[df['method'] == 'dist']
+	df.drop(columns=['p_in','instance','repetition','robustness','method'], inplace=True)
+	df['algorithm'] = [alg.split('_')[0] for alg in df['algorithm']]
+	df['algorithm'] = [algorithms[alg] for alg in df['algorithm'].values]
+	return df
 
 ##############################################################################
 
@@ -192,7 +192,7 @@ def load_df_A(dfs_noise):
 
 def load_realnets_df():
 	prefix = 'outputs/recents'
-	csv_name = 'real_nets__networks=4_reps=1000_noises=13'
+	csv_name = 'real_nets_fix__networks=4_reps=100_noises=13'
 	realnets_df = pd.read_csv(f'{prefix}/{csv_name}.csv')
 	realnets_df = realnets_df.loc[realnets_df['method'] == 'dist']
 	realnets_df.drop(columns=['repetition','robustness','method'], inplace=True)
@@ -512,12 +512,12 @@ def plot_hists(filename):
 
 if __name__ == "__main__":
 	# df = load_df()
-	df = load_realnets_df()
+	# df = load_realnets_df()
 
-	# df, dfs_noise, speed, df_A, realnets_df = load_datas()
+	df, dfs_noise, speed, df_A, realnets_df = load_datas()
 	# generate_noises_plot()
 	# generate_gif()
-	# generate_fig_1()
+	generate_fig_1()
 
 	# name = 'max_components__ps=10_mults=11_inst=10_reps=10_nComm=2_commSize=500.csv'
 	# fname = f'outputs/comparisons/news/{name}'

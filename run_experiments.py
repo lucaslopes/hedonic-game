@@ -63,12 +63,28 @@ def spectral(G):
 	# print('Spectral acuracy:', accuracy(extract_labels(G), labels))
 	return labels
 
+# def one_pass_neighbors(G):
+# 	want_move = []
+# 	for node in G.nodes:
+# 		here, there, dis_here, dis_there = get_node_atributes(G, node)
+# 		if here < there:
+# 			want_move.append(node)
+# 	for node in want_move:
+# 		move(G, node)
+# 	return G
+
 def one_pass_neighbors(G):
 	want_move = []
 	for node in G.nodes:
-		here, there, dis_here, dis_there = get_node_atributes(G, node)
-		if here < there:
+		here, there = 0, 0
+		for friend in G.neighbors(node):
+			if G.nodes[friend]['cluster'] == G.nodes[node]['cluster']:
+				here += 1
+			else:
+				there += 1
+		if there > here:
 			want_move.append(node)
+	# print(want_move)
 	for node in want_move:
 		move(G, node)
 	return G
@@ -108,9 +124,10 @@ def load_ground_truth(G, values, label='gt', replace={'0':0,'1':1}):
 	return G
 
 def initialize(G, labels=[], prob=.5):
-	if len(labels) != len(G.nodes):
+	if len(labels) == 0:
 		for _ in range(len(G.nodes)):
 			labels.append(0 if random() < prob else 1)
+	labels = [l if labels[0] == 0 else 1 - l for l in labels]
 	on_c0 = labels.count(0)
 	heres = np.zeros(len(G.nodes))
 	edges_c0, edges_c1 = 0, 0
@@ -123,9 +140,9 @@ def initialize(G, labels=[], prob=.5):
 			heres[n1] += 1
 			if c_n0 == 0: edges_c0 += 1
 			else:         edges_c1 += 1
-	for node, i, cluster, here in zip(G.nodes, range(len(G.nodes)), labels, heres):
-		if node != i:
-			print(f'ERROR: index of node {node} is different from index {i}.')
+	for node, cluster, here in zip(range(len(G.nodes)), labels, heres):
+		# if node != i:
+		# 	print(f'ERROR: index of node {node} is different from index {i}.')
 		G.nodes[node]['cluster'] = cluster
 		G.nodes[node]['here']    = here
 	G.clusters_nodes = [on_c0, len(G.nodes)-on_c0]
@@ -199,8 +216,8 @@ def max_edges_possible(nodes):
 	return nodes * (nodes - 1) / 2
 
 def extract_labels(G, label='block'):
-	return [l for n,l in list(G.nodes.data(label))]
-	# return [G.nodes[node][label] for node in G.nodes]
+	return [G.nodes[node][label] for node in range(len(G.nodes))]
+	# return [l for n,l in list(G.nodes.data(label))] # wrong: not in order
 
 def get_node_atributes(G, node):
 	here  = G.nodes[node]['here']
@@ -214,10 +231,7 @@ def satisfied(G, node):
 	return here >= there and dis_here <= dis_there
 
 def add_noise(labels, noise=.5):
-	new_labels = []
-	for label in labels:
-		new_labels.append(1 - label if random() < noise else label)
-	return new_labels
+	return [1 - label if noise > random() else label for label in labels]
 
 def separate_clusters(G):
 	clusters = [[], []]
@@ -242,8 +256,8 @@ def accuracy(x,y): # WARNING: x and y must be only 0 or 1
 	score = max([matches1, matches2]) / len(x)
 	return score
 
-def run_algorithm(G, GT, noise=.5, alpha=1, W=None, alg='naive'):
-	G = initialize(G, labels=add_noise(GT, noise))
+def run_algorithm(G, GT, noise=.5, alpha=1, W=None, alg='naive', labels=[]):
+	G = initialize(G, labels)
 	seconds = time()
 	if alg == 'hedonic' : answer = almost_robust(G)
 	if alg == 'naive'   : answer = find_equilibrium_shuffle(G, alpha)
@@ -375,6 +389,49 @@ def exp_2(
 			went += 1
 	df.to_csv(get_file_name('real_nets', f'{len(networks)}_networks_{repetitions}_repts.csv'), index=False)
 	print('\n\n\nFINISHED EXP 2!', time()-begin)
+
+####
+
+def valida_exp2(
+	algorithms = ['onepass', 'hedonic'], noises=[.5], # here # np.linspace(0,.5,11)
+	networks=get_real_nets(['karate']), repetitions=1000):
+
+	# df = pd.DataFrame(columns=['network', 'algorithm'])
+	went, total = 0, repetitions*len(networks)
+	accs = {'hedonic':[], 'onepass':[]}
+
+	begin = time()
+	print(f'\n\nExp 2 begin at:{begin} -- TOTAL = {total}\n\n')
+	for net in list(networks):
+		G  = networks[net]
+		GT = extract_labels(G, label='gt')
+		# spectral_answered, spectral_answer = False, None
+		for r in range(repetitions):
+			print(f'% = {round(went/total*100, 2)}%\tNet = {net}\tRep = {r}')
+			
+			labels = add_noise(GT, .5)
+
+			# if not spectral_answered:
+			# 	spectral_answer = run_algorithm(G, GT, alg='spectral')
+			# df = df.append({
+			# 	'network':net, 'algorithm':f'spectral',
+			# 	'accuracy':spectral_answer[1], 'time':spectral_answer[0],
+			# 	'robustness':spectral_answer[2], 'infos':spectral_answer[3]}, ignore_index=True)
+			for alg in algorithms:
+			# for noi in noises:
+				answer = run_algorithm(G, GT, alg=alg, labels=labels)
+				accs[alg].append(answer[1])
+				# print(alg, answer[1])
+				# df = df.append({
+				# 	'network':net, 'algorithm':f'{alg}_n{round(noi,2)}',
+				# 	'accuracy':answer[1], 'time':answer[0],
+				# 	'robustness':answer[2], 'infos':answer[3]}, ignore_index=True)
+			went += 1
+	# df.to_csv(get_file_name('real_nets', f'{len(networks)}_networks_{repetitions}_repts.csv'), index=False)
+	print('\n\n\nFINISHED EXP 2!', time()-begin)
+	print('hedonic', max(accs['hedonic']))
+	print('onepass', max(accs['onepass']))
+
 
 #################################################################################################
 ## Experiment 3: Consensus #############################################################
@@ -655,8 +712,12 @@ if __name__ == "__main__":
 
 	################################################
 
-	equal = 11
+	# equal = 11
 	# exp_5(alphas=equal, inits=equal, ps=equal, insts=equal, reps=equal)
 	# exp_5(alphas=equal, inits=equal, ps=5, insts=5, reps=5)
 
-	print(neighbors_states(int2bin(value=75, tam=100)))
+	# print(neighbors_states(int2bin(value=75, tam=100)))
+
+	################################################
+
+	valida_exp2()
