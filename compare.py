@@ -79,9 +79,9 @@ def get_answers(g, algs=['spectral', 'hedonic', 'ml', 'ecg', 'local improve'], s
 	# 	if alg[-1] == '2': answers[alg]['ans'] = two_communities(g, answers[ref]['ans'])
 	return answers
 
-def load_ground_truth(G, values, label='gt', replace={'0':0,'1':1}):
-	for node, cluster in zip(G.nodes, values):
-		G.nodes[node][label] = replace[cluster]
+def load_ground_truth(G, gts, label='gt', replace={'0':0,'1':1}):
+	for node in G.nodes:
+		G.nodes[node][label] = replace[gts[node]]
 	return G
 
 def get_file_name(folder='', outname='no_name'): # to output csv result
@@ -500,8 +500,11 @@ def get_real_nets(nets=['karate', 'dolphins', 'pol_blogs', 'pol_books']):
 		csv = pd.read_csv(f'real_nets/csv/{net}.csv', names=['A', 'B'])
 		gt  = pd.read_csv(f'real_nets/gt/{net}.csv',  names=['N', 'GT'])
 		clusters = gt['GT'].unique()
+		nodes_gts = {}
+		for node, gt in zip(gt['N'].values, gt['GT'].values):
+			nodes_gts[node] = gt
 		G = nx.from_pandas_edgelist(csv, 'A', 'B')
-		G = load_ground_truth(G, gt['GT'].values, label='GT', replace={clusters[0]:0, clusters[1]:1})
+		G = load_ground_truth(G, nodes_gts, label='GT', replace={clusters[0]:0, clusters[1]:1})
 		# colors = ['red' if G.nodes[node]['gt'] == 0 else 'blue' for node in G.nodes]
 		# nx.draw(G, pos=nx.spring_layout(G), node_color=colors) # , node_color=colors, alpha=alpha, width=width, node_size=sizes, edge_color=edge_color
 		# plt.show()
