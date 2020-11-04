@@ -7,7 +7,7 @@ Available at: https://lucaslopes.github.io/hedonic/doc/paper.pdf
 
 ## To run experiments
 
-1. Run the python file: `$ python run_experiments.py`
+1. Run the python file: `$ python compare.py`
 
 If you want to change experiment parameters, change it at the end of the file.
 
