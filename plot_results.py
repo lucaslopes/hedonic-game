@@ -58,8 +58,8 @@ from tqdm import tqdm
 			# }, ignore_index=True)
 
 # clustering / improvement / robust / local improve == local improve
-algorithms = { 'spectral':'spectral', 'local improve':'local improve', 'hedonic':'hedonic', 'ml':'louvain', 'ecg':'ecg' }
-alg_colors = { 'spectral':'#C44E53', 'local improve':'#DD8452', 'hedonic':'#55A869', 'louvain':'#4C72B0', 'ecg':'#8172B3' }
+algorithms = { 'spectral':'spectral', 'local improve':'local improve', 'hedonic':'hedonic', 'ml':'Louvain', 'ecg':'ECG' }
+alg_colors = { 'spectral':'#C44E53', 'local improve':'#DD8452', 'hedonic':'#55A869', 'Louvain':'#4C72B0', 'ECG':'#8172B3' }
 file_name_prefix = ''
 
 def adaptd_df_to_new_exp(df, prefix='outputs/noises/'):
@@ -89,15 +89,17 @@ def adaptd_df_to_new_exp(df, prefix='outputs/noises/'):
 	df2['algorithm'] = ['local improve' if alg == 'onepass' else algorithms[alg] for alg in df2['algorithm'].values]
 	return df2
 
+# merge old and new dataframes
 def load_df():
 	prefix = 'outputs/noises/'
 	df = pd.concat([pd.read_csv(f'{prefix}{csv}') for csv in os.listdir(prefix) if csv[-3:] == 'csv' and csv[:5] == 'noise'])
 	# df['p_in-p_out'] = df['p_in'] - df['p_out']
 	return adaptd_df_to_new_exp(df, prefix)
 
+# one datafram
 # def load_df():
 # 	prefix = 'outputs/recents'
-# 	csv_name = 'with_noises_fix__ps=5_mults=11_inst=5_reps=5_noises=13_nComm=2_commSize=250'
+# 	csv_name = 'with_noises_fix__ps=5_mults=11_inst=5_reps=15_noises=13_nComm=2_commSize=500'
 # 	df = pd.read_csv(f'{prefix}/{csv_name}.csv')
 # 	df = df.loc[df['method'] == 'dist']
 # 	df.drop(columns=['p_in','instance','repetition','robustness','method'], inplace=True)
@@ -144,7 +146,7 @@ def load_speed(df):
 	speed['algorithm'] = [alg.replace(' ','\n') for alg in speed['algorithm'].values]
 	for alg in speed['algorithm'].unique():
 		alg_df = speed[speed['algorithm'] == alg]
-	return speed#.loc[speed['algorithm'] != 'ecg']
+	return speed#.loc[speed['algorithm'] != 'ECG']
 
 ##############################################################################
 
@@ -226,7 +228,7 @@ def load_realnets_df():
 	# print(realnets_df['algorithm'].unique())
 	# algs = []
 	# for alg in realnets_df['algorithm']:
-	# 	if alg != [algorithms['spectral'], algorithms['ml'], algorithms['ecg']]:
+	# 	if alg != [algorithms['spectral'], algorithms['ml'], algorithms['ECG']]:
 	# 		alg = alg.split('_')
 	# 		alg[0] = algorithms[alg[0]]
 	# 		alg = f'{alg[0]} (noi={alg[1][2:]})'
@@ -234,7 +236,7 @@ def load_realnets_df():
 	# realnets_df['algorithm'] = algs
 	
 	# print(realnets_df.loc[(realnets_df['algorithm'] == 'ml') & (realnets_df['network'] == 'pol_blogs'), 'accuracy'].max())
-	# print(realnets_df.loc[(realnets_df['algorithm'] == 'ecg') & (realnets_df['network'] == 'pol_blogs'), 'accuracy'].max())
+	# print(realnets_df.loc[(realnets_df['algorithm'] == 'ECG') & (realnets_df['network'] == 'pol_blogs'), 'accuracy'].max())
 
 	return realnets_df
 
@@ -297,7 +299,7 @@ def generate_noises_plot():
 	for noise_graph, data in dfs_noise.items():
 		fig, ax = get_ax(n_cols=1, width=12.5)
 		ax.set_ylim(.499,1.01)
-		g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=data, marker='o', linewidth=4.5, ax=ax, ci=95) # , style="event"
+		g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=data, marker='o', linewidth=4.5, ax=ax, ci=95, hue_order=['Louvain','local improve','hedonic','spectral','ECG']) # , style="event"
 		ax.axhline(1-noise_graph, c='red', alpha=.75, ls='--', lw=2.5)
 		# ax.annotate('$1$-noise', (.85, 1.005-noise_graph), fontsize=40)
 		noise_name = str(round(noise_graph,3))+'00000000'
@@ -331,7 +333,7 @@ def generate_fig_1():
 	noise_graph = .35 # Choose one noise to be in Fig 1 (a)
 	# print(dfs_noise[noise_graph]['algorithm'].unique())
 	axes[0].set_ylim(.499,1.01)
-	g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=dfs_noise[noise_graph], marker='o', linewidth=4.5, ci=95, hue_order=['louvain','local improve','hedonic','spectral','ecg'], ax=axes[0]) # , style="event"
+	g = sns.lineplot(x="q/p", y="accuracy", hue="algorithm", data=dfs_noise[noise_graph], marker='o', linewidth=4.5, ci=95, hue_order=['Louvain','local improve','hedonic','spectral','ECG'], ax=axes[0]) # , style="event"
 	axes[0].axhline(1-noise_graph, c='red', alpha=.75, ls='--', lw=2.5)
 	axes[0].annotate('$1$-noise', (.85, 1.005-noise_graph), fontsize=40)
 	plt.text(0.6, 0.65, '', bbox=dict(boxstyle="round", fc="white", ec="red", pad=0.2))
@@ -341,20 +343,19 @@ def generate_fig_1():
 
 	##############################################################################
 
-	g = sns.lineplot(x="noise", y="r = maximum tolerated q/p", hue="algorithm", data=df_A, marker='o', linewidth=4.5, hue_order=['louvain','local improve','hedonic','spectral','ecg'], ax=axes[1])
+	g = sns.lineplot(x="noise", y="r = maximum tolerated q/p", hue="algorithm", data=df_A, marker='o', linewidth=4.5, hue_order=['Louvain','local improve','hedonic','spectral','ECG'], ax=axes[1])
 	save_plot(axes[1], title='(b) max q/p such that accuracy$\geq1$-noise', x_label='noise', y_label='r = maximum tolerated q/p', f_name='cross')
 	print('plot 2')
 
 	##############################################################################
 
-	# ['louvain','local improve','hedonic','spectral','ecg']
-	# order=['spectral','local\nimprov','hedonic','louvain','ecg']
-	# ['louvain' 'ecg' 'hedonic' 'local\nimprov' 'spectral']
+	# ['Louvain','local improve','hedonic','spectral','ECG']
+	# order=['spectral','local\nimprove','hedonic','Louvain','ECG']
+	# ['Louvain' 'ECG' 'hedonic' 'local\nimprove' 'spectral']
 	# print('ki', speed['algorithm'].unique())
 	palette=alg_colors.copy()
 	palette['local\nimprove'] = palette.pop('local improve')
-	print(palette)
-	g = sns.violinplot(x="algorithm", y="seconds", data=speed, fontsize=27.5, palette=palette, order=['louvain','ecg','spectral','local\nimprov','hedonic'], ax=axes[2]) # hue_order=['spectral','local\nimprov','hedonic','louvain','ecg']
+	g = sns.violinplot(x="algorithm", y="seconds", data=speed, fontsize=27.5, palette=palette, order=['spectral','local\nimprove','hedonic','Louvain','ECG'], ax=axes[2]) # hue_order=['spectral','local\nimprove','hedonic','Louvain','ECG']
 	# g = sns.boxplot(x="algorithm", y="seconds", data=speed, ax=axes[2]) # , fontsize=27.5
 	# g = sns.swarmplot(x="algorithm", y="seconds", data=speed, color=".25", ax=axes[2])
 	axes[2].set(yscale="log") # xscale="log", 
@@ -364,8 +365,8 @@ def generate_fig_1():
 	##############################################################################
 
 	alg_repetition = int((len(realnets_df['algorithm'].unique())-3)/2) # #5975A4 sns.color_palette("Blues", n_colors=1)
-	cor = [(alg_colors['louvain']),(alg_colors['ecg']),(alg_colors['spectral'])]+sns.color_palette("Oranges", n_colors=alg_repetition)+sns.color_palette("Greens", n_colors=alg_repetition) # #5975A4 #CC8964 #5F9E6E
-	realnets_order = ['ml','ecg','spectral','local improve_n0','local improve_n0.025','local improve_n0.05','local improve_n0.1','local improve_n0.15','local improve_n0.2','local improve_n0.25','local improve_n0.3','local improve_n0.35','local improve_n0.4','local improve_n0.45','local improve_n0.475','local improve_n0.5','hedonic_n0','hedonic_n0.025','hedonic_n0.05','hedonic_n0.1','hedonic_n0.15','hedonic_n0.2','hedonic_n0.25','hedonic_n0.3','hedonic_n0.35','hedonic_n0.4','hedonic_n0.45','hedonic_n0.475','hedonic_n0.5']
+	cor = [(alg_colors['Louvain']),(alg_colors['ECG']),(alg_colors['spectral'])]+sns.color_palette("Oranges", n_colors=alg_repetition)+sns.color_palette("Greens", n_colors=alg_repetition) # #5975A4 #CC8964 #5F9E6E
+	realnets_order = ['ml','ECG','spectral','local improve_n0','local improve_n0.025','local improve_n0.05','local improve_n0.1','local improve_n0.15','local improve_n0.2','local improve_n0.25','local improve_n0.3','local improve_n0.35','local improve_n0.4','local improve_n0.45','local improve_n0.475','local improve_n0.5','hedonic_n0','hedonic_n0.025','hedonic_n0.05','hedonic_n0.1','hedonic_n0.15','hedonic_n0.2','hedonic_n0.25','hedonic_n0.3','hedonic_n0.35','hedonic_n0.4','hedonic_n0.45','hedonic_n0.475','hedonic_n0.5']
 	g = sns.barplot(x="network", y="accuracy", hue="algorithm", data=realnets_df, palette=cor, hue_order=realnets_order, ax=axes[3]) # order=realnets_order
 	max_acc = [] # [0] * len(realnets_order) * 4
 	for net in ['karate', 'dolphins', 'pol_blogs', 'pol_books']:
@@ -376,12 +377,12 @@ def generate_fig_1():
 			# max_acc[realnets_order.index(alg)] = nets_alg_df['accuracy'].max()
 	x_pos = [p.get_x() for p in axes[3].patches]
 	x_pos.sort()
-	colors = [alg_colors['louvain'],alg_colors['ecg'],alg_colors['spectral']]+[alg_colors['local improve'] for _ in range(alg_repetition)]+[alg_colors['hedonic'] for _ in range(alg_repetition)]
+	colors = [alg_colors['Louvain'],alg_colors['ECG'],alg_colors['spectral']]+[alg_colors['local improve'] for _ in range(alg_repetition)]+[alg_colors['hedonic'] for _ in range(alg_repetition)]
 	for pos, maxx, c in zip(x_pos, max_acc, colors*4):
 		axes[3].annotate('_', (pos, maxx), c=c, weight=1000) # p.get_height() * 1.005)
 	axes[3].set_ylim(0.499,1.01)
 	# labls = {'spectral clustering':'#5975A4', 'local improvement\n(0$\leq$noise$\leq$0.5)':'#CC8964', 'hedonic robust\n(0$\leq$noise$\leq$0.5)':'#5F9E6E'}
-	labls = {'louvain':alg_colors['louvain'], 'ecg':alg_colors['ecg'], 'spectral':alg_colors['spectral'], 'local improve':alg_colors['local improve'], 'hedonic':alg_colors['hedonic']} # \n(0$\leq$noise$\leq$0.5)
+	labls = {'Louvain':alg_colors['Louvain'], 'ECG':alg_colors['ECG'], 'spectral':alg_colors['spectral'], 'local improve':alg_colors['local improve'], 'hedonic':alg_colors['hedonic']} # \n(0$\leq$noise$\leq$0.5)
 	save_plot(axes[3], title='(d) real networks', x_label='network', y_label='accuracy', f_name='real_nets_bar_plot', n_col=2, labels_handles=labls, font_scale=.7)
 	print('plot 4')
 
@@ -518,8 +519,8 @@ if __name__ == "__main__":
 	# df = load_realnets_df()
 
 	df, dfs_noise, speed, df_A, realnets_df = load_datas()
-	# generate_noises_plot()
-	# generate_gif()
+	generate_noises_plot()
+	generate_gif()
 	generate_fig_1()
 
 	# name = 'max_components__ps=10_mults=11_inst=10_reps=10_nComm=2_commSize=500.csv'
