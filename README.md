@@ -17,10 +17,17 @@ If you want to change experiment parameters, change it at the end of the file.
 
 It will generate:
 
-1. [Figure 1](https://lucaslopes.github.io/hedonic/doc/fig1.png)
+1. [Main Plot](https://lucaslopes.github.io/hedonic/doc/main_plot.png) !!! UPDATED !!!
 
-<!-- ![https://lucaslopes.github.io/hedonic/fig1.png](./doc/fig1.png) -->
-<img src="./doc/fig1.png" alt="fig 1"/>
+A bug was fixed in plot (d), this was the previous version (submitted to ICC 2021):
+
+<!-- ![https://lucaslopes.github.io/hedonic/doc/main_plot_submitted.png](./doc/main_plot_submitted.png) -->
+<img src="./doc/submitted/main_plot_submitted.png" alt="Main Plot (submitted to ICC 2021)"/>
+
+And here is the current version (bug fixed and `pol_books` changed order with `pol_blogs`):
+
+<!-- ![https://lucaslopes.github.io/hedonic/doc/main_plot.png](./doc/main_plot.png) -->
+<img src="./doc/main_plot.png" alt="Main Plot (bug fixed)"/>
 
 2. Fig 1 (a) is considered at multiple noise levels (saved in `./outputs/noises/plots/`)
 

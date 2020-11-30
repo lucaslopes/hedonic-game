@@ -426,10 +426,10 @@ def speed_test(multipliers=np.concatenate(([.05], np.linspace(0,1,6)[1:])),
 #################################################################################################
 ## Compare Time and Accuracy: Hedonic vs Spectral vs Louvain vs ECG #############################
 
-def compare(with_noise=True, multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
-	ps=np.linspace(.01,.1,5), instances=5, repetitions=15, numComm=2, commSize=500, output_name='with_noises_fix'): # noises=, #np.linspace(.5,.5,1)
+def compare(noise_levels=True, multipliers=np.concatenate(([.05], np.linspace(0,1,11)[1:])),
+	ps=np.linspace(.01,.1,5), instances=5, repetitions=15, numComm=2, commSize=500, output_name='noise_levelss_fix'): # noises=, #np.linspace(.5,.5,1)
 
-	if with_noise:
+	if noise_levels:
 		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
 		noises = [round(noi, 3) for noi in noises]
 	else:
@@ -494,7 +494,7 @@ def compare(with_noise=True, multipliers=np.concatenate(([.05], np.linspace(0,1,
 #################################################################################################
 ## Real Nets #############################
 
-def get_real_nets(nets=['karate', 'dolphins', 'pol_blogs', 'pol_books']):
+def get_real_nets(nets=['karate', 'dolphins', 'pol_books', 'pol_blogs']):
 	real_nets = {}
 	for net in nets:
 		csv = pd.read_csv(f'real_nets/csv/{net}.csv', names=['A', 'B'])
@@ -512,9 +512,9 @@ def get_real_nets(nets=['karate', 'dolphins', 'pol_blogs', 'pol_books']):
 		real_nets[net] = (G, GT)
 	return real_nets
 
-def compare_real_nets(networks=get_real_nets(), repetitions=100, with_noise=True, output_name='real_nets_fix'): # noises=, #np.linspace(.5,.5,1)
+def compare_real_nets(networks=get_real_nets(), repetitions=1000, noise_levels=True, output_name=''): # noises=, #np.linspace(.5,.5,1)
 
-	if with_noise:
+	if noise_levels:
 		noises = [0,.025]+list(np.linspace(0,.5,11))[1:-1]+[.475,.5]
 		noises = [round(noi, 3) for noi in noises]
 	else:
@@ -549,7 +549,7 @@ def compare_real_nets(networks=get_real_nets(), repetitions=100, with_noise=True
 				seconds = [answers[alg]['sec'] for alg in ans_order]
 				robust  = [answers[alg]['rob'] if 'rob' in answers[alg] else 0 for alg in ans_order] # only hedonics
 				answers = [answers[alg]['ans'] for alg in ans_order]
-				scores = accuracies(G, answers, GT, methods=['dist','jaccard','rand']) # , methods=['dist']
+				scores = accuracies(G, answers, GT, methods=['dist']) # , methods=['dist','jaccard','rand']
 				# print(scores)
 				for alg, score, rob, sec in zip(ans_order, scores, robust, seconds):
 					for mthd, acc in score.items():
@@ -570,6 +570,7 @@ def compare_real_nets(networks=get_real_nets(), repetitions=100, with_noise=True
 	for col, values in columns.items():
 		df_results[col] = values
 	df_results.to_csv(f'{output_name}__networks={len(networks)}_reps={repetitions}_noises={len(noises)}.csv', index=False) # get_file_name('comparisons', f'comparison_commSize={commSize}.csv'
+
 	print('\n\n\nFINISHED EXP COMPARISON!', time()-begin)
 
 #################################################################################################
@@ -592,7 +593,7 @@ def test_acc_realnet():
 		# labls = [l if labls[0] == 0 else 1 - l for l in labls]
 		# print('init eq:', labls == init_labels)
 		# print('labls:', labls)
-		game.play(naive=True)
+		game.play(naive=False)
 		eq = game.in_equilibrium_for(inspect=True)
 		if not eq: # Walrus Operator :=
 			print(f'game is not in equilibrium for alpha=edge density ({eq}')
@@ -625,7 +626,7 @@ def test_acc_realnet():
 if __name__ == "__main__":
 	# test_acc_realnet()
 
-	compare() # run 3/3
+	# compare() # run 3/3
 	# compare(output_name='dict_label_fix__max_components')
 	# compare(multipliers=np.array([1]), ps=np.array([.1]), instances=100, repetitions=100, numComm=2, commSize=250, output_name='tttest') # noises=, #np.linspace(.5,.5,1)
 
@@ -655,7 +656,8 @@ if __name__ == "__main__":
 
 	## Real Nets ############
 
-	# compare_real_nets(repetitions=100) # 
+	# compare_real_nets(repetitions=10, noise_levels=False, output_name='print_infos') # 
+	compare_real_nets(output_name='agora_vai') # 
 
 	##############################
 

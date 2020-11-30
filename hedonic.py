@@ -3,15 +3,16 @@ from random import random, shuffle
 from time import time
 import seaborn as sns
 import matplotlib.pyplot as plt
+# from compare import get_real_nets
 
 class Game:
 
-	def __init__(self, edge_list=None, alpha=None):
-		self.load_from_edge_list(edge_list)
+	def __init__(self, edge_list=None, gt=None, alpha=None):
+		self.load_from_edge_list(edge_list, gt)
 		self.set_labels()
 		self.set_alpha(alpha)
 	
-	def load_from_edge_list(self, edge_list=None):
+	def load_from_edge_list(self, edge_list=None, gt=None):
 		edge_list = self.ppg() if edge_list is None else edge_list
 		nodes = {}
 		for edge in edge_list:
@@ -23,21 +24,21 @@ class Game:
 		# verify if int list(nodes) sorted is contious (1,2,3...++,)
 		for i in range(max(list(nodes))):
 			if i not in nodes:
-				print('ISOLATED NODE:', node)
+				print('ISOLATED NODE:', i)
 				nodes[i] = []
 		neighbors = [[] for _ in range(len(nodes))]
 		for node, friends in nodes.items():
 			neighbors[node] = [friend for friend in friends] 
-		self.edge_list = edge_list
+		self.edge_list = list(edge_list) # [e for e in edge_list]
 		self.labels = [0] * len(nodes)
 		self.neighbors = neighbors
-		# self.GT = [0] * int(len(self.labels)/2) + [1] * int(len(self.labels)/2) # todo: load GT
+		self.GT = dict(gt) # [0] * int(len(self.labels)/2) + [1] * int(len(self.labels)/2) # todo: load GT
 
 	def set_labels(self, labels=[], prob=.5):
 		if len(labels) != len(self.labels):
-			if len(self.labels) != self.labels.count(0):
-				print('hedonic: labels has different size of number of vertices.')
 			labels = [0 if prob > random() else 1 for _ in range(len(self.labels))]
+			# if len(self.labels) != self.labels.count(0):
+			# 	print('hedonic: labels has different size of number of vertices.')
 		on_c0 = labels.count(0)
 		with_me = [0] * len(self.labels)
 		edges = [0, 0]
@@ -218,7 +219,10 @@ class Game:
 	def accuracy(self, x=None,y=None): # WARNING: x and y must be only 0 or 1
 		if x is None:
 			x = self.labels
-			y = self.GT
+			gt = [0 for i in range(len(self.GT))] # max(list(self.GT))+1
+			for node, cluster in self.GT.items():
+				gt[node] = cluster
+			y = gt
 		x, y = np.array(x), np.array(y)
 		if len(x) != len(y):
 			print(len(x), len(y))
@@ -317,16 +321,35 @@ class Game:
 		pass # txt to load attributes
 
 if __name__ == "__main__":
-	# game = Game(edge_list=Game.ppg(6, .6, .4))
-	# game.play()
+	game = Game(edge_list=Game.ppg(6, .6, .4))
+	game.play()
 
-	now = time()
-	for p in np.linspace(.5, 1, 11):
-		for r in range(10):
-			game = Game(edge_list=Game.ppg(50, p, 1-p))
-			game.play()
-	print(time()-now)
+	# now = time()
+	# for p in np.linspace(.5, 1, 11):
+	# 	for r in range(10):
+	# 		game = Game(edge_list=Game.ppg(50, p, 1-p))
+	# 		game.play()
+	# print(time()-now)
 	
+	# real_nets = get_real_nets() # nao esquecer de voltar com import hedonic em compare e partition_graph
+	# for net, (g, gt) in real_nets.items():
+	# 	game = Game(g.get_edgelist(), gt)
+	# 	best = 0
+	# 	for i in range(100):
+	# 		game.set_labels()
+	# 		game.play(naive=False)
+	# 		acc = game.accuracy()
+	# 		if acc > best:
+	# 			best = acc
+	# 	print(net, best)
+	# eq = game.in_equilibrium_for(inspect=True)
+	# if not eq: # Walrus Operator :=
+	# 	print(f'game is not in equilibrium for alpha=edge density ({eq}')
+	# if only_membership:
+	# 	return game.labels
+	# else:
+	# 	return from_label_to_dict(game.labels), duration, game.calc_robustness()
+
 	# pot, robs, accs = game.potential_robustness_accuracy()
 	# robs = [x for _, x in sorted(zip(accs, robs))] # sort by first elem of tupple: accs or pot
 	# pot  = [x for _, x in sorted(zip(accs, pot))]

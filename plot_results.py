@@ -140,7 +140,7 @@ def load_dfs_noise(df):
 ##############################################################################
 
 def load_speed(df):
-	speed = df.loc[:, ['noise', 'algorithm', 'seconds']] # +[f'{alg}_time' for alg in algorithms]
+	speed = df.loc[:, ['mult', 'noise', 'algorithm', 'seconds']] # +[f'{alg}_time' for alg in algorithms]
 	# speed = speed.melt('noise', var_name='algorithm', value_name='seconds')
 	# speed['algorithm'] = [alg.split('_')[0] for alg in speed['algorithm'].values]
 	speed['algorithm'] = [alg.replace(' ','\n') for alg in speed['algorithm'].values]
@@ -193,8 +193,8 @@ def load_df_A(dfs_noise):
 ##############################################################################
 
 def load_realnets_df():
-	prefix = 'outputs/recents'
-	csv_name = 'real_nets_fix__networks=4_reps=100_noises=13'
+	prefix = 'outputs/real_nets'
+	csv_name = 'agora_vai__networks=4_reps=1000_noises=13'
 	realnets_df = pd.read_csv(f'{prefix}/{csv_name}.csv')
 	realnets_df = realnets_df.loc[realnets_df['method'] == 'dist']
 	realnets_df.drop(columns=['repetition','robustness','method'], inplace=True)
@@ -327,7 +327,7 @@ def generate_gif():
 
 ##############################################################################
 
-def generate_fig_1():
+def generate_main_plot():
 	fig, axes = get_ax()
 
 	noise_graph = .35 # Choose one noise to be in Fig 1 (a)
@@ -366,10 +366,10 @@ def generate_fig_1():
 
 	alg_repetition = int((len(realnets_df['algorithm'].unique())-3)/2) # #5975A4 sns.color_palette("Blues", n_colors=1)
 	cor = [(alg_colors['Louvain']),(alg_colors['ECG']),(alg_colors['spectral'])]+sns.color_palette("Oranges", n_colors=alg_repetition)+sns.color_palette("Greens", n_colors=alg_repetition) # #5975A4 #CC8964 #5F9E6E
-	realnets_order = ['ml','ECG','spectral','local improve_n0','local improve_n0.025','local improve_n0.05','local improve_n0.1','local improve_n0.15','local improve_n0.2','local improve_n0.25','local improve_n0.3','local improve_n0.35','local improve_n0.4','local improve_n0.45','local improve_n0.475','local improve_n0.5','hedonic_n0','hedonic_n0.025','hedonic_n0.05','hedonic_n0.1','hedonic_n0.15','hedonic_n0.2','hedonic_n0.25','hedonic_n0.3','hedonic_n0.35','hedonic_n0.4','hedonic_n0.45','hedonic_n0.475','hedonic_n0.5']
+	realnets_order = ['ml','ecg','spectral','local improve_n0','local improve_n0.025','local improve_n0.05','local improve_n0.1','local improve_n0.15','local improve_n0.2','local improve_n0.25','local improve_n0.3','local improve_n0.35','local improve_n0.4','local improve_n0.45','local improve_n0.475','local improve_n0.5','hedonic_n0','hedonic_n0.025','hedonic_n0.05','hedonic_n0.1','hedonic_n0.15','hedonic_n0.2','hedonic_n0.25','hedonic_n0.3','hedonic_n0.35','hedonic_n0.4','hedonic_n0.45','hedonic_n0.475','hedonic_n0.5']
 	g = sns.barplot(x="network", y="accuracy", hue="algorithm", data=realnets_df, palette=cor, hue_order=realnets_order, ax=axes[3]) # order=realnets_order
 	max_acc = [] # [0] * len(realnets_order) * 4
-	for net in ['karate', 'dolphins', 'pol_blogs', 'pol_books']:
+	for net in ['karate', 'dolphins', 'pol_books', 'pol_blogs']:
 		nets_df = realnets_df.loc[realnets_df['network'] == net]
 		for alg in realnets_order: # nets_df['algorithm'].unique():
 			nets_alg_df = nets_df.loc[nets_df['algorithm'] == alg] # .max()
@@ -382,14 +382,14 @@ def generate_fig_1():
 		axes[3].annotate('_', (pos, maxx), c=c, weight=1000) # p.get_height() * 1.005)
 	axes[3].set_ylim(0.499,1.01)
 	# labls = {'spectral clustering':'#5975A4', 'local improvement\n(0$\leq$noise$\leq$0.5)':'#CC8964', 'hedonic robust\n(0$\leq$noise$\leq$0.5)':'#5F9E6E'}
-	labls = {'Louvain':alg_colors['Louvain'], 'ECG':alg_colors['ECG'], 'spectral':alg_colors['spectral'], 'local improve':alg_colors['local improve'], 'hedonic':alg_colors['hedonic']} # \n(0$\leq$noise$\leq$0.5)
-	save_plot(axes[3], title='(d) real networks', x_label='network', y_label='accuracy', f_name='real_nets_bar_plot', n_col=2, labels_handles=labls, font_scale=.7)
+	labls = {'Louvain':alg_colors['Louvain'], 'ECG':alg_colors['ECG'], 'spectral':alg_colors['spectral'], 'l. improve':alg_colors['local improve'], 'hedonic':alg_colors['hedonic']} # \n(0$\leq$noise$\leq$0.5)
+	save_plot(axes[3], title='(d) real networks', x_label='network', y_label='accuracy', f_name='real_nets_bar_plot', n_col=2, labels_handles=labls, font_scale=.625)
 	print('plot 4')
 
 	##############################################################################
 
 	plt.tight_layout()
-	fig.savefig('fig1.png')
+	fig.savefig('main_plot.png')
 	print('save fig')
 
 ##############################################################################
@@ -518,10 +518,28 @@ if __name__ == "__main__":
 	# df = load_df()
 	# df = load_realnets_df()
 
+	# realnets_df = load_realnets_df()
+	# print(realnets_df['algorithm'].unique())
+	# asdasd()
+	# print(realnets_df.columns)
+	# nets = realnets_df['network'].unique()
+	# for net in nets:
+	# 	print(net, np.mean(realnets_df.loc[(realnets_df['network'] == net) & (realnets_df['algorithm'] == 'ecg')]['accuracy']))
+
+	# df = load_df()
+	# speed = load_speed(df)
+	# accs_ecg = speed[speed['algorithm'] == 'ECG']['seconds'].values()
+	# print(np.mean(speed[speed['algorithm'] == 'ECG']['seconds']))
+	# for mult in speed['mult'].unique():
+	# 	plt.clf()
+	# 	plt.title(mult)
+	# 	plt.hist(speed.loc[(speed['mult'] == mult) & (speed['algorithm'] == 'ECG')]['seconds'])
+	# 	plt.show()
+
 	df, dfs_noise, speed, df_A, realnets_df = load_datas()
-	generate_noises_plot()
-	generate_gif()
-	generate_fig_1()
+	# generate_noises_plot()
+	# generate_gif()
+	generate_main_plot()
 
 	# name = 'max_components__ps=10_mults=11_inst=10_reps=10_nComm=2_commSize=500.csv'
 	# fname = f'outputs/comparisons/news/{name}'
