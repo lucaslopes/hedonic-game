@@ -4,4 +4,5 @@ __pycache__
 outputs/
 ignore/
 Procfile
-Icon
+Icon
+doc/paper.pdf
