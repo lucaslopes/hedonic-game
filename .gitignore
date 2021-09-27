@@ -5,4 +5,4 @@ outputs/
 ignore/
 Procfile
 Icon
-doc/paper.pdf
+*.pdf
