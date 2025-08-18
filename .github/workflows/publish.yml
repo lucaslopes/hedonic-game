@@ -1,0 +1,51 @@
+name: Publish to TestPyPI
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v0.0.1, v1.0.0, etc.
+  workflow_dispatch:  # Allow manual triggering
+
+permissions:
+  id-token: write  # Required for OIDC authentication
+  contents: read    # Required to read repository contents
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          version: 'latest'
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          # Note: You'll still need to add TEST_PYPI_API_TOKEN as a secret
+          # until you configure OIDC trust with TestPyPI
+          # For full OIDC setup, you'd use:
+          # password: ${{ steps.auth.outputs.token }}
+          # And add the OIDC authentication step below
+
+      # Uncomment the following steps when TestPyPI supports OIDC:
+      # - name: Authenticate to TestPyPI with OIDC
+      #   id: auth
+      #   uses: google-github-actions/auth@v2
+      #   with:
+      #     workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/github-actions/providers/github'
+      #     service_account: 'github-actions@your-project.iam.gserviceaccount.com'
+      #     token_format: 'access_token'

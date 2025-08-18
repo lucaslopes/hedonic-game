@@ -49,3 +49,24 @@ To publish to PyPI:
 ```bash
 uv publish --token <your-pypi-token>
 ```
+
+## GitHub Actions Publishing
+
+This repository includes GitHub Actions workflows for automated publishing:
+
+- **Automatic publishing** when you push version tags (e.g., `v0.0.1`)
+- **Manual publishing** from the Actions tab
+- **Secure authentication** using API tokens (with OIDC support planned)
+
+### Quick Release
+
+1. Update version in `pyproject.toml`
+2. Commit and push your changes
+3. Create and push a version tag:
+   ```bash
+   git tag v0.0.1
+   git push origin v0.0.1
+   ```
+4. The workflow will automatically build and publish to TestPyPI
+
+For detailed setup instructions, see [docs/OIDC_SETUP.md](docs/OIDC_SETUP.md).
