@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "A Python library for hedonic games"
 readme = "README.md"
 authors = [
-    { name = "Lucas Lopes Felipe", website = "https://lucaslopes.me" }
+    { name = "Lucas Lopes Felipe" }
 ]
 requires-python = ">=3.12"
 dependencies = []
