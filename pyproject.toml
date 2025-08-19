@@ -7,7 +7,7 @@ authors = [
     { name = "Lucas Lopes Felipe" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["igraph>=0.11"]
 
 [build-system]
 requires = ["uv_build>=0.8.11,<0.9.0"]
