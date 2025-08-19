@@ -1,42 +1,42 @@
 # PyPI workflow is currently disabled
 # To re-enable: uncomment this file and add PYPI_API_TOKEN secret
 #
-# name: Publish to PyPI
-# 
-# on:
-#   push:
-#     tags:
-#       - 'v*'          # Trigger on production version tags like v0.0.1, v1.0.0, etc.
-#   workflow_dispatch:  # Allow manual triggering
-# 
-# permissions:
-#   id-token: write  # Required for OIDC authentication
-#   contents: read    # Required to read repository contents
-# 
-# jobs:
-#   publish:
-#     runs-on: ubuntu-latest
-#     steps:
-#       - name: Checkout repository
-#         uses: actions/checkout@v4
-# 
-#       - name: Set up Python
-#         uses: actions/setup-python@v4
-#         with:
-#           python-version: '3.12'
-# 
-#       - name: Install uv
-#         uses: astral-sh/setup-uv@v2
-#         with:
-#           version: 'latest'
-# 
-#       - name: Build package
-#         run: uv build
-# 
-#       - name: Publish to PyPI
-#         uses: pypa/gh-action-pypi-publish@release/v1
-#         with:
-#           password: ${{ secrets.PYPI_API_TOKEN }}
-# 
-# # PyPI workflow is currently disabled
-# # To re-enable: uncomment this file and add PYPI_API_TOKEN secret
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'          # Trigger on production version tags like v0.0.1, v1.0.0, etc.
+  workflow_dispatch:  # Allow manual triggering
+
+permissions:
+  id-token: write  # Required for OIDC authentication
+  contents: read    # Required to read repository contents
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          version: 'latest'
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+# PyPI workflow is currently disabled
+# To re-enable: uncomment this file and add PYPI_API_TOKEN secret
