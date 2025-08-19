@@ -11,22 +11,11 @@ pip install hedonic
 ## Usage
 
 ```python
+import igraph as ig 
 from hedonic import Game
 
-# Create a new game
-game = Game("My Hedonic Game")
-
-# Add players
-game.add_player("Alice")
-game.add_player("Bob")
-game.add_player("Charlie")
-
-# Get all players
-players = game.get_players()
-print(players)  # ['Alice', 'Bob', 'Charlie']
-
-# Print game info
-print(game)  # Game: My Hedonic Game with 3 players
+g = ig.Graph.Famous("Zachary")  # sample graph: Zachary's karate club
+h = Game(g)
 ```
 
 ## Development
