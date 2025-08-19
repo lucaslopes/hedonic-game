@@ -3,7 +3,7 @@ name: Publish to TestPyPI
 on:
   push:
     tags:
-      - 'v*'  # Trigger on version tags like v0.0.1, v1.0.0, etc.
+      - 'v*'  # Trigger on standard version tags like v0.0.1, v1.0.0, etc.
   workflow_dispatch:  # Allow manual triggering
 
 permissions:
@@ -13,6 +13,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Only run when explicitly triggered or when we want TestPyPI publishing
+    if: github.event_name == 'workflow_dispatch' || contains(github.ref, 'test')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

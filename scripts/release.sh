@@ -11,6 +11,9 @@ if [ $# -eq 0 ]; then
     echo "  patch: 0.0.1 -> 0.0.2"
     echo "  minor: 0.1.0 -> 0.2.0"
     echo "  major: 1.0.0 -> 2.0.0"
+    echo ""
+    echo "Note: Currently only TestPyPI publishing is enabled"
+    echo "PyPI workflow is disabled and can be re-enabled later"
     exit 1
 fi
 
@@ -22,7 +25,7 @@ if [[ ! "$VERSION_TYPE" =~ ^(patch|minor|major)$ ]]; then
     exit 1
 fi
 
-echo "Releasing $VERSION_TYPE version..."
+echo "Releasing $VERSION_TYPE version to TestPyPI..."
 
 # Get current version from pyproject.toml
 CURRENT_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
@@ -71,19 +74,25 @@ uv build
 git add pyproject.toml
 git commit -m "Bump version to $NEW_VERSION"
 
-# Create and push tag
+# Create standard version tag
 TAG="v$NEW_VERSION"
 git tag "$TAG"
 echo "Created tag: $TAG"
 
 echo ""
-echo "Release $NEW_VERSION prepared!"
+echo "Release $NEW_VERSION prepared for TestPyPI!"
 echo ""
 echo "Next steps:"
 echo "1. Review changes: git log --oneline -5"
 echo "2. Push changes: git push origin main"
 echo "3. Push tag: git push origin $TAG"
-echo "4. Check GitHub Actions for automated publishing"
+echo "4. Check GitHub Actions for automated publishing to TestPyPI"
 echo ""
 echo "Or push everything at once:"
 echo "git push origin main && git push origin $TAG"
+echo ""
+echo "Tag format: $TAG"
+echo "This will trigger: TestPyPI workflow only"
+echo ""
+echo "Note: PyPI workflow is currently disabled"
+echo "To enable PyPI publishing later, uncomment .github/workflows/publish-pypi.yml.disabled"

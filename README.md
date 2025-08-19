@@ -54,19 +54,35 @@ uv publish --token <your-pypi-token>
 
 This repository includes GitHub Actions workflows for automated publishing:
 
-- **Automatic publishing** when you push version tags (e.g., `v0.0.1`)
+- **TestPyPI workflow**: Currently active, publishes to TestPyPI on `v*` tags
+- **PyPI workflow**: Currently disabled (can be re-enabled later)
+- **Automatic publishing** when you push version tags
 - **Manual publishing** from the Actions tab
-- **Secure authentication** using API tokens (with OIDC support planned)
+- **Secure authentication** using OIDC for TestPyPI
 
 ### Quick Release
 
-1. Update version in `pyproject.toml`
-2. Commit and push your changes
-3. Create and push a version tag:
-   ```bash
-   git tag v0.0.1
-   git push origin v0.0.1
-   ```
-4. The workflow will automatically build and publish to TestPyPI
+```bash
+# Bump version and prepare release
+./scripts/release.sh patch  # or minor/major
+
+# Push everything (triggers TestPyPI workflow)
+git push origin main && git push origin v0.0.2
+```
+
+### **Version Types**
+- `patch`: `0.0.1` → `0.0.2` (bug fixes, small changes)
+- `minor`: `0.0.1` → `0.1.0` (new features, backward compatible)  
+- `major`: `0.0.1` → `1.0.0` (breaking changes)
+
+### **Current Status**
+- **TestPyPI**: ✅ Active - publishes on `v*` tags
+- **PyPI**: ❌ Disabled - workflow file is commented out
+
+### **Enabling PyPI Publishing Later**
+When you're ready to publish to PyPI:
+1. Rename `.github/workflows/publish-pypi.yml.disabled` to `publish-pypi.yml`
+2. Add `PYPI_API_TOKEN` secret to your GitHub repository
+3. Both workflows will then be active with different tag patterns
 
 For detailed setup instructions, see [docs/OIDC_SETUP.md](docs/OIDC_SETUP.md).
