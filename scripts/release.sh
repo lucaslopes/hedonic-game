@@ -5,19 +5,41 @@
 
 set -e
 
-# Check if version type is provided
+DO_PUSH=false
+
+# Check if args are provided
 if [ $# -eq 0 ]; then
-    echo "Usage: $0 [patch|minor|major]"
+    echo "Usage: $0 [patch|minor|major] [-p|--push]"
     echo "  patch: 0.0.1 -> 0.0.2"
     echo "  minor: 0.1.0 -> 0.2.0"
     echo "  major: 1.0.0 -> 2.0.0"
+    echo ""
+    echo "Flags:"
+    echo "  -p, --push   Push branch and tag to origin after tagging"
     echo ""
     echo "Note: Currently only TestPyPI publishing is enabled"
     echo "PyPI workflow is disabled and can be re-enabled later"
     exit 1
 fi
 
-VERSION_TYPE=$1
+VERSION_TYPE=""
+for arg in "$@"; do
+    case "$arg" in
+        -p|--push)
+            DO_PUSH=true
+            ;;
+        patch|minor|major)
+            if [ -z "$VERSION_TYPE" ]; then
+                VERSION_TYPE="$arg"
+            fi
+            ;;
+        *)
+            echo "Error: Unknown argument: $arg"
+            echo "Usage: $0 [patch|minor|major] [-p|--push]"
+            exit 1
+            ;;
+    esac
+done
 
 # Validate version type
 if [[ ! "$VERSION_TYPE" =~ ^(patch|minor|major)$ ]]; then
@@ -78,21 +100,29 @@ git commit -m "Bump version to $NEW_VERSION"
 TAG="v$NEW_VERSION"
 git tag "$TAG"
 echo "Created tag: $TAG"
-
-echo ""
-echo "Release $NEW_VERSION prepared for TestPyPI!"
-echo ""
-echo "Next steps:"
-echo "1. Review changes: git log --oneline -5"
-echo "2. Push changes: git push origin main"
-echo "3. Push tag: git push origin $TAG"
-echo "4. Check GitHub Actions for automated publishing to TestPyPI"
-echo ""
-echo "Or push everything at once:"
-echo "git push origin main && git push origin $TAG"
-echo ""
-echo "Tag format: $TAG"
-echo "This will trigger: TestPyPI workflow only"
-echo ""
-echo "Note: PyPI workflow is currently disabled"
-echo "To enable PyPI publishing later, uncomment .github/workflows/publish-pypi.yml.disabled"
+if [ "$DO_PUSH" = true ]; then
+    # Push branch and tag automatically
+    echo "\nPushing branch 'main' and tag '$TAG' to origin..."
+    git push origin main && git push origin "$TAG"
+    echo "Pushed to origin."
+    echo ""
+    echo "Release $NEW_VERSION prepared for TestPyPI!"
+else
+    echo ""
+    echo "Release $NEW_VERSION prepared for TestPyPI!"
+    echo ""
+    echo "Next steps:"
+    echo "1. Review changes: git log --oneline -5"
+    echo "2. Push changes: git push origin main"
+    echo "3. Push tag: git push origin $TAG"
+    echo "4. Check GitHub Actions for automated publishing to TestPyPI"
+    echo ""
+    echo "Or push everything at once:"
+    echo "git push origin main && git push origin $TAG"
+    echo ""
+    echo "Tag format: $TAG"
+    echo "This will trigger: TestPyPI workflow only"
+    echo ""
+    echo "Note: PyPI workflow is currently disabled"
+    echo "To enable PyPI publishing later, uncomment .github/workflows/publish-pypi.yml.disabled"
+fi
