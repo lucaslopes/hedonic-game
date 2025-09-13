@@ -63,6 +63,7 @@ class Game(Graph):
             resolution: float = None,
             allow_isolation: bool = False,
             only_local_moving: bool = True,
+            edge_weights = None,
         ):
         """
         Community detection using the hedonic game model.
@@ -88,7 +89,8 @@ class Game(Graph):
             n_iterations=n_iterations,
             resolution=self.density() if resolution is None else resolution,
             allow_isolation=allow_isolation,
-            only_local_moving=only_local_moving)
+            only_local_moving=only_local_moving,
+            edge_weights=edge_weights)
         return p
 
 
