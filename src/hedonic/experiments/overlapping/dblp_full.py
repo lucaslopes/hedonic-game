@@ -144,18 +144,33 @@ def load_dblp(data_dir: str | Path | None = None):
     return g, gt, node_map
 
 
+def resolve_max_memberships(max_memberships, n_gt_communities: int) -> int:
+    """Use explicit K, else number of ground-truth communities (≥ 1)."""
+    if max_memberships is not None:
+        return max(1, int(max_memberships))
+    return max(1, int(n_gt_communities))
+
+
 def run_experiment(
     g: ig.Graph,
     gt: list,
     resolution: float,
     n_iter: int,
-    max_memberships: int = 4,
+    max_memberships: int | None = None,
 ):
     log(f"\n[exp] Creating Game (n={g.vcount():,}, m={g.ecount():,}) …")
     t_total = time.time()
     game = Game(g)
     n = game.vcount()
-    results = {}
+    k = resolve_max_memberships(max_memberships, len(gt))
+    results = {
+        "params": {
+            "resolution": resolution,
+            "n_iterations": n_iter,
+            "max_memberships": k,
+            "n_gt_communities": len(gt),
+        }
+    }
 
     log(f"\n[1/3] Hedonic non-overlapping  γ={resolution:.2e} …")
     t0 = time.time()
@@ -183,13 +198,13 @@ def run_experiment(
 
     log(
         f"\n[2/3] Hedonic overlapping  γ={resolution:.2e}  "
-        f"n_iter={n_iter}  max_memberships={max_memberships} …"
+        f"n_iter={n_iter}  max_memberships={k} (n_GT={len(gt)}) …"
     )
     t0 = time.time()
     hedonic_cover_obj = game.community_hedonic(
         resolution=resolution,
         n_iterations=n_iter,
-        max_memberships=max_memberships,
+        max_memberships=k,
         only_local_moving=True,
         initial_membership=list(leiden_part.membership),
     )
@@ -202,6 +217,7 @@ def run_experiment(
     metrics_hedonic = evaluate_cover(cover_lists, gt, n, compute_omega=False)
     metrics_hedonic["time_s"] = t_hedonic
     metrics_hedonic["n_communities"] = len(cover_lists)
+    metrics_hedonic["max_memberships"] = k
     results["hedonic_overlapping"] = metrics_hedonic
     log(
         f"[2/3] F1={metrics_hedonic['f1']:.4f}  "
@@ -235,12 +251,14 @@ def run_experiment(
     return results
 
 
-def resolution_sweep(game, gt, resolutions, n_iter, max_memberships: int = 4):
+def resolution_sweep(game, gt, resolutions, n_iter, max_memberships: int | None = None):
     n = game.vcount()
+    k = resolve_max_memberships(max_memberships, len(gt))
     sweep = []
     log(
         f"\n[sweep] {len(resolutions)} resolutions: "
-        f"{resolutions[0]:.1e} → {resolutions[-1]:.1e}"
+        f"{resolutions[0]:.1e} → {resolutions[-1]:.1e}  "
+        f"max_memberships={k}"
     )
 
     for i, res in enumerate(resolutions):
@@ -262,7 +280,7 @@ def resolution_sweep(game, gt, resolutions, n_iter, max_memberships: int = 4):
         cover_obj = game.community_hedonic(
             resolution=res,
             n_iterations=n_iter,
-            max_memberships=max_memberships,
+            max_memberships=k,
             only_local_moving=True,
             initial_membership=list(part.membership),
         )
@@ -273,6 +291,8 @@ def resolution_sweep(game, gt, resolutions, n_iter, max_memberships: int = 4):
         t = time.time()
         metrics = _evaluate_no_omega(cover, gt, n)
         metrics["resolution"] = res
+        metrics["max_memberships"] = k
+        metrics["n_iterations"] = n_iter
         q = cover_quality(cover_obj)
         if q is None:
             q = quality_overlapping_cpm(game, cover, res)
@@ -293,12 +313,23 @@ def main(argv=None):
     )
     parser.add_argument("--data_dir", default=str(DBLP_DIR))
     parser.add_argument("--resolution", type=float, default=1e-4)
-    parser.add_argument("--n_iterations", type=int, default=5)
+    parser.add_argument(
+        "--n_iterations",
+        type=int,
+        default=-1,
+        help=(
+            "Overlapping local-moving iteration budget. "
+            "Use a negative value (default -1) to iterate until equilibrium."
+        ),
+    )
     parser.add_argument(
         "--max_memberships",
         type=int,
-        default=4,
-        help="Max communities per vertex (overlapping Leiden when > 1)",
+        default=None,
+        help=(
+            "Max communities per vertex (overlapping when > 1). "
+            "Default: number of ground-truth communities on the full graph."
+        ),
     )
     parser.add_argument("--resolution_sweep", action="store_true")
     parser.add_argument("--output", default="results.json")
@@ -311,7 +342,18 @@ def main(argv=None):
     log(f"  output     : {args.output}")
     log(f"  sweep      : {args.resolution_sweep}")
     log(f"  resolution : {args.resolution:.2e}")
-    log(f"  max_memberships : {args.max_memberships}")
+    log(f"  n_iterations : {args.n_iterations}")
+    mm_log = (
+        "auto (n GT communities)"
+        if args.max_memberships is None
+        else str(args.max_memberships)
+    )
+    log(f"  max_memberships : {mm_log}")
+    if args.n_iterations >= 0:
+        log(
+            "  WARNING: n_iterations >= 0 may stop before equilibrium; "
+            "prefer -1 for paper reproduction."
+        )
     log("=" * 55)
 
     t_start = time.time()

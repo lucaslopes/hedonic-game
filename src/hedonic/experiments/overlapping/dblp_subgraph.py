@@ -56,8 +56,20 @@ def extract_subgraph(g, seed_nodes, levels):
     return subg, old2new, nodes_sorted
 
 
+def resolve_max_memberships(max_memberships, n_gt_communities: int) -> int:
+    """Use explicit K, else number of ground-truth communities (≥ 1)."""
+    if max_memberships is not None:
+        return max(1, int(max_memberships))
+    return max(1, int(n_gt_communities))
+
+
 def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_memberships):
-    """Generate reference covers via Game.community_hedonic(max_memberships=...)."""
+    """Generate reference covers via Game.community_hedonic(max_memberships=...).
+
+    Always run community_hedonic with n_iterations negative (e.g. -1) so local
+    moving continues until equilibrium. When max_memberships is None, K is set
+    to the number of ground-truth communities present in the subgraph.
+    """
     from hedonic import Game
     from hedonic.experiments.overlapping.metrics import (
         grand_coalition_cover,
@@ -69,6 +81,7 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
     n_sub = subg.vcount()
     game = Game(subg)
     covers, timings = {}, {}
+    k = resolve_max_memberships(max_memberships, n_gt_in_subgraph)
 
     if resolution is None:
         resolution = game.density()
@@ -92,7 +105,7 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
         cover_obj = game.community_hedonic(
             resolution=resolution,
             n_iterations=n_iterations,
-            max_memberships=max_memberships,
+            max_memberships=k,
             only_local_moving=True,
             initial_membership=list(part.membership),
         )
@@ -104,7 +117,7 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
         t = time.time()
         cover_obj_v2 = game.community_hedonic(
             resolution=resolution,
-            max_memberships=max_memberships,
+            max_memberships=k,
             n_iterations=n_iterations,
             only_local_moving=False,
         )
@@ -120,7 +133,7 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
             n_sub, max(1, n_gt_in_subgraph)
         )
 
-    return covers, timings, resolution
+    return covers, timings, resolution, k
 
 
 def score_covers(covers, gt_target, n_sub, compute_omega=False):
@@ -154,7 +167,7 @@ def run_one(
         1 for comm in all_gt if len([v for v in comm if v in node_set]) >= 2
     )
 
-    covers, timings, resolution = build_covers(
+    covers, timings, resolution, k = build_covers(
         subg, n_gt_in_subgraph, resolution, n_iterations, max_memberships
     )
     metrics = score_covers(covers, gt_target, n_sub, compute_omega=False)
@@ -178,6 +191,7 @@ def run_one(
     msg1 = f"ΔF1 (v1-Leiden) = {delta_f1:+.4f}" if has_delta1 else "ΔF1 (v1-Leiden) = n/a"
     msg2 = f"ΔF1 (v2-Leiden) = {delta_f1_v2:+.4f}" if has_delta2 else "ΔF1 (v2-Leiden) = n/a"
     log(f"  {msg1}   {msg2}")
+    log(f"  max_memberships={k}  (GT communities in subgraph={n_gt_in_subgraph})")
 
     result = {
         "community_idx": comm_idx,
@@ -186,7 +200,9 @@ def run_one(
         "subgraph_edges": m_sub,
         "levels": levels,
         "resolution": resolution,
+        "n_iterations": n_iterations,
         "n_gt_in_subgraph": n_gt_in_subgraph,
+        "max_memberships": k,
         **{
             name: {
                 **metrics[name],
@@ -205,7 +221,9 @@ def run_one(
         "subgraph_edges": m_sub,
         "levels": levels,
         "resolution": resolution,
+        "n_iterations": n_iterations,
         "n_gt_in_subgraph": n_gt_in_subgraph,
+        "max_memberships": k,
         "covers": covers,
         "ground_truth": gt_target,
     }
@@ -268,7 +286,7 @@ def run_one_overlapping(
 
     gt_target = [[old2new[v] for v in gt[comm_idx] if v in old2new]]
 
-    covers, timings, resolution = build_covers(
+    covers, timings, resolution, k = build_covers(
         subg, n_gt_in_subgraph, resolution, n_iterations, max_memberships
     )
     metrics = score_covers(covers, gt_target, n_sub, compute_omega=False)
@@ -294,6 +312,7 @@ def run_one_overlapping(
     log(
         f"  {msg1}  {msg2}  partners={len(partners)}  shared_nodes={shared}"
     )
+    log(f"  max_memberships={k}  (GT communities in subgraph={n_gt_in_subgraph})")
 
     result = {
         "community_idx": comm_idx,
@@ -304,7 +323,9 @@ def run_one_overlapping(
         "subgraph_edges": m_sub,
         "levels": levels,
         "resolution": resolution,
+        "n_iterations": n_iterations,
         "n_gt_in_subgraph": n_gt_in_subgraph,
+        "max_memberships": k,
         **{
             name: {
                 **metrics[name],
@@ -325,7 +346,9 @@ def run_one_overlapping(
         "subgraph_edges": m_sub,
         "levels": levels,
         "resolution": resolution,
+        "n_iterations": n_iterations,
         "n_gt_in_subgraph": n_gt_in_subgraph,
+        "max_memberships": k,
         "covers": covers,
         "ground_truth": gt_target,
     }
@@ -342,12 +365,24 @@ def main(argv=None):
         action="store_true",
         help="Ignore --resolution and use each subgraph's density as γ",
     )
-    parser.add_argument("--n_iterations", type=int, default=5)
+    parser.add_argument(
+        "--n_iterations",
+        type=int,
+        default=-1,
+        help=(
+            "Leiden/hedonic iteration budget for overlapping methods. "
+            "Use a negative value (default -1) to iterate until equilibrium."
+        ),
+    )
     parser.add_argument(
         "--max_memberships",
         type=int,
-        default=4,
-        help="Max communities per vertex in hedonic v2",
+        default=None,
+        help=(
+            "Max communities per vertex for hedonic_v1/v2. "
+            "Default: number of ground-truth communities present in each subgraph "
+            "(≥2 nodes of a GT community inside the L-hop window)."
+        ),
     )
     parser.add_argument(
         "--methods",
@@ -408,8 +443,18 @@ def main(argv=None):
         f"{'subgraph density' if resolution is None else f'{resolution:.2e}'}"
     )
     log(f"  n_iterations  : {args.n_iterations}")
-    log(f"  max_memberships (v2): {args.max_memberships}")
+    mm_log = (
+        "auto (n GT communities in subgraph)"
+        if args.max_memberships is None
+        else str(args.max_memberships)
+    )
+    log(f"  max_memberships: {mm_log}")
     log(f"  methods       : {METHODS}")
+    if args.n_iterations >= 0:
+        log(
+            "  WARNING: n_iterations >= 0 may stop before equilibrium; "
+            "prefer -1 for paper reproduction."
+        )
     log("=" * 55)
 
     cache = Path(args.data_dir) / "dblp.pkl"

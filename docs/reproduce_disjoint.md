@@ -343,6 +343,7 @@ hedonic-exp disjoint --preset v1020-smoke --output_root /tmp/v1020-smoke
 ## See also
 
 - Package layout and agent rules: [`AGENTS.md`](../AGENTS.md)
+- Overlapping DBLP reproduction: [`reproduce_overlapping.md`](reproduce_overlapping.md)
 - Historical consolidation notes: [`experiments_report.md`](experiments_report.md)
 - CLI source: `src/hedonic/experiments/CLI.py`
 - Sweep / presets: `src/hedonic/experiments/disjoint/sbm_sweep.py`

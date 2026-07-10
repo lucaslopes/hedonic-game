@@ -71,8 +71,9 @@ def run_tests() -> None:
     gt = [list(range(0, 10)), list(range(10, 20))]
 
     res_sbm = 0.1
+    # max_memberships = number of ground-truth communities
     cover_sbm = g_sbm.community_hedonic(
-        resolution=res_sbm, n_iterations=-1, max_memberships=4
+        resolution=res_sbm, n_iterations=-1, max_memberships=n_blocks
     )
     cover_sbm_lists = partition_to_cover_lists(cover_sbm)
     print(f"Resolution: {res_sbm}")

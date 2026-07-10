@@ -201,8 +201,10 @@ hedonic-exp reproduce-disjoint --plots-only \
   --output_root ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI --max_rows 50000
 
 # Overlapping (point HEDONIC_DBLP_DIR if needed)
-hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 --methods leiden,hedonic_v1
-hedonic-exp overlapping-full --max_memberships 4 --n_iterations 5
+# Defaults: n_iterations=-1 (to equilibrium), max_memberships=n_GT communities
+hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 \
+  --methods leiden,hedonic_v1 --output /tmp/subgraph_smoke.json
+hedonic-exp overlapping-full --resolution 1e-4 --output /tmp/dblp_full.json
 ```
 
 Args after the subcommand are forwarded to that module’s `main(argv)`.
@@ -267,12 +269,17 @@ Or one shot: `hedonic-exp reproduce-disjoint --preset v1020 --output_root …/V1
 ### Overlapping pattern
 
 - Detection: **`Game.community_hedonic(..., max_memberships=K)`**.
+- **Always** pass **`n_iterations=-1`** (or any negative value) so local moving runs until equilibrium. Positive budgets may stop early; CLI defaults are `-1`.
+- **`max_memberships`** defaults to the **number of ground-truth communities** relevant to the run (subgraph: GT communities with ≥2 nodes inside the L-hop window; full graph: `len(gt)`). Override only when intentionally capping K.
 - Metrics vs covers: **`experiments.overlapping.metrics`** (`evaluate_cover`, `partition_to_cover_lists`, `cover_quality`, baselines, optional Nash check).
 - DBLP load: `dblp_full.load_dblp` (cache `dblp.pkl`, or `pkl/`, or `raw/*.gz`).
 - Subgraph methods:
   - `leiden` — `community_hedonic(max_memberships=1, only_local_moving=False)`
-  - `hedonic_v1` — overlapping local-moving (`only_local_moving=True`)
+  - `hedonic_v1` — overlapping local-moving (`only_local_moving=True`), warm-started from Leiden
   - `hedonic_v2` — overlapping full multi-phase (`only_local_moving=False`)
+  - `singleton` / `grand_coalition` / `total_overlap` — deterministic control baselines
+
+Reproduction guide: [`docs/reproduce_overlapping.md`](docs/reproduce_overlapping.md).
 
 ---
 

@@ -8,7 +8,7 @@ Install with experiments extra, then::
     hedonic-exp disjoint --smoke --output_root /tmp/hedonic-smoke
     hedonic-exp overlapping-small
     hedonic-exp overlapping-subgraph --levels 1 --n_communities 5
-    hedonic-exp overlapping-full --max_memberships 4
+    hedonic-exp overlapping-full --n_iterations -1
     hedonic-exp disjoint-load --results_folder /path/to/jsons
     hedonic-exp plots --smoke --output_dir /tmp/figs
     hedonic-exp reproduce-disjoint --preset v1020-smoke --output_root /tmp/V1020_CLI
@@ -226,9 +226,10 @@ examples:
       --output_root .../V1020_CLI --max_rows 50000
 
   # Overlapping on DBLP (set HEDONIC_DBLP_DIR if needed)
+  # Defaults: n_iterations=-1 (to equilibrium), max_memberships=n_GT
   hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 \\
-      --methods leiden,hedonic_v1
-  hedonic-exp overlapping-full --max_memberships 4 --n_iterations 5
+      --methods leiden,hedonic_v1 --output /tmp/subgraph_smoke.json
+  hedonic-exp overlapping-full --resolution 1e-4 --output /tmp/dblp_full.json
 """
 
 

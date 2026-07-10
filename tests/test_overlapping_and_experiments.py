@@ -21,6 +21,12 @@ from hedonic.experiments.config import (
 )
 from hedonic.experiments.disjoint import data_loader, sbm_sweep
 from hedonic.experiments.overlapping import small_graphs
+from hedonic.experiments.overlapping.dblp_full import (
+    resolve_max_memberships as resolve_mm_full,
+)
+from hedonic.experiments.overlapping.dblp_subgraph import (
+    resolve_max_memberships as resolve_mm_sub,
+)
 from hedonic.experiments.overlapping.metrics import (
     cover_quality,
     evaluate_cover,
@@ -76,6 +82,13 @@ class TestCommunityHedonic(unittest.TestCase):
         self.assertEqual(
             sbm_sweep.METHODS["Hedonic"]["parameters"]["max_memberships"], 1
         )
+
+    def test_max_memberships_defaults_to_gt_count(self):
+        self.assertEqual(resolve_mm_sub(None, 7), 7)
+        self.assertEqual(resolve_mm_sub(None, 0), 1)
+        self.assertEqual(resolve_mm_sub(4, 7), 4)
+        self.assertEqual(resolve_mm_full(None, 13477), 13477)
+        self.assertEqual(resolve_mm_full(8, 13477), 8)
 
 
 class TestExperimentsConfig(unittest.TestCase):
@@ -329,6 +342,35 @@ class TestCLI(unittest.TestCase):
     def test_overlapping_small_via_cli(self):
         code = CLI.main(["overlapping-small"])
         self.assertEqual(code, 0)
+
+    def test_overlapping_subgraph_help(self):
+        code = CLI.main(["overlapping-subgraph", "--help"])
+        self.assertEqual(code, 0)
+
+    def test_overlapping_full_help(self):
+        code = CLI.main(["overlapping-full", "--help"])
+        self.assertEqual(code, 0)
+
+    def test_overlapping_help_documents_equilibrium_and_gt_k(self):
+        """Help should document n_iterations=-1 and GT-based max_memberships."""
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            CLI.main(["overlapping-subgraph", "--help"])
+        help_sub = buf.getvalue().lower()
+        self.assertIn("-1", help_sub)
+        self.assertIn("ground-truth", help_sub)
+        self.assertIn("equilibrium", help_sub)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            CLI.main(["overlapping-full", "--help"])
+        help_full = buf.getvalue().lower()
+        self.assertIn("-1", help_full)
+        self.assertIn("ground-truth", help_full)
+        self.assertIn("equilibrium", help_full)
 
     def test_disjoint_help(self):
         code = CLI.main(["disjoint", "--help"])
