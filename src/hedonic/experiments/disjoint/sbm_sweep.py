@@ -411,21 +411,61 @@ def run_experiment(
     return True
 
 
+# Tiny defaults for isolated / CI-style runs (no large data dirs required).
+SMOKE_DEFAULTS = {
+    "folder_name": "smoke",
+    "max_n_nodes": 24,
+    "n_communities": [2],
+    "seeds": [0],
+    "p_in": [0.35],
+    "difficulty": [0.2],
+    "noises": [0.01],
+    "partition_seeds": 0,
+    "methods": ["Mirror", "Hedonic", "Leiden"],
+}
+
+
+def _parse_methods(spec: str | None) -> dict:
+    """Resolve a comma-separated method list to a METHODS subset."""
+    if not spec:
+        return METHODS
+    names = [n.strip() for n in spec.split(",") if n.strip()]
+    unknown = [n for n in names if n not in METHODS]
+    if unknown:
+        known = ", ".join(METHODS)
+        raise SystemExit(f"Unknown --methods: {unknown}. Known: {known}")
+    return {n: METHODS[n] for n in names}
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Run hedonic game SBM experiments.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run hedonic game SBM experiments (disjoint). "
+            "Use --smoke for an isolated single-cell sweep."
+        )
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help=(
+            "Isolated mini-run: small graph, few methods, one noise/seed. "
+            "Overrides defaults unless you pass explicit values after this flag "
+            "is set (explicit CLI values still win)."
+        ),
+    )
     parser.add_argument(
         "--folder_name",
         type=str,
         required=False,
         help="Name of the folder to store results",
-        default="test",
+        default=None,
     )
     parser.add_argument(
         "--max_n_nodes",
         type=int,
         required=False,
         help="Maximum number of nodes",
-        default=60,
+        default=None,
     )
     parser.add_argument(
         "--n_communities",
@@ -433,15 +473,15 @@ def main(argv=None):
         nargs="+",
         required=False,
         help="Number of clusters",
-        default=[2],
+        default=None,
     )
     parser.add_argument(
         "--seeds",
         type=int,
         nargs="+",
         required=False,
-        help="Seeds",
-        default=[42],
+        help="Network generation seeds",
+        default=None,
     )
     parser.add_argument(
         "--p_in",
@@ -449,31 +489,38 @@ def main(argv=None):
         nargs="+",
         required=False,
         help="Probability of edge within communities",
-        default=[0.1],
+        default=None,
     )
     parser.add_argument(
         "--difficulty",
         type=float,
         nargs="+",
         required=False,
-        help="Difficulty of the problem",
-        default=[0.5],
+        help="Difficulty of the problem (p_out = p_in * difficulty)",
+        default=None,
     )
     parser.add_argument(
         "--noises",
         type=float,
         nargs="+",
         required=False,
-        help="Noise levels",
-        default=[
-            0.01, 0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0, 1.1,
-        ],
+        help="Noise levels applied to initial membership",
+        default=None,
     )
     parser.add_argument(
         "--partition_seeds",
         type=int,
-        default=0,
+        default=None,
         help="Number of seeds for initial partition (int count, 0 → [0])",
+    )
+    parser.add_argument(
+        "--methods",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated subset of methods "
+            f"(default: all). Known: {', '.join(METHODS)}"
+        ),
     )
     parser.add_argument(
         "--output_root",
@@ -483,21 +530,67 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
+    # Resolve defaults: smoke preset vs full-sweep defaults.
+    if args.smoke:
+        base = dict(SMOKE_DEFAULTS)
+    else:
+        base = {
+            "folder_name": "test",
+            "max_n_nodes": 60,
+            "n_communities": [2],
+            "seeds": [42],
+            "p_in": [0.1],
+            "difficulty": [0.5],
+            "noises": [
+                0.01, 0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0, 1.1,
+            ],
+            "partition_seeds": 0,
+            "methods": None,
+        }
+
+    folder_name = args.folder_name if args.folder_name is not None else base["folder_name"]
+    max_n_nodes = args.max_n_nodes if args.max_n_nodes is not None else base["max_n_nodes"]
+    n_communities = (
+        args.n_communities if args.n_communities is not None else base["n_communities"]
+    )
+    seeds = args.seeds if args.seeds is not None else base["seeds"]
+    p_in_list = args.p_in if args.p_in is not None else base["p_in"]
+    difficulty_list = (
+        args.difficulty if args.difficulty is not None else base["difficulty"]
+    )
+    noises = args.noises if args.noises is not None else base["noises"]
+    partition_seeds = (
+        args.partition_seeds
+        if args.partition_seeds is not None
+        else base["partition_seeds"]
+    )
+
+    method_spec = args.methods
+    if method_spec is None and args.smoke:
+        method_spec = ",".join(SMOKE_DEFAULTS["methods"])
+    methods = _parse_methods(method_spec)
+
     output_root = Path(args.output_root) if args.output_root else SYNTHETIC_DIR
-    for n_community in tqdm(args.n_communities, desc="n_community", leave=False):
-        community_size = int(args.max_n_nodes / n_community)
-        for p_in in tqdm(args.p_in, desc="p_in", leave=False):
-            for difficulty in tqdm(args.difficulty, desc="difficulty", leave=False):
-                for seed in tqdm(args.seeds, desc="seed", leave=False):
+    if args.smoke:
+        print(
+            f"[disjoint smoke] nodes≤{max_n_nodes} methods={list(methods)} "
+            f"→ {output_root / folder_name}"
+        )
+
+    for n_community in tqdm(n_communities, desc="n_community", leave=False):
+        community_size = int(max_n_nodes / n_community)
+        for p_in in tqdm(p_in_list, desc="p_in", leave=False):
+            for difficulty in tqdm(difficulty_list, desc="difficulty", leave=False):
+                for seed in tqdm(seeds, desc="seed", leave=False):
                     run_experiment(
-                        args.folder_name,
+                        folder_name,
                         n_community,
                         community_size,
                         p_in,
                         difficulty,
-                        METHODS,
-                        args.noises,
-                        args.partition_seeds,
+                        methods,
+                        noises,
+                        partition_seeds,
                         seed,
                         output_root=output_root,
                     )

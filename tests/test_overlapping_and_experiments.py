@@ -158,15 +158,46 @@ class TestSbmSweep(unittest.TestCase):
             files = list(root.rglob("*.json"))
             self.assertGreaterEqual(len(files), 2)
 
+    def test_parse_methods_subset(self):
+        subset = sbm_sweep._parse_methods("Hedonic,Leiden")
+        self.assertEqual(list(subset), ["Hedonic", "Leiden"])
+
+    def test_main_smoke_flag(self):
+        with tempfile.TemporaryDirectory() as d:
+            ok = sbm_sweep.main(
+                ["--smoke", "--output_root", d, "--folder_name", "unit"]
+            )
+            self.assertTrue(ok)
+            self.assertGreaterEqual(len(list(Path(d).rglob("*.json"))), 1)
+
 
 class TestCLI(unittest.TestCase):
     def test_help_lists_subcommands(self):
         code = CLI.main(["--help"])
         self.assertEqual(code, 0)
 
+    def test_list_commands(self):
+        code = CLI.main(["list"])
+        self.assertEqual(code, 0)
+
+    def test_version(self):
+        code = CLI.main(["--version"])
+        self.assertEqual(code, 0)
+
     def test_unknown_command(self):
         code = CLI.main(["not-a-command"])
         self.assertEqual(code, 2)
+
+    def test_registry_covers_expected_commands(self):
+        expected = {
+            "smoke",
+            "disjoint",
+            "disjoint-load",
+            "overlapping-small",
+            "overlapping-subgraph",
+            "overlapping-full",
+        }
+        self.assertEqual(set(CLI.COMMANDS), expected)
 
     def test_overlapping_small_via_cli(self):
         code = CLI.main(["overlapping-small"])
@@ -175,6 +206,26 @@ class TestCLI(unittest.TestCase):
     def test_disjoint_help(self):
         code = CLI.main(["disjoint", "--help"])
         self.assertEqual(code, 0)
+
+    def test_disjoint_load_help(self):
+        code = CLI.main(["disjoint-load", "--help"])
+        self.assertEqual(code, 0)
+
+    def test_smoke_help(self):
+        code = CLI.main(["smoke", "--help"])
+        self.assertEqual(code, 0)
+
+    def test_smoke_isolated_run(self):
+        code = CLI.main(["smoke"])
+        self.assertEqual(code, 0)
+
+    def test_disjoint_smoke_to_tmpdir(self):
+        with tempfile.TemporaryDirectory() as d:
+            code = CLI.main(
+                ["disjoint", "--smoke", "--output_root", d, "--folder_name", "cli"]
+            )
+            self.assertEqual(code, 0)
+            self.assertGreaterEqual(len(list(Path(d).rglob("*.json"))), 1)
 
 
 class TestSmallGraphsModule(unittest.TestCase):

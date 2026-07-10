@@ -320,8 +320,8 @@ def main(argv=None):
     print("Saving data to", output_path)
     df.to_csv(output_path, index=False, compression="gzip")
     print("Done.")
-    return True
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main() or 0)

@@ -129,10 +129,20 @@ def run_tests() -> None:
     print("\nAll small-graph tests completed.\n")
 
 
-def main(argv=None) -> None:
-    _ = argv
+def main(argv=None) -> int:
+    """CLI entry: optional argv accepted for ``hedonic-exp`` compatibility."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Quick overlapping tests on small graphs "
+            "(Petersen + tiny SBM). No data directories required."
+        )
+    )
+    parser.parse_args(argv)
     run_tests()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
