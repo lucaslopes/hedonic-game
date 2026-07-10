@@ -22,10 +22,11 @@ src/hedonic/
     │   ├── data_loader.py   # JSON → CSV result pipeline
     │   └── reproduce.py     # end-to-end: sweep → CSV → figures
     └── overlapping/
-        ├── metrics.py       # F1/Jaccard/Omega, cover helpers
-        ├── small_graphs.py  # smoke tests (no DBLP)
-        ├── dblp_full.py     # full DBLP graph
-        └── dblp_subgraph.py # L-hop GT subgraphs
+        ├── metrics.py           # F1/Jaccard/Omega, cover helpers
+        ├── small_graphs.py      # smoke tests (no DBLP)
+        ├── dblp_full.py         # full DBLP graph
+        ├── dblp_subgraph.py     # L-hop GT subgraphs
+        └── complexity_scale.py  # size vs wallclock (local-moving vs multi-phase)
 ```
 
 | Layer | What belongs here | What does **not** |
@@ -163,6 +164,7 @@ Subcommands are registered in **`COMMANDS`** (the single source of truth in `CLI
 | `overlapping-small` | `overlapping.small_graphs` | Smoke + metrics on small graphs | none |
 | `overlapping-subgraph` | `overlapping.dblp_subgraph` | L-hop around GT communities | DBLP |
 | `overlapping-full` | `overlapping.dblp_full` | Full DBLP + optional resolution sweep | DBLP |
+| `overlapping-scale` | `overlapping.complexity_scale` | Wallclock scaling as subnetworks grow (local-moving T/F, timeout stop + plot) | DBLP (or `--smoke`) |
 | `list` | meta | List subcommands | — |
 
 ```bash
@@ -205,6 +207,16 @@ hedonic-exp reproduce-disjoint --plots-only \
 hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 \
   --methods leiden,hedonic_v1 --output /tmp/subgraph_smoke.json
 hedonic-exp overlapping-full --resolution 1e-4 --output /tmp/dblp_full.json
+
+# Complexity scale: network size vs wallclock to equilibrium
+# Two lines: only_local_moving True vs False; density γ; K = #GT in window
+# Growth stops per line when --timeout is hit (full graph not required)
+hedonic-exp overlapping-scale --smoke --output_dir /tmp/hedonic-scale
+hedonic-exp overlapping-scale --timeout 30 --max-levels 6 \
+  --output_dir /tmp/hedonic-scale-dblp
+# Full multi-phase only (only_local_moving=False), 10 min budget per size
+hedonic-exp overlapping-scale --variant full --timeout 600 --max-levels 6 \
+  --community_idx 1004 --output_dir /tmp/hedonic-scale-dblp-full
 ```
 
 Args after the subcommand are forwarded to that module’s `main(argv)`.

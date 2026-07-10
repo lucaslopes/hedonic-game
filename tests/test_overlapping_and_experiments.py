@@ -21,6 +21,7 @@ from hedonic.experiments.config import (
 )
 from hedonic.experiments.disjoint import data_loader, sbm_sweep
 from hedonic.experiments.overlapping import small_graphs
+from hedonic.experiments.overlapping import complexity_scale
 from hedonic.experiments.overlapping.dblp_full import (
     resolve_max_memberships as resolve_mm_full,
 )
@@ -336,8 +337,41 @@ class TestCLI(unittest.TestCase):
             "overlapping-small",
             "overlapping-subgraph",
             "overlapping-full",
+            "overlapping-scale",
         }
         self.assertEqual(set(CLI.COMMANDS), expected)
+
+    def test_overlapping_scale_help(self):
+        code = CLI.main(["overlapping-scale", "--help"])
+        self.assertEqual(code, 0)
+
+    def test_overlapping_scale_smoke_via_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            code = CLI.main(
+                [
+                    "overlapping-scale",
+                    "--smoke",
+                    "--sizes",
+                    "20,32",
+                    "--timeout",
+                    "120",
+                    "--no-process",
+                    "--output_dir",
+                    d,
+                ]
+            )
+            self.assertEqual(code, 0)
+            results = Path(d) / "complexity_scale.json"
+            plot = Path(d) / "complexity_scale.png"
+            self.assertTrue(results.is_file())
+            self.assertTrue(plot.is_file())
+            self.assertGreater(plot.stat().st_size, 0)
+            data = json.loads(results.read_text(encoding="utf-8"))
+            self.assertIn("points", data)
+            self.assertIn("meta", data)
+            self.assertEqual(data["meta"]["n_iterations"], -1)
+            self.assertTrue(data["meta"]["allow_isolation"])
+            self.assertGreaterEqual(len(data["points"]), 2)
 
     def test_overlapping_small_via_cli(self):
         code = CLI.main(["overlapping-small"])
@@ -465,6 +499,136 @@ class TestCLI(unittest.TestCase):
 class TestSmallGraphsModule(unittest.TestCase):
     def test_run_tests_entrypoint(self):
         small_graphs.main([])
+
+
+class TestComplexityScale(unittest.TestCase):
+    """Shipped overlapping-scale helpers: timing, timeout stop, plot."""
+
+    def test_synthetic_series_increasing_sizes(self):
+        series = complexity_scale.build_synthetic_size_series(
+            sizes=(24, 48, 72), n_blocks=4, seed=1
+        )
+        self.assertEqual(len(series), 3)
+        sizes = [p.n_nodes for p in series]
+        self.assertEqual(sizes, sorted(sizes))
+        self.assertGreater(sizes[-1], sizes[0])
+        for p in series:
+            self.assertGreater(p.n_nodes, 0)
+            self.assertGreaterEqual(p.max_memberships, 1)
+            self.assertGreaterEqual(p.density, 0.0)
+
+    def test_time_both_variants_records_flags(self):
+        series = complexity_scale.build_synthetic_size_series(
+            sizes=(20, 36), n_blocks=4, seed=2
+        )
+        result = complexity_scale.run_scale_experiment(
+            series,
+            timeout_s=120.0,
+            use_process=False,
+        )
+        self.assertGreaterEqual(len(result.points), 2)
+        for rec in result.points:
+            self.assertIn(rec["only_local_moving"], (True, False))
+            self.assertEqual(rec["n_iterations"], -1)
+            self.assertTrue(rec["allow_isolation"])
+            self.assertGreater(rec["n_nodes"], 0)
+            self.assertIsNotNone(rec["wallclock_s"])
+            self.assertGreaterEqual(rec["wallclock_s"], 0.0)
+            self.assertGreaterEqual(rec["max_memberships"], 1)
+            # resolution must be density of that subgraph
+            self.assertAlmostEqual(rec["resolution"], rec["density"], places=9)
+            self.assertFalse(rec["timed_out"])
+
+        completed_t = result.completed_for(True)
+        completed_f = result.completed_for(False)
+        self.assertGreaterEqual(len(completed_t), 1)
+        self.assertGreaterEqual(len(completed_f), 1)
+
+    def test_soft_timeout_stops_further_growth(self):
+        """Extremely tight soft timeout marks timed_out and stops that line."""
+        series = complexity_scale.build_synthetic_size_series(
+            sizes=(30, 60, 90), n_blocks=3, seed=3
+        )
+        # Negative wallclock budget is impossible → first finish still exceeds.
+        result = complexity_scale.run_scale_experiment(
+            series,
+            timeout_s=1e-12,
+            use_process=False,
+        )
+        # First size for each variant should be timed_out; no further sizes.
+        by_olm: dict[bool, list] = {True: [], False: []}
+        for p in result.points:
+            by_olm[bool(p["only_local_moving"])].append(p)
+        for olm, rows in by_olm.items():
+            self.assertGreaterEqual(len(rows), 1, msg=olm)
+            self.assertTrue(rows[0]["timed_out"])
+            # Growth stopped: at most one record per variant under soft timeout.
+            self.assertEqual(len(rows), 1, msg=f"expected stop after first timeout ({olm})")
+
+    def test_plot_writes_nonempty_file(self):
+        series = complexity_scale.build_synthetic_size_series(
+            sizes=(16, 28), n_blocks=4, seed=4
+        )
+        result = complexity_scale.run_scale_experiment(
+            series, timeout_s=120.0, use_process=False
+        )
+        with tempfile.TemporaryDirectory() as d:
+            plot_path = Path(d) / "complexity_scale.png"
+            out = complexity_scale.plot_complexity_scale(result, plot_path)
+            self.assertTrue(out.is_file())
+            self.assertGreater(out.stat().st_size, 0)
+            json_path = Path(d) / "out.json"
+            complexity_scale.save_results(result, json_path)
+            loaded = complexity_scale.load_results(json_path)
+            self.assertEqual(len(loaded.points), len(result.points))
+
+    def test_main_smoke_entrypoint(self):
+        with tempfile.TemporaryDirectory() as d:
+            code = complexity_scale.main(
+                [
+                    "--smoke",
+                    "--sizes",
+                    "18,30",
+                    "--timeout",
+                    "60",
+                    "--no-process",
+                    "--output_dir",
+                    d,
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue((Path(d) / "complexity_scale.json").is_file())
+            self.assertTrue((Path(d) / "complexity_scale.png").is_file())
+
+    def test_count_gt_communities(self):
+        nodes = [0, 1, 2, 5, 6]
+        gt = [[0, 1, 2], [5, 6, 7], [10, 11], [1]]
+        # first has 3, second has 2, third 0, fourth 1 (<2)
+        self.assertEqual(
+            complexity_scale.count_gt_communities_in_nodes(nodes, gt), 2
+        )
+
+    def test_parse_variants(self):
+        self.assertEqual(complexity_scale.parse_variants("both"), (True, False))
+        self.assertEqual(complexity_scale.parse_variants("local"), (True,))
+        self.assertEqual(complexity_scale.parse_variants("full"), (False,))
+        with self.assertRaises(ValueError):
+            complexity_scale.parse_variants("nope")
+
+    def test_run_full_variant_only(self):
+        series = complexity_scale.build_synthetic_size_series(
+            sizes=(16, 24), n_blocks=4, seed=7
+        )
+        result = complexity_scale.run_scale_experiment(
+            series,
+            timeout_s=60.0,
+            use_process=False,
+            variants=complexity_scale.parse_variants("full"),
+        )
+        self.assertTrue(result.points)
+        self.assertTrue(all(p["only_local_moving"] is False for p in result.points))
+        self.assertFalse(result.completed_for(True))
+        self.assertGreaterEqual(len(result.completed_for(False)), 1)
 
 
 class TestNoOverlappingModule(unittest.TestCase):

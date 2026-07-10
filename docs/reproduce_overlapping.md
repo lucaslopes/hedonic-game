@@ -28,6 +28,7 @@ A complete overlapping reproduction covers the suite documented in the old `RESU
 | 0. Smoke | Small graphs, no DBLP | `hedonic-exp overlapping-small` |
 | 1. Subgraph suite | L-hop windows around GT communities | `hedonic-exp overlapping-subgraph` |
 | 2. Full graph (optional) | Whole DBLP + optional γ sweep | `hedonic-exp overlapping-full` |
+| 3. Complexity scale | Size vs wallclock (local-moving T/F); timeout stop | `hedonic-exp overlapping-scale` |
 
 There is no separate figure pipeline for overlapping (unlike disjoint PHYSA V1020). Artifacts are **JSON metrics** plus an optional **covers pickle** for re-scoring.
 
@@ -172,6 +173,34 @@ hedonic-exp overlapping-subgraph \
 ```
 
 Defaults already use `--n_iterations -1` and auto `max_memberships`; the flags are shown explicitly for clarity.
+
+### Complexity scale (hardware limits)
+
+Wallclock time to equilibrium as L-hop subnetworks grow. Two lines:
+`only_local_moving=True` vs `False`. Shared settings: resolution = edge density,
+`max_memberships` = #GT communities in the window, `allow_isolation=True`,
+`n_iterations=-1`. Each line stops when `--timeout` is exceeded (full DBLP not required).
+
+```bash
+# Synthetic smoke (no DBLP)
+hedonic-exp overlapping-scale --smoke --output_dir "$OUT/scale_smoke"
+
+# DBLP hop growth from a GT seed (safe timeout)
+hedonic-exp overlapping-scale \
+  --timeout 30 \
+  --max-levels 6 \
+  --output_dir "$OUT/scale_dblp"
+
+# Full multi-phase only (only_local_moving=False), 10 min per size point
+hedonic-exp overlapping-scale \
+  --variant full \
+  --timeout 600 \
+  --max-levels 6 \
+  --community_idx 1004 \
+  --output_dir "$OUT/scale_dblp_full"
+```
+
+Writes `complexity_scale.json` + `complexity_scale.png` under `--output_dir`.
 
 ---
 

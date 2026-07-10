@@ -9,6 +9,7 @@ Install with experiments extra, then::
     hedonic-exp overlapping-small
     hedonic-exp overlapping-subgraph --levels 1 --n_communities 5
     hedonic-exp overlapping-full --n_iterations -1
+    hedonic-exp overlapping-scale --smoke --output_dir /tmp/scale
     hedonic-exp disjoint-load --results_folder /path/to/jsons
     hedonic-exp plots --smoke --output_dir /tmp/figs
     hedonic-exp reproduce-disjoint --preset v1020-smoke --output_root /tmp/V1020_CLI
@@ -91,6 +92,16 @@ COMMANDS: dict[str, Command] = {
         module="hedonic.experiments.overlapping.dblp_full",
         attr="main",
         summary="Full DBLP overlapping experiment (+ optional resolution sweep)",
+        needs_data="dblp",
+    ),
+    "overlapping-scale": Command(
+        name="overlapping-scale",
+        module="hedonic.experiments.overlapping.complexity_scale",
+        attr="main",
+        summary=(
+            "Wallclock scaling of overlapping hedonic as subnetworks grow "
+            "(only_local_moving T/F vs size; timeout stop + plot)"
+        ),
         needs_data="dblp",
     ),
     "plots": Command(
@@ -230,6 +241,15 @@ examples:
   hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 \\
       --methods leiden,hedonic_v1 --output /tmp/subgraph_smoke.json
   hedonic-exp overlapping-full --resolution 1e-4 --output /tmp/dblp_full.json
+
+  # Complexity scale: size vs wallclock (local-moving vs full multi-phase)
+  # Stops each line when --timeout is hit; does not require full DBLP finish
+  hedonic-exp overlapping-scale --smoke --output_dir /tmp/hedonic-scale
+  hedonic-exp overlapping-scale --timeout 30 --max-levels 6 \\
+      --output_dir /tmp/hedonic-scale-dblp
+  # Full multi-phase only, 10 min budget per size point
+  hedonic-exp overlapping-scale --variant full --timeout 600 --max-levels 6 \\
+      --community_idx 1004 --output_dir /tmp/hedonic-scale-dblp-full
 """
 
 
