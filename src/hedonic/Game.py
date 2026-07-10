@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from igraph import Graph
+
 from .utils import sample_uniform_ints
 
 
@@ -29,14 +32,25 @@ class Game(Graph):
         for attr in self.attributes():
             g[attr] = self[attr]
         return g
-    
-    def validate_membership(self, membership: list[int]) -> bool:
-        """Validate a community membership vector.
 
-        Rules:
-        - Length must equal the number of vertices
-        - Labels must be non-negative integers
-        - Labels must be contiguous starting at 0 (i.e., {0, 1, ..., K-1})
+    def validate_membership(
+        self,
+        membership: list[int] | list[list[int]],
+        *,
+        overlapping: bool = False,
+    ) -> bool:
+        """Validate a community membership vector or overlapping cover init.
+
+        Disjoint (``overlapping=False``):
+          - length == n
+          - non-negative integer labels
+          - labels contiguous from 0
+
+        Overlapping (``overlapping=True``):
+          - length == n
+          - each entry is a non-empty list of non-negative community ids
+            (one membership list per vertex), **or** a flat disjoint vector
+            (accepted and later expanded to singleton lists)
         """
         if not isinstance(membership, list):
             return False
@@ -44,54 +58,139 @@ class Game(Graph):
             return False
         if not membership:
             return False
-        # Ensure all entries are ints and non-negative
-        for label in membership:
-            if not isinstance(label, int):
-                return False
-            if label < 0:
-                return False
-        unique_labels = set(membership)
-        # Contiguous labels starting from 0
-        max_label = max(unique_labels)
-        expected = set(range(0, max_label + 1))
-        return unique_labels == expected
-    
-    def community_hedonic(self,
-            initial_membership: list[int] = None,
-            max_communities: int | None = None,
-            n_iterations: int = -1,
-            resolution: float = None,
-            allow_isolation: bool = False,
-            only_local_moving: bool = True,
-            edge_weights = None,
-            seed: int | None = None,
-        ):
+
+        if overlapping:
+            first = membership[0]
+            if isinstance(first, (list, tuple)):
+                labels: set[int] = set()
+                for entry in membership:
+                    if not isinstance(entry, (list, tuple)) or len(entry) == 0:
+                        return False
+                    for label in entry:
+                        if not isinstance(label, int) or label < 0:
+                            return False
+                        labels.add(label)
+                if not labels:
+                    return False
+                max_label = max(labels)
+                return labels == set(range(0, max_label + 1))
+            # flat vector allowed as overlapping init (expanded later)
+            overlapping = False
+
+        if not overlapping:
+            for label in membership:
+                if not isinstance(label, int) or label < 0:
+                    return False
+            unique_labels = set(membership)
+            max_label = max(unique_labels)
+            return unique_labels == set(range(0, max_label + 1))
+
+        return False
+
+    @staticmethod
+    def _as_overlapping_init(
+        membership: list[int] | list[list[int]],
+    ) -> list[list[int]]:
+        """Normalize flat or nested membership to list-of-lists (per vertex)."""
+        if membership and isinstance(membership[0], (list, tuple)):
+            return [list(map(int, entry)) for entry in membership]
+        return [[int(c)] for c in membership]
+
+    def community_hedonic(
+        self,
+        initial_membership: list[int] | list[list[int]] | None = None,
+        max_communities: int | None = None,
+        max_memberships: int = 1,
+        n_iterations: int = -1,
+        resolution: float | None = None,
+        allow_isolation: bool = False,
+        only_local_moving: bool = True,
+        edge_weights=None,
+        seed: int | None = None,
+        beta: float = 0.01,
+    ):
+        """Community detection with the hedonic-game / Leiden local-moving model.
+
+        This is the primary exploratory method for both disjoint and overlapping
+        experiments. It delegates to ``community_leiden`` from lucas-igraph.
+
+        Parameters
+        ----------
+        initial_membership :
+            Disjoint: flat list of community ids (length n).
+            Overlapping (``max_memberships > 1``): flat list or list-of-lists
+            (one community-id list per vertex). ``None`` builds a default init.
+        max_communities :
+            When ``initial_membership`` is ``None`` and ``max_memberships == 1``,
+            random init over ``[0, max_communities)``. Ignored for overlapping
+            defaults (singleton cover).
+        max_memberships :
+            ``1`` (default) → disjoint clustering (``VertexClustering``).
+            ``> 1`` → overlapping cover (``VertexCover``); each vertex may
+            belong to at most this many communities.
+        n_iterations :
+            Leiden outer iterations (``-1`` until stability).
+        resolution :
+            CPM resolution γ. Defaults to graph density.
+        allow_isolation :
+            Allow moves into empty communities (new clusters).
+        only_local_moving :
+            If True (default), run only the local-moving phase — the hedonic
+            best-response phase. If False, run full Leiden (refine + aggregate).
+        edge_weights :
+            Optional edge weights.
+        seed :
+            RNG seed for random disjoint initialization.
+        beta :
+            Leiden refinement randomness (used when ``only_local_moving`` is False).
+
+        Returns
+        -------
+        VertexClustering if ``max_memberships == 1``, else VertexCover.
         """
-        Community detection using the hedonic game model.
-        """
-        # Determine initial membership according to the specified rules
+        if not isinstance(max_memberships, int) or max_memberships < 1:
+            raise ValueError("max_memberships must be an integer >= 1")
+
+        overlapping = max_memberships > 1
+        res = self.density() if resolution is None else resolution
+
         if initial_membership is not None:
-            if not self.validate_membership(initial_membership):
-                raise ValueError("Invalid initial_membership: expected list of contiguous non-negative integer labels starting at 0, length equal to number of vertices")
-            membership_vector = initial_membership
+            if not self.validate_membership(
+                initial_membership, overlapping=overlapping
+            ):
+                raise ValueError(
+                    "Invalid initial_membership: expected length-n labels "
+                    "(disjoint: contiguous ints from 0; overlapping: flat ints "
+                    "or non-empty community-id lists per vertex)"
+                )
+            if overlapping:
+                membership_vector = self._as_overlapping_init(initial_membership)
+            else:
+                membership_vector = list(initial_membership)
         else:
-            # No initial membership provided
-            if max_communities is None:
-                # Singleton partition: each node in its own community
+            if overlapping:
+                # Singleton cover: vertex v alone in community v
+                membership_vector = [[v] for v in range(self.vcount())]
+            elif max_communities is None:
                 membership_vector = list(range(self.vcount()))
             else:
                 if not isinstance(max_communities, int) or max_communities <= 0:
-                    raise ValueError("max_communities must be a positive integer when provided")
-                # Random initialization with K possible labels [0..K-1]
+                    raise ValueError(
+                        "max_communities must be a positive integer when provided"
+                    )
                 if seed is None:
-                    seed = 42  # Default seed for reproducibility
-                membership_vector = sample_uniform_ints(self.vcount(), max_communities - 1, seed).tolist()
+                    seed = 42
+                membership_vector = sample_uniform_ints(
+                    self.vcount(), max_communities - 1, seed
+                ).tolist()
 
-        p = self.community_leiden(
+        return self.community_leiden(
             initial_membership=membership_vector,
             n_iterations=n_iterations,
-            resolution=self.density() if resolution is None else resolution,
+            resolution=res,
             allow_isolation=allow_isolation,
             only_local_moving=only_local_moving,
-            weights=edge_weights)
-        return p
+            weights=edge_weights,
+            max_memberships=max_memberships,
+            beta=beta,
+        )

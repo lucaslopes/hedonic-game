@@ -12,6 +12,17 @@ dependencies = [
     "numpy",
 ]
 
+[project.optional-dependencies]
+experiments = [
+    "pandas>=2.0.0",
+    "scipy>=1.10.0",
+    "tqdm>=4.65.0",
+    "stopwatch-py>=1.0.0",
+]
+
+[project.scripts]
+hedonic-exp = "hedonic.experiments.CLI:main"
+
 [build-system]
 requires = ["uv_build>=0.8.11,<0.9.0"]
 build-backend = "uv_build"
