@@ -9,9 +9,12 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "lucas-igraph",
-    "numpy"
+    "numpy",
 ]
 
 [build-system]
 requires = ["uv_build>=0.8.11,<0.9.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+lucas-igraph = { path = "../python-igraph", editable = true }

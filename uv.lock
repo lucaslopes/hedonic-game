@@ -4,7 +4,7 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "hedonic"
-version = "0.0.9"
+version = "0.0.10"
 source = { editable = "." }
 dependencies = [
     { name = "lucas-igraph" },
@@ -13,29 +13,49 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "lucas-igraph" },
+    { name = "lucas-igraph", editable = "../python-igraph" },
     { name = "numpy" },
 ]
 
 [[package]]
 name = "lucas-igraph"
-version = "0.11.9.3"
-source = { registry = "https://pypi.org/simple" }
+version = "1.0.0.1"
+source = { editable = "../python-igraph" }
 dependencies = [
     { name = "texttable" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/b3/8d90cfe15d759bcf6af657e1c16eeb4d19cd52e3b83f96d5a72e0a607765/lucas-igraph-0.11.9.3.tar.gz", hash = "sha256:7840dba88238aa08dde6e043388e0fe15a46e9e6264aa4edd7c36e7e8604abec", size = 4623210, upload-time = "2025-08-19T23:45:59.313Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/3f/409aab1bf7790d1844a7d5b6a124be29b8c5b017bdccc254c8a4d3f14c48/lucas_igraph-0.11.9.3-cp39-abi3-macosx_10_15_x86_64.whl", hash = "sha256:fd0b8cbba5441ab191f6156b7b878b578e68dea39e7f3cf696f87e57b6a4b43c", size = 1907263, upload-time = "2025-08-19T23:45:34.084Z" },
-    { url = "https://files.pythonhosted.org/packages/37/76/9f4790251c424d57b42a1e6b2da222f27be75901fc6195e434b5a039f1ef/lucas_igraph-0.11.9.3-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:041e1a76627198b6f0f5abe6916040028c3814f45369b227286291a10541ac95", size = 1756236, upload-time = "2025-08-19T23:45:35.769Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/55/8935d2dd5d5915c3787a6072a98d7eb094e24744e297724785c859956593/lucas_igraph-0.11.9.3-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:a4279daeca9d0066f181796535e3b6e37a2a63d51f78b63887d6485382e98519", size = 4346826, upload-time = "2025-08-19T23:45:37.249Z" },
-    { url = "https://files.pythonhosted.org/packages/22/b1/35ce17e6f3b4ad19e3b2ca86680b90b8ac25ed0346852ac80025c9ff9286/lucas_igraph-0.11.9.3-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:f78eb6be349df479ddc8ec17c37bfb506eb626e70cb90263ab510870534973da", size = 4598791, upload-time = "2025-08-19T23:45:38.408Z" },
-    { url = "https://files.pythonhosted.org/packages/62/36/96fb1ff0c904c5b4a12da3ec4a2438d1fbde276eeac7512d75b5c36b0047/lucas_igraph-0.11.9.3-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:7eea2752c039fe4345112c8b837cb35635781cb28f3f5bdcc19fbdc1cf52dcd6", size = 5250752, upload-time = "2025-08-19T23:45:40.01Z" },
-    { url = "https://files.pythonhosted.org/packages/10/7f/05822ec44c969f901ddf589e494eceb0cb80fa3395bb9aa0ddd0cd69feee/lucas_igraph-0.11.9.3-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:f3663f736bfba52dcbe44f6a3ef7233534c973096fe26e654bd0b1533b66aa19", size = 5515112, upload-time = "2025-08-19T23:45:41.436Z" },
-    { url = "https://files.pythonhosted.org/packages/08/24/9db0a5cae048702e6e9fa9689eaec2c8c9661afb7efe48c498cbd7af1026/lucas_igraph-0.11.9.3-cp39-abi3-win32.whl", hash = "sha256:94db468ac940ea361f4a191ec64bdcea0c9c018a6dfe23788ce2c8942f71322e", size = 2497863, upload-time = "2025-08-19T23:45:43.139Z" },
-    { url = "https://files.pythonhosted.org/packages/c9/5e/2ab3f95e185e2373bc5cabf036dd5d0c0a4ce12f63af9ca3caa95ccd3e44/lucas_igraph-0.11.9.3-cp39-abi3-win_amd64.whl", hash = "sha256:63e4567ac3cadf98dd1b63bc548b9502d12d7ce53201113556c7d5a9b7507283", size = 2945214, upload-time = "2025-08-19T23:45:44.294Z" },
-    { url = "https://files.pythonhosted.org/packages/c2/c7/d72e1a82de1dddb4d9c9f04764c29403d6d67c807200560aa6104c6689ee/lucas_igraph-0.11.9.3-cp39-abi3-win_arm64.whl", hash = "sha256:9f3fab238a2d5be2fd9d1888584515d347352671e0a2cd61c2db294a1042e2bd", size = 2525974, upload-time = "2025-08-19T23:45:45.755Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "cairocffi", marker = "extra == 'cairo'", specifier = ">=1.2.0" },
+    { name = "cairocffi", marker = "extra == 'plotting'", specifier = ">=1.2.0" },
+    { name = "cairocffi", marker = "extra == 'test'", specifier = ">=1.2.0" },
+    { name = "cairocffi", marker = "extra == 'test-musl'", specifier = ">=1.2.0" },
+    { name = "cairocffi", marker = "extra == 'test-win-arm64'", specifier = ">=1.2.0" },
+    { name = "matplotlib", marker = "platform_python_implementation != 'PyPy' and extra == 'matplotlib'", specifier = ">=3.6.0" },
+    { name = "matplotlib", marker = "platform_python_implementation != 'PyPy' and extra == 'test'", specifier = ">=3.6.0" },
+    { name = "networkx", marker = "extra == 'test'", specifier = ">=2.5" },
+    { name = "networkx", marker = "extra == 'test-musl'", specifier = ">=2.5" },
+    { name = "networkx", marker = "extra == 'test-win-arm64'", specifier = ">=2.5" },
+    { name = "numpy", marker = "platform_python_implementation != 'PyPy' and extra == 'test'", specifier = ">=1.19.0" },
+    { name = "pandas", marker = "platform_python_implementation != 'PyPy' and extra == 'test'", specifier = ">=1.1.0" },
+    { name = "pillow", marker = "platform_python_implementation != 'PyPy' and extra == 'test'", specifier = ">=9" },
+    { name = "plotly", marker = "extra == 'plotly'", specifier = ">=5.3.0" },
+    { name = "plotly", marker = "extra == 'test'", specifier = ">=5.3.0" },
+    { name = "pydoctor", marker = "extra == 'doc'", specifier = ">=23.4.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.1" },
+    { name = "pytest", marker = "extra == 'test-musl'", specifier = ">=7.0.1" },
+    { name = "pytest", marker = "extra == 'test-win-arm64'", specifier = ">=7.0.1" },
+    { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.1.0" },
+    { name = "pytest-timeout", marker = "extra == 'test-musl'", specifier = ">=2.1.0" },
+    { name = "pytest-timeout", marker = "extra == 'test-win-arm64'", specifier = ">=2.1.0" },
+    { name = "scipy", marker = "platform_python_implementation != 'PyPy' and extra == 'test'", specifier = ">=1.5.0" },
+    { name = "sphinx", marker = "extra == 'doc'", specifier = ">=7.0.0" },
+    { name = "sphinx-gallery", marker = "extra == 'doc'", specifier = ">=0.14.0" },
+    { name = "sphinx-rtd-theme", marker = "extra == 'doc'", specifier = ">=1.3.0" },
+    { name = "texttable", specifier = ">=1.6.2" },
 ]
+provides-extras = ["cairo", "matplotlib", "plotly", "plotting", "test", "test-win-arm64", "test-musl", "doc"]
 
 [[package]]
 name = "numpy"
