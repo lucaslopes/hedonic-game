@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -170,6 +171,130 @@ class TestSbmSweep(unittest.TestCase):
             self.assertTrue(ok)
             self.assertGreaterEqual(len(list(Path(d).rglob("*.json"))), 1)
 
+    def test_v1020_preset_constants(self):
+        """Full V1020 grid matches archived PHYSA synthetic experiment."""
+        p = sbm_sweep.V1020_PRESET
+        self.assertEqual(p["max_n_nodes"], 1020)
+        self.assertEqual(p["n_communities"], [2, 3, 4, 5, 6])
+        self.assertEqual(p["seeds"], [0, 1, 2, 3, 4])
+        self.assertEqual(p["noises"], [0.10, 0.25, 0.50, 0.75, 1.00])
+        self.assertEqual(p["partition_seeds"], 10)
+        self.assertEqual(p["n_runs"], 10)
+        self.assertEqual(p["layout"], "v1020")
+        self.assertEqual(p["folder_name"], "resultados")
+        self.assertEqual(set(p["methods"]), set(sbm_sweep.METHODS))
+        # community sizes used in archived V1020
+        for n in p["n_communities"]:
+            self.assertEqual(1020 // n, int(1020 / n))
+
+    def test_v1020_smoke_layout_and_schema(self):
+        """v1020-smoke writes partition_*.json lists with all methods + CSV schema."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ok = sbm_sweep.main(
+                [
+                    "--preset",
+                    "v1020-smoke",
+                    "--output_root",
+                    str(root),
+                ]
+            )
+            self.assertTrue(ok)
+            jsons = list(root.rglob("partition_*.json"))
+            self.assertGreaterEqual(len(jsons), 1)
+            # Path shape: .../resultados/2C_20N/Noise = .../P_in = .../Difficulty = .../Network (000)/
+            sample = jsons[0]
+            parts = sample.parts
+            self.assertIn("resultados", parts)
+            self.assertTrue(any(re.match(r"\d+C_\d+N$", p) for p in parts))
+            self.assertTrue(any(p.startswith("Noise =") for p in parts))
+            self.assertTrue(any(p.startswith("Network (") for p in parts))
+            with open(sample, encoding="utf-8") as f:
+                records = json.load(f)
+            self.assertIsInstance(records, list)
+            self.assertGreaterEqual(len(records), len(sbm_sweep.METHODS))
+            methods_seen = {r["method"] for r in records}
+            for m in sbm_sweep.METHODS:
+                self.assertIn(m, methods_seen)
+            required = {
+                "method",
+                "number_of_communities",
+                "community_size",
+                "p_in",
+                "p_out",
+                "multiplier",
+                "duration",
+                "accuracy",
+                "robustness",
+                "noise",
+                "network_seed",
+                "partition_seed",
+                "partition",
+            }
+            self.assertTrue(required.issubset(records[0].keys()))
+
+            # data_loader simple path → CSV columns match archived resultados.csv.gzip
+            df = data_loader.load_experiment_data(
+                str(root / "resultados"), simple=True
+            )
+            expected_cols = {
+                "method",
+                "number_of_communities",
+                "community_size",
+                "p_in",
+                "p_out",
+                "multiplier",
+                "resolution",
+                "duration",
+                "accuracy",
+                "robustness",
+                "noise",
+                "network_seed",
+                "partition_seed",
+            }
+            self.assertTrue(expected_cols.issubset(set(df.columns)))
+            self.assertGreater(len(df), 0)
+            self.assertEqual(
+                set(df["method"].unique()) | set(),
+                set(sbm_sweep.METHODS.keys()),
+            )
+
+    def test_v1020_preset_refuses_archived_root(self):
+        code_or_exc = None
+        try:
+            sbm_sweep.main(
+                [
+                    "--preset",
+                    "v1020",
+                    "--output_root",
+                    "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020",
+                    # Tiny override so we never actually run if guard fails
+                    "--max_n_nodes",
+                    "4",
+                    "--n_communities",
+                    "2",
+                    "--seeds",
+                    "0",
+                    "--p_in",
+                    "0.1",
+                    "--difficulty",
+                    "0.1",
+                    "--noises",
+                    "0.1",
+                    "--partition_seeds",
+                    "0",
+                    "--methods",
+                    "Mirror",
+                    "--n_runs",
+                    "1",
+                ]
+            )
+            code_or_exc = "no_exit"
+        except SystemExit as exc:
+            code_or_exc = exc.code
+        self.assertNotEqual(code_or_exc, "no_exit")
+        self.assertNotEqual(code_or_exc, 0)
+
 
 class TestCLI(unittest.TestCase):
     def test_help_lists_subcommands(self):
@@ -193,6 +318,8 @@ class TestCLI(unittest.TestCase):
             "smoke",
             "disjoint",
             "disjoint-load",
+            "plots",
+            "reproduce-disjoint",
             "overlapping-small",
             "overlapping-subgraph",
             "overlapping-full",
@@ -226,6 +353,71 @@ class TestCLI(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertGreaterEqual(len(list(Path(d).rglob("*.json"))), 1)
+
+    def test_disjoint_v1020_smoke_via_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            code = CLI.main(
+                ["disjoint", "--preset", "v1020-smoke", "--output_root", d]
+            )
+            self.assertEqual(code, 0)
+            jsons = list(Path(d).rglob("partition_*.json"))
+            self.assertGreaterEqual(len(jsons), 1)
+            code = CLI.main(
+                [
+                    "disjoint-load",
+                    "--results_folder",
+                    str(Path(d) / "resultados"),
+                    "--output",
+                    str(Path(d) / "out.csv.gzip"),
+                    "--simple",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue((Path(d) / "out.csv.gzip").is_file())
+
+    def test_plots_help(self):
+        code = CLI.main(["plots", "--help"])
+        self.assertEqual(code, 0)
+
+    def test_plots_smoke_via_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "figures"
+            code = CLI.main(
+                [
+                    "plots",
+                    "--smoke",
+                    "--output_dir",
+                    str(out),
+                    "--format",
+                    "png",
+                    "--no-persist",
+                ]
+            )
+            self.assertEqual(code, 0)
+            from hedonic.experiments.plots.paper_figures import FIGURE_NAMES
+
+            for stem in FIGURE_NAMES:
+                matches = list(out.glob(f"{stem}.*"))
+                self.assertTrue(matches, f"missing figure stem {stem}")
+
+    def test_reproduce_disjoint_smoke_via_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            code = CLI.main(
+                [
+                    "reproduce-disjoint",
+                    "--preset",
+                    "v1020-smoke",
+                    "--output_root",
+                    d,
+                    "--format",
+                    "png",
+                    "--no-persist",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue((Path(d) / "resultados.csv.gzip").is_file())
+            figs = list((Path(d) / "figures").glob("*.png"))
+            self.assertGreaterEqual(len(figs), 4)
 
 
 class TestSmallGraphsModule(unittest.TestCase):

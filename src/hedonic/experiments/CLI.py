@@ -10,6 +10,8 @@ Install with experiments extra, then::
     hedonic-exp overlapping-subgraph --levels 1 --n_communities 5
     hedonic-exp overlapping-full --max_memberships 4
     hedonic-exp disjoint-load --results_folder /path/to/jsons
+    hedonic-exp plots --smoke --output_dir /tmp/figs
+    hedonic-exp reproduce-disjoint --preset v1020-smoke --output_root /tmp/V1020_CLI
 
 **Agents:** when you add, remove, rename, or change the CLI of any experiment
 module under ``hedonic.experiments``, you **must** update this file (registry +
@@ -56,7 +58,10 @@ COMMANDS: dict[str, Command] = {
         name="disjoint",
         module="hedonic.experiments.disjoint.sbm_sweep",
         attr="main",
-        summary="SBM parameter sweep for disjoint community detection",
+        summary=(
+            "SBM parameter sweep for disjoint community detection "
+            "(presets: v1020, v1020-smoke)"
+        ),
         needs_data="synthetic",
     ),
     "disjoint-load": Command(
@@ -87,6 +92,26 @@ COMMANDS: dict[str, Command] = {
         attr="main",
         summary="Full DBLP overlapping experiment (+ optional resolution sweep)",
         needs_data="dblp",
+    ),
+    "plots": Command(
+        name="plots",
+        module="hedonic.experiments.plots.paper_figures",
+        attr="main",
+        summary=(
+            "PHYSA V1020 paper figures from disjoint CSV "
+            "(gt_robustness, noise, n_communities, acc_*)"
+        ),
+        needs_data="synthetic",
+    ),
+    "reproduce-disjoint": Command(
+        name="reproduce-disjoint",
+        module="hedonic.experiments.disjoint.reproduce",
+        attr="main",
+        summary=(
+            "End-to-end disjoint reproduction: sweep → CSV → paper figures "
+            "(presets: v1020, v1020-smoke)"
+        ),
+        needs_data="synthetic",
     ),
 }
 
@@ -170,12 +195,35 @@ examples:
   hedonic-exp overlapping-small
   hedonic-exp disjoint --smoke --output_root /tmp/hedonic-smoke
 
-  # Reproduce disjoint SBM sweep
+  # Tiny V1020-compatible structural smoke (safe output root)
+  hedonic-exp disjoint --preset v1020-smoke \\
+      --output_root ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI
+
+  # Full PHYSA V1020 grid (very large — do not write into archived V1020)
+  hedonic-exp disjoint --preset v1020 \\
+      --output_root ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI
+
+  # Ad-hoc disjoint SBM sweep
   hedonic-exp disjoint --folder_name exp --max_n_nodes 60 \\
       --n_communities 2 --seeds 42 --p_in 0.1 --difficulty 0.5
 
   # Load disjoint JSON results → CSV
-  hedonic-exp disjoint-load --results_folder /path/to/resultados
+  hedonic-exp disjoint-load --results_folder /path/to/resultados --simple
+  hedonic-exp disjoint-load \\
+      --results_folder .../V1020_CLI/resultados \\
+      --output .../V1020_CLI/resultados.csv.gzip --simple
+
+  # Paper figures (same stems as archived V1020/figures/)
+  hedonic-exp plots --smoke --output_dir /tmp/hedonic-figs
+  hedonic-exp plots --data .../V1020/resultados_ari.csv.gzip \\
+      --output_dir .../V1020_CLI/figures --format pdf
+
+  # Complete disjoint pipeline (sweep → CSV → figures)
+  hedonic-exp reproduce-disjoint --preset v1020-smoke \\
+      --output_root .../V1020_CLI
+  hedonic-exp reproduce-disjoint --plots-only \\
+      --data .../V1020/resultados_ari.csv.gzip \\
+      --output_root .../V1020_CLI --max_rows 50000
 
   # Overlapping on DBLP (set HEDONIC_DBLP_DIR if needed)
   hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 \\
@@ -245,6 +293,8 @@ def _call_experiment(fn: Callable, rest: list[str]) -> int:
             return 0
         if isinstance(exc.code, int):
             return exc.code
+        # argparse / explicit SystemExit("message") — surface the text
+        print(exc.code, file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)

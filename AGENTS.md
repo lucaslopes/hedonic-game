@@ -15,9 +15,12 @@ src/hedonic/
 └── experiments/         # optional extra: replication & sweeps
     ├── config.py        # data path defaults + env overrides
     ├── CLI.py           # hedonic-exp entrypoint (capital C, intentional)
+    ├── plots/           # paper figures (matplotlib; optional extra)
+    │   └── paper_figures.py  # V1020 PHYSA figures
     ├── disjoint/
     │   ├── sbm_sweep.py     # synthetic SBM parameter sweeps
-    │   └── data_loader.py   # JSON → CSV result pipeline
+    │   ├── data_loader.py   # JSON → CSV result pipeline
+    │   └── reproduce.py     # end-to-end: sweep → CSV → figures
     └── overlapping/
         ├── metrics.py       # F1/Jaccard/Omega, cover helpers
         ├── small_graphs.py  # smoke tests (no DBLP)
@@ -108,7 +111,7 @@ lucas-igraph   # path editable: ../python-igraph (see pyproject [tool.uv.sources
 numpy
 
 # Optional: pip install "hedonic[experiments]"  or  uv sync --extra experiments
-pandas, scipy, tqdm, stopwatch-py
+pandas, scipy, tqdm, stopwatch-py, matplotlib, seaborn
 ```
 
 Setup:
@@ -153,8 +156,10 @@ Subcommands are registered in **`COMMANDS`** (the single source of truth in `CLI
 | Subcommand | Module | Purpose | Data |
 |------------|--------|---------|------|
 | `smoke` | (CLI built-in) | Isolated check: small graphs + tiny SBM sweep | none |
-| `disjoint` | `disjoint.sbm_sweep` | SBM sweeps → JSON under `SYNTHETIC_DIR` | synthetic (or `--output_root`) |
-| `disjoint-load` | `disjoint.data_loader` | JSON results → gzipped CSV | synthetic results |
+| `disjoint` | `disjoint.sbm_sweep` | SBM sweeps → JSON under `SYNTHETIC_DIR` (presets: `v1020`, `v1020-smoke`) | synthetic (or `--output_root`) |
+| `disjoint-load` | `disjoint.data_loader` | JSON results → gzipped CSV (`--simple` for smoke) | synthetic results |
+| `plots` | `plots.paper_figures` | PHYSA V1020 paper figures from CSV (`gt_robustness`, `noise`, …) | synthetic CSV |
+| `reproduce-disjoint` | `disjoint.reproduce` | End-to-end: sweep → CSV → figures | synthetic |
 | `overlapping-small` | `overlapping.small_graphs` | Smoke + metrics on small graphs | none |
 | `overlapping-subgraph` | `overlapping.dblp_subgraph` | L-hop around GT communities | DBLP |
 | `overlapping-full` | `overlapping.dblp_full` | Full DBLP + optional resolution sweep | DBLP |
@@ -171,8 +176,29 @@ hedonic-exp disjoint --folder_name smoke --max_n_nodes 40 --n_communities 2 \
   --seeds 1 --p_in 0.2 --difficulty 0.3 --noises 0.01 --partition_seeds 0 \
   --methods Hedonic,Leiden --output_root /tmp/sbm
 
+# PHYSA V1020 structural smoke (same layout/methods as archived grid; safe root)
+hedonic-exp disjoint --preset v1020-smoke \
+  --output_root ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI
+
+# Full V1020 grid via CLI (very large — never write into archived V1020)
+hedonic-exp disjoint --preset v1020 \
+  --output_root ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI
+
 # Combine prior disjoint JSON dumps
-hedonic-exp disjoint-load --results_folder /path/to/resultados --output /tmp/out.csv.gzip
+hedonic-exp disjoint-load --results_folder /path/to/resultados --output /tmp/out.csv.gzip --simple
+
+# Paper figures (same five stems as archived V1020/figures/)
+hedonic-exp plots --smoke --output_dir /tmp/hedonic-figs
+hedonic-exp plots --data /path/to/resultados_ari.csv.gzip \
+  --output_dir ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI/figures
+
+# Complete pipeline: sweep → CSV → figures (never write into archived V1020)
+hedonic-exp reproduce-disjoint --preset v1020-smoke \
+  --output_root ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI
+# Figures only from archived CSV (read-only) into V1020_CLI:
+hedonic-exp reproduce-disjoint --plots-only \
+  --data ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020/resultados_ari.csv.gzip \
+  --output_root ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI --max_rows 50000
 
 # Overlapping (point HEDONIC_DBLP_DIR if needed)
 hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 --methods leiden,hedonic_v1
@@ -212,11 +238,31 @@ Do **not** add a second entrypoint module or a parallel `cli.py`; extend `CLI.py
 1. Build an SBM with `generate_graph` → `Game`.
 2. Ground truth via block labels; optional noisy `initial_membership`.
 3. Methods table maps **name → `method_call_name` + parameters**.
-4. **Hedonic** and **Leiden** both call `community_hedonic` with `max_memberships=1` (Leiden uses `only_local_moving=False`).
-5. Write one JSON per method/seed path under `output_root / folder_name / ...`.
-6. **Isolated run:** `--smoke` (tiny defaults) and/or `--methods Hedonic,Leiden` and `--output_root`.
+4. **Hedonic** and **Leiden** both call `community_hedonic` with `max_memberships=1` (Leiden uses `only_local_moving=False`). Spectral sets `clusters = n_communities`.
+5. Output layouts:
+   - **`v1020`** (preset default): `resultados/{n}C_{size}N/Noise = …/P_in = …/Difficulty = …/Network (NNN)/partition_MMM.json` — list of method result dicts (matches archived PHYSA V1020).
+   - **`legacy`**: `{folder}/{n} Communities of {size} nodes/.../Partition (MMM)/{Method}.json`.
+6. Leiden/Hedonic use **`--n_runs`** stochastic restarts with unique-partition dedup (V1020 used 10).
+7. **Presets:**
+   - `--preset v1020` — full archived grid (1020 nodes, communities 2–6, full p_in/difficulty/noise, 5 nets, 10 partitions, all methods). Refuses to write into the archived `.../V1020` folder.
+   - `--preset v1020-smoke` — tiny structural clone for CLI checks.
+   - `--smoke` — smaller legacy mini-run (CI-friendly).
+8. **Isolated run:** `--smoke` / `--preset v1020-smoke` and `--output_root` (prefer `.../V1020_CLI`, never overwrite archived V1020).
+9. **Figures:** `hedonic-exp plots` (or `reproduce-disjoint`) writes the five paper stems: `gt_robustness`, `noise`, `n_communities`, `acc_robustness`, `acc_efficiency`.
 
 When adding a method to the sweep, extend `METHODS` and implement the callable on `Game` (or a local helper in the experiment module if it is not core). If the public CLI documents method names, refresh help/examples.
+
+### Complete V1020 disjoint reproduction (via CLI)
+
+| Step | Command | Output |
+|------|---------|--------|
+| 1. Sweep | `hedonic-exp disjoint --preset v1020 --output_root …/V1020_CLI` | `resultados/{n}C_{size}N/…/partition_*.json` |
+| 2. Combine | `hedonic-exp disjoint-load --results_folder …/resultados --simple` | `resultados.csv.gzip` |
+| 3. Figures | `hedonic-exp plots --data …/resultados.csv.gzip --output_dir …/figures` | five PDFs matching archived names |
+
+Or one shot: `hedonic-exp reproduce-disjoint --preset v1020 --output_root …/V1020_CLI`.
+
+**Do not** write into archived `…/Synthetic_Networks/V1020` (CLI guards refuse).
 
 ### Overlapping pattern
 

@@ -18,6 +18,8 @@ experiments = [
     "scipy>=1.10.0",
     "tqdm>=4.65.0",
     "stopwatch-py>=1.0.0",
+    "matplotlib>=3.7",
+    "seaborn>=0.13",
 ]
 
 [project.scripts]
