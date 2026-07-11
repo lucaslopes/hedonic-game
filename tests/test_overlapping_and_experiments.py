@@ -17,7 +17,11 @@ from hedonic.experiments import CLI
 from hedonic.experiments.config import (
     DEFAULT_DBLP_DIR,
     DEFAULT_SYNTHETIC_DIR,
+    DEFAULT_OUTPUT_DIR,
+    load_config_file,
+    read_toml,
     reload_paths,
+    resolve_experiment_paths,
 )
 from hedonic.experiments.disjoint import data_loader, sbm_sweep
 from hedonic.experiments.overlapping import small_graphs
@@ -95,13 +99,22 @@ class TestCommunityHedonic(unittest.TestCase):
 
 class TestExperimentsConfig(unittest.TestCase):
     def test_defaults(self):
+        from hedonic.experiments.config import expand_path
+
         self.assertEqual(
-            str(DEFAULT_DBLP_DIR),
-            "~/Databases/Hedonic/Networks/DBLP",
+            DEFAULT_DBLP_DIR,
+            expand_path("~/Databases/Hedonic/Networks/DBLP"),
         )
         self.assertEqual(
-            str(DEFAULT_SYNTHETIC_DIR),
-            "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020",
+            DEFAULT_SYNTHETIC_DIR,
+            expand_path("~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"),
+        )
+        self.assertEqual(
+            DEFAULT_OUTPUT_DIR,
+            expand_path("~/Databases/Hedonic/experiments"),
+        )
+        self.assertTrue(
+            str(DEFAULT_DBLP_DIR).endswith("Databases/Hedonic/Networks/DBLP")
         )
 
     def test_env_override(self):
@@ -110,16 +123,117 @@ class TestExperimentsConfig(unittest.TestCase):
             {
                 "HEDONIC_DBLP_DIR": "/tmp/custom_dblp",
                 "HEDONIC_SYNTHETIC_DIR": "/tmp/custom_synth",
+                "HEDONIC_OUTPUT_DIR": "/tmp/custom_out",
             },
             clear=False,
         ):
             dblp, synth = reload_paths()
             self.assertEqual(str(dblp), "/tmp/custom_dblp")
             self.assertEqual(str(synth), "/tmp/custom_synth")
+            from hedonic.experiments import config as cfg
+
+            self.assertEqual(str(cfg.OUTPUT_DIR), "/tmp/custom_out")
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("HEDONIC_DBLP_DIR", None)
             os.environ.pop("HEDONIC_SYNTHETIC_DIR", None)
+            os.environ.pop("HEDONIC_OUTPUT_DIR", None)
             reload_paths()
+
+    def test_toml_paths_and_section(self):
+        with tempfile.TemporaryDirectory() as d:
+            toml_path = Path(d) / "hedonic.toml"
+            toml_path.write_text(
+                "\n".join(
+                    [
+                        "[paths]",
+                        'dblp_dir = "/toml/dblp"',
+                        'synthetic_dir = "/toml/synth"',
+                        'output_dir = "/toml/out"',
+                        "",
+                        "[overlapping_resolution]",
+                        'output_dir = "/toml/res-f1"',
+                        'resolutions = "0,1"',
+                        'seeds = "0,1"',
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            data = read_toml(toml_path)
+            self.assertIn("paths", data)
+            with patch.dict(os.environ, {}, clear=False):
+                for k in (
+                    "HEDONIC_DBLP_DIR",
+                    "HEDONIC_SYNTHETIC_DIR",
+                    "HEDONIC_OUTPUT_DIR",
+                    "HEDONIC_CONFIG",
+                ):
+                    os.environ.pop(k, None)
+                loaded = load_config_file(toml_path, search_cwd=False, apply=True)
+                self.assertEqual(loaded["paths"]["dblp_dir"], "/toml/dblp")
+                from hedonic.experiments import config as cfg
+
+                self.assertEqual(str(cfg.DBLP_DIR), "/toml/dblp")
+                self.assertEqual(str(cfg.OUTPUT_DIR), "/toml/out")
+                resolved = resolve_experiment_paths(
+                    config_path=toml_path,
+                    data_dir=None,
+                    output_dir=None,
+                    experiment_section="overlapping_resolution",
+                    search_cwd=False,
+                )
+                self.assertEqual(str(resolved["output_dir"]), "/toml/res-f1")
+                self.assertEqual(
+                    resolved["section"]["resolutions"], "0,1"
+                )
+                # CLI explicit output wins over TOML section
+                resolved_cli = resolve_experiment_paths(
+                    config_path=toml_path,
+                    data_dir=None,
+                    output_dir="/cli/out",
+                    experiment_section="overlapping_resolution",
+                    search_cwd=False,
+                )
+                self.assertEqual(str(resolved_cli["output_dir"]), "/cli/out")
+            reload_paths()
+
+    def test_example_toml_ships_and_parses(self):
+        root = Path(__file__).resolve().parents[1]
+        configs_dir = root / "configs"
+        example = configs_dir / "hedonic.example.toml"
+        default_cfg = configs_dir / "hedonic.toml"
+        self.assertTrue(configs_dir.is_dir(), "configs/ must exist")
+        self.assertTrue(example.is_file(), "configs/hedonic.example.toml must ship")
+        self.assertTrue(default_cfg.is_file(), "configs/hedonic.toml must ship")
+        data = read_toml(example)
+        self.assertIn("paths", data)
+        self.assertIn("dblp_dir", data["paths"])
+        # Example uses home-relative paths, not /Users/<name>
+        self.assertTrue(
+            str(data["paths"]["dblp_dir"]).startswith("~/")
+            or str(data["paths"]["dblp_dir"]).startswith("$"),
+            msg=data["paths"]["dblp_dir"],
+        )
+        default_data = read_toml(default_cfg)
+        self.assertTrue(
+            str(default_data["paths"]["dblp_dir"]).startswith("~/"),
+            msg=default_data["paths"]["dblp_dir"],
+        )
+
+    def test_find_config_prefers_configs_dir(self):
+        from hedonic.experiments.config import DEFAULT_TOML_NAMES, find_config_file
+
+        self.assertEqual(DEFAULT_TOML_NAMES[0], "configs/hedonic.toml")
+        root = Path(__file__).resolve().parents[1]
+        # When cwd is the repo root, configs/hedonic.toml is discovered
+        old = Path.cwd()
+        try:
+            os.chdir(root)
+            found = find_config_file(search_cwd=True)
+            self.assertIsNotNone(found)
+            self.assertTrue(str(found).endswith("configs/hedonic.toml"))
+        finally:
+            os.chdir(old)
 
 
 class TestDataLoaderHelpers(unittest.TestCase):
@@ -282,7 +396,11 @@ class TestSbmSweep(unittest.TestCase):
                     "--preset",
                     "v1020",
                     "--output_root",
-                    "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020",
+                    str(
+                        Path(
+                            "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
+                        ).expanduser()
+                    ),
                     # Tiny override so we never actually run if guard fails
                     "--max_n_nodes",
                     "4",
@@ -733,6 +851,27 @@ class TestResolutionF1(unittest.TestCase):
         self.assertIn("f1", rec)
         self.assertGreaterEqual(rec["f1"], 0.0)
         self.assertLessEqual(rec["f1"], 1.0)
+        # Full metadata + cover for cache / later metrics
+        for key in (
+            "cover",
+            "quality",
+            "wallclock_s",
+            "seed",
+            "resolution",
+            "initial_membership",
+            "metrics",
+            "completed_at",
+            "status",
+            "n_vertices",
+            "n_edges",
+        ):
+            self.assertIn(key, rec, msg=key)
+        self.assertEqual(rec["status"], "complete")
+        self.assertIsInstance(rec["cover"], list)
+        self.assertGreaterEqual(len(rec["cover"]), 1)
+        self.assertIsInstance(rec["wallclock_s"], float)
+        self.assertEqual(rec["seed"], 0)
+        self.assertIn("f1", rec["metrics"])
 
     def test_smoke_experiment_writes_plot_and_ci(self):
         game, gt = resolution_f1.build_smoke_instance(
@@ -810,6 +949,144 @@ class TestResolutionF1(unittest.TestCase):
         self.assertIn("smoke", help_text)
         self.assertIn("0:1:11", help_text)
         self.assertIn("dblp", help_text)
+        self.assertIn("resume", help_text)
+        self.assertIn("rescore", help_text)
+        self.assertIn("config", help_text)
+
+    def test_cache_resume_skips_completed_runs(self):
+        """Interrupted-then-restarted: completed (γ,seed) cells are not re-run."""
+        game, gt = resolution_f1.build_smoke_instance(
+            n_blocks=3, block_size=6, seed=3
+        )
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            first = resolution_f1.run_resolution_f1_experiment(
+                game,
+                gt,
+                resolutions=[0.0, 1.0],
+                seeds=[0, 1],
+                cache_dir=out,
+                resume=True,
+            )
+            self.assertEqual(first.meta["n_ran"], 4)
+            self.assertEqual(first.meta["n_skipped_cache"], 0)
+            runs_dir = out / resolution_f1.RUNS_SUBDIR
+            self.assertTrue(runs_dir.is_dir())
+            run_files = list(runs_dir.glob("res_*.json"))
+            self.assertEqual(len(run_files), 4)
+            sample = json.loads(run_files[0].read_text(encoding="utf-8"))
+            self.assertIn("cover", sample)
+            self.assertIn("quality", sample)
+            self.assertIn("wallclock_s", sample)
+            self.assertEqual(sample["status"], "complete")
+
+            second = resolution_f1.run_resolution_f1_experiment(
+                game,
+                gt,
+                resolutions=[0.0, 1.0],
+                seeds=[0, 1],
+                cache_dir=out,
+                resume=True,
+            )
+            self.assertEqual(second.meta["n_ran"], 0)
+            self.assertEqual(second.meta["n_skipped_cache"], 4)
+            self.assertTrue(all(r.get("from_cache") for r in second.runs))
+
+    def test_partial_resume_only_runs_missing(self):
+        game, gt = resolution_f1.build_smoke_instance(
+            n_blocks=3, block_size=6, seed=4
+        )
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            # Complete only γ=0, seed=0
+            partial = resolution_f1.run_resolution_f1_experiment(
+                game,
+                gt,
+                resolutions=[0.0],
+                seeds=[0],
+                cache_dir=out,
+            )
+            self.assertEqual(partial.meta["n_ran"], 1)
+            full = resolution_f1.run_resolution_f1_experiment(
+                game,
+                gt,
+                resolutions=[0.0, 1.0],
+                seeds=[0, 1],
+                cache_dir=out,
+                resume=True,
+            )
+            # 4 cells total; 1 cached → 3 new
+            self.assertEqual(full.meta["n_skipped_cache"], 1)
+            self.assertEqual(full.meta["n_ran"], 3)
+            self.assertEqual(len(full.runs), 4)
+
+    def test_rescore_from_cover_without_detection(self):
+        game, gt = resolution_f1.build_smoke_instance(
+            n_blocks=3, block_size=6, seed=5
+        )
+        gt_eval = resolution_f1.filter_gt_communities_gt1(gt)
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            resolution_f1.run_resolution_f1_experiment(
+                game,
+                gt,
+                resolutions=[0.5],
+                seeds=[0],
+                cache_dir=out,
+            )
+            # Rescore-only path (no community_hedonic)
+            rescored = resolution_f1.run_resolution_f1_experiment(
+                game,
+                gt,
+                resolutions=[0.5],
+                seeds=[0],
+                cache_dir=out,
+                rescore_only=True,
+            )
+            self.assertEqual(rescored.meta["n_ran"], 0)
+            self.assertEqual(rescored.meta["n_rescored"], 1)
+            self.assertIn("f1", rescored.runs[0])
+
+            # Direct API: metrics_from_cover uses cached cover only
+            rec = resolution_f1.load_run_file(
+                resolution_f1.run_cache_path(out / "runs", 0.5, 0)
+            )
+            self.assertIsNotNone(rec)
+            metrics = resolution_f1.metrics_from_cover(
+                rec["cover"], gt_eval, game.vcount()
+            )
+            self.assertIn("f1", metrics)
+            self.assertAlmostEqual(metrics["f1"], rec["f1"], places=9)
+
+    def test_main_writes_runs_cache_and_toml_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            toml_path = root / "cfg.toml"
+            out = root / "artifacts"
+            toml_path.write_text(
+                "\n".join(
+                    [
+                        "[overlapping_resolution]",
+                        f'output_dir = "{out.as_posix()}"',
+                        'resolutions = "0,1"',
+                        'seeds = "0,1"',
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            code = resolution_f1.main(
+                [
+                    "--smoke",
+                    "--config",
+                    str(toml_path),
+                    # CLI output still wins if set; omit to use TOML section
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue((out / "resolution_f1.json").is_file())
+            self.assertTrue((out / "runs").is_dir())
+            self.assertGreaterEqual(len(list((out / "runs").glob("res_*.json"))), 2)
 
 
 class TestNoOverlappingModule(unittest.TestCase):

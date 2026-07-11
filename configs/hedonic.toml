@@ -1,0 +1,24 @@
+# Default hedonic experiment config (repo: configs/hedonic.toml).
+# Override with --config path.toml or HEDONIC_CONFIG.
+#
+# Priority for paths: CLI flags > environment variables > this file > defaults.
+#   HEDONIC_DBLP_DIR, HEDONIC_SYNTHETIC_DIR, HEDONIC_OUTPUT_DIR, HEDONIC_CONFIG
+#
+# Use ~/… paths (expanded at load time). Avoid hard-coded /Users/<name>.
+
+[paths]
+# Full DBLP network directory (pkl/raw or dblp.pkl cache)
+dblp_dir = "~/Databases/Hedonic/Networks/DBLP"
+# Synthetic / PHYSA SBM results root
+synthetic_dir = "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
+# Default root for experiment outputs / artifacts
+output_dir = "~/Databases/Hedonic/experiments"
+
+# Optional defaults for: hedonic-exp overlapping-resolution
+[overlapping_resolution]
+# Overrides paths.output_dir for this experiment only when CLI omits --output_dir
+output_dir = "~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1"
+# data_dir = "~/Databases/Hedonic/Networks/DBLP"
+resolutions = "0:1:11"
+seeds = "0-4"
+# confidence = 0.95

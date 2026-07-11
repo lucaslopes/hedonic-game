@@ -138,15 +138,30 @@ python -m hedonic.experiments.CLI --help
 
 ### Paths (`experiments/config.py`)
 
-| Variable | Env override | Default |
-|----------|--------------|---------|
+| Variable | Env override | Default (expanded from `~/…`) |
+|----------|--------------|--------------------------------|
 | `DBLP_DIR` | `HEDONIC_DBLP_DIR` | `~/Databases/Hedonic/Networks/DBLP` |
 | `SYNTHETIC_DIR` | `HEDONIC_SYNTHETIC_DIR` | `~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020` |
+| `OUTPUT_DIR` | `HEDONIC_OUTPUT_DIR` | `~/Databases/Hedonic/experiments` |
 
-Always import paths from config (never hardcode home paths in new modules):
+**TOML configs live under [`configs/`](configs/)** (default load: `configs/hedonic.toml` from cwd). Example template: [`configs/hedonic.example.toml`](configs/hedonic.example.toml). Override with `--config path.toml` or `HEDONIC_CONFIG`. Priority: **CLI flag > env > TOML > defaults**. Use `~/…` paths in TOML (expanded at load); do not hard-code `/Users/<name>`.
+
+```toml
+[paths]
+dblp_dir = "~/Databases/Hedonic/Networks/DBLP"
+synthetic_dir = "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
+output_dir = "~/Databases/Hedonic/experiments"
+
+[overlapping_resolution]
+output_dir = "~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1"
+resolutions = "0:1:11"
+seeds = "0-4"
+```
+
+Always import paths from config (never hardcode absolute home paths in new modules):
 
 ```python
-from hedonic.experiments.config import DBLP_DIR, SYNTHETIC_DIR
+from hedonic.experiments.config import DBLP_DIR, SYNTHETIC_DIR, OUTPUT_DIR
 ```
 
 ### CLI (`experiments/CLI.py`) — **keep this in sync**
@@ -221,10 +236,19 @@ hedonic-exp overlapping-scale --variant full --timeout 600 --max-levels 6 \
   --community_idx 1004 --output_dir /tmp/hedonic-scale-dblp-full
 
 # Full-DBLP F1 vs resolution γ ∈ [0,1]: multi-phase, allow_isolation,
-# max_memberships = #GT with size>1; multi-seed F1 CI band on the plot
+# max_memberships = #GT with size>1; multi-seed F1 CI band on the plot.
+# Per-(γ,seed) covers + metadata cached under <output_dir>/runs/ (resume-safe).
+# Paths from configs/hedonic.toml by default (~/… expanded).
+# Re-score metrics from covers without re-detection: --rescore-only
 hedonic-exp overlapping-resolution --smoke --output_dir /tmp/hedonic-res-f1
+hedonic-exp overlapping-resolution --config configs/hedonic.toml \
+  --resolutions 0:1:11 --seeds 0-4
+# Resume after interrupt (same --output_dir; skips completed runs/ files):
 hedonic-exp overlapping-resolution --resolutions 0:1:11 --seeds 0-4 \
-  --data_dir "$HEDONIC_DBLP_DIR" \
+  --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
+# Recompute F1 (or extend code for ARI) from cached covers only:
+hedonic-exp overlapping-resolution --rescore-only \
+  --resolutions 0:1:11 --seeds 0-4 \
   --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
 ```
 
@@ -352,7 +376,7 @@ Reproduction guide: [`docs/reproduce_overlapping.md`](docs/reproduce_overlapping
 9. **Do not**:
    - add a parallel overlapping class in core
    - depend on `tmp/` clones for runtime (those are research archives only)
-   - hardcode `~/...` outside `config.py` defaults
+   - hardcode absolute `/Users/<name>/...` paths (use `~/…` + `expanduser`, or `configs/hedonic.toml`)
    - leave a new experiment runnable only as `python -m ...` without a `hedonic-exp` subcommand
 
 ### Minimal new experiment skeleton

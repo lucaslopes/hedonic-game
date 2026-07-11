@@ -855,7 +855,7 @@ def main(argv=None):
 
     # Guard: refuse to write the full V1020 preset into the archived folder.
     archived = Path(
-        "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
+        str(Path("~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020").expanduser())
     ).resolve()
     if args.preset == "v1020" and output_root.resolve() == archived:
         raise SystemExit(

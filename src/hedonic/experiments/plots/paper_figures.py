@@ -916,6 +916,7 @@ def main(argv=None) -> int:
 
     archived_figures = (
         Path("~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020/figures")
+        .expanduser()
         .resolve()
     )
 

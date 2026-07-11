@@ -1,0 +1,20 @@
+# Example hedonic experiment config.
+# Copy or edit configs/hedonic.toml (loaded by default from repo cwd),
+# or pass --config path.toml / set HEDONIC_CONFIG.
+#
+# Priority for paths: CLI flags > environment variables > TOML > defaults.
+#   HEDONIC_DBLP_DIR, HEDONIC_SYNTHETIC_DIR, HEDONIC_OUTPUT_DIR, HEDONIC_CONFIG
+#
+# Prefer ~/… (home-relative) paths so configs are portable.
+
+[paths]
+dblp_dir = "~/Databases/Hedonic/Networks/DBLP"
+synthetic_dir = "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
+output_dir = "~/Databases/Hedonic/experiments"
+
+[overlapping_resolution]
+output_dir = "~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1"
+# data_dir = "~/Databases/Hedonic/Networks/DBLP"
+resolutions = "0:1:11"
+seeds = "0-4"
+# confidence = 0.95

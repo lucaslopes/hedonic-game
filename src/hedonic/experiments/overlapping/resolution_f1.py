@@ -11,14 +11,25 @@ Sweeps resolution γ over [0, 1], runs::
 
 where ``K`` is the number of ground-truth communities with more than one node.
 Each γ is repeated over multiple seeds (seed-dependent random initial membership)
-so F1 can be summarized with a confidence interval. Writes JSON + a line plot
-(resolution on x, F1 on y, CI band/error bars).
+so F1 can be summarized with a confidence interval.
+
+**Persistence / resume**
+
+Each ``(resolution, seed)`` run is written immediately under::
+
+    <output_dir>/runs/res_<γ>_seed_<s>.json
+
+including the predicted **cover** (community lists), quality, wallclock, seed,
+algorithm flags, and metrics. Re-running the same ``--output_dir`` **resumes**
+by default (skips completed cells). Covers stay on disk so later metrics
+(e.g. a new ARI-like score) can be computed via ``--rescore-only`` without
+re-running detection.
 
 CLI::
 
     hedonic-exp overlapping-resolution --smoke --output_dir /tmp/res-f1
-    hedonic-exp overlapping-resolution --resolutions 0:1:11 --seeds 0-4 \\
-        --output_dir .../dblp_resolution_f1
+    hedonic-exp overlapping-resolution --config configs/hedonic.toml \\
+        --resolutions 0:1:11 --seeds 0-4
 """
 
 from __future__ import annotations
@@ -27,6 +38,7 @@ import argparse
 import json
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -34,11 +46,14 @@ import igraph as ig
 import numpy as np
 
 from hedonic import Game
-from hedonic.experiments.config import DBLP_DIR
+from hedonic.experiments import config as exp_config
+from hedonic.experiments.config import DBLP_DIR, OUTPUT_DIR
 from hedonic.experiments.overlapping.dblp_full import load_dblp
 from hedonic.experiments.overlapping.metrics import (
+    cover_quality,
     evaluate_cover,
     partition_to_cover_lists,
+    quality_overlapping_cpm,
 )
 from hedonic.utils import sample_uniform_ints
 
@@ -51,6 +66,7 @@ DEFAULT_OUTPUT_DIR = Path("overlapping_resolution_f1_results")
 DEFAULT_RESOLUTIONS = "0:1:11"  # linspace 0..1 inclusive, 11 points
 DEFAULT_SEEDS = "0-4"  # five seeds for CI
 DEFAULT_CI_LEVEL = 0.95
+RUNS_SUBDIR = "runs"
 
 
 def log(msg: str, t0: float | None = None) -> None:
@@ -141,7 +157,6 @@ def seeded_initial_membership(
     if k == 1:
         return [0] * n_vertices
     raw = sample_uniform_ints(n_vertices, k - 1, seed).tolist()
-    # sample_uniform_ints draws [0, k-1] inclusive when K=k-1 → [0, k-1]
     uniq = sorted(set(raw))
     if len(uniq) == k and uniq[0] == 0 and uniq[-1] == k - 1:
         return [int(x) for x in raw]
@@ -186,7 +201,7 @@ def mean_ci(
         from scipy import stats
 
         tcrit = float(stats.t.ppf((1.0 + confidence) / 2.0, df=n - 1))
-    except Exception:  # pragma: no cover - scipy always present with experiments
+    except Exception:  # pragma: no cover
         tcrit = 1.96
     half = tcrit * se
     return {
@@ -199,6 +214,142 @@ def mean_ci(
         "n": n,
         "confidence": float(confidence),
     }
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Run cache (per γ × seed) — covers + metadata for resume / re-score
+# ---------------------------------------------------------------------------
+
+
+def run_cache_key(resolution: float, seed: int) -> str:
+    """Stable id for one (γ, seed) cell."""
+    return f"res_{float(resolution):.10f}_seed_{int(seed)}"
+
+
+def run_cache_path(runs_dir: Path | str, resolution: float, seed: int) -> Path:
+    return Path(runs_dir) / f"{run_cache_key(resolution, seed)}.json"
+
+
+def atomic_write_json(path: Path | str, payload: dict[str, Any]) -> Path:
+    """Write JSON atomically (temp file + replace) so crashes don't corrupt."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    text = json.dumps(payload, indent=2)
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def is_run_complete(record: dict[str, Any] | None) -> bool:
+    """True if a cached record is usable (has cover + complete status)."""
+    if not record:
+        return False
+    if record.get("status") == "failed":
+        return False
+    cover = record.get("cover")
+    if not isinstance(cover, list):
+        return False
+    status = record.get("status")
+    if status in ("complete", "ok"):
+        return True
+    # Legacy / partial writes: cover + a metric field is enough to resume
+    if status is None:
+        return "f1" in record or isinstance(record.get("metrics"), dict)
+    return False
+
+
+def load_run_file(path: Path | str) -> dict[str, Any] | None:
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def save_run_file(record: dict[str, Any], path: Path | str) -> Path:
+    return atomic_write_json(path, record)
+
+
+def load_completed_runs(runs_dir: Path | str) -> dict[tuple[float, int], dict[str, Any]]:
+    """Load all complete run records keyed by ``(resolution, seed)``."""
+    runs_dir = Path(runs_dir)
+    out: dict[tuple[float, int], dict[str, Any]] = {}
+    if not runs_dir.is_dir():
+        return out
+    for path in sorted(runs_dir.glob("res_*.json")):
+        rec = load_run_file(path)
+        if not is_run_complete(rec):
+            continue
+        assert rec is not None
+        key = (float(rec["resolution"]), int(rec["seed"]))
+        out[key] = rec
+    return out
+
+
+def metrics_from_cover(
+    cover: Sequence[Sequence[int]],
+    gt: Sequence[Sequence[int]],
+    n_vertices: int,
+    *,
+    compute_omega: bool = False,
+) -> dict[str, Any]:
+    """Score a cached cover vs GT (no detection). For F1 today; extend for ARI etc."""
+    return evaluate_cover(
+        [list(c) for c in cover],
+        [list(c) for c in gt],
+        int(n_vertices),
+        compute_omega=compute_omega,
+    )
+
+
+def rescore_record(
+    record: dict[str, Any],
+    gt: Sequence[Sequence[int]],
+    *,
+    n_vertices: int | None = None,
+    compute_omega: bool = False,
+) -> dict[str, Any]:
+    """Recompute metrics on a cached run **without** re-running detection.
+
+    Updates ``metrics`` / convenience ``f1``/… fields in a **copy**; cover and
+    wallclock are left unchanged. Use this when adding a new accuracy metric
+    later (compute from ``record["cover"]``).
+    """
+    rec = dict(record)
+    cover = rec.get("cover")
+    if not isinstance(cover, list):
+        raise ValueError("record has no cover; cannot rescore")
+    n = int(n_vertices if n_vertices is not None else rec.get("n_vertices") or 0)
+    if n <= 0:
+        # Infer n from cover membership
+        n = max((max(c) for c in cover if c), default=-1) + 1
+    metrics = metrics_from_cover(cover, gt, n, compute_omega=compute_omega)
+    rec["metrics"] = {
+        "f1": float(metrics["f1"]),
+        "jaccard": float(metrics["jaccard"]),
+        "precision": float(metrics["precision"]),
+        "recall": float(metrics["recall"]),
+        "omega": metrics.get("omega"),
+        "n_predicted_comms": int(metrics["n_predicted_comms"]),
+        "n_gt_comms": int(metrics["n_gt_comms"]),
+    }
+    # Convenience aliases (plot / aggregate path)
+    rec["f1"] = rec["metrics"]["f1"]
+    rec["jaccard"] = rec["metrics"]["jaccard"]
+    rec["precision"] = rec["metrics"]["precision"]
+    rec["recall"] = rec["metrics"]["recall"]
+    rec["n_predicted_comms"] = rec["metrics"]["n_predicted_comms"]
+    rec["n_gt_comms"] = rec["metrics"]["n_gt_comms"]
+    rec["rescored_at"] = utc_now_iso()
+    return rec
 
 
 # ---------------------------------------------------------------------------
@@ -217,8 +368,9 @@ def run_one(
     only_local_moving: bool = ONLY_LOCAL_MOVING,
     allow_isolation: bool = ALLOW_ISOLATION,
 ) -> dict[str, Any]:
-    """One (resolution, seed) detection + F1 vs GT (no Omega)."""
+    """One (resolution, seed) detection + full metadata + cover for cache."""
     n = game.vcount()
+    m = int(game.ecount())
     k = max(1, int(max_memberships))
     init = seeded_initial_membership(n, k, seed)
     t0 = time.perf_counter()
@@ -233,23 +385,44 @@ def run_one(
     )
     elapsed = time.perf_counter() - t0
     cover = partition_to_cover_lists(cover_obj)
+    q = cover_quality(cover_obj)
+    if q is None:
+        q = quality_overlapping_cpm(game, cover, float(resolution))
     metrics = evaluate_cover(cover, list(gt), n, compute_omega=False)
-    return {
-        "resolution": float(resolution),
-        "seed": int(seed),
+    metrics_compact = {
         "f1": float(metrics["f1"]),
         "jaccard": float(metrics["jaccard"]),
         "precision": float(metrics["precision"]),
         "recall": float(metrics["recall"]),
+        "omega": metrics.get("omega"),
         "n_predicted_comms": int(metrics["n_predicted_comms"]),
         "n_gt_comms": int(metrics["n_gt_comms"]),
+    }
+    return {
+        "status": "complete",
+        "resolution": float(resolution),
+        "seed": int(seed),
         "max_memberships": k,
         "n_iterations": int(n_iterations),
         "only_local_moving": bool(only_local_moving),
         "allow_isolation": bool(allow_isolation),
         "wallclock_s": float(elapsed),
+        "quality": float(q) if q is not None else None,
         "n_vertices": n,
-        "n_edges": int(game.ecount()),
+        "n_edges": m,
+        "n_predicted_comms": metrics_compact["n_predicted_comms"],
+        "n_gt_comms": metrics_compact["n_gt_comms"],
+        "metrics": metrics_compact,
+        # Convenience aliases for aggregate / plot
+        "f1": metrics_compact["f1"],
+        "jaccard": metrics_compact["jaccard"],
+        "precision": metrics_compact["precision"],
+        "recall": metrics_compact["recall"],
+        # Cache for later metrics (ARI, …) without re-running detection
+        "cover": [[int(v) for v in comm] for comm in cover],
+        "initial_membership": [int(x) for x in init],
+        "completed_at": utc_now_iso(),
+        "from_cache": False,
     }
 
 
@@ -268,6 +441,11 @@ def aggregate_runs(
         group = by_res[res]
         f1s = [float(g["f1"]) for g in group]
         stats = mean_ci(f1s, confidence=confidence)
+        qualities = [
+            float(g["quality"])
+            for g in group
+            if g.get("quality") is not None
+        ]
         out.append(
             {
                 "resolution": res,
@@ -287,6 +465,9 @@ def aggregate_runs(
                 "wallclock_s_mean": float(
                     np.mean([float(g["wallclock_s"]) for g in group])
                 ),
+                "quality_mean": (
+                    float(np.mean(qualities)) if qualities else None
+                ),
                 "max_memberships": int(group[0]["max_memberships"]),
                 "n_iterations": int(group[0]["n_iterations"]),
                 "only_local_moving": bool(group[0]["only_local_moving"]),
@@ -304,10 +485,20 @@ class ResolutionF1Result:
     aggregated: list[dict[str, Any]] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_covers: bool = False) -> dict[str, Any]:
+        """Serialize. Summary JSON omits covers by default (they live in runs/)."""
+        runs_out: list[dict[str, Any]] = []
+        for r in self.runs:
+            if include_covers:
+                runs_out.append(r)
+            else:
+                slim = {k: v for k, v in r.items() if k not in ("cover",)}
+                # Keep a pointer so covers are discoverable
+                slim["cover_cached"] = bool(r.get("cover") is not None)
+                runs_out.append(slim)
         return {
             "meta": self.meta,
-            "runs": self.runs,
+            "runs": runs_out,
             "aggregated": self.aggregated,
         }
 
@@ -320,12 +511,40 @@ def run_resolution_f1_experiment(
     seeds: Sequence[int],
     max_memberships: int | None = None,
     confidence: float = DEFAULT_CI_LEVEL,
+    cache_dir: Path | str | None = None,
+    resume: bool = True,
+    force: bool = False,
+    rescore_only: bool = False,
 ) -> ResolutionF1Result:
-    """Sweep γ × seeds on a fixed graph; aggregate F1 CIs."""
+    """Sweep γ × seeds; optionally resume from / write to ``cache_dir/runs``.
+
+    Parameters
+    ----------
+    cache_dir :
+        Experiment output root. Per-cell files go to ``cache_dir/runs/``.
+        If None, no disk cache (in-memory only; no resume).
+    resume :
+        Skip cells that already have a complete cached run (default True).
+    force :
+        Ignore cache and re-run every cell (overwrites run files).
+    rescore_only :
+        Do not call ``community_hedonic``; only load cached covers and
+        recompute metrics vs ``gt``. Fails if a required cell is missing.
+    """
     gt_eval = filter_gt_communities_gt1(gt)
     k = resolve_max_memberships(max_memberships, gt)
-    n_res = len(list(resolutions))
-    n_seeds = len(list(seeds))
+    resolutions = [float(r) for r in resolutions]
+    seeds = [int(s) for s in seeds]
+    n_res = len(resolutions)
+    n_seeds = len(seeds)
+
+    runs_dir: Path | None = None
+    cached: dict[tuple[float, int], dict[str, Any]] = {}
+    if cache_dir is not None:
+        runs_dir = Path(cache_dir) / RUNS_SUBDIR
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        if resume or rescore_only:
+            cached = load_completed_runs(runs_dir)
 
     log("=" * 55)
     log("  Overlapping resolution × F1 (full multi-phase)")
@@ -337,36 +556,82 @@ def run_resolution_f1_experiment(
     log(f"  n_iterations    : {N_ITERATIONS}")
     log(f"  only_local_moving: {ONLY_LOCAL_MOVING}")
     log(f"  allow_isolation : {ALLOW_ISOLATION}")
-    log(f"  resolutions     : {list(resolutions)}")
-    log(f"  seeds           : {list(seeds)}")
+    log(f"  resolutions     : {resolutions}")
+    log(f"  seeds           : {seeds}")
     log(f"  CI level        : {confidence}")
+    log(f"  cache_dir       : {cache_dir}")
+    log(f"  resume          : {resume and not force}")
+    log(f"  force           : {force}")
+    log(f"  rescore_only    : {rescore_only}")
+    log(f"  cached complete : {len(cached)}")
     log("=" * 55)
 
     runs: list[dict[str, Any]] = []
+    n_skipped = 0
+    n_ran = 0
+    n_rescored = 0
     total = n_res * n_seeds
     done = 0
     t_all = time.time()
+
     for res in resolutions:
         for seed in seeds:
             done += 1
-            log(
-                f"\n[{done}/{total}] γ={float(res):.6g}  seed={seed}  K={k} …"
+            key = (float(res), int(seed))
+            path = (
+                run_cache_path(runs_dir, res, seed) if runs_dir is not None else None
             )
-            t0 = time.time()
-            rec = run_one(
-                game,
-                gt_eval,
-                resolution=float(res),
-                seed=int(seed),
-                max_memberships=k,
+
+            use_cache = (
+                (not force)
+                and (resume or rescore_only)
+                and key in cached
+                and is_run_complete(cached[key])
             )
+
+            if rescore_only and not use_cache:
+                raise FileNotFoundError(
+                    f"rescore-only: missing cached run for γ={res} seed={seed}"
+                    + (f" (expected {path})" if path else "")
+                )
+
+            if use_cache:
+                rec = rescore_record(cached[key], gt_eval, n_vertices=game.vcount())
+                rec["from_cache"] = True
+                if path is not None:
+                    # Persist updated metrics (cover unchanged)
+                    save_run_file(rec, path)
+                n_skipped += 1
+                n_rescored += 1
+                log(
+                    f"\n[{done}/{total}] γ={float(res):.6g}  seed={seed}  "
+                    f"SKIP (cache)  F1={rec['f1']:.4f}"
+                )
+            else:
+                log(
+                    f"\n[{done}/{total}] γ={float(res):.6g}  seed={seed}  K={k} …"
+                )
+                t0 = time.time()
+                rec = run_one(
+                    game,
+                    gt_eval,
+                    resolution=float(res),
+                    seed=int(seed),
+                    max_memberships=k,
+                )
+                n_ran += 1
+                if path is not None:
+                    save_run_file(rec, path)
+                    log(f"  cached → {path.name}")
+                log(
+                    f"  F1={rec['f1']:.4f}  Jaccard={rec['jaccard']:.4f}  "
+                    f"Q={rec.get('quality')}  "
+                    f"comms={rec['n_predicted_comms']}  "
+                    f"wall={rec['wallclock_s']:.3f}s",
+                    t0,
+                )
+
             runs.append(rec)
-            log(
-                f"  F1={rec['f1']:.4f}  Jaccard={rec['jaccard']:.4f}  "
-                f"comms={rec['n_predicted_comms']}  "
-                f"wall={rec['wallclock_s']:.3f}s",
-                t0,
-            )
 
     aggregated = aggregate_runs(runs, confidence=confidence)
     meta = {
@@ -377,15 +642,27 @@ def run_resolution_f1_experiment(
         "max_memberships_rule": "n_gt_communities_size_gt_1",
         "n_gt_communities_raw": len(gt),
         "n_gt_communities_gt1": count_gt_communities_gt1(gt),
-        "resolutions": [float(r) for r in resolutions],
-        "seeds": [int(s) for s in seeds],
+        "resolutions": resolutions,
+        "seeds": seeds,
         "confidence": float(confidence),
         "n_runs": len(runs),
         "n_vertices": int(game.vcount()),
         "n_edges": int(game.ecount()),
         "wallclock_total_s": float(time.time() - t_all),
+        "cache_dir": str(cache_dir) if cache_dir is not None else None,
+        "runs_dir": str(runs_dir) if runs_dir is not None else None,
+        "resume": bool(resume and not force),
+        "force": bool(force),
+        "rescore_only": bool(rescore_only),
+        "n_ran": n_ran,
+        "n_skipped_cache": n_skipped,
+        "n_rescored": n_rescored,
+        "covers_cached": True,
     }
-    log(f"\n[done] {len(runs)} runs in {meta['wallclock_total_s']:.1f}s")
+    log(
+        f"\n[done] {len(runs)} cells  ran={n_ran}  "
+        f"cache_hits={n_skipped}  in {meta['wallclock_total_s']:.1f}s"
+    )
     for row in aggregated:
         log(
             f"  γ={row['resolution']:.4g}  "
@@ -432,10 +709,15 @@ def build_smoke_instance(
 # ---------------------------------------------------------------------------
 
 
-def save_results(result: ResolutionF1Result, path: Path | str) -> Path:
+def save_results(
+    result: ResolutionF1Result,
+    path: Path | str,
+    *,
+    include_covers: bool = False,
+) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+    atomic_write_json(path, result.to_dict(include_covers=include_covers))
     return path
 
 
@@ -473,8 +755,12 @@ def plot_resolution_f1(
     rows = sorted(rows, key=lambda r: float(r["resolution"]))
     xs = [float(r["resolution"]) for r in rows]
     ys = [float(r["f1_mean"]) for r in rows]
-    yerr_lo = [max(0.0, ys[i] - float(rows[i]["f1_ci_low"])) for i in range(len(rows))]
-    yerr_hi = [max(0.0, float(rows[i]["f1_ci_high"]) - ys[i]) for i in range(len(rows))]
+    yerr_lo = [
+        max(0.0, ys[i] - float(rows[i]["f1_ci_low"])) for i in range(len(rows))
+    ]
+    yerr_hi = [
+        max(0.0, float(rows[i]["f1_ci_high"]) - ys[i]) for i in range(len(rows))
+    ]
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -531,32 +817,46 @@ def main(argv: list[str] | None = None) -> int:
             "Full-DBLP (or --smoke) F1 vs resolution for multi-phase "
             "community_hedonic: n_iterations=-1, only_local_moving=False, "
             "allow_isolation=True, max_memberships=#GT communities with "
-            "size>1. Multi-seed F1 confidence intervals + line plot."
+            "size>1. Multi-seed F1 confidence intervals + line plot. "
+            "Per-(γ,seed) covers are cached under <output_dir>/runs/ for "
+            "resume and later re-scoring without re-running detection. "
+            "Paths may come from a TOML config (default: configs/hedonic.toml)."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
+        "--config",
+        default=None,
+        help=(
+            "TOML config path (paths + optional [overlapping_resolution]). "
+            "Also: HEDONIC_CONFIG or configs/hedonic.toml (cwd search)"
+        ),
+    )
+    parser.add_argument(
         "--data_dir",
-        default=str(DBLP_DIR),
-        help="DBLP root (pkl/raw); ignored with --smoke",
+        default=None,
+        help="DBLP root (pkl/raw); default from config/env/DBLP_DIR",
     )
     parser.add_argument(
         "--output_dir",
-        default=str(DEFAULT_OUTPUT_DIR),
-        help="Directory for results JSON + plot",
+        default=None,
+        help=(
+            "Directory for results JSON, plot, and runs/ cache; "
+            "default from config/env or local folder"
+        ),
     )
     parser.add_argument(
         "--resolutions",
-        default=DEFAULT_RESOLUTIONS,
+        default=None,
         help=(
             "Resolution grid: start:stop:n (linspace) or comma list. "
-            "Default 0:1:11 covers γ from 0 to 1 inclusive."
+            f"Default {DEFAULT_RESOLUTIONS} (γ from 0 to 1 inclusive)."
         ),
     )
     parser.add_argument(
         "--seeds",
-        default=DEFAULT_SEEDS,
-        help="Seed list: a-b inclusive range or comma list (multi-seed CI)",
+        default=None,
+        help=f"Seed list: a-b or comma list (default {DEFAULT_SEEDS})",
     )
     parser.add_argument(
         "--max_memberships",
@@ -570,7 +870,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--confidence",
         type=float,
-        default=DEFAULT_CI_LEVEL,
+        default=None,
         help="Two-sided CI level for F1 over seeds (e.g. 0.95)",
     )
     parser.add_argument(
@@ -591,6 +891,29 @@ def main(argv: list[str] | None = None) -> int:
         help="Nodes per block for --smoke SBM",
     )
     parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Do not skip completed runs in <output_dir>/runs/",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run all cells and overwrite cached run files",
+    )
+    parser.add_argument(
+        "--rescore-only",
+        action="store_true",
+        help=(
+            "Only recompute metrics from cached covers under runs/ "
+            "(no community_hedonic). Fails if any cell is missing."
+        ),
+    )
+    parser.add_argument(
+        "--include-covers-in-summary",
+        action="store_true",
+        help="Embed full covers in resolution_f1.json (default: only in runs/)",
+    )
+    parser.add_argument(
         "--plot-format",
         choices=("png", "pdf", "svg"),
         default="png",
@@ -608,25 +931,73 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Resolve paths: CLI > env > TOML section > defaults
     try:
-        resolutions = parse_resolutions(args.resolutions)
-        seeds = parse_seeds(args.seeds)
+        resolved = exp_config.resolve_experiment_paths(
+            config_path=args.config,
+            data_dir=args.data_dir,
+            output_dir=args.output_dir,
+            experiment_section="overlapping_resolution",
+            search_cwd=True,
+        )
+    except FileNotFoundError as exc:
+        log(f"[error] {exc}")
+        return 2
+
+    section = resolved["section"]
+    data_dir = resolved["data_dir"]
+    # If user did not pass --output_dir and TOML/env only set global OUTPUT_DIR
+    # to the shared experiments root, fall back to local default folder name
+    # unless the section explicitly set output_dir.
+    if args.output_dir is not None:
+        out_dir = Path(args.output_dir)
+    elif section.get("output_dir"):
+        out_dir = Path(str(section["output_dir"])).expanduser()
+    elif args.smoke:
+        out_dir = DEFAULT_OUTPUT_DIR
+    else:
+        # Prefer HEDONIC_OUTPUT_DIR / [paths].output_dir / default folder
+        out_dir = Path(resolved["output_dir"])
+        if out_dir == OUTPUT_DIR and str(OUTPUT_DIR) == str(
+            exp_config.DEFAULT_OUTPUT_DIR
+        ):
+            # Keep a dedicated subfolder under the global artifacts root
+            out_dir = OUTPUT_DIR / "overlapping_resolution_f1"
+        elif out_dir == exp_config.DEFAULT_OUTPUT_DIR:
+            out_dir = DEFAULT_OUTPUT_DIR
+
+    res_spec = (
+        args.resolutions
+        if args.resolutions is not None
+        else section.get("resolutions") or DEFAULT_RESOLUTIONS
+    )
+    seeds_spec = (
+        args.seeds if args.seeds is not None else section.get("seeds") or DEFAULT_SEEDS
+    )
+    confidence = (
+        float(args.confidence)
+        if args.confidence is not None
+        else float(section.get("confidence", DEFAULT_CI_LEVEL))
+    )
+
+    try:
+        resolutions = parse_resolutions(str(res_spec))
+        seeds = parse_seeds(str(seeds_spec))
     except ValueError as exc:
         log(f"[error] {exc}")
         return 2
 
-    if not (0.0 < args.confidence < 1.0):
+    if not (0.0 < confidence < 1.0):
         log("[error] --confidence must be in (0, 1)")
         return 2
 
-    out_dir = Path(args.output_dir)
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.smoke:
-        # Tight defaults for smoke if user left production grid
-        if args.resolutions == DEFAULT_RESOLUTIONS:
+        if args.resolutions is None and str(res_spec) == DEFAULT_RESOLUTIONS:
             resolutions = parse_resolutions("0,0.5,1")
-        if args.seeds == DEFAULT_SEEDS:
+        if args.seeds is None and str(seeds_spec) == DEFAULT_SEEDS:
             seeds = parse_seeds("0,1")
         log(
             f"[smoke] synthetic SBM  blocks={args.smoke_blocks}  "
@@ -638,8 +1009,16 @@ def main(argv: list[str] | None = None) -> int:
             seed=0,
         )
     else:
-        g, gt, _node_map = load_dblp(args.data_dir)
-        game = Game(g)
+        if args.rescore_only:
+            # Still need GT for metrics; load graph+GT (detection skipped)
+            g, gt, _node_map = load_dblp(data_dir)
+            game = Game(g)
+        else:
+            g, gt, _node_map = load_dblp(data_dir)
+            game = Game(g)
+
+    if resolved["config_path"]:
+        log(f"[config] {resolved['config_path']}")
 
     result = run_resolution_f1_experiment(
         game,
@@ -647,16 +1026,29 @@ def main(argv: list[str] | None = None) -> int:
         resolutions=resolutions,
         seeds=seeds,
         max_memberships=args.max_memberships,
-        confidence=args.confidence,
+        confidence=confidence,
+        cache_dir=out_dir,
+        resume=not args.no_resume,
+        force=bool(args.force),
+        rescore_only=bool(args.rescore_only),
     )
     result.meta["smoke"] = bool(args.smoke)
-    result.meta["data_dir"] = None if args.smoke else str(args.data_dir)
-    result.meta["resolutions_spec"] = args.resolutions
-    result.meta["seeds_spec"] = args.seeds
+    result.meta["data_dir"] = None if args.smoke else str(data_dir)
+    result.meta["output_dir"] = str(out_dir)
+    result.meta["resolutions_spec"] = str(res_spec)
+    result.meta["seeds_spec"] = str(seeds_spec)
+    result.meta["config_path"] = (
+        str(resolved["config_path"]) if resolved["config_path"] else None
+    )
 
     results_path = out_dir / args.results_name
-    save_results(result, results_path)
+    save_results(
+        result,
+        results_path,
+        include_covers=bool(args.include_covers_in_summary),
+    )
     log(f"\n[done] Results → {results_path}")
+    log(f"[done] Run cache → {out_dir / RUNS_SUBDIR}")
 
     plot_name = args.plot_name or f"resolution_f1.{args.plot_format}"
     plot_path = out_dir / plot_name

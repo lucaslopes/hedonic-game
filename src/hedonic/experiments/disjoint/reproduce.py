@@ -31,7 +31,7 @@ from hedonic.experiments.plots import paper_figures
 
 ARCHIVED_V1020 = Path(
     "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
-).resolve()
+).expanduser().resolve()
 
 
 def _ok(result) -> bool:

@@ -263,9 +263,13 @@ examples:
       --community_idx 1004 --output_dir /tmp/hedonic-scale-dblp-full
 
   # Full-DBLP F1 vs resolution (multi-phase, multi-seed CI); --smoke skips DBLP
+  # Caches covers under <output_dir>/runs/ (resume + later re-score)
+  # Default TOML: configs/hedonic.toml (paths use ~/…)
   hedonic-exp overlapping-resolution --smoke --output_dir /tmp/hedonic-res-f1
-  hedonic-exp overlapping-resolution --resolutions 0:1:11 --seeds 0-4 \\
-      --output_dir /tmp/hedonic-res-f1-dblp
+  hedonic-exp overlapping-resolution --config configs/hedonic.toml \\
+      --resolutions 0:1:11 --seeds 0-4
+  hedonic-exp overlapping-resolution --rescore-only \\
+      --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
 """
 
 
@@ -281,9 +285,11 @@ def _print_command_list() -> None:
     print("  -h/--help  This help")
     print("  -V/--version  Package version")
     print()
-    print("Data paths (env overrides):")
+    print("Data paths (env overrides / TOML — see configs/hedonic.toml):")
     print("  HEDONIC_DBLP_DIR       DBLP network directory")
     print("  HEDONIC_SYNTHETIC_DIR  Synthetic/SBM results root")
+    print("  HEDONIC_OUTPUT_DIR     Default experiment artifacts root")
+    print("  HEDONIC_CONFIG         Path to TOML (default: configs/hedonic.toml)")
 
 
 def _load_main(command: str) -> Callable:
