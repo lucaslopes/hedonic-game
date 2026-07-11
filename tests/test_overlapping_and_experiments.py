@@ -22,6 +22,7 @@ from hedonic.experiments.config import (
 from hedonic.experiments.disjoint import data_loader, sbm_sweep
 from hedonic.experiments.overlapping import small_graphs
 from hedonic.experiments.overlapping import complexity_scale
+from hedonic.experiments.overlapping import resolution_f1
 from hedonic.experiments.overlapping.dblp_full import (
     resolve_max_memberships as resolve_mm_full,
 )
@@ -338,8 +339,55 @@ class TestCLI(unittest.TestCase):
             "overlapping-subgraph",
             "overlapping-full",
             "overlapping-scale",
+            "overlapping-resolution",
         }
         self.assertEqual(set(CLI.COMMANDS), expected)
+
+    def test_overlapping_resolution_help(self):
+        code = CLI.main(["overlapping-resolution", "--help"])
+        self.assertEqual(code, 0)
+
+    def test_overlapping_resolution_smoke_via_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            code = CLI.main(
+                [
+                    "overlapping-resolution",
+                    "--smoke",
+                    "--resolutions",
+                    "0,0.5,1",
+                    "--seeds",
+                    "0,1",
+                    "--output_dir",
+                    d,
+                ]
+            )
+            self.assertEqual(code, 0)
+            results = Path(d) / "resolution_f1.json"
+            plot = Path(d) / "resolution_f1.png"
+            self.assertTrue(results.is_file())
+            self.assertTrue(plot.is_file())
+            self.assertGreater(plot.stat().st_size, 0)
+            data = json.loads(results.read_text(encoding="utf-8"))
+            self.assertIn("runs", data)
+            self.assertIn("aggregated", data)
+            self.assertIn("meta", data)
+            self.assertEqual(data["meta"]["n_iterations"], -1)
+            self.assertFalse(data["meta"]["only_local_moving"])
+            self.assertTrue(data["meta"]["allow_isolation"])
+            self.assertTrue(data["meta"]["smoke"])
+            # 3 resolutions × 2 seeds
+            self.assertEqual(len(data["runs"]), 6)
+            self.assertEqual(len(data["aggregated"]), 3)
+            for row in data["aggregated"]:
+                self.assertIn("f1_mean", row)
+                self.assertIn("f1_ci_low", row)
+                self.assertIn("f1_ci_high", row)
+                self.assertIn("f1_samples", row)
+                self.assertEqual(len(row["f1_samples"]), 2)
+                self.assertEqual(row["n_seeds"], 2)
+                self.assertFalse(row["only_local_moving"])
+                self.assertTrue(row["allow_isolation"])
+                self.assertEqual(row["n_iterations"], -1)
 
     def test_overlapping_scale_help(self):
         code = CLI.main(["overlapping-scale", "--help"])
@@ -631,6 +679,139 @@ class TestComplexityScale(unittest.TestCase):
         self.assertGreaterEqual(len(result.completed_for(False)), 1)
 
 
+class TestResolutionF1(unittest.TestCase):
+    """Shipped overlapping-resolution: γ×seed F1 CIs + plot (no DBLP)."""
+
+    def test_count_gt_gt1_and_resolve_k(self):
+        gt = [[0, 1, 2], [3, 4], [5], [6, 7, 8, 9]]
+        self.assertEqual(resolution_f1.count_gt_communities_gt1(gt), 3)
+        self.assertEqual(resolution_f1.resolve_max_memberships(None, gt), 3)
+        self.assertEqual(resolution_f1.resolve_max_memberships(2, gt), 2)
+        self.assertEqual(resolution_f1.resolve_max_memberships(None, [[0]]), 1)
+
+    def test_parse_resolutions_and_seeds(self):
+        res = resolution_f1.parse_resolutions("0:1:5")
+        self.assertEqual(len(res), 5)
+        self.assertAlmostEqual(res[0], 0.0)
+        self.assertAlmostEqual(res[-1], 1.0)
+        self.assertEqual(resolution_f1.parse_resolutions("0,0.5,1"), [0.0, 0.5, 1.0])
+        self.assertEqual(resolution_f1.parse_seeds("0-3"), [0, 1, 2, 3])
+        self.assertEqual(resolution_f1.parse_seeds("1,7,9"), [1, 7, 9])
+
+    def test_seeded_init_varies_with_seed(self):
+        a = resolution_f1.seeded_initial_membership(20, 4, seed=0)
+        b = resolution_f1.seeded_initial_membership(20, 4, seed=1)
+        self.assertEqual(len(a), 20)
+        self.assertNotEqual(a, b)
+        # Contiguous labels from 0
+        self.assertEqual(set(a), set(range(max(a) + 1)))
+
+    def test_mean_ci_fields(self):
+        stats = resolution_f1.mean_ci([0.5, 0.6, 0.7], confidence=0.95)
+        self.assertAlmostEqual(stats["mean"], 0.6)
+        self.assertLess(stats["ci_low"], stats["mean"])
+        self.assertGreater(stats["ci_high"], stats["mean"])
+        self.assertEqual(stats["n"], 3)
+
+    def test_run_one_uses_required_flags(self):
+        game, gt = resolution_f1.build_smoke_instance(
+            n_blocks=3, block_size=6, seed=1
+        )
+        k = resolution_f1.resolve_max_memberships(None, gt)
+        # K must ignore the singleton planted in build_smoke_instance
+        self.assertEqual(k, 3)
+        rec = resolution_f1.run_one(
+            game, resolution_f1.filter_gt_communities_gt1(gt),
+            resolution=0.5,
+            seed=0,
+            max_memberships=k,
+        )
+        self.assertEqual(rec["n_iterations"], -1)
+        self.assertFalse(rec["only_local_moving"])
+        self.assertTrue(rec["allow_isolation"])
+        self.assertEqual(rec["max_memberships"], k)
+        self.assertIn("f1", rec)
+        self.assertGreaterEqual(rec["f1"], 0.0)
+        self.assertLessEqual(rec["f1"], 1.0)
+
+    def test_smoke_experiment_writes_plot_and_ci(self):
+        game, gt = resolution_f1.build_smoke_instance(
+            n_blocks=3, block_size=6, seed=2
+        )
+        result = resolution_f1.run_resolution_f1_experiment(
+            game,
+            gt,
+            resolutions=[0.0, 0.5, 1.0],
+            seeds=[0, 1],
+        )
+        self.assertEqual(len(result.runs), 6)
+        self.assertEqual(len(result.aggregated), 3)
+        self.assertEqual(result.meta["n_iterations"], -1)
+        self.assertFalse(result.meta["only_local_moving"])
+        self.assertTrue(result.meta["allow_isolation"])
+        self.assertEqual(result.meta["max_memberships"], 3)
+        for row in result.aggregated:
+            self.assertEqual(len(row["f1_samples"]), 2)
+            self.assertIn("f1_ci_low", row)
+            self.assertIn("f1_ci_high", row)
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            json_path = resolution_f1.save_results(result, out / "r.json")
+            plot_path = resolution_f1.plot_resolution_f1(
+                result, out / "r.png"
+            )
+            self.assertTrue(json_path.is_file())
+            self.assertTrue(plot_path.is_file())
+            self.assertGreater(plot_path.stat().st_size, 0)
+            loaded = resolution_f1.load_results(json_path)
+            self.assertEqual(len(loaded.runs), len(result.runs))
+
+    def test_main_smoke_entrypoint(self):
+        with tempfile.TemporaryDirectory() as d:
+            code = resolution_f1.main(
+                [
+                    "--smoke",
+                    "--resolutions",
+                    "0,1",
+                    "--seeds",
+                    "0,1",
+                    "--output_dir",
+                    d,
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue((Path(d) / "resolution_f1.json").is_file())
+            self.assertTrue((Path(d) / "resolution_f1.png").is_file())
+            data = json.loads(
+                (Path(d) / "resolution_f1.json").read_text(encoding="utf-8")
+            )
+            # Production defaults for max_memberships rule on smoke graph
+            self.assertEqual(
+                data["meta"]["max_memberships_rule"],
+                "n_gt_communities_size_gt_1",
+            )
+            self.assertEqual(data["meta"]["n_iterations"], -1)
+            self.assertFalse(data["meta"]["only_local_moving"])
+            self.assertTrue(data["meta"]["allow_isolation"])
+
+    def test_help_documents_resolution_span_and_seeds(self):
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            try:
+                resolution_f1.main(["--help"])
+            except SystemExit as exc:
+                self.assertIn(exc.code, (0, None))
+        help_text = buf.getvalue().lower()
+        self.assertIn("resolution", help_text)
+        self.assertIn("seed", help_text)
+        self.assertIn("smoke", help_text)
+        self.assertIn("0:1:11", help_text)
+        self.assertIn("dblp", help_text)
+
+
 class TestNoOverlappingModule(unittest.TestCase):
     def test_overlapping_py_removed(self):
         path = Path(__file__).resolve().parents[1] / "src" / "hedonic" / "overlapping.py"
@@ -645,3 +826,4 @@ class TestNoOverlappingModule(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

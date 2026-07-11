@@ -26,7 +26,8 @@ src/hedonic/
         ├── small_graphs.py      # smoke tests (no DBLP)
         ├── dblp_full.py         # full DBLP graph
         ├── dblp_subgraph.py     # L-hop GT subgraphs
-        └── complexity_scale.py  # size vs wallclock (local-moving vs multi-phase)
+        ├── complexity_scale.py  # size vs wallclock (local-moving vs multi-phase)
+        └── resolution_f1.py     # full-DBLP F1 vs γ (multi-seed CI + line plot)
 ```
 
 | Layer | What belongs here | What does **not** |
@@ -165,6 +166,7 @@ Subcommands are registered in **`COMMANDS`** (the single source of truth in `CLI
 | `overlapping-subgraph` | `overlapping.dblp_subgraph` | L-hop around GT communities | DBLP |
 | `overlapping-full` | `overlapping.dblp_full` | Full DBLP + optional resolution sweep | DBLP |
 | `overlapping-scale` | `overlapping.complexity_scale` | Wallclock scaling as subnetworks grow (local-moving T/F, timeout stop + plot) | DBLP (or `--smoke`) |
+| `overlapping-resolution` | `overlapping.resolution_f1` | Full-DBLP F1 vs resolution [0,1] (multi-phase; multi-seed CI + line plot) | DBLP (or `--smoke`) |
 | `list` | meta | List subcommands | — |
 
 ```bash
@@ -217,6 +219,13 @@ hedonic-exp overlapping-scale --timeout 30 --max-levels 6 \
 # Full multi-phase only (only_local_moving=False), 10 min budget per size
 hedonic-exp overlapping-scale --variant full --timeout 600 --max-levels 6 \
   --community_idx 1004 --output_dir /tmp/hedonic-scale-dblp-full
+
+# Full-DBLP F1 vs resolution γ ∈ [0,1]: multi-phase, allow_isolation,
+# max_memberships = #GT with size>1; multi-seed F1 CI band on the plot
+hedonic-exp overlapping-resolution --smoke --output_dir /tmp/hedonic-res-f1
+hedonic-exp overlapping-resolution --resolutions 0:1:11 --seeds 0-4 \
+  --data_dir "$HEDONIC_DBLP_DIR" \
+  --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
 ```
 
 Args after the subcommand are forwarded to that module’s `main(argv)`.
