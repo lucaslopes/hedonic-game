@@ -29,8 +29,9 @@ A complete overlapping reproduction covers the suite documented in the old `RESU
 | 1. Subgraph suite | L-hop windows around GT communities | `hedonic-exp overlapping-subgraph` |
 | 2. Full graph (optional) | Whole DBLP + optional γ sweep | `hedonic-exp overlapping-full` |
 | 3. Complexity scale | Size vs wallclock (local-moving T/F); timeout stop | `hedonic-exp overlapping-scale` |
+| 4. Resolution evaluation | Cached-cover overlap metrics vs γ with multi-seed summaries | `hedonic-exp overlapping-resolution` |
 
-There is no separate figure pipeline for overlapping (unlike disjoint PHYSA V1020). Artifacts are **JSON metrics** plus an optional **covers pickle** for re-scoring.
+There is no separate figure pipeline for overlapping (unlike disjoint PHYSA V1020). Artifacts are **JSON metrics**, per-run JSON cover caches for the resolution experiment, plus an optional **covers pickle** for subgraph re-scoring.
 
 ---
 
@@ -324,6 +325,44 @@ Capping memberships on the full graph (optional, not the paper default):
 
 ```bash
 hedonic-exp overlapping-full --max_memberships 16 --output "$OUT/dblp_full_k16.json"
+```
+
+### Resolution metrics from cached covers
+
+`overlapping-resolution` caches every detected cover under
+`<output_dir>/runs/`. Re-score those files without invoking
+`community_hedonic`:
+
+```bash
+hedonic-exp overlapping-resolution --rescore-only \
+  --resolutions 0:1:11 --seeds 0-4 \
+  --singleton-mode both \
+  --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
+```
+
+The historical `f1` field remains the symmetric best-match F1 used by earlier
+resolution runs. New metrics are stored per singleton mode (`all` and/or
+`size_ge_2`) and include:
+
+- one-to-one community precision, recall, and F1 (Hungarian matching by pairwise F1);
+- node-membership multilabel micro precision/recall/F1 and macro F1;
+- size-weighted community F1;
+- community-count, singleton, coverage, size, and memberships-per-vertex diagnostics.
+
+`size_ge_2` filters singleton communities consistently from both predicted and
+GT covers. `all` retains them on both sides. `both` reports both evaluations in
+one pass. The summary JSON need not embed covers: rescoring reads the per-run
+cache files directly.
+
+Sampled Omega is opt-in because it adds work per cached cover. It samples
+vertex pairs and never materializes a dense vertex-by-vertex matrix, so it is
+safe at full DBLP scale:
+
+```bash
+hedonic-exp overlapping-resolution --rescore-only --omega \
+  --omega-sample-size 100000 --omega-seed 0 \
+  --singleton-mode size_ge_2 \
+  --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
 ```
 
 ---

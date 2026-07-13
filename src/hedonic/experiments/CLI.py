@@ -10,7 +10,7 @@ Install with experiments extra, then::
     hedonic-exp overlapping-subgraph --levels 1 --n_communities 5
     hedonic-exp overlapping-full --n_iterations -1
     hedonic-exp overlapping-scale --smoke --output_dir /tmp/scale
-    hedonic-exp overlapping-resolution --smoke --output_dir /tmp/res-f1
+    hedonic-exp overlapping-resolution --smoke --singleton-mode both --output_dir /tmp/res-f1
     hedonic-exp disjoint-load --results_folder /path/to/jsons
     hedonic-exp plots --smoke --output_dir /tmp/figs
     hedonic-exp reproduce-disjoint --preset v1020-smoke --output_root /tmp/V1020_CLI
@@ -110,8 +110,8 @@ COMMANDS: dict[str, Command] = {
         module="hedonic.experiments.overlapping.resolution_f1",
         attr="main",
         summary=(
-            "Full-DBLP F1 vs resolution (0→1) for multi-phase overlapping "
-            "hedonic; multi-seed CI band + line plot"
+            "Full-DBLP overlap metrics vs resolution for multi-phase hedonic; "
+            "cache-only rescoring, singleton modes, optional sampled Omega"
         ),
         needs_data="dblp",
     ),
@@ -262,13 +262,17 @@ examples:
   hedonic-exp overlapping-scale --variant full --timeout 600 --max-levels 6 \\
       --community_idx 1004 --output_dir /tmp/hedonic-scale-dblp-full
 
-  # Full-DBLP F1 vs resolution (multi-phase, multi-seed CI); --smoke skips DBLP
-  # Caches covers under <output_dir>/runs/ (resume + later re-score)
+  # Full-DBLP overlap metrics vs resolution; --smoke skips DBLP
+  # Caches covers under <output_dir>/runs/ (resume + detector-free re-score)
   # Default TOML: configs/hedonic.toml (paths use ~/…)
   hedonic-exp overlapping-resolution --smoke --output_dir /tmp/hedonic-res-f1
   hedonic-exp overlapping-resolution --config configs/hedonic.toml \\
       --resolutions 0:1:11 --seeds 0-4
-  hedonic-exp overlapping-resolution --rescore-only \\
+  hedonic-exp overlapping-resolution --rescore-only --singleton-mode both \\
+      --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
+  # Optional sampled Omega (memory-safe for full DBLP)
+  hedonic-exp overlapping-resolution --rescore-only --omega \\
+      --omega-sample-size 100000 \\
       --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
 """
 

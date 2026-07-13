@@ -54,6 +54,7 @@ from hedonic.experiments.overlapping.metrics import (
     evaluate_cover,
     partition_to_cover_lists,
     quality_overlapping_cpm,
+    symmetric_best_match_metrics,
 )
 from hedonic.utils import sample_uniform_ints
 
@@ -66,6 +67,8 @@ DEFAULT_OUTPUT_DIR = Path("overlapping_resolution_f1_results")
 DEFAULT_RESOLUTIONS = "0:1:11"  # linspace 0..1 inclusive, 11 points
 DEFAULT_SEEDS = "0-4"  # five seeds for CI
 DEFAULT_CI_LEVEL = 0.95
+DEFAULT_SINGLETON_MODE = "size_ge_2"
+DEFAULT_OMEGA_SAMPLE_SIZE = 100_000
 RUNS_SUBDIR = "runs"
 
 
@@ -300,14 +303,31 @@ def metrics_from_cover(
     n_vertices: int,
     *,
     compute_omega: bool = False,
+    singleton_mode: str = "all",
+    omega_sample_size: int = DEFAULT_OMEGA_SAMPLE_SIZE,
+    omega_seed: int = 0,
 ) -> dict[str, Any]:
-    """Score a cached cover vs GT (no detection). For F1 today; extend for ARI etc."""
+    """Score a cached cover vs GT without invoking community detection."""
+    if singleton_mode not in ("all", "size_ge_2"):
+        raise ValueError("singleton_mode must be 'all' or 'size_ge_2'")
     return evaluate_cover(
         [list(c) for c in cover],
         [list(c) for c in gt],
         int(n_vertices),
         compute_omega=compute_omega,
+        singleton_mode=singleton_mode,
+        omega_sample_size=omega_sample_size,
+        omega_seed=omega_seed,
     )
+
+
+def singleton_modes(singleton_mode: str) -> tuple[str, ...]:
+    """Expand the CLI singleton selector into concrete evaluation modes."""
+    if singleton_mode == "both":
+        return ("all", "size_ge_2")
+    if singleton_mode in ("all", "size_ge_2"):
+        return (singleton_mode,)
+    raise ValueError("singleton_mode must be 'all', 'size_ge_2', or 'both'")
 
 
 def rescore_record(
@@ -316,6 +336,9 @@ def rescore_record(
     *,
     n_vertices: int | None = None,
     compute_omega: bool = False,
+    singleton_mode: str = DEFAULT_SINGLETON_MODE,
+    omega_sample_size: int = DEFAULT_OMEGA_SAMPLE_SIZE,
+    omega_seed: int = 0,
 ) -> dict[str, Any]:
     """Recompute metrics on a cached run **without** re-running detection.
 
@@ -331,23 +354,82 @@ def rescore_record(
     if n <= 0:
         # Infer n from cover membership
         n = max((max(c) for c in cover if c), default=-1) + 1
-    metrics = metrics_from_cover(cover, gt, n, compute_omega=compute_omega)
-    rec["metrics"] = {
-        "f1": float(metrics["f1"]),
-        "jaccard": float(metrics["jaccard"]),
-        "precision": float(metrics["precision"]),
-        "recall": float(metrics["recall"]),
-        "omega": metrics.get("omega"),
-        "n_predicted_comms": int(metrics["n_predicted_comms"]),
-        "n_gt_comms": int(metrics["n_gt_comms"]),
+    # Preserve the historical resolution score exactly: all predicted
+    # communities versus GT communities of size >= 2.  This intentionally
+    # differs from the new consistent singleton modes and keeps old plots and
+    # cache consumers stable.
+    legacy = symmetric_best_match_metrics(
+        cover,
+        filter_gt_communities_gt1(gt),
+        singleton_mode="all",
+    )
+    by_mode = {
+        mode: metrics_from_cover(
+            cover,
+            gt,
+            n,
+            compute_omega=compute_omega,
+            singleton_mode=mode,
+            omega_sample_size=omega_sample_size,
+            omega_seed=omega_seed,
+        )
+        for mode in singleton_modes(singleton_mode)
     }
+    old_metrics = rec.get("metrics")
+    rec["metrics"] = dict(old_metrics) if isinstance(old_metrics, dict) else {}
+    rec["metrics"].update(
+        {
+            "f1": float(legacy["f1"]),
+            "symmetric_best_match_f1": float(legacy["f1"]),
+            "jaccard": float(legacy["jaccard"]),
+            "symmetric_best_match_jaccard": float(legacy["jaccard"]),
+            "precision": float(legacy["precision"]),
+            "recall": float(legacy["recall"]),
+            "omega": None,
+            "n_predicted_comms": int(legacy["n_predicted_comms"]),
+            "n_gt_comms": int(legacy["n_gt_comms"]),
+            "by_singleton_mode": by_mode,
+        }
+    )
+    rec["metrics_by_singleton_mode"] = by_mode
+    primary_mode = "size_ge_2" if "size_ge_2" in by_mode else "all"
+    primary = by_mode[primary_mode]
+    rec["metrics"]["omega"] = primary.get("omega")
+    rec["omega"] = primary.get("omega")
+    rec["sampled_omega"] = primary.get("omega")
+    # Convenient unsuffixed aliases for the recommended metrics. Historical
+    # aliases above are excluded so f1/jaccard semantics do not change.
+    legacy_names = {
+        "f1",
+        "jaccard",
+        "precision",
+        "recall",
+        "omega",
+        "n_predicted_comms",
+        "n_gt_comms",
+        "symmetric_best_match_f1",
+        "symmetric_best_match_jaccard",
+    }
+    for key, value in primary.items():
+        if key not in legacy_names:
+            rec["metrics"][key] = value
+            rec[key] = value
+    for mode, mode_metrics in by_mode.items():
+        for key, value in mode_metrics.items():
+            rec[f"{key}_{mode}"] = value
     # Convenience aliases (plot / aggregate path)
     rec["f1"] = rec["metrics"]["f1"]
+    rec["symmetric_best_match_f1"] = rec["metrics"]["f1"]
     rec["jaccard"] = rec["metrics"]["jaccard"]
     rec["precision"] = rec["metrics"]["precision"]
     rec["recall"] = rec["metrics"]["recall"]
     rec["n_predicted_comms"] = rec["metrics"]["n_predicted_comms"]
     rec["n_gt_comms"] = rec["metrics"]["n_gt_comms"]
+    rec["singleton_mode"] = singleton_mode
+    rec["omega_enabled"] = bool(compute_omega)
+    rec["omega_method"] = "sampled_pairwise" if compute_omega else None
+    rec["omega_sample_size"] = int(omega_sample_size) if compute_omega else None
+    rec["omega_seed"] = int(omega_seed) if compute_omega else None
     rec["rescored_at"] = utc_now_iso()
     return rec
 
@@ -367,6 +449,10 @@ def run_one(
     n_iterations: int = N_ITERATIONS,
     only_local_moving: bool = ONLY_LOCAL_MOVING,
     allow_isolation: bool = ALLOW_ISOLATION,
+    singleton_mode: str = DEFAULT_SINGLETON_MODE,
+    compute_omega: bool = False,
+    omega_sample_size: int = DEFAULT_OMEGA_SAMPLE_SIZE,
+    omega_seed: int = 0,
 ) -> dict[str, Any]:
     """One (resolution, seed) detection + full metadata + cover for cache."""
     n = game.vcount()
@@ -388,17 +474,7 @@ def run_one(
     q = cover_quality(cover_obj)
     if q is None:
         q = quality_overlapping_cpm(game, cover, float(resolution))
-    metrics = evaluate_cover(cover, list(gt), n, compute_omega=False)
-    metrics_compact = {
-        "f1": float(metrics["f1"]),
-        "jaccard": float(metrics["jaccard"]),
-        "precision": float(metrics["precision"]),
-        "recall": float(metrics["recall"]),
-        "omega": metrics.get("omega"),
-        "n_predicted_comms": int(metrics["n_predicted_comms"]),
-        "n_gt_comms": int(metrics["n_gt_comms"]),
-    }
-    return {
+    record = {
         "status": "complete",
         "resolution": float(resolution),
         "seed": int(seed),
@@ -410,20 +486,21 @@ def run_one(
         "quality": float(q) if q is not None else None,
         "n_vertices": n,
         "n_edges": m,
-        "n_predicted_comms": metrics_compact["n_predicted_comms"],
-        "n_gt_comms": metrics_compact["n_gt_comms"],
-        "metrics": metrics_compact,
-        # Convenience aliases for aggregate / plot
-        "f1": metrics_compact["f1"],
-        "jaccard": metrics_compact["jaccard"],
-        "precision": metrics_compact["precision"],
-        "recall": metrics_compact["recall"],
         # Cache for later metrics (ARI, …) without re-running detection
         "cover": [[int(v) for v in comm] for comm in cover],
         "initial_membership": [int(x) for x in init],
         "completed_at": utc_now_iso(),
         "from_cache": False,
     }
+    return rescore_record(
+        record,
+        gt,
+        n_vertices=n,
+        compute_omega=compute_omega,
+        singleton_mode=singleton_mode,
+        omega_sample_size=omega_sample_size,
+        omega_seed=omega_seed,
+    )
 
 
 def aggregate_runs(
@@ -431,7 +508,7 @@ def aggregate_runs(
     *,
     confidence: float = DEFAULT_CI_LEVEL,
 ) -> list[dict[str, Any]]:
-    """Group by resolution; mean F1 ± CI over seeds."""
+    """Group by resolution; retain legacy F1 CI and aggregate new metrics."""
     by_res: dict[float, list[dict[str, Any]]] = {}
     for r in runs:
         by_res.setdefault(float(r["resolution"]), []).append(r)
@@ -446,8 +523,7 @@ def aggregate_runs(
             for g in group
             if g.get("quality") is not None
         ]
-        out.append(
-            {
+        row: dict[str, Any] = {
                 "resolution": res,
                 "f1_mean": stats["mean"],
                 "f1_std": stats["std"],
@@ -462,18 +538,63 @@ def aggregate_runs(
                 "jaccard_mean": float(
                     np.mean([float(g["jaccard"]) for g in group])
                 ),
-                "wallclock_s_mean": float(
-                    np.mean([float(g["wallclock_s"]) for g in group])
-                ),
+                "wallclock_s_mean": float(np.mean([
+                    float(g.get("wallclock_s", 0.0)) for g in group
+                ])),
                 "quality_mean": (
                     float(np.mean(qualities)) if qualities else None
                 ),
-                "max_memberships": int(group[0]["max_memberships"]),
-                "n_iterations": int(group[0]["n_iterations"]),
-                "only_local_moving": bool(group[0]["only_local_moving"]),
-                "allow_isolation": bool(group[0]["allow_isolation"]),
+                "max_memberships": int(group[0].get("max_memberships", 1)),
+                "n_iterations": int(group[0].get("n_iterations", N_ITERATIONS)),
+                "only_local_moving": bool(
+                    group[0].get("only_local_moving", ONLY_LOCAL_MOVING)
+                ),
+                "allow_isolation": bool(
+                    group[0].get("allow_isolation", ALLOW_ISOLATION)
+                ),
+            }
+
+        mode_names = sorted(
+            {
+                mode
+                for run in group
+                for mode in (
+                    run.get("metrics_by_singleton_mode", {}).keys()
+                    if isinstance(run.get("metrics_by_singleton_mode"), dict)
+                    else ()
+                )
             }
         )
+        mode_summaries: dict[str, dict[str, Any]] = {}
+        for mode in mode_names:
+            metric_dicts = [
+                run["metrics_by_singleton_mode"][mode]
+                for run in group
+                if isinstance(run.get("metrics_by_singleton_mode"), dict)
+                and isinstance(run["metrics_by_singleton_mode"].get(mode), dict)
+            ]
+            keys = sorted({key for metrics in metric_dicts for key in metrics})
+            summary: dict[str, Any] = {}
+            for key in keys:
+                values = [
+                    float(metrics[key])
+                    for metrics in metric_dicts
+                    if isinstance(metrics.get(key), (int, float))
+                    and not isinstance(metrics.get(key), bool)
+                    and metrics.get(key) is not None
+                ]
+                if not values:
+                    continue
+                summary[f"{key}_mean"] = float(np.mean(values))
+                row[f"{key}_{mode}_mean"] = summary[f"{key}_mean"]
+                if key.endswith("f1"):
+                    score_stats = mean_ci(values, confidence=confidence)
+                    summary[f"{key}_ci_low"] = score_stats["ci_low"]
+                    summary[f"{key}_ci_high"] = score_stats["ci_high"]
+                    summary[f"{key}_samples"] = values
+            mode_summaries[mode] = summary
+        row["metrics_by_singleton_mode"] = mode_summaries
+        out.append(row)
     return out
 
 
@@ -515,6 +636,10 @@ def run_resolution_f1_experiment(
     resume: bool = True,
     force: bool = False,
     rescore_only: bool = False,
+    singleton_mode: str = DEFAULT_SINGLETON_MODE,
+    compute_omega: bool = False,
+    omega_sample_size: int = DEFAULT_OMEGA_SAMPLE_SIZE,
+    omega_seed: int = 0,
 ) -> ResolutionF1Result:
     """Sweep γ × seeds; optionally resume from / write to ``cache_dir/runs``.
 
@@ -531,7 +656,9 @@ def run_resolution_f1_experiment(
         Do not call ``community_hedonic``; only load cached covers and
         recompute metrics vs ``gt``. Fails if a required cell is missing.
     """
-    gt_eval = filter_gt_communities_gt1(gt)
+    singleton_modes(singleton_mode)
+    if omega_sample_size <= 0:
+        raise ValueError("omega_sample_size must be positive")
     k = resolve_max_memberships(max_memberships, gt)
     resolutions = [float(r) for r in resolutions]
     seeds = [int(s) for s in seeds]
@@ -563,6 +690,10 @@ def run_resolution_f1_experiment(
     log(f"  resume          : {resume and not force}")
     log(f"  force           : {force}")
     log(f"  rescore_only    : {rescore_only}")
+    log(f"  singleton_mode  : {singleton_mode}")
+    log(f"  sampled Omega   : {compute_omega}")
+    if compute_omega:
+        log(f"  Omega samples   : {omega_sample_size:,} (seed={omega_seed})")
     log(f"  cached complete : {len(cached)}")
     log("=" * 55)
 
@@ -596,7 +727,15 @@ def run_resolution_f1_experiment(
                 )
 
             if use_cache:
-                rec = rescore_record(cached[key], gt_eval, n_vertices=game.vcount())
+                rec = rescore_record(
+                    cached[key],
+                    gt,
+                    n_vertices=game.vcount(),
+                    compute_omega=compute_omega,
+                    singleton_mode=singleton_mode,
+                    omega_sample_size=omega_sample_size,
+                    omega_seed=omega_seed,
+                )
                 rec["from_cache"] = True
                 if path is not None:
                     # Persist updated metrics (cover unchanged)
@@ -614,10 +753,14 @@ def run_resolution_f1_experiment(
                 t0 = time.time()
                 rec = run_one(
                     game,
-                    gt_eval,
+                    gt,
                     resolution=float(res),
                     seed=int(seed),
                     max_memberships=k,
+                    singleton_mode=singleton_mode,
+                    compute_omega=compute_omega,
+                    omega_sample_size=omega_sample_size,
+                    omega_seed=omega_seed,
                 )
                 n_ran += 1
                 if path is not None:
@@ -654,6 +797,11 @@ def run_resolution_f1_experiment(
         "resume": bool(resume and not force),
         "force": bool(force),
         "rescore_only": bool(rescore_only),
+        "singleton_mode": singleton_mode,
+        "singleton_modes_reported": list(singleton_modes(singleton_mode)),
+        "omega_enabled": bool(compute_omega),
+        "omega_sample_size": int(omega_sample_size) if compute_omega else None,
+        "omega_seed": int(omega_seed) if compute_omega else None,
         "n_ran": n_ran,
         "n_skipped_cache": n_skipped,
         "n_rescored": n_rescored,
@@ -817,7 +965,10 @@ def main(argv: list[str] | None = None) -> int:
             "Full-DBLP (or --smoke) F1 vs resolution for multi-phase "
             "community_hedonic: n_iterations=-1, only_local_moving=False, "
             "allow_isolation=True, max_memberships=#GT communities with "
-            "size>1. Multi-seed F1 confidence intervals + line plot. "
+            "size>1. Reports legacy symmetric best-match F1 plus one-to-one, "
+            "node-membership, size-weighted, and diagnostic metrics. "
+            "Singleton handling is selectable with --singleton-mode; sampled "
+            "Omega is opt-in. Multi-seed F1 confidence intervals + line plot. "
             "Per-(γ,seed) covers are cached under <output_dir>/runs/ for "
             "resume and later re-scoring without re-running detection. "
             "Paths may come from a TOML config (default: configs/hedonic.toml)."
@@ -909,6 +1060,35 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--singleton-mode",
+        choices=("all", "size_ge_2", "both"),
+        default=None,
+        help=(
+            "Apply singleton handling consistently to predicted and GT covers. "
+            "'both' stores both evaluations; legacy f1 remains unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--omega",
+        action="store_true",
+        help=(
+            "Compute the scalable sampled pairwise Omega approximation while "
+            "scoring cached covers (disabled by default)"
+        ),
+    )
+    parser.add_argument(
+        "--omega-sample-size",
+        type=int,
+        default=DEFAULT_OMEGA_SAMPLE_SIZE,
+        help="Number of uniformly sampled vertex pairs for --omega",
+    )
+    parser.add_argument(
+        "--omega-seed",
+        type=int,
+        default=0,
+        help="RNG seed for reproducible sampled Omega",
+    )
+    parser.add_argument(
         "--include-covers-in-summary",
         action="store_true",
         help="Embed full covers in resolution_f1.json (default: only in runs/)",
@@ -990,6 +1170,23 @@ def main(argv: list[str] | None = None) -> int:
     if not (0.0 < confidence < 1.0):
         log("[error] --confidence must be in (0, 1)")
         return 2
+    if args.omega_sample_size <= 0:
+        log("[error] --omega-sample-size must be positive")
+        return 2
+    if args.rescore_only and args.force:
+        log("[error] --rescore-only cannot be combined with --force")
+        return 2
+
+    singleton_mode = str(
+        args.singleton_mode
+        if args.singleton_mode is not None
+        else section.get("singleton_mode", DEFAULT_SINGLETON_MODE)
+    )
+    try:
+        singleton_modes(singleton_mode)
+    except ValueError as exc:
+        log(f"[error] {exc}")
+        return 2
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1031,6 +1228,10 @@ def main(argv: list[str] | None = None) -> int:
         resume=not args.no_resume,
         force=bool(args.force),
         rescore_only=bool(args.rescore_only),
+        singleton_mode=singleton_mode,
+        compute_omega=bool(args.omega),
+        omega_sample_size=int(args.omega_sample_size),
+        omega_seed=int(args.omega_seed),
     )
     result.meta["smoke"] = bool(args.smoke)
     result.meta["data_dir"] = None if args.smoke else str(data_dir)

@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import igraph as ig
+import numpy as np
 
 from hedonic import Game
 from hedonic.experiments import CLI
@@ -34,9 +35,15 @@ from hedonic.experiments.overlapping.dblp_subgraph import (
     resolve_max_memberships as resolve_mm_sub,
 )
 from hedonic.experiments.overlapping.metrics import (
+    cover_diagnostics,
     cover_quality,
     evaluate_cover,
+    node_membership_multilabel_metrics,
+    omega_index,
+    one_to_one_community_metrics,
     partition_to_cover_lists,
+    size_weighted_community_f1,
+    symmetric_best_match_f1,
 )
 
 
@@ -77,6 +84,77 @@ class TestCommunityHedonic(unittest.TestCase):
         self.assertAlmostEqual(metrics["f1"], 1.0)
         self.assertAlmostEqual(metrics["jaccard"], 1.0)
         self.assertAlmostEqual(metrics["omega"], 1.0)
+
+    def test_one_to_one_matching_penalizes_duplicate_prediction(self):
+        metrics = one_to_one_community_metrics(
+            [[0, 1], [0, 1]], [[0, 1]]
+        )
+        self.assertAlmostEqual(metrics["matching_precision"], 0.5)
+        self.assertAlmostEqual(metrics["matching_recall"], 1.0)
+        self.assertAlmostEqual(metrics["matching_f1"], 2.0 / 3.0)
+        self.assertEqual(metrics["n_unmatched_predicted_comms"], 1)
+        # Historical best-match remains deliberately duplicate-insensitive.
+        self.assertAlmostEqual(
+            symmetric_best_match_f1([[0, 1], [0, 1]], [[0, 1]]), 1.0
+        )
+
+    def test_one_to_one_matching_penalizes_unmatched_gt(self):
+        metrics = one_to_one_community_metrics(
+            [[0, 1]], [[0, 1], [2, 3]], matching_weight="jaccard"
+        )
+        self.assertAlmostEqual(metrics["matching_precision"], 1.0)
+        self.assertAlmostEqual(metrics["matching_recall"], 0.5)
+        self.assertAlmostEqual(metrics["matching_f1"], 2.0 / 3.0)
+        self.assertEqual(metrics["n_unmatched_gt_comms"], 1)
+
+    def test_node_membership_micro_and_macro_f1(self):
+        metrics = node_membership_multilabel_metrics(
+            [[0, 1], [2]], [[0, 1], [1, 2]]
+        )
+        self.assertAlmostEqual(metrics["node_micro_precision"], 1.0)
+        self.assertAlmostEqual(metrics["node_micro_recall"], 0.75)
+        self.assertAlmostEqual(metrics["node_micro_f1"], 6.0 / 7.0)
+        self.assertAlmostEqual(metrics["node_macro_f1"], 5.0 / 6.0)
+
+    def test_singleton_modes_and_diagnostics(self):
+        pred = [[0, 1], [2], []]
+        gt = [[0, 1], [3]]
+        all_diag = cover_diagnostics(pred, gt, 4, singleton_mode="all")
+        gt1_diag = cover_diagnostics(pred, gt, 4, singleton_mode="size_ge_2")
+        self.assertEqual(all_diag["predicted_community_count"], 2)
+        self.assertEqual(all_diag["gt_community_count"], 2)
+        self.assertAlmostEqual(all_diag["predicted_singleton_fraction"], 0.5)
+        self.assertAlmostEqual(all_diag["predicted_vertices_covered_fraction"], 0.75)
+        self.assertAlmostEqual(all_diag["predicted_average_community_size"], 1.5)
+        self.assertAlmostEqual(all_diag["predicted_median_community_size"], 1.5)
+        self.assertAlmostEqual(
+            all_diag["predicted_average_memberships_per_vertex"], 0.75
+        )
+        self.assertEqual(gt1_diag["predicted_community_count"], 1)
+        self.assertEqual(gt1_diag["gt_community_count"], 1)
+        self.assertEqual(gt1_diag["predicted_singleton_fraction"], 0.0)
+        self.assertAlmostEqual(
+            size_weighted_community_f1(pred, gt, singleton_mode="size_ge_2"),
+            1.0,
+        )
+
+    def test_sampled_omega_never_allocates_dense_vertex_matrix(self):
+        original_zeros = np.zeros
+
+        def reject_dense_vertex_matrix(shape, *args, **kwargs):
+            if isinstance(shape, tuple) and shape == (10_000, 10_000):
+                raise AssertionError("dense vertex-pair allocation")
+            return original_zeros(shape, *args, **kwargs)
+
+        with patch("numpy.zeros", side_effect=reject_dense_vertex_matrix):
+            value = omega_index(
+                [[0, 1, 2], [2, 3]],
+                [[0, 1, 2], [2, 3]],
+                10_000,
+                sample_size=2_000,
+                seed=7,
+            )
+        self.assertAlmostEqual(value, 1.0)
 
     def test_sbm_methods_use_community_hedonic(self):
         self.assertEqual(
@@ -951,6 +1029,8 @@ class TestResolutionF1(unittest.TestCase):
         self.assertIn("dblp", help_text)
         self.assertIn("resume", help_text)
         self.assertIn("rescore", help_text)
+        self.assertIn("singleton-mode", help_text)
+        self.assertIn("omega-sample-size", help_text)
         self.assertIn("config", help_text)
 
     def test_cache_resume_skips_completed_runs(self):
@@ -1035,17 +1115,32 @@ class TestResolutionF1(unittest.TestCase):
                 cache_dir=out,
             )
             # Rescore-only path (no community_hedonic)
-            rescored = resolution_f1.run_resolution_f1_experiment(
-                game,
-                gt,
-                resolutions=[0.5],
-                seeds=[0],
-                cache_dir=out,
-                rescore_only=True,
-            )
+            with patch.object(
+                Game,
+                "community_hedonic",
+                side_effect=AssertionError("detection called during rescore"),
+            ):
+                rescored = resolution_f1.run_resolution_f1_experiment(
+                    game,
+                    gt,
+                    resolutions=[0.5],
+                    seeds=[0],
+                    cache_dir=out,
+                    rescore_only=True,
+                    singleton_mode="both",
+                )
             self.assertEqual(rescored.meta["n_ran"], 0)
             self.assertEqual(rescored.meta["n_rescored"], 1)
             self.assertIn("f1", rescored.runs[0])
+            self.assertIn("matching_f1", rescored.runs[0])
+            self.assertEqual(
+                set(rescored.runs[0]["metrics_by_singleton_mode"]),
+                {"all", "size_ge_2"},
+            )
+            self.assertIn(
+                "matching_f1_mean",
+                rescored.aggregated[0]["metrics_by_singleton_mode"]["size_ge_2"],
+            )
 
             # Direct API: metrics_from_cover uses cached cover only
             rec = resolution_f1.load_run_file(
@@ -1057,6 +1152,45 @@ class TestResolutionF1(unittest.TestCase):
             )
             self.assertIn("f1", metrics)
             self.assertAlmostEqual(metrics["f1"], rec["f1"], places=9)
+
+    def test_old_minimal_cached_record_can_be_rescored(self):
+        game, gt = resolution_f1.build_smoke_instance(
+            n_blocks=2, block_size=4, seed=6
+        )
+        old_record = {
+            "resolution": 0.25,
+            "seed": 0,
+            "n_vertices": game.vcount(),
+            "wallclock_s": 12.5,
+            "cover": [list(range(4)), list(range(4, 8))],
+            "f1": 0.123,  # Legacy completion marker; no metrics dict/status.
+        }
+        with tempfile.TemporaryDirectory() as d:
+            runs_dir = Path(d) / resolution_f1.RUNS_SUBDIR
+            path = resolution_f1.run_cache_path(runs_dir, 0.25, 0)
+            resolution_f1.save_run_file(old_record, path)
+            with patch.object(
+                Game,
+                "community_hedonic",
+                side_effect=AssertionError("detection called during rescore"),
+            ):
+                result = resolution_f1.run_resolution_f1_experiment(
+                    game,
+                    gt,
+                    resolutions=[0.25],
+                    seeds=[0],
+                    cache_dir=d,
+                    rescore_only=True,
+                    singleton_mode="size_ge_2",
+                )
+            rescored = result.runs[0]
+            self.assertEqual(rescored["cover"], old_record["cover"])
+            self.assertEqual(rescored["wallclock_s"], 12.5)
+            self.assertAlmostEqual(rescored["f1"], 1.0)
+            self.assertIn("symmetric_best_match_f1", rescored)
+            self.assertIn("node_micro_f1", rescored)
+            self.assertIn("predicted_community_count", rescored)
+            self.assertEqual(result.meta["n_ran"], 0)
 
     def test_main_writes_runs_cache_and_toml_output(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1103,4 +1237,3 @@ class TestNoOverlappingModule(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

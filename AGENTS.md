@@ -181,7 +181,7 @@ Subcommands are registered in **`COMMANDS`** (the single source of truth in `CLI
 | `overlapping-subgraph` | `overlapping.dblp_subgraph` | L-hop around GT communities | DBLP |
 | `overlapping-full` | `overlapping.dblp_full` | Full DBLP + optional resolution sweep | DBLP |
 | `overlapping-scale` | `overlapping.complexity_scale` | Wallclock scaling as subnetworks grow (local-moving T/F, timeout stop + plot) | DBLP (or `--smoke`) |
-| `overlapping-resolution` | `overlapping.resolution_f1` | Full-DBLP F1 vs resolution [0,1] (multi-phase; multi-seed CI + line plot) | DBLP (or `--smoke`) |
+| `overlapping-resolution` | `overlapping.resolution_f1` | Full-DBLP overlap metrics vs resolution [0,1] (cached-cover rescoring, singleton modes, optional sampled Omega) | DBLP (or `--smoke`) |
 | `list` | meta | List subcommands | — |
 
 ```bash
@@ -239,16 +239,21 @@ hedonic-exp overlapping-scale --variant full --timeout 600 --max-levels 6 \
 # max_memberships = #GT with size>1; multi-seed F1 CI band on the plot.
 # Per-(γ,seed) covers + metadata cached under <output_dir>/runs/ (resume-safe).
 # Paths from configs/hedonic.toml by default (~/… expanded).
-# Re-score metrics from covers without re-detection: --rescore-only
+# Re-score all metrics from covers without re-detection: --rescore-only
 hedonic-exp overlapping-resolution --smoke --output_dir /tmp/hedonic-res-f1
 hedonic-exp overlapping-resolution --config configs/hedonic.toml \
   --resolutions 0:1:11 --seeds 0-4
 # Resume after interrupt (same --output_dir; skips completed runs/ files):
 hedonic-exp overlapping-resolution --resolutions 0:1:11 --seeds 0-4 \
   --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
-# Recompute F1 (or extend code for ARI) from cached covers only:
-hedonic-exp overlapping-resolution --rescore-only \
+# Recompute matching, node-membership, weighted F1, and diagnostics from
+# cached covers only; report both consistent singleton modes:
+hedonic-exp overlapping-resolution --rescore-only --singleton-mode both \
   --resolutions 0:1:11 --seeds 0-4 \
+  --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
+# Optional sampled Omega (never allocates a dense vertex-pair matrix):
+hedonic-exp overlapping-resolution --rescore-only --omega \
+  --omega-sample-size 100000 --singleton-mode size_ge_2 \
   --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
 ```
 
