@@ -2,13 +2,16 @@
 # Override with --config path.toml or HEDONIC_CONFIG.
 #
 # Priority for paths: CLI flags > environment variables > this file > defaults.
-#   HEDONIC_DBLP_DIR, HEDONIC_SYNTHETIC_DIR, HEDONIC_OUTPUT_DIR, HEDONIC_CONFIG
+#   HEDONIC_DBLP_DIR, HEDONIC_SYNTHETIC_DIR, HEDONIC_NETWORKS_DIR,
+#   HEDONIC_OUTPUT_DIR, HEDONIC_CONFIG
 #
 # Use ~/… paths (expanded at load time). Avoid hard-coded /Users/<name>.
 
 [paths]
 # Full DBLP network directory (pkl/raw or dblp.pkl cache)
 dblp_dir = "~/Databases/Hedonic/Networks/DBLP"
+# Root containing all saved SNAP network directories
+networks_dir = "~/Databases/Hedonic/Networks"
 # Synthetic / PHYSA SBM results root
 synthetic_dir = "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
 # Default root for experiment outputs / artifacts
@@ -22,3 +25,71 @@ output_dir = "~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1"
 resolutions = "0:1:11"
 seeds = "0-4"
 # confidence = 0.95
+
+# Complete, resumable reproduction of docs/papers/overlapping_communities/main.tex.
+# One command launches a tmux session with independent dataset shards:
+#   hedonic-exp reproduce-overlapping-paper
+#
+# `auto` picks the smaller of logical CPUs, the configured cap, the job count,
+# and installed-RAM / memory_gb_per_worker.  A worker holds at most one complete
+# SNAP graph and runs one detector subprocess at a time.  This avoids shared
+# manifest/summary writers while using available CPU safely overnight.
+[overlapping_paper]
+profile = "full"
+data_root = "~/Databases/Hedonic/Networks"
+output_dir = "docs/papers/overlapping_communities/artifacts/full"
+paper_dir = "docs/papers/overlapping_communities"
+tmux_session = "hedonic-overlapping-paper"
+
+# The paper compares three multi-phase hedonic density resolutions with
+# independent baselines. Every hedonic variant uses allow_isolation = true.
+# hedonic_local is intentionally excluded from this protocol.
+methods = ["hedonic_multiphase", "hedonic_multiphase_x10", "hedonic_multiphase_x100", "cpm", "demon"]
+seeds = "0-4"
+resolutions = "auto"
+max_nodes = 0                 # <=0 disables the benchmark's bounded-subgraph cap
+timeout_per_run = 3600        # seconds, enforced in a detector subprocess
+omega = true
+omega_sample_size = 100000
+resume = true
+retry_attempts = 1            # retry timeout/error records once in the same overnight run
+
+# RAM guard for parallel full-network runs.  With 64 GiB this permits two
+# workers; on a 32 GiB machine it uses one.  Raise only after measuring peaks.
+max_parallel_workers = "auto"
+max_parallel_cap = 2
+memory_gb_per_worker = 24
+poll_seconds = 10
+compile_paper = true
+
+# The first four supplied selected covers and Wikipedia's category cover are
+# intentionally separate ground truths. We never merge `all` and `top5000`.
+[[overlapping_paper.jobs]]
+name = "amazon-top5000"
+dataset = "amazon"
+cover = "top5000"
+weight = 2
+
+[[overlapping_paper.jobs]]
+name = "dblp-top5000"
+dataset = "dblp"
+cover = "top5000"
+weight = 1
+
+[[overlapping_paper.jobs]]
+name = "livejournal-top5000"
+dataset = "livejournal"
+cover = "top5000"
+weight = 5
+
+[[overlapping_paper.jobs]]
+name = "youtube-top5000"
+dataset = "youtube"
+cover = "top5000"
+weight = 3
+
+[[overlapping_paper.jobs]]
+name = "wikipedia-all"
+dataset = "wikipedia"
+cover = "all"
+weight = 5

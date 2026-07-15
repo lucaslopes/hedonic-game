@@ -95,6 +95,19 @@ wheels = [
 ]
 
 [[package]]
+name = "demon"
+version = "2.0.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "networkx" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/01/21337857631a97ab551bb2e3b5691ed6b1b9586011aa6a5355b9694a37fa/demon-2.0.6.tar.gz", hash = "sha256:60e5d85aaf039172770e58bb4e989287b672d8008a83d66b8e722c273d38a359", size = 7589, upload-time = "2021-06-23T09:11:21.126Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/85/5f9146e3f8d7324d8741cd3bea9b99926d5ee75571b9610c661b1bbd06f5/demon-2.0.6-py3-none-any.whl", hash = "sha256:2dc023c9d2a8550a4039c4c46f02153c467a7ccce9144e38a1ea0d5b0054e362", size = 7342, upload-time = "2021-06-23T09:11:20.236Z" },
+]
+
+[[package]]
 name = "fonttools"
 version = "4.63.0"
 source = { registry = "https://pypi.org/simple" }
@@ -146,7 +159,9 @@ dependencies = [
 
 [package.optional-dependencies]
 experiments = [
+    { name = "demon" },
     { name = "matplotlib" },
+    { name = "networkx" },
     { name = "pandas" },
     { name = "scipy" },
     { name = "seaborn" },
@@ -156,8 +171,10 @@ experiments = [
 
 [package.metadata]
 requires-dist = [
+    { name = "demon", marker = "extra == 'experiments'", specifier = ">=2.0.6" },
     { name = "lucas-igraph", editable = "../python-igraph" },
     { name = "matplotlib", marker = "extra == 'experiments'", specifier = ">=3.7" },
+    { name = "networkx", marker = "extra == 'experiments'", specifier = ">=3.2" },
     { name = "numpy" },
     { name = "pandas", marker = "extra == 'experiments'", specifier = ">=2.0.0" },
     { name = "scipy", marker = "extra == 'experiments'", specifier = ">=1.10.0" },
@@ -345,6 +362,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ef/f9/9b030b6088354acb0296871bb624b25befc1c42509d3c6cd17420c83a5b8/matplotlib-3.11.0-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:15b0d160079cb10699a0e98b5989c70677b2df7cacdc62af67c30f2facec46d9", size = 10939427, upload-time = "2026-06-12T02:29:02.527Z" },
     { url = "https://files.pythonhosted.org/packages/59/94/6b273eaee4ee250863567d100865da61a5c1527fa67f527b7ed22e0dd29c/matplotlib-3.11.0-cp314-cp314t-win_amd64.whl", hash = "sha256:446307e6b04b57b1f1239e228a1ec2af0d589a1008cebc3dfa3f5441d095cfb6", size = 9535809, upload-time = "2026-06-12T02:29:04.994Z" },
     { url = "https://files.pythonhosted.org/packages/60/95/1d36bddf2b7e2692c1540e78a6e5bc88bc1496b137e3e35a611f91b65ac3/matplotlib-3.11.0-cp314-cp314t-win_arm64.whl", hash = "sha256:652fb5696271d4c50f196d22a5ff4f8e4444c74f847423570d7dc0aa2bbd0159", size = 9209226, upload-time = "2026-06-12T02:29:07.033Z" },
+]
+
+[[package]]
+name = "networkx"
+version = "3.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl", hash = "sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762", size = 2068504, upload-time = "2025-12-08T17:02:38.159Z" },
 ]
 
 [[package]]

@@ -11,3 +11,15 @@ wheels/
 
 # macOS files
 .DS_Store
+
+# Project files
+artifacts/
+*.log
+*.out
+*.fls
+*.fdb_latexmk
+*.blg
+*.bbl
+*.aux
+*.pdf
+img/

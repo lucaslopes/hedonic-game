@@ -17,6 +17,7 @@ from hedonic import Game
 from hedonic.experiments import CLI
 from hedonic.experiments.config import (
     DEFAULT_DBLP_DIR,
+    DEFAULT_NETWORKS_DIR,
     DEFAULT_SYNTHETIC_DIR,
     DEFAULT_OUTPUT_DIR,
     load_config_file,
@@ -184,6 +185,10 @@ class TestExperimentsConfig(unittest.TestCase):
             expand_path("~/Databases/Hedonic/Networks/DBLP"),
         )
         self.assertEqual(
+            DEFAULT_NETWORKS_DIR,
+            expand_path("~/Databases/Hedonic/Networks"),
+        )
+        self.assertEqual(
             DEFAULT_SYNTHETIC_DIR,
             expand_path("~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"),
         )
@@ -200,6 +205,7 @@ class TestExperimentsConfig(unittest.TestCase):
             os.environ,
             {
                 "HEDONIC_DBLP_DIR": "/tmp/custom_dblp",
+                "HEDONIC_NETWORKS_DIR": "/tmp/custom_networks",
                 "HEDONIC_SYNTHETIC_DIR": "/tmp/custom_synth",
                 "HEDONIC_OUTPUT_DIR": "/tmp/custom_out",
             },
@@ -211,8 +217,10 @@ class TestExperimentsConfig(unittest.TestCase):
             from hedonic.experiments import config as cfg
 
             self.assertEqual(str(cfg.OUTPUT_DIR), "/tmp/custom_out")
+            self.assertEqual(str(cfg.NETWORKS_DIR), "/tmp/custom_networks")
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("HEDONIC_DBLP_DIR", None)
+            os.environ.pop("HEDONIC_NETWORKS_DIR", None)
             os.environ.pop("HEDONIC_SYNTHETIC_DIR", None)
             os.environ.pop("HEDONIC_OUTPUT_DIR", None)
             reload_paths()
@@ -225,6 +233,7 @@ class TestExperimentsConfig(unittest.TestCase):
                     [
                         "[paths]",
                         'dblp_dir = "/toml/dblp"',
+                        'networks_dir = "/toml/networks"',
                         'synthetic_dir = "/toml/synth"',
                         'output_dir = "/toml/out"',
                         "",
@@ -252,6 +261,7 @@ class TestExperimentsConfig(unittest.TestCase):
                 from hedonic.experiments import config as cfg
 
                 self.assertEqual(str(cfg.DBLP_DIR), "/toml/dblp")
+                self.assertEqual(str(cfg.NETWORKS_DIR), "/toml/networks")
                 self.assertEqual(str(cfg.OUTPUT_DIR), "/toml/out")
                 resolved = resolve_experiment_paths(
                     config_path=toml_path,
@@ -536,11 +546,17 @@ class TestCLI(unittest.TestCase):
             "overlapping-full",
             "overlapping-scale",
             "overlapping-resolution",
+            "overlapping-benchmark",
+            "reproduce-overlapping-paper",
         }
         self.assertEqual(set(CLI.COMMANDS), expected)
 
     def test_overlapping_resolution_help(self):
         code = CLI.main(["overlapping-resolution", "--help"])
+        self.assertEqual(code, 0)
+
+    def test_reproduce_overlapping_paper_help(self):
+        code = CLI.main(["reproduce-overlapping-paper", "--help"])
         self.assertEqual(code, 0)
 
     def test_overlapping_resolution_smoke_via_cli(self):

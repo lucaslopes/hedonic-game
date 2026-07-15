@@ -27,7 +27,11 @@ src/hedonic/
         ├── dblp_full.py         # full DBLP graph
         ├── dblp_subgraph.py     # L-hop GT subgraphs
         ├── complexity_scale.py  # size vs wallclock (local-moving vs multi-phase)
-        └── resolution_f1.py     # full-DBLP F1 vs γ (multi-seed CI + line plot)
+        ├── resolution_f1.py     # full-DBLP F1 vs γ (multi-seed CI + line plot)
+        ├── snap.py              # shared, ID-safe SNAP graph/cover loader
+        ├── methods.py           # hedonic + external overlap-method adapters
+        ├── benchmark.py         # five-network resumable SNAP benchmark
+        └── reproduce_paper.py   # TOML/tmux full-paper orchestration + aggregation
 ```
 
 | Layer | What belongs here | What does **not** |
@@ -113,7 +117,7 @@ lucas-igraph   # path editable: ../python-igraph (see pyproject [tool.uv.sources
 numpy
 
 # Optional: pip install "hedonic[experiments]"  or  uv sync --extra experiments
-pandas, scipy, tqdm, stopwatch-py, matplotlib, seaborn
+pandas, scipy, tqdm, stopwatch-py, matplotlib, seaborn, networkx, demon
 ```
 
 Setup:
@@ -141,6 +145,7 @@ python -m hedonic.experiments.CLI --help
 | Variable | Env override | Default (expanded from `~/…`) |
 |----------|--------------|--------------------------------|
 | `DBLP_DIR` | `HEDONIC_DBLP_DIR` | `~/Databases/Hedonic/Networks/DBLP` |
+| `NETWORKS_DIR` | `HEDONIC_NETWORKS_DIR` | `~/Databases/Hedonic/Networks` |
 | `SYNTHETIC_DIR` | `HEDONIC_SYNTHETIC_DIR` | `~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020` |
 | `OUTPUT_DIR` | `HEDONIC_OUTPUT_DIR` | `~/Databases/Hedonic/experiments` |
 
@@ -149,6 +154,7 @@ python -m hedonic.experiments.CLI --help
 ```toml
 [paths]
 dblp_dir = "~/Databases/Hedonic/Networks/DBLP"
+networks_dir = "~/Databases/Hedonic/Networks"
 synthetic_dir = "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
 output_dir = "~/Databases/Hedonic/experiments"
 
@@ -156,6 +162,12 @@ output_dir = "~/Databases/Hedonic/experiments"
 output_dir = "~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1"
 resolutions = "0:1:11"
 seeds = "0-4"
+
+[overlapping_paper]
+# `hedonic-exp reproduce-overlapping-paper` reads the complete registered
+# protocol here: methods, seeds, timeouts, Omega, worker RAM budget, tmux
+# session, paper/output paths, and per-dataset cover shards.
+methods = ["hedonic_multiphase", "hedonic_multiphase_x10", "hedonic_multiphase_x100", "cpm", "demon"]
 ```
 
 Always import paths from config (never hardcode absolute home paths in new modules):
@@ -182,6 +194,8 @@ Subcommands are registered in **`COMMANDS`** (the single source of truth in `CLI
 | `overlapping-full` | `overlapping.dblp_full` | Full DBLP + optional resolution sweep | DBLP |
 | `overlapping-scale` | `overlapping.complexity_scale` | Wallclock scaling as subnetworks grow (local-moving T/F, timeout stop + plot) | DBLP (or `--smoke`) |
 | `overlapping-resolution` | `overlapping.resolution_f1` | Full-DBLP overlap metrics vs resolution [0,1] (cached-cover rescoring, singleton modes, optional sampled Omega) | DBLP (or `--smoke`) |
+| `overlapping-benchmark` | `overlapping.benchmark` | Resumable Amazon/DBLP/LiveJournal/YouTube/Wikipedia overlapping-cover benchmark with hedonic, CPM, and DEMON | saved SNAP networks (or `--profile smoke`) |
+| `reproduce-overlapping-paper` | `overlapping.reproduce_paper` | TOML-driven paper protocol: RAM-bounded tmux shards → merged records/plots/tables → guarded `main.tex` compilation | saved SNAP networks |
 | `list` | meta | List subcommands | — |
 
 ```bash
@@ -255,6 +269,24 @@ hedonic-exp overlapping-resolution --rescore-only --singleton-mode both \
 hedonic-exp overlapping-resolution --rescore-only --omega \
   --omega-sample-size 100000 --singleton-mode size_ge_2 \
   --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
+
+# Reproducible five-network SNAP overlap benchmark. The smoke profile uses
+# built-in tiny covers; standard bounds each graph to a deterministic
+# GT-informed induced subgraph. Wikipedia has only an `all` category cover,
+# so `--cover top5000` records it explicitly as skipped.
+hedonic-exp overlapping-benchmark --profile smoke \
+  --output_dir /tmp/hedonic-snap-smoke
+hedonic-exp overlapping-benchmark --datasets amazon,dblp,livejournal,youtube,wikipedia \
+  --cover top5000 --profile standard \
+  --output_dir ~/Databases/Hedonic/Networks/SNAP_BENCHMARK_CLI
+hedonic-exp overlapping-benchmark --list-networks
+hedonic-exp overlapping-benchmark --list-methods
+
+# Complete overlapping SNAP paper reproduction. All run parameters are in
+# configs/hedonic.toml [overlapping_paper]; raw SNAP archives stay read-only.
+hedonic-exp reproduce-overlapping-paper --dry-run
+hedonic-exp reproduce-overlapping-paper
+tmux attach -t hedonic-overlapping-paper
 ```
 
 Args after the subcommand are forwarded to that module’s `main(argv)`.
@@ -329,7 +361,62 @@ Or one shot: `hedonic-exp reproduce-disjoint --preset v1020 --output_root …/V1
   - `hedonic_v2` — overlapping full multi-phase (`only_local_moving=False`)
   - `singleton` / `grand_coalition` / `total_overlap` — deterministic control baselines
 
+### SNAP overlapping benchmark
+
+`hedonic-exp overlapping-benchmark` is the single CLI for the saved
+overlapping SNAP covers: Amazon, DBLP, LiveJournal, YouTube, and Wikipedia
+categories. It uses `~/Databases/Hedonic/Networks` by default, accepts
+`--data_root`, and honors `HEDONIC_NETWORKS_DIR`. The shared loader in
+`overlapping.snap` prefers validated normalized caches outside the archive,
+then trusted local pickles, then streamed `*.txt.gz` files. It records the
+original-ID mapping, validation/dropped-ID counts, directionality, and cover
+statistics for every load. DBLP cached graphs use `vs["label"]` to remap
+original community IDs correctly.
+
+The benchmark writes resumable JSON per method/dataset/seed/resolution under
+`runs/`, plus `manifest.json`, `results.jsonl`, `results.csv.gz`, summaries,
+method availability, and plots. `--resume` skips existing run records.
+`--timeout_per_run` terminates an isolated detector subprocess; unavailable
+optional methods, timeouts, and unsupported variants are explicit records
+rather than silently omitted. Use `--omega --omega_sample_size …` for the
+memory-safe sampled Omega metric.
+
+Methods are adapters, not new core algorithms: `hedonic_local` and the three
+`hedonic_multiphase*` variants call `Game.community_hedonic` with
+`n_iterations=-1` and the ground-truth community count as `max_memberships`.
+The multi-phase variants enable `allow_isolation=True` and fix resolution to
+`min(density × {1,10,100}, 1)`; CPM uses NetworkX clique percolation; DEMON
+uses its maintained external Python package. Install all baselines with
+`uv sync --extra experiments`; `--list-methods` reports availability,
+parameters, algorithm family, conversion behavior, and expected scalability.
+
 Reproduction guide: [`docs/reproduce_overlapping.md`](docs/reproduce_overlapping.md).
+SNAP benchmark guide: [`docs/snap_overlapping_benchmark.md`](docs/snap_overlapping_benchmark.md).
+
+### Full overlapping-paper reproduction
+
+`hedonic-exp reproduce-overlapping-paper` is the one-command protocol for
+[`docs/papers/overlapping_communities/main.tex`](docs/papers/overlapping_communities/main.tex).
+It reads every normal experiment argument from `[overlapping_paper]` in
+`configs/hedonic.toml`, including data/output/paper paths, methods, seeds,
+resolutions, timeout, sampled Omega, retry count, tmux name, worker cap, RAM
+budget, and the five dataset/cover jobs. The paper protocol intentionally uses
+the three density-scaled multi-phase variants (`hedonic_multiphase`, `_x10`,
+`_x100`) with `cpm,demon`; it rejects `hedonic_local`. All three pass
+`allow_isolation=True`.
+
+The command writes a plan, opens one tmux window per RAM-bounded worker plus a
+coordinator, and assigns whole dataset/cover shards so no two processes write
+the same benchmark manifest or summary. Shards remain resumable under
+`artifacts/full/shards/`; the coordinator creates the merged `results.*`,
+`summary.*`, `paper_summary.csv`, regenerated `plots/`, and TeX fragments.
+`main.tex` stays on its smoke branch until all expected full-protocol records
+are present and completed. Only then does the coordinator
+enable the generated results branch and run `latexmk`.
+
+Run `hedonic-exp reproduce-overlapping-paper --dry-run` to inspect the CPU/RAM
+bounded assignment first. Use `--no-tmux` only for small smoke/debug configs;
+the normal command is the overnight tmux workflow.
 
 ---
 

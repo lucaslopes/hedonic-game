@@ -11,6 +11,7 @@ Install with experiments extra, then::
     hedonic-exp overlapping-full --n_iterations -1
     hedonic-exp overlapping-scale --smoke --output_dir /tmp/scale
     hedonic-exp overlapping-resolution --smoke --singleton-mode both --output_dir /tmp/res-f1
+    hedonic-exp overlapping-benchmark --profile smoke --output_dir /tmp/snap-benchmark
     hedonic-exp disjoint-load --results_folder /path/to/jsons
     hedonic-exp plots --smoke --output_dir /tmp/figs
     hedonic-exp reproduce-disjoint --preset v1020-smoke --output_root /tmp/V1020_CLI
@@ -115,6 +116,26 @@ COMMANDS: dict[str, Command] = {
         ),
         needs_data="dblp",
     ),
+    "overlapping-benchmark": Command(
+        name="overlapping-benchmark",
+        module="hedonic.experiments.overlapping.benchmark",
+        attr="main",
+        summary=(
+            "Resumable Amazon/DBLP/LiveJournal/YouTube/Wikipedia overlap "
+            "benchmark (hedonic + CPM/DEMON baselines)"
+        ),
+        needs_data="snap-networks",
+    ),
+    "reproduce-overlapping-paper": Command(
+        name="reproduce-overlapping-paper",
+        module="hedonic.experiments.overlapping.reproduce_paper",
+        attr="main",
+        summary=(
+            "TOML + tmux full SNAP paper reproduction: safe parallel shards "
+            "→ merged caches/plots/tables → manuscript PDF"
+        ),
+        needs_data="snap-networks",
+    ),
     "plots": Command(
         name="plots",
         module="hedonic.experiments.plots.paper_figures",
@@ -183,7 +204,7 @@ def _print_root_help() -> None:
         prog="hedonic-exp",
         description=(
             "Reproduce hedonic experiments: disjoint SBM sweeps, "
-            "overlapping DBLP runs, and isolated smoke checks."
+            "overlapping DBLP/SNAP runs, and isolated smoke checks."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_examples_epilog(),
@@ -253,6 +274,22 @@ examples:
       --methods leiden,hedonic_v1 --output /tmp/subgraph_smoke.json
   hedonic-exp overlapping-full --resolution 1e-4 --output /tmp/dblp_full.json
 
+  # Reproducible five-network SNAP benchmark (three multi-phase hedonic
+  # density variants plus CPM/DEMON; no database required for smoke)
+  hedonic-exp overlapping-benchmark --profile smoke \\
+      --output_dir /tmp/hedonic-snap-smoke
+  # Standard profile uses deterministic 3,000-node induced subgraphs; top5000
+  # is unavailable for Wikipedia and is recorded as an intentional skip.
+  hedonic-exp overlapping-benchmark --datasets amazon,dblp,livejournal,youtube,wikipedia \\
+      --cover top5000 --profile standard \\
+      --output_dir ~/Databases/Hedonic/Networks/SNAP_BENCHMARK_CLI
+
+  # Full overlapping-paper protocol from [overlapping_paper] in TOML.
+  # Creates RAM-bounded tmux workers, merged cache tables/plots, and compiles
+  # main.tex only after every expected full-protocol record is terminal.
+  hedonic-exp reproduce-overlapping-paper
+  tmux attach -t hedonic-overlapping-paper
+
   # Complexity scale: size vs wallclock (local-moving vs full multi-phase)
   # Stops each line when --timeout is hit; does not require full DBLP finish
   hedonic-exp overlapping-scale --smoke --output_dir /tmp/hedonic-scale
@@ -293,6 +330,7 @@ def _print_command_list() -> None:
     print("  HEDONIC_DBLP_DIR       DBLP network directory")
     print("  HEDONIC_SYNTHETIC_DIR  Synthetic/SBM results root")
     print("  HEDONIC_OUTPUT_DIR     Default experiment artifacts root")
+    print("  HEDONIC_NETWORKS_DIR   Root containing saved SNAP network archives")
     print("  HEDONIC_CONFIG         Path to TOML (default: configs/hedonic.toml)")
 
 

@@ -5,7 +5,7 @@ resolving, after applying sources in this order):
 
 1. Explicit function / CLI arguments
 2. Environment variables (``HEDONIC_DBLP_DIR``, ``HEDONIC_SYNTHETIC_DIR``,
-   ``HEDONIC_OUTPUT_DIR``, ``HEDONIC_CONFIG``)
+   ``HEDONIC_NETWORKS_DIR``, ``HEDONIC_OUTPUT_DIR``, ``HEDONIC_CONFIG``)
 3. TOML under ``configs/`` (default: ``configs/hedonic.toml``)
 4. Built-in defaults using ``~/…`` (expanded with ``Path.expanduser``)
 
@@ -47,6 +47,7 @@ def expand_path(value: str | Path) -> Path:
 
 # Portable defaults (no hard-coded /Users/<name>).
 DEFAULT_DBLP_DIR = expand_path("~/Databases/Hedonic/Networks/DBLP")
+DEFAULT_NETWORKS_DIR = expand_path("~/Databases/Hedonic/Networks")
 DEFAULT_SYNTHETIC_DIR = expand_path(
     "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
 )
@@ -66,6 +67,9 @@ SYNTHETIC_DIR = expand_path(
     os.getenv("HEDONIC_SYNTHETIC_DIR", str(DEFAULT_SYNTHETIC_DIR))
 )
 OUTPUT_DIR = expand_path(os.getenv("HEDONIC_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)))
+NETWORKS_DIR = expand_path(
+    os.getenv("HEDONIC_NETWORKS_DIR", str(DEFAULT_NETWORKS_DIR))
+)
 
 # Last successfully loaded TOML (full table) and its path; for experiments.
 _LOADED_TOML: dict[str, Any] = {}
@@ -131,13 +135,19 @@ def _paths_from_toml(data: dict[str, Any]) -> dict[str, Path | None]:
     """Extract known path keys from ``[paths]`` (and legacy top-level aliases)."""
     paths_tbl = data.get("paths") if isinstance(data.get("paths"), dict) else {}
     merged = {
-        **{k: data.get(k) for k in ("dblp_dir", "synthetic_dir", "output_dir")},
+        **{
+            k: data.get(k)
+            for k in ("dblp_dir", "synthetic_dir", "networks_dir", "output_dir")
+        },
         **paths_tbl,
     }
     return {
         "dblp_dir": _as_path(merged.get("dblp_dir") or merged.get("dblp")),
         "synthetic_dir": _as_path(
             merged.get("synthetic_dir") or merged.get("synthetic")
+        ),
+        "networks_dir": _as_path(
+            merged.get("networks_dir") or merged.get("networks")
         ),
         "output_dir": _as_path(
             merged.get("output_dir") or merged.get("artifacts_dir")
@@ -149,14 +159,17 @@ def apply_path_overrides(
     *,
     dblp_dir: str | Path | None = None,
     synthetic_dir: str | Path | None = None,
+    networks_dir: str | Path | None = None,
     output_dir: str | Path | None = None,
 ) -> tuple[Path, Path, Path]:
     """Set module-level path globals from explicit values (non-None only)."""
-    global DBLP_DIR, SYNTHETIC_DIR, OUTPUT_DIR
+    global DBLP_DIR, SYNTHETIC_DIR, NETWORKS_DIR, OUTPUT_DIR
     if dblp_dir is not None:
         DBLP_DIR = expand_path(dblp_dir)
     if synthetic_dir is not None:
         SYNTHETIC_DIR = expand_path(synthetic_dir)
+    if networks_dir is not None:
+        NETWORKS_DIR = expand_path(networks_dir)
     if output_dir is not None:
         OUTPUT_DIR = expand_path(output_dir)
     return DBLP_DIR, SYNTHETIC_DIR, OUTPUT_DIR
@@ -193,6 +206,8 @@ def load_config_file(
             apply_path_overrides(dblp_dir=extracted["dblp_dir"])
         if extracted["synthetic_dir"] is not None:
             apply_path_overrides(synthetic_dir=extracted["synthetic_dir"])
+        if extracted["networks_dir"] is not None:
+            apply_path_overrides(networks_dir=extracted["networks_dir"])
         if extracted["output_dir"] is not None:
             apply_path_overrides(output_dir=extracted["output_dir"])
         _apply_env_overrides()
@@ -202,11 +217,13 @@ def load_config_file(
 
 def _apply_env_overrides() -> None:
     """Apply env vars on top of current module paths (env wins)."""
-    global DBLP_DIR, SYNTHETIC_DIR, OUTPUT_DIR
+    global DBLP_DIR, SYNTHETIC_DIR, NETWORKS_DIR, OUTPUT_DIR
     if "HEDONIC_DBLP_DIR" in os.environ:
         DBLP_DIR = expand_path(os.environ["HEDONIC_DBLP_DIR"])
     if "HEDONIC_SYNTHETIC_DIR" in os.environ:
         SYNTHETIC_DIR = expand_path(os.environ["HEDONIC_SYNTHETIC_DIR"])
+    if "HEDONIC_NETWORKS_DIR" in os.environ:
+        NETWORKS_DIR = expand_path(os.environ["HEDONIC_NETWORKS_DIR"])
     if "HEDONIC_OUTPUT_DIR" in os.environ:
         OUTPUT_DIR = expand_path(os.environ["HEDONIC_OUTPUT_DIR"])
 
@@ -222,9 +239,10 @@ def reload_paths(
     When ``config_path`` is set or ``search_cwd`` is True, TOML is applied
     first, then env overrides.
     """
-    global DBLP_DIR, SYNTHETIC_DIR, OUTPUT_DIR
+    global DBLP_DIR, SYNTHETIC_DIR, NETWORKS_DIR, OUTPUT_DIR
     DBLP_DIR = expand_path(DEFAULT_DBLP_DIR)
     SYNTHETIC_DIR = expand_path(DEFAULT_SYNTHETIC_DIR)
+    NETWORKS_DIR = expand_path(DEFAULT_NETWORKS_DIR)
     OUTPUT_DIR = expand_path(DEFAULT_OUTPUT_DIR)
     if config_path is not None or search_cwd:
         load_config_file(config_path, search_cwd=search_cwd, apply=True)

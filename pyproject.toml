@@ -20,6 +20,8 @@ experiments = [
     "stopwatch-py>=1.0.0",
     "matplotlib>=3.7",
     "seaborn>=0.13",
+    "networkx>=3.2",
+    "demon>=2.0.6",
 ]
 
 [project.scripts]

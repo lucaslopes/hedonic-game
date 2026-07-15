@@ -9,7 +9,8 @@ cover diagnostics from the same function.
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
+from itertools import combinations
 from collections.abc import Sequence
 from typing import Literal
 
@@ -459,8 +460,11 @@ def cover_diagnostics(
         sizes = [len(c) for c in cover]
         covered = set().union(*cover) if cover else set()
         memberships = sum(sizes)
+        membership_counts = Counter(vertex for community in cover for vertex in community)
+        overlapping_nodes = sum(count > 1 for count in membership_counts.values())
         return {
             f"{prefix}_community_count": len(cover),
+            f"{prefix}_singleton_count": sum(size == 1 for size in sizes),
             f"{prefix}_singleton_fraction": (
                 sum(size == 1 for size in sizes) / len(sizes) if sizes else 0.0
             ),
@@ -473,8 +477,22 @@ def cover_diagnostics(
             f"{prefix}_median_community_size": (
                 float(np.median(sizes)) if sizes else 0.0
             ),
+            f"{prefix}_p95_community_size": (
+                float(np.percentile(sizes, 95)) if sizes else 0.0
+            ),
+            f"{prefix}_max_community_size": max(sizes) if sizes else 0,
             f"{prefix}_average_memberships_per_vertex": (
                 memberships / n_vertices if n_vertices > 0 else 0.0
+            ),
+            f"{prefix}_average_memberships_per_covered_vertex": (
+                memberships / len(covered) if covered else 0.0
+            ),
+            f"{prefix}_max_memberships_per_vertex": max(
+                membership_counts.values(), default=0
+            ),
+            f"{prefix}_overlapping_node_count": overlapping_nodes,
+            f"{prefix}_overlapping_node_fraction": (
+                overlapping_nodes / len(covered) if covered else 0.0
             ),
         }
 
@@ -485,6 +503,7 @@ def cover_diagnostics(
     result["n_predicted_comms"] = len(pred_sets)
     result["n_gt_comms"] = n_gt
     result["singleton_fraction"] = result["predicted_singleton_fraction"]
+    result["singleton_count"] = result["predicted_singleton_count"]
     result["vertices_covered_fraction"] = result[
         "predicted_vertices_covered_fraction"
     ]
@@ -494,6 +513,85 @@ def cover_diagnostics(
         "predicted_average_memberships_per_vertex"
     ]
     return result
+
+
+def structural_overlap_metrics(
+    predicted: Sequence[Sequence[int]],
+    ground_truth: Sequence[Sequence[int]],
+    *,
+    singleton_mode: SingletonMode = "all",
+    max_pair_events: int = 100_000,
+) -> dict[str, float | int | bool]:
+    """Bounded structural overlap metrics, separate from recovery accuracy.
+
+    ``inclusion_rate`` is the mean fraction of each predicted community covered
+    by its best ground-truth match.  ``coverage_rate`` is its inverse
+    ground-truth direction.  ``overlapping_rate`` is the mean normalized
+    intersection (intersection / smaller community) across predicted community
+    pairs that share a node.  ``distribution_rate`` is the fraction of
+    predicted memberships assigned to nodes with multiple memberships.
+
+    Pair intersections are accumulated from an inverted index and stop after
+    ``max_pair_events`` events; this deliberately avoids dense community-pair
+    matrices on the largest SNAP covers.  The truncation flag must accompany
+    comparisons where this bound is reached.
+    """
+    if max_pair_events <= 0:
+        raise ValueError("max_pair_events must be positive")
+    pred_sets = _cover_sets(predicted, singleton_mode)
+    gt_sets = _cover_sets(ground_truth, singleton_mode)
+    _scores, intersections = _pair_scores(pred_sets, gt_sets, "f1")
+    pred_best = [0.0] * len(pred_sets)
+    gt_best = [0.0] * len(gt_sets)
+    for (pi, gi), inter in intersections.items():
+        pred_best[pi] = max(pred_best[pi], inter / len(pred_sets[pi]))
+        gt_best[gi] = max(gt_best[gi], inter / len(gt_sets[gi]))
+
+    memberships: dict[int, list[int]] = defaultdict(list)
+    for ci, community in enumerate(pred_sets):
+        for vertex in community:
+            memberships[vertex].append(ci)
+    pair_intersections: dict[tuple[int, int], int] = defaultdict(int)
+    events = 0
+    truncated = False
+    for community_ids in memberships.values():
+        if len(community_ids) < 2:
+            continue
+        for first, second in combinations(community_ids, 2):
+            if events >= max_pair_events:
+                truncated = True
+                break
+            pair_intersections[(first, second)] += 1
+            events += 1
+        if truncated:
+            break
+    normalized_pair_overlaps = [
+        intersection / min(len(pred_sets[first]), len(pred_sets[second]))
+        for (first, second), intersection in pair_intersections.items()
+    ]
+    membership_total = sum(len(community) for community in pred_sets)
+    memberships_on_overlapping_nodes = sum(
+        len(community_ids)
+        for community_ids in memberships.values()
+        if len(community_ids) > 1
+    )
+    return {
+        "inclusion_rate": float(np.mean(pred_best)) if pred_best else 0.0,
+        "coverage_rate": float(np.mean(gt_best)) if gt_best else 0.0,
+        "overlapping_rate": (
+            float(np.mean(normalized_pair_overlaps))
+            if normalized_pair_overlaps
+            else 0.0
+        ),
+        "distribution_rate": (
+            memberships_on_overlapping_nodes / membership_total
+            if membership_total
+            else 0.0
+        ),
+        "overlap_pair_count": len(pair_intersections),
+        "overlap_pair_events": events,
+        "overlap_pair_events_truncated": truncated,
+    }
 
 
 def evaluate_cover(
@@ -557,6 +655,11 @@ def evaluate_cover(
     )
     result.update(_node_metrics_from_matches(pred_sets, gt_sets, matches))
     result.update(cover_diagnostics(pred_sets, gt_sets, n_vertices))
+    result.update(
+        structural_overlap_metrics(
+            pred_sets, gt_sets, singleton_mode=singleton_mode
+        )
+    )
     return result
 
 
@@ -632,17 +735,24 @@ def quality_overlapping_cpm(
     if total_w == 0:
         return 0.0
 
-    quality = 0.0
-    for members in cover:
-        Nc = len(members)
-        if Nc == 0:
-            continue
-        member_set = set(members)
-        ec = 0.0
-        for e_idx, (src, tgt) in enumerate(g.get_edgelist()):
-            if src in member_set and tgt in member_set:
-                ec += w[e_idx]
-        quality += ec - resolution * Nc * (Nc - 1) / 2.0
+    # Accumulate internal edge weight through memberships.  This is equivalent
+    # to the former community-by-edge scan but avoids O(|C| * m) work.
+    community_sets = [set(members) for members in cover]
+    vertex_communities: dict[int, set[int]] = defaultdict(set)
+    for community_index, members in enumerate(community_sets):
+        for vertex in members:
+            vertex_communities[vertex].add(community_index)
+    internal_weights = [0.0] * len(community_sets)
+    for edge_index, (source, target) in enumerate(g.get_edgelist()):
+        for community_index in vertex_communities[source] & vertex_communities[target]:
+            internal_weights[community_index] += w[edge_index]
+
+    quality = sum(
+        internal_weights[community_index]
+        - resolution * len(members) * (len(members) - 1) / 2.0
+        for community_index, members in enumerate(community_sets)
+        if members
+    )
 
     return quality / (2.0 * total_w)
 

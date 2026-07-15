@@ -1,0 +1,4 @@
+interface:
+  display_name: "SNAP Networks"
+  short_description: "Inspect SNAP graphs and detect overlap"
+  default_prompt: "Use $snap-networks to inspect a SNAP network, align its community IDs, and run an overlapping detection experiment."
