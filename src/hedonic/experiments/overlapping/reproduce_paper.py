@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import json
 import math
 import os
@@ -40,10 +41,15 @@ from typing import Any, Iterable
 from hedonic.experiments import config as experiment_config
 from hedonic.experiments.overlapping import benchmark
 from hedonic.experiments.overlapping.methods import METHODS
-from hedonic.experiments.overlapping.snap import network_names
+from hedonic.experiments.overlapping.snap import (
+    bounded_induced_dataset,
+    load_snap_dataset,
+    network_names,
+    smoke_dataset,
+)
 
 
-PAPER_SCHEMA_VERSION = 1
+PAPER_SCHEMA_VERSION = 2
 DEFAULT_METHODS = (
     "hedonic_multiphase",
     "hedonic_multiphase_x10",
@@ -58,7 +64,7 @@ DEFAULT_JOBS = (
     ("youtube", "top5000"),
     ("wikipedia", "all"),
 )
-TERMINAL_STATUSES = {"completed", "unavailable", "skipped", "data_unavailable"}
+TERMINAL_STATUSES = {"completed", "unavailable", "skipped", "data_unavailable", "memory_limit"}
 RETRYABLE_STATUSES = {"timeout", "error"}
 _DATASET_WEIGHT = {
     "dblp": 1,
@@ -140,20 +146,14 @@ def _physical_memory_bytes() -> int | None:
         return None
 
 
-def _resolve_workers(value: Any, *, jobs: int, memory_gb_per_worker: float, cap: int) -> int:
+def _resolve_worker_limit(value: Any, *, jobs: int, cap: int) -> int:
     if jobs < 1:
         raise ValueError("At least one paper job is required")
     cpu_count = os.cpu_count() or 1
     if cap < 1:
         raise ValueError("overlapping_paper.max_parallel_cap must be >= 1")
-    memory = _physical_memory_bytes()
-    memory_cap = jobs
-    if memory is not None and memory_gb_per_worker > 0:
-        per_worker = int(memory_gb_per_worker * (1024**3))
-        memory_cap = max(1, memory // per_worker)
-
     if isinstance(value, str) and value.strip().lower() == "auto":
-        return max(1, min(jobs, cpu_count, cap, memory_cap))
+        return max(1, min(jobs, cpu_count, cap))
     try:
         workers = int(value)
     except (TypeError, ValueError) as exc:
@@ -169,12 +169,6 @@ def _resolve_workers(value: Any, *, jobs: int, memory_gb_per_worker: float, cap:
     if workers > cap:
         raise ValueError(
             f"Requested {workers} workers but max_parallel_cap is {cap}; raise the cap explicitly"
-        )
-    if workers > memory_cap:
-        required = workers * memory_gb_per_worker
-        raise ValueError(
-            f"Requested {workers} workers needs at least {required:g} GiB according to "
-            "memory_gb_per_worker; lower workers or revise the explicit safety budget"
         )
     return min(workers, jobs)
 
@@ -214,15 +208,145 @@ def _parse_jobs(raw: Any) -> list[dict[str, Any]]:
     return jobs
 
 
-def _assign_jobs(jobs: list[dict[str, Any]], workers: int) -> list[list[dict[str, Any]]]:
-    """Greedily balance the known large SNAP graphs across worker windows."""
-    assignments: list[list[dict[str, Any]]] = [[] for _ in range(workers)]
-    loads = [0.0] * workers
-    for job in sorted(jobs, key=lambda item: (-float(item["weight"]), item["index"])):
-        target = min(range(workers), key=lambda index: (loads[index], index))
-        assignments[target].append(job)
-        loads[target] += float(job["weight"])
-    return assignments
+def _memory_budget_bytes(value: Any, reserve_gb: float) -> int:
+    """Resolve a usable experiment-memory budget, leaving OS headroom."""
+    if reserve_gb < 0:
+        raise ValueError("overlapping_paper.memory_reserve_gb must be >= 0")
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        physical = _physical_memory_bytes()
+        if physical is None:
+            raise ValueError(
+                "Could not determine physical memory; set overlapping_paper.memory_budget_gb explicitly"
+            )
+        budget = physical - int(reserve_gb * (1024**3))
+    else:
+        try:
+            budget = int(float(value) * (1024**3))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "overlapping_paper.memory_budget_gb must be a positive GiB value or 'auto'"
+            ) from exc
+    if budget <= 0:
+        raise ValueError("The memory budget must be positive after the OS reserve")
+    return budget
+
+
+def _job_memory_profile(
+    job: dict[str, Any],
+    *,
+    data_root: Path,
+    profile: str,
+    max_nodes: int,
+    methods: list[str],
+    memory_budget_bytes: int,
+    safety_factor: float,
+    configured_membership_cap: int | None,
+) -> dict[str, Any]:
+    """Estimate one job's peak and cap the hedonic workspace before launch.
+
+    The lucas-igraph overlap workspace scales as ``n * max_memberships``.
+    Treating the number of ground-truth communities as that capacity made the
+    old full LiveJournal and Wikipedia jobs require roughly 150 and 232 GiB.
+    The correct automatic capacity is the maximum *per-node* GT membership.
+    """
+    dataset = (
+        smoke_dataset(str(job["dataset"]), cover_variant=str(job["cover"]))
+        if profile == "smoke"
+        else load_snap_dataset(
+            str(job["dataset"]), cover_variant=str(job["cover"]), data_root=data_root
+        )
+    )
+    dataset = bounded_induced_dataset(dataset, max_nodes)
+    report = dataset.report
+    n, m = int(report["n"]), int(report["m"])
+    overlap = report.get("overlap_statistics", {})
+    memberships = int(overlap.get("memberships", 0))
+    community_count = int(report.get("number_of_communities", len(dataset.cover)))
+    gt_membership_cap = max(1, int(overlap.get("max_memberships_per_node", 1)))
+    requested_cap = min(
+        gt_membership_cap,
+        configured_membership_cap if configured_membership_cap is not None else gt_membership_cap,
+    )
+    requested_cap = max(2, requested_cap)
+
+    gib = 1024**3
+    # Parent graph + forked child graph bookkeeping, cover lists, and native
+    # igraph allocator headroom. NetworkX baselines are estimated separately
+    # with a deliberately pessimistic 512 B/edge because dict-backed adjacency
+    # dominates their full-graph peak.
+    igraph_bytes = 2 * (n * 64 + m * 32) + memberships * 24 + 2 * gib
+    networkx_bytes = n * 192 + m * 512 + 2 * gib
+    baseline_bytes = igraph_bytes + networkx_bytes if {"cpm", "demon"} & set(methods) else 0
+    hedonic_base_bytes = igraph_bytes
+    workspace_per_membership = n * 8
+    raw_room = int(memory_budget_bytes / safety_factor) - hedonic_base_bytes
+    fit_cap = raw_room // workspace_per_membership if workspace_per_membership else requested_cap
+    if {name for name in methods if name.startswith("hedonic_")}:
+        if fit_cap < 2:
+            raise ValueError(
+                f"{job['name']} cannot fit even two hedonic memberships within the "
+                f"{memory_budget_bytes / gib:.1f} GiB budget; increase the budget or use --max_nodes"
+            )
+        effective_cap = min(requested_cap, int(fit_cap))
+        hedonic_bytes = hedonic_base_bytes + workspace_per_membership * effective_cap
+    else:
+        effective_cap = requested_cap
+        hedonic_bytes = hedonic_base_bytes
+    raw_peak = max(hedonic_bytes, baseline_bytes)
+    estimated_peak = math.ceil(raw_peak * safety_factor)
+    if estimated_peak > memory_budget_bytes:
+        raise ValueError(
+            f"{job['name']} is estimated at {estimated_peak / gib:.1f} GiB, above the "
+            f"{memory_budget_bytes / gib:.1f} GiB budget; lower --max_nodes or raise the budget"
+        )
+    # Do not retain any full graph while profiling the next job.
+    del dataset
+    gc.collect()
+    return {
+        **job,
+        "max_memberships": effective_cap,
+        "memory": {
+            "n": n,
+            "m": m,
+            "ground_truth_community_count": community_count,
+            "ground_truth_max_memberships_per_node": gt_membership_cap,
+            "configured_membership_cap": configured_membership_cap,
+            "effective_max_memberships": effective_cap,
+            "bytes_per_vertex_membership": 8,
+            "naive_community_count_workspace_bytes": n * community_count * 8,
+            "effective_workspace_bytes": workspace_per_membership * effective_cap,
+            "igraph_parent_child_bytes": igraph_bytes,
+            "networkx_baseline_bytes": networkx_bytes if baseline_bytes else 0,
+            "safety_factor": safety_factor,
+            "estimated_peak_bytes": estimated_peak,
+            "detector_memory_limit_bytes": estimated_peak,
+        },
+    }
+
+
+def _schedule_memory_waves(
+    jobs: list[dict[str, Any]], *, memory_budget_bytes: int, worker_limit: int
+) -> list[list[dict[str, Any]]]:
+    """Pack independent jobs into waves whose estimated peaks fit the budget."""
+    remaining = sorted(
+        jobs,
+        key=lambda job: (-int(job["memory"]["estimated_peak_bytes"]), int(job["index"])),
+    )
+    waves: list[list[dict[str, Any]]] = []
+    while remaining:
+        wave: list[dict[str, Any]] = []
+        used = 0
+        for job in list(remaining):
+            estimate = int(job["memory"]["estimated_peak_bytes"])
+            if len(wave) < worker_limit and used + estimate <= memory_budget_bytes:
+                wave.append(job)
+                remaining.remove(job)
+                used += estimate
+        if not wave:  # guarded above, retained as an invariant check
+            job = remaining[0]
+            raise ValueError(f"No memory-safe schedule can place {job['name']}")
+        waves.append(wave)
+    return waves
 
 
 def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
@@ -253,14 +377,9 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
     if profile not in benchmark.PROFILE_DEFAULTS:
         raise ValueError("overlapping_paper.profile must be smoke, standard, or full")
     jobs = _parse_jobs(raw.get("jobs"))
-    memory_gb = float(raw.get("memory_gb_per_worker", 24))
-    if memory_gb <= 0:
-        raise ValueError("overlapping_paper.memory_gb_per_worker must be positive")
     cap = int(raw.get("max_parallel_cap", 2))
     worker_setting = args.workers if args.workers is not None else raw.get("max_parallel_workers", "auto")
-    workers = _resolve_workers(
-        worker_setting, jobs=len(jobs), memory_gb_per_worker=memory_gb, cap=cap
-    )
+    worker_limit = _resolve_worker_limit(worker_setting, jobs=len(jobs), cap=cap)
     if args.session is not None:
         session = args.session
     else:
@@ -283,17 +402,47 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         )
     benchmark._safe_output_dir(output_dir, data_root)
 
+    max_nodes = int(raw.get("max_nodes", 0))
+    timeout = float(raw.get("timeout_per_run", 3600))
+    if timeout <= 0:
+        raise ValueError("overlapping_paper.timeout_per_run must be positive")
+
+    reserve_gb = float(raw.get("memory_reserve_gb", 16))
+    memory_budget_bytes = _memory_budget_bytes(raw.get("memory_budget_gb", "auto"), reserve_gb)
+    safety_factor = float(raw.get("memory_safety_factor", 1.5))
+    if safety_factor < 1:
+        raise ValueError("overlapping_paper.memory_safety_factor must be >= 1")
+    membership_cap_raw = raw.get("max_memberships")
+    if membership_cap_raw is None:
+        membership_cap = None
+    else:
+        membership_cap = int(membership_cap_raw)
+        if membership_cap < 1:
+            raise ValueError("overlapping_paper.max_memberships must be >= 1")
+    profiled_jobs = [
+        _job_memory_profile(
+            job,
+            data_root=data_root,
+            profile=profile,
+            max_nodes=max_nodes,
+            methods=methods,
+            memory_budget_bytes=memory_budget_bytes,
+            safety_factor=safety_factor,
+            configured_membership_cap=membership_cap,
+        )
+        for job in jobs
+    ]
+    waves = _schedule_memory_waves(
+        profiled_jobs, memory_budget_bytes=memory_budget_bytes, worker_limit=worker_limit
+    )
+    workers = max(len(wave) for wave in waves)
+
     retries = int(raw.get("retry_attempts", 1))
     if retries < 0:
         raise ValueError("overlapping_paper.retry_attempts must be >= 0")
     poll_seconds = float(raw.get("poll_seconds", 10))
     if poll_seconds <= 0:
         raise ValueError("overlapping_paper.poll_seconds must be positive")
-    max_nodes = int(raw.get("max_nodes", 0))
-    timeout = float(raw.get("timeout_per_run", 3600))
-    if timeout <= 0:
-        raise ValueError("overlapping_paper.timeout_per_run must be positive")
-
     options = {
         "schema_version": PAPER_SCHEMA_VERSION,
         "created_at": _timestamp(),
@@ -314,10 +463,15 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         "retry_attempts": retries,
         "compile_paper": bool(raw.get("compile_paper", True)),
         "poll_seconds": poll_seconds,
-        "memory_gb_per_worker": memory_gb,
+        "memory_budget_bytes": memory_budget_bytes,
+        "memory_reserve_gb": reserve_gb,
+        "memory_safety_factor": safety_factor,
+        "configured_max_memberships": membership_cap,
         "max_parallel_cap": cap,
+        "worker_limit": worker_limit,
         "workers": workers,
-        "jobs": jobs,
+        "jobs": profiled_jobs,
+        "waves": waves,
     }
     return options, config_path
 
@@ -332,7 +486,9 @@ def _state_path(output_dir: Path, worker_index: int) -> Path:
 
 def _make_plan(options: dict[str, Any]) -> dict[str, Any]:
     workers = int(options["workers"])
-    assignments = _assign_jobs(list(options["jobs"]), workers)
+    assignments = [
+        wave + [None] * (workers - len(wave)) for wave in options["waves"]
+    ]
     return {
         **options,
         "plan_id": uuid.uuid4().hex,
@@ -345,14 +501,24 @@ def _write_new_plan(options: dict[str, Any]) -> dict[str, Any]:
     output_dir = Path(options["output_dir"])
     plan = _make_plan(options)
     _write_json(_plan_path(output_dir), plan)
-    for index, assignment in enumerate(plan["assignments"]):
+    workers = int(plan["workers"])
+    for index in range(workers):
+        jobs = [
+            job["name"]
+            for wave in plan["assignments"]
+            if index < len(wave) and isinstance((job := wave[index]), dict)
+        ]
         _write_json(
             _state_path(output_dir, index),
             {
                 "plan_id": plan["plan_id"],
                 "worker_index": index,
                 "status": "pending",
-                "jobs": [job["name"] for job in assignment],
+                "jobs": jobs,
+                "waves": [
+                    {"index": wave_index, "status": "pending"}
+                    for wave_index in range(len(plan["assignments"]))
+                ],
                 "updated_at": _timestamp(),
             },
         )
@@ -389,6 +555,10 @@ def _benchmark_argv(plan: dict[str, Any], job: dict[str, Any], output_dir: Path)
         str(plan["timeout_per_run"]),
         "--max_nodes",
         str(plan["max_nodes"]),
+        "--max_memberships",
+        str(job["max_memberships"]),
+        "--memory_limit_gb",
+        str(job["memory"]["detector_memory_limit_bytes"] / (1024**3)),
         "--output_dir",
         str(output_dir),
         "--no-plots",
@@ -415,45 +585,87 @@ def _job_retryable_records(
     )
 
 
-def run_worker(plan: dict[str, Any], worker_index: int) -> int:
-    """Execute one independent, memory-bounded worker assignment."""
+def _wait_for_wave(plan: dict[str, Any], wave_index: int) -> None:
+    """Barrier preventing a later wave from overlapping the current one."""
+    output_dir = Path(plan["output_dir"])
+    worker_count = int(plan["workers"])
+    final_statuses = {"completed", "error", "idle"}
+    while True:
+        states = [_read_json(_state_path(output_dir, index)) for index in range(worker_count)]
+        if all(
+            state is not None
+            and state.get("plan_id") == plan["plan_id"]
+            and isinstance(state.get("waves"), list)
+            and len(state["waves"]) > wave_index
+            and state["waves"][wave_index].get("status") in final_statuses
+            for state in states
+        ):
+            return
+        time.sleep(float(plan["poll_seconds"]))
+
+
+def run_worker(plan: dict[str, Any], worker_index: int, *, synchronize: bool = True) -> int:
+    """Execute assigned jobs one memory-budgeted wave at a time."""
     assignments = plan["assignments"]
-    if worker_index < 0 or worker_index >= len(assignments):
+    worker_count = int(plan["workers"])
+    if worker_index < 0 or worker_index >= worker_count:
         raise ValueError(f"Worker index {worker_index} is outside this plan")
     output_dir = Path(plan["output_dir"])
+    planned_jobs = [
+        job["name"]
+        for wave in assignments
+        if worker_index < len(wave) and isinstance((job := wave[worker_index]), dict)
+    ]
     state = {
         "plan_id": plan["plan_id"],
         "worker_index": worker_index,
         "status": "running",
-        "jobs": [job["name"] for job in assignments[worker_index]],
+        "jobs": planned_jobs,
         "completed_jobs": [],
         "failures": [],
+        "waves": [
+            {"index": wave_index, "status": "pending"}
+            for wave_index in range(len(assignments))
+        ],
         "started_at": _timestamp(),
         "updated_at": _timestamp(),
     }
     _write_json(_state_path(output_dir, worker_index), state)
 
-    for job in assignments[worker_index]:
-        shard_dir = output_dir / "shards" / str(job["name"])
-        attempts = 0
-        try:
-            while True:
-                code = benchmark.main(_benchmark_argv(plan, job, shard_dir))
-                retryable = _job_retryable_records(shard_dir, plan, job)
-                if code == 0 and (retryable == 0 or attempts >= int(plan["retry_attempts"])):
-                    break
-                attempts += 1
-                if attempts > int(plan["retry_attempts"]):
-                    break
-            if code != 0:
-                raise RuntimeError(f"benchmark returned exit code {code}")
-            state["completed_jobs"].append(
-                {"name": job["name"], "attempts": attempts + 1, "retryable_records": retryable}
-            )
-        except BaseException as exc:
-            state["failures"].append({"name": job["name"], "error": f"{type(exc).__name__}: {exc}"})
+    for wave_index, wave in enumerate(assignments):
+        job = wave[worker_index] if worker_index < len(wave) else None
+        state["waves"][wave_index] = {
+            "index": wave_index,
+            "status": "running" if isinstance(job, dict) else "idle",
+            "job": job["name"] if isinstance(job, dict) else None,
+        }
         state["updated_at"] = _timestamp()
         _write_json(_state_path(output_dir, worker_index), state)
+        if isinstance(job, dict):
+            shard_dir = output_dir / "shards" / str(job["name"])
+            attempts = 0
+            try:
+                while True:
+                    code = benchmark.main(_benchmark_argv(plan, job, shard_dir))
+                    retryable = _job_retryable_records(shard_dir, plan, job)
+                    if code == 0 and (retryable == 0 or attempts >= int(plan["retry_attempts"])):
+                        break
+                    attempts += 1
+                    if attempts > int(plan["retry_attempts"]):
+                        break
+                if code != 0:
+                    raise RuntimeError(f"benchmark returned exit code {code}")
+                state["completed_jobs"].append(
+                    {"name": job["name"], "attempts": attempts + 1, "retryable_records": retryable}
+                )
+                state["waves"][wave_index]["status"] = "completed"
+            except BaseException as exc:
+                state["failures"].append({"name": job["name"], "error": f"{type(exc).__name__}: {exc}"})
+                state["waves"][wave_index]["status"] = "error"
+        state["updated_at"] = _timestamp()
+        _write_json(_state_path(output_dir, worker_index), state)
+        if synchronize:
+            _wait_for_wave(plan, wave_index)
 
     state["status"] = "completed" if not state["failures"] else "error"
     state["finished_at"] = _timestamp()
@@ -821,7 +1033,7 @@ def finalize(plan: dict[str, Any]) -> int:
 def run_coordinator(plan: dict[str, Any]) -> int:
     """Wait for tmux workers, then run the sole aggregate/paper writer."""
     output_dir = Path(plan["output_dir"])
-    worker_count = len(plan["assignments"])
+    worker_count = int(plan["workers"])
     print(f"[coordinator] waiting for {worker_count} worker windows", flush=True)
     while True:
         states = [_read_json(_state_path(output_dir, index)) for index in range(worker_count)]
@@ -846,6 +1058,25 @@ def _tmux_command(plan_path: Path, action: str, worker_index: int | None = None)
     return "exec " + shlex.join(argv)
 
 
+def _print_memory_plan(plan: dict[str, Any]) -> None:
+    gib = 1024**3
+    print(
+        "[plan] memory budget: "
+        f"{plan['memory_budget_bytes'] / gib:.1f} GiB "
+        f"(reserve {float(plan['memory_reserve_gb']):.1f} GiB; "
+        f"safety factor {float(plan['memory_safety_factor']):.2g})"
+    )
+    for index, wave in enumerate(plan["assignments"], start=1):
+        jobs = [job for job in wave if isinstance(job, dict)]
+        used = sum(int(job["memory"]["estimated_peak_bytes"]) for job in jobs)
+        details = ", ".join(
+            f"{job['name']} ({job['memory']['estimated_peak_bytes'] / gib:.1f} GiB, "
+            f"K={job['max_memberships']})"
+            for job in jobs
+        )
+        print(f"[plan] wave {index}: {used / gib:.1f} GiB — {details}")
+
+
 def launch_tmux(plan: dict[str, Any]) -> int:
     if shutil.which("tmux") is None:
         raise RuntimeError("tmux is required; install it or use --no-tmux for a foreground debug run")
@@ -858,7 +1089,7 @@ def launch_tmux(plan: dict[str, Any]) -> int:
             f"tmux session {session!r} already exists; attach to it or set overlapping_paper.tmux_session to a new name"
         )
     plan_path = _plan_path(Path(plan["output_dir"])).resolve()
-    for index in range(len(plan["assignments"])):
+    for index in range(int(plan["workers"])):
         target = f"worker-{index + 1}"
         command = _tmux_command(plan_path, "worker", index)
         if index == 0:
@@ -874,14 +1105,15 @@ def launch_tmux(plan: dict[str, Any]) -> int:
     print(f"[launch] tmux session: {session}")
     print(f"[launch] attach with: tmux attach -t {session}")
     print(f"[launch] plan: {plan_path}")
+    _print_memory_plan(plan)
     return 0
 
 
 def run_foreground(plan: dict[str, Any]) -> int:
     """Debug/test mode without tmux; intentionally serial and race-free."""
     code = 0
-    for index in range(len(plan["assignments"])):
-        code = max(code, run_worker(plan, index))
+    for index in range(int(plan["workers"])):
+        code = max(code, run_worker(plan, index, synchronize=False))
     finalized = finalize(plan)
     return max(code, finalized)
 
@@ -924,7 +1156,18 @@ def main(argv: list[str] | None = None) -> int:
     options, _config_path = _load_options(args)
     plan = _write_new_plan(options)
     if args.dry_run:
-        print(json.dumps({"plan": str(_plan_path(Path(plan["output_dir"]))), "workers": plan["workers"], "assignments": plan["assignments"]}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "plan": str(_plan_path(Path(plan["output_dir"]))),
+                    "memory_budget_gib": plan["memory_budget_bytes"] / (1024**3),
+                    "memory_reserve_gib": plan["memory_reserve_gb"],
+                    "workers": plan["workers"],
+                    "assignments": plan["assignments"],
+                },
+                indent=2,
+            )
+        )
         return 0
     if args.finalize:
         return finalize(plan)

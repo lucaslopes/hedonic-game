@@ -284,10 +284,10 @@ examples:
       --cover top5000 --profile standard \\
       --output_dir ~/Databases/Hedonic/Networks/SNAP_BENCHMARK_CLI
 
-  # Full overlapping-paper protocol from [overlapping_paper] in TOML.
-  # Creates RAM-bounded tmux workers, merged cache tables/plots, and compiles
-  # main.tex only after every expected full-protocol record is terminal.
-  hedonic-exp reproduce-overlapping-paper
+  # Full overlapping-paper protocol: preflights graph/cover memory, waves
+  # compatible jobs below the TOML budget, then creates tmux workers.
+  # main.tex compiles only after every expected full-protocol record is terminal.
+  uv run hedonic-exp reproduce-overlapping-paper
   tmux attach -t hedonic-overlapping-paper
 
   # Complexity scale: size vs wallclock (local-moving vs full multi-phase)

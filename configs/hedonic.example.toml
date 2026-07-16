@@ -22,7 +22,7 @@ seeds = "0-4"
 # confidence = 0.95
 
 # Full paper reproduction (docs/papers/overlapping_communities/main.tex).
-# Launch with: hedonic-exp reproduce-overlapping-paper
+# Launch with: uv run hedonic-exp reproduce-overlapping-paper
 [overlapping_paper]
 profile = "full"
 data_root = "~/Databases/Hedonic/Networks"
@@ -39,10 +39,13 @@ omega_sample_size = 100000
 resume = true
 retry_attempts = 1
 
-# `auto` chooses a safe worker count from CPU count, RAM budget, jobs, and cap.
+# The runner measures graph/cover sizes and packs only jobs whose conservative
+# estimated peaks fit this budget. `auto` means physical RAM minus the reserve.
+memory_budget_gb = "auto"
+memory_reserve_gb = 16
+memory_safety_factor = 1.5
 max_parallel_workers = "auto"
 max_parallel_cap = 2
-memory_gb_per_worker = 24
 poll_seconds = 10
 compile_paper = true
 

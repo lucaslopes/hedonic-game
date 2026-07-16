@@ -57,15 +57,17 @@ It compares `hedonic_multiphase`, `hedonic_multiphase_x10`, and
 
 ```bash
 uv sync --extra experiments
-hedonic-exp reproduce-overlapping-paper --dry-run
-hedonic-exp reproduce-overlapping-paper
+uv run hedonic-exp reproduce-overlapping-paper --dry-run
+uv run hedonic-exp reproduce-overlapping-paper
 tmux attach -t hedonic-overlapping-paper
 ```
 
-The launcher assigns independent dataset/cover shards to RAM-bounded tmux
-workers (the default `auto` choice uses CPU count, a two-worker cap, and a
-24-GiB-per-worker safety budget), so no parallel process writes the same
-benchmark manifest or summary. A coordinator merges all cache records into
+Before launching tmux, the launcher measures each graph and supplied cover,
+derives `max_memberships` from the maximum ground-truth memberships of any
+single node, and estimates parent/child igraph plus NetworkX baseline memory.
+It packs only compatible jobs into waves below the detected-memory budget
+(48 GiB on the default 64-GiB Mac after a 16-GiB reserve). A parent RSS monitor
+terminates any detector exceeding its planned per-job limit. A coordinator merges all cache records into
 `docs/papers/overlapping_communities/artifacts/full/`, regenerates plots and
 the paper table fragment, and runs `latexmk` only after every planned full-run
 record is present and completed. Adjust all normal settings in
@@ -76,10 +78,11 @@ configs.
 
 `hedonic_local` and the three `hedonic_multiphase*` variants call
 `Game.community_hedonic(max_memberships=K, n_iterations=-1)`, where `K` is the
-number of applicable ground-truth communities. The local method uses only the
-local-moving phase; the multi-phase variants enable full Leiden refinement and
-aggregation. They set `allow_isolation=True` and cache the effective density
-multiplier resolution in each per-run record.
+maximum number of supplied ground-truth communities containing any one node
+(at least two), not the total number of communities. The local method uses only
+the local-moving phase; the multi-phase variants enable full Leiden refinement
+and aggregation. They set `allow_isolation=True` and cache the effective
+density multiplier resolution in each per-run record.
 
 Two independent default overlapping baselines are included in the experiments
 extra:

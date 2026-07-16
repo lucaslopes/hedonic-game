@@ -42,7 +42,9 @@ def _smoke_config(root: Path) -> Path:
                 "retry_attempts = 0",
                 "max_parallel_workers = 1",
                 "max_parallel_cap = 1",
-                "memory_gb_per_worker = 1",
+                "memory_budget_gb = 8",
+                "memory_reserve_gb = 0",
+                "memory_safety_factor = 1.5",
                 "poll_seconds = 0.01",
                 "compile_paper = false",
                 "",
@@ -64,6 +66,34 @@ def _smoke_config(root: Path) -> Path:
 
 
 class TestOverlappingPaperReproduction(unittest.TestCase):
+    def test_memory_plan_uses_per_node_membership_capacity_and_budgeted_waves(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = _smoke_config(root)
+            args = reproduce_paper.build_parser().parse_args(["--config", str(config)])
+            options, _ = reproduce_paper._load_options(args)
+            self.assertTrue(
+                all(job["max_memberships"] == 2 for job in options["jobs"])
+            )
+            plan = reproduce_paper._make_plan(options)
+            for wave in plan["assignments"]:
+                used = sum(
+                    int(job["memory"]["estimated_peak_bytes"])
+                    for job in wave
+                    if isinstance(job, dict)
+                )
+                self.assertLessEqual(used, int(plan["memory_budget_bytes"]))
+
+    def test_memory_scheduler_packs_only_jobs_that_fit_together(self):
+        jobs = [
+            {"name": "large", "index": 0, "memory": {"estimated_peak_bytes": 6}},
+            {"name": "medium", "index": 1, "memory": {"estimated_peak_bytes": 4}},
+            {"name": "small", "index": 2, "memory": {"estimated_peak_bytes": 3}},
+        ]
+        waves = reproduce_paper._schedule_memory_waves(
+            jobs, memory_budget_bytes=7, worker_limit=2
+        )
+        self.assertEqual([[job["name"] for job in wave] for wave in waves], [["large"], ["medium", "small"]])
     def test_toml_driven_smoke_foreground_merges_and_preserves_smoke_switch(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -88,6 +118,15 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
             self.assertIn("\\smokeresultstrue", (output / "paper_status.tex").read_text())
             self.assertTrue((output / "plots" / "accuracy_by_dataset.pdf").is_file())
             self.assertFalse(any("hedonic_local" in path.parts for path in (output / "shards").rglob("*.json")))
+            records = [
+                json.loads(path.read_text())
+                for path in (output / "shards").rglob("runs/**/*.json")
+            ]
+            self.assertTrue(records)
+            self.assertTrue(all(record["memory_limit_bytes"] > 0 for record in records))
+            self.assertTrue(
+                all(record["detector_memory"]["limit_bytes"] == record["memory_limit_bytes"] for record in records)
+            )
 
     def test_local_only_variant_is_rejected_by_the_paper_protocol(self):
         with tempfile.TemporaryDirectory() as directory:

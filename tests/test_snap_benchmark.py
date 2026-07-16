@@ -202,6 +202,10 @@ class TestBenchmarkHelpers(unittest.TestCase):
                 for path in (output / "runs").rglob("*.json")
             ]
             self.assertTrue(all(record["allow_isolation"] for record in hedonic_records))
+            self.assertTrue(all(record["max_memberships"] == 2 for record in hedonic_records))
+            self.assertTrue(
+                all(record["ground_truth_max_memberships"] == 2 for record in hedonic_records)
+            )
             self.assertTrue(
                 all(
                     record["resolution"] == min(

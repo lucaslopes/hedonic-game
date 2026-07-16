@@ -13,6 +13,7 @@ import csv
 import gzip
 import json
 import multiprocessing as mp
+import subprocess
 import sys
 import time
 import traceback
@@ -217,8 +218,10 @@ def _worker(
     max_memberships: int,
     resolution: float,
     seed: int,
+    memory_limit_bytes: int | None,
 ) -> None:
     """Subprocess entry point used for enforceable per-run wall-clock limits."""
+    memory: dict[str, Any] = {"limit_bytes": memory_limit_bytes}
     try:
         cover, method_meta = run_method(
             METHODS[method_name],
@@ -227,15 +230,39 @@ def _worker(
             resolution=resolution,
             seed=seed,
         )
-        queue.put({"status": "ok", "cover": cover, "method_meta": method_meta})
+        try:
+            import resource
+
+            peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+            # macOS reports bytes; Linux reports KiB.
+            memory["peak_rss_bytes"] = peak if sys.platform == "darwin" else peak * 1024
+        except (AttributeError, ValueError):  # pragma: no cover - platform-specific
+            pass
+        queue.put(
+            {"status": "ok", "cover": cover, "method_meta": method_meta, "memory": memory}
+        )
     except BaseException as exc:  # child errors must reach a resumable run record
         queue.put(
             {
                 "status": "error",
                 "error": f"{type(exc).__name__}: {exc}",
                 "traceback": traceback.format_exc(),
+                "memory": memory,
             }
         )
+
+
+def _process_rss_bytes(pid: int) -> int | None:
+    """Return current RSS for an isolated detector process, if observable."""
+    try:
+        output = subprocess.check_output(
+            ["ps", "-o", "rss=", "-p", str(pid)],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        return int(output) * 1024 if output else None
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return None
 
 
 def _run_with_timeout(
@@ -246,6 +273,7 @@ def _run_with_timeout(
     resolution: float,
     seed: int,
     timeout_seconds: float | None,
+    memory_limit_bytes: int | None = None,
 ) -> dict[str, Any]:
     """Run a detector in an isolated process, terminating genuine timeouts."""
     if timeout_seconds is None or timeout_seconds <= 0:
@@ -272,20 +300,51 @@ def _run_with_timeout(
     queue = context.Queue()
     process = context.Process(
         target=_worker,
-        args=(queue, method_name, graph, max_memberships, resolution, seed),
+        args=(
+            queue,
+            method_name,
+            graph,
+            max_memberships,
+            resolution,
+            seed,
+            memory_limit_bytes,
+        ),
     )
     started = time.monotonic()
     process.start()
-    process.join(timeout_seconds)
+    peak_rss_bytes = 0
+    while process.is_alive():
+        elapsed = time.monotonic() - started
+        if elapsed >= timeout_seconds:
+            process.terminate()
+            process.join(5)
+            return {
+                "status": "timeout",
+                "runtime_seconds": elapsed,
+                "timeout_seconds": timeout_seconds,
+                "memory": {
+                    "limit_bytes": memory_limit_bytes,
+                    "enforcement": "parent_rss_monitor" if memory_limit_bytes else None,
+                    "observed_peak_rss_bytes": peak_rss_bytes,
+                },
+            }
+        rss_bytes = _process_rss_bytes(process.pid)
+        if rss_bytes is not None:
+            peak_rss_bytes = max(peak_rss_bytes, rss_bytes)
+            if memory_limit_bytes is not None and rss_bytes > memory_limit_bytes:
+                process.terminate()
+                process.join(5)
+                return {
+                    "status": "memory_limit",
+                    "runtime_seconds": elapsed,
+                    "memory": {
+                        "limit_bytes": memory_limit_bytes,
+                        "enforcement": "parent_rss_monitor",
+                        "observed_peak_rss_bytes": peak_rss_bytes,
+                    },
+                }
+        process.join(min(0.25, max(0.01, timeout_seconds - elapsed)))
     elapsed = time.monotonic() - started
-    if process.is_alive():
-        process.terminate()
-        process.join(5)
-        return {
-            "status": "timeout",
-            "runtime_seconds": elapsed,
-            "timeout_seconds": timeout_seconds,
-        }
     try:
         packet = queue.get(timeout=2)
     except Exception:
@@ -295,6 +354,17 @@ def _run_with_timeout(
             "error": f"Detector subprocess exited without a result (exit={process.exitcode})",
         }
     packet["runtime_seconds"] = elapsed
+    memory = packet.get("memory")
+    if not isinstance(memory, dict):
+        memory = {}
+        packet["memory"] = memory
+    memory.update(
+        {
+            "limit_bytes": memory_limit_bytes,
+            "enforcement": "parent_rss_monitor" if memory_limit_bytes else None,
+            "observed_peak_rss_bytes": peak_rss_bytes,
+        }
+    )
     return packet
 
 
@@ -527,6 +597,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true", help="Skip existing per-run records")
     parser.add_argument("--timeout_per_run", type=float, help="Hard wall-clock limit per detector run (seconds; <=0 disables)")
     parser.add_argument("--max_nodes", type=int, help="Deterministic GT-informed induced-subgraph cap; <=0 disables")
+    parser.add_argument(
+        "--max_memberships",
+        type=int,
+        help=(
+            "Cap memberships per vertex for hedonic methods; the default is the "
+            "maximum ground-truth memberships of any node, not the number of communities"
+        ),
+    )
+    parser.add_argument(
+        "--memory_limit_gb",
+        type=float,
+        help=(
+            "RSS limit for each isolated detector process; <=0 disables. A parent monitor "
+            "terminates an over-limit child. The paper scheduler supplies a graph-aware value."
+        ),
+    )
     parser.add_argument("--omega", action="store_true", help="Compute memory-safe sampled Omega")
     parser.add_argument("--omega_sample_size", type=int, default=100_000)
     parser.add_argument("--plots", dest="plots", action="store_true", default=None)
@@ -562,6 +648,10 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
     profile = PROFILE_DEFAULTS[args.profile]
     datasets = _parse_csv(args.datasets, network_names(), "dataset") or profile["datasets"]
     methods = _parse_csv(args.methods, METHODS, "method") or profile["methods"]
+    if args.max_memberships is not None and args.max_memberships < 1:
+        raise ValueError("--max_memberships must be >= 1")
+    if args.memory_limit_gb is not None and args.memory_limit_gb <= 0:
+        raise ValueError("--memory_limit_gb must be positive when supplied")
     return {
         "datasets": datasets,
         "methods": methods,
@@ -569,6 +659,12 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
         "seeds": parse_seeds(args.seeds) or profile["seeds"],
         "resolutions": parse_resolutions(args.resolutions) or profile["resolutions"],
         "max_nodes": args.max_nodes if args.max_nodes is not None else profile["max_nodes"],
+        "max_memberships": args.max_memberships,
+        "memory_limit_bytes": (
+            int(args.memory_limit_gb * (1024**3))
+            if args.memory_limit_gb is not None
+            else None
+        ),
         "timeout_per_run": (
             args.timeout_per_run
             if args.timeout_per_run is not None
@@ -658,6 +754,29 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
         if args.dry_run:
             continue
+        ground_truth_membership_cap = max(
+            1,
+            int(
+                dataset.report.get("overlap_statistics", {}).get(
+                    "max_memberships_per_node", 1
+                )
+            ),
+        )
+        configured_membership_cap = options["max_memberships"]
+        max_memberships = max(
+            2,
+            min(
+                ground_truth_membership_cap,
+                configured_membership_cap
+                if configured_membership_cap is not None
+                else ground_truth_membership_cap,
+            ),
+        )
+        manifest["datasets"][dataset_name]["membership_capacity"] = {
+            "ground_truth_max_memberships_per_node": ground_truth_membership_cap,
+            "configured_cap": configured_membership_cap,
+            "effective_max_memberships": max_memberships,
+        }
         for requested_resolution in options["resolutions"]:
             requested_value = (
                 dataset.graph.density()
@@ -675,7 +794,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             "unavailable",
                             "skipped",
                             "data_unavailable",
-                        }:
+                            "memory_limit",
+                        } and existing.get("max_memberships") == max_memberships:
                             existing["run_path"] = str(path)
                             records.append(existing)
                             print(f"[resume] {dataset.name}/{adapter.name}/seed={seed}/resolution={resolution:.6g}")
@@ -702,14 +822,16 @@ def run_benchmark(args: argparse.Namespace) -> int:
                         outcome = _run_with_timeout(
                             adapter.name,
                             dataset.graph,
-                            max_memberships=max(2, len(dataset.cover)),
+                            max_memberships=max_memberships,
                             resolution=resolution,
                             seed=seed,
                             timeout_seconds=options["timeout_per_run"],
+                            memory_limit_bytes=options["memory_limit_bytes"],
                         )
                         if outcome["status"] == "ok":
                             cover = outcome.pop("cover")
                             method_meta = outcome.pop("method_meta")
+                            detector_memory = outcome.pop("memory", None)
                             metrics = evaluate_cover(
                                 cover,
                                 dataset.cover,
@@ -738,7 +860,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 status="completed",
                                 profile=args.profile,
                                 dataset_report=dataset.report,
-                                max_memberships=max(2, len(dataset.cover)),
+                                max_memberships=max_memberships,
+                                ground_truth_max_memberships=ground_truth_membership_cap,
+                                memory_limit_bytes=options["memory_limit_bytes"],
+                                detector_memory=detector_memory,
                                 n_iterations=-1,
                                 only_local_moving=bool(
                                     adapter.parameters.get("only_local_moving", False)
@@ -759,7 +884,9 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 status=outcome.pop("status"),
                                 profile=args.profile,
                                 dataset_report=dataset.report,
-                                max_memberships=max(2, len(dataset.cover)),
+                                max_memberships=max_memberships,
+                                ground_truth_max_memberships=ground_truth_membership_cap,
+                                memory_limit_bytes=options["memory_limit_bytes"],
                                 **outcome,
                             )
                     _write_json(path, record)

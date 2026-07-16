@@ -284,8 +284,8 @@ hedonic-exp overlapping-benchmark --list-methods
 
 # Complete overlapping SNAP paper reproduction. All run parameters are in
 # configs/hedonic.toml [overlapping_paper]; raw SNAP archives stay read-only.
-hedonic-exp reproduce-overlapping-paper --dry-run
-hedonic-exp reproduce-overlapping-paper
+uv run hedonic-exp reproduce-overlapping-paper --dry-run
+uv run hedonic-exp reproduce-overlapping-paper
 tmux attach -t hedonic-overlapping-paper
 ```
 
@@ -352,7 +352,10 @@ Or one shot: `hedonic-exp reproduce-disjoint --preset v1020 --output_root …/V1
 
 - Detection: **`Game.community_hedonic(..., max_memberships=K)`**.
 - **Always** pass **`n_iterations=-1`** (or any negative value) so local moving runs until equilibrium. Positive budgets may stop early; CLI defaults are `-1`.
-- **`max_memberships`** defaults to the **number of ground-truth communities** relevant to the run (subgraph: GT communities with ≥2 nodes inside the L-hop window; full graph: `len(gt)`). Override only when intentionally capping K.
+- **SNAP benchmark `max_memberships`** defaults to the maximum number of
+  ground-truth communities containing any one node (at least 2), not `len(gt)`.
+  This keeps overlap capacity semantically meaningful and bounds the native
+  `n × max_memberships` workspace. Override only when intentionally capping it.
 - Metrics vs covers: **`experiments.overlapping.metrics`** (`evaluate_cover`, `partition_to_cover_lists`, `cover_quality`, baselines, optional Nash check).
 - DBLP load: `dblp_full.load_dblp` (cache `dblp.pkl`, or `pkl/`, or `raw/*.gz`).
 - Subgraph methods:
@@ -383,7 +386,8 @@ memory-safe sampled Omega metric.
 
 Methods are adapters, not new core algorithms: `hedonic_local` and the three
 `hedonic_multiphase*` variants call `Game.community_hedonic` with
-`n_iterations=-1` and the ground-truth community count as `max_memberships`.
+`n_iterations=-1` and the maximum per-node ground-truth membership count as
+`max_memberships`.
 The multi-phase variants enable `allow_isolation=True` and fix resolution to
 `min(density × {1,10,100}, 1)`; CPM uses NetworkX clique percolation; DEMON
 uses its maintained external Python package. Install all baselines with
@@ -405,9 +409,10 @@ the three density-scaled multi-phase variants (`hedonic_multiphase`, `_x10`,
 `_x100`) with `cpm,demon`; it rejects `hedonic_local`. All three pass
 `allow_isolation=True`.
 
-The command writes a plan, opens one tmux window per RAM-bounded worker plus a
-coordinator, and assigns whole dataset/cover shards so no two processes write
-the same benchmark manifest or summary. Shards remain resumable under
+The command measures graph/cover sizes before launch, records conservative
+per-job peak-memory estimates and parent-RSS detector limits in `plan.json`,
+then opens tmux workers in memory-budgeted waves so incompatible large graphs
+cannot overlap. Shards remain resumable under
 `artifacts/full/shards/`; the coordinator creates the merged `results.*`,
 `summary.*`, `paper_summary.csv`, regenerated `plots/`, and TeX fragments.
 `main.tex` stays on its smoke branch until all expected full-protocol records

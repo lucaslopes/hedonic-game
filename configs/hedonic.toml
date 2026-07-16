@@ -28,12 +28,11 @@ seeds = "0-4"
 
 # Complete, resumable reproduction of docs/papers/overlapping_communities/main.tex.
 # One command launches a tmux session with independent dataset shards:
-#   hedonic-exp reproduce-overlapping-paper
+#   uv run hedonic-exp reproduce-overlapping-paper
 #
-# `auto` picks the smaller of logical CPUs, the configured cap, the job count,
-# and installed-RAM / memory_gb_per_worker.  A worker holds at most one complete
-# SNAP graph and runs one detector subprocess at a time.  This avoids shared
-# manifest/summary writers while using available CPU safely overnight.
+# Before launching tmux, the runner loads each graph once, measures n, m, and
+# the maximum GT memberships per node, estimates each detector peak, and packs
+# only memory-safe jobs into concurrent waves. The plan records every estimate.
 [overlapping_paper]
 profile = "full"
 data_root = "~/Databases/Hedonic/Networks"
@@ -54,11 +53,15 @@ omega_sample_size = 100000
 resume = true
 retry_attempts = 1            # retry timeout/error records once in the same overnight run
 
-# RAM guard for parallel full-network runs.  With 64 GiB this permits two
-# workers; on a 32 GiB machine it uses one.  Raise only after measuring peaks.
+# On this 64-GiB unified-memory Mac, reserve 16 GiB for macOS and other apps.
+# The remaining 48 GiB is a hard scheduling budget; a parent RSS monitor kills
+# any child detector exceeding its per-job limit. Do not raise this without
+# examining plan.json.
+memory_budget_gb = "auto"
+memory_reserve_gb = 16
+memory_safety_factor = 1.5
 max_parallel_workers = "auto"
 max_parallel_cap = 2
-memory_gb_per_worker = 24
 poll_seconds = 10
 compile_paper = true
 
