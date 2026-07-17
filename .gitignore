@@ -22,4 +22,5 @@ artifacts/
 *.bbl
 *.aux
 *.pdf
+*.gz
 img/

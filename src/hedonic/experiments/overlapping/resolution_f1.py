@@ -56,7 +56,7 @@ from hedonic.experiments.overlapping.metrics import (
     quality_overlapping_cpm,
     symmetric_best_match_metrics,
 )
-from hedonic.utils import sample_uniform_ints
+from hedonic.experiments.overlapping.methods import seeded_initial_membership
 
 # Fixed algorithm flags (not CLI knobs) — match the experiment contract.
 N_ITERATIONS = -1
@@ -143,28 +143,6 @@ def parse_seeds(spec: str) -> list[int]:
             raise ValueError(f"seed range end < start: {spec!r}")
         return list(range(start, stop + 1))
     return [int(x.strip()) for x in spec.split(",") if x.strip()]
-
-
-def seeded_initial_membership(
-    n_vertices: int,
-    n_communities: int,
-    seed: int,
-) -> list[int]:
-    """Seed-dependent random disjoint labels in ``[0, K)``, labels contiguous.
-
-    Used as overlapping init (flat vector expanded to singleton lists per
-    vertex) so multi-seed F1 CIs are not identical duplicates when the
-    Leiden binding does not take an RNG seed.
-    """
-    k = max(1, int(n_communities))
-    if k == 1:
-        return [0] * n_vertices
-    raw = sample_uniform_ints(n_vertices, k - 1, seed).tolist()
-    uniq = sorted(set(raw))
-    if len(uniq) == k and uniq[0] == 0 and uniq[-1] == k - 1:
-        return [int(x) for x in raw]
-    remap = {old: new for new, old in enumerate(uniq)}
-    return [remap[int(x)] for x in raw]
 
 
 def mean_ci(

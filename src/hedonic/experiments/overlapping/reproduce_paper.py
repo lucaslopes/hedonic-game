@@ -49,7 +49,10 @@ from hedonic.experiments.overlapping.snap import (
 )
 
 
-PAPER_SCHEMA_VERSION = 2
+PAPER_SCHEMA_VERSION = 4
+MIN_MAC_RESERVE_GB = 20.0
+DEFAULT_MAC_RESERVE_GB = 24.0
+DEFAULT_SAFETY_FACTOR = 1.5
 DEFAULT_METHODS = (
     "hedonic_multiphase",
     "hedonic_multiphase_x10",
@@ -64,8 +67,11 @@ DEFAULT_JOBS = (
     ("youtube", "top5000"),
     ("wikipedia", "all"),
 )
-TERMINAL_STATUSES = {"completed", "unavailable", "skipped", "data_unavailable", "memory_limit"}
-RETRYABLE_STATUSES = {"timeout", "error"}
+# Resource exhaustion is deterministic for a fixed condition and is never
+# retried automatically. A detector exception is the only potentially
+# transient outcome, and even that defaults to zero retries in TOML.
+RETRYABLE_STATUSES = {"failed"}
+NON_RETRYABLE_FAILURES = {"timeout", "memory_limit", "oom", "skipped_not_scalable"}
 _DATASET_WEIGHT = {
     "dblp": 1,
     "amazon": 2,
@@ -231,6 +237,28 @@ def _memory_budget_bytes(value: Any, reserve_gb: float) -> int:
     return budget
 
 
+def _historical_peaks(output_dir: Path | None, job: dict[str, Any], methods: list[str]) -> tuple[dict[str, int], bool]:
+    """Read observed process-tree peaks without treating old limits as peaks."""
+    if output_dir is None:
+        return {}, True
+    shard = output_dir / "shards" / str(job["name"])
+    peaks: dict[str, int] = {}
+    uncertain = False
+    for record in benchmark._completed_records(shard):
+        method = str(record.get("method", ""))
+        if method not in methods:
+            continue
+        memory = record.get("memory") or record.get("detector_memory")
+        observed = memory.get("observed_peak_rss_bytes") if isinstance(memory, dict) else None
+        if isinstance(observed, (int, float)) and observed > 0:
+            peaks[method] = max(peaks.get(method, 0), int(observed))
+        elif record.get("status") in {"memory_limit", "oom", "timeout", "failed"}:
+            uncertain = True
+    if not peaks:
+        uncertain = True
+    return peaks, uncertain
+
+
 def _job_memory_profile(
     job: dict[str, Any],
     *,
@@ -241,6 +269,7 @@ def _job_memory_profile(
     memory_budget_bytes: int,
     safety_factor: float,
     configured_membership_cap: int | None,
+    output_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Estimate one job's peak and cap the hedonic workspace before launch.
 
@@ -270,6 +299,7 @@ def _job_memory_profile(
     requested_cap = max(2, requested_cap)
 
     gib = 1024**3
+    historical_peaks, history_uncertain = _historical_peaks(output_dir, job, methods)
     # Parent graph + forked child graph bookkeeping, cover lists, and native
     # igraph allocator headroom. NetworkX baselines are estimated separately
     # with a deliberately pessimistic 512 B/edge because dict-backed adjacency
@@ -292,13 +322,27 @@ def _job_memory_profile(
     else:
         effective_cap = requested_cap
         hedonic_bytes = hedonic_base_bytes
-    raw_peak = max(hedonic_bytes, baseline_bytes)
-    estimated_peak = math.ceil(raw_peak * safety_factor)
-    if estimated_peak > memory_budget_bytes:
-        raise ValueError(
-            f"{job['name']} is estimated at {estimated_peak / gib:.1f} GiB, above the "
-            f"{memory_budget_bytes / gib:.1f} GiB budget; lower --max_nodes or raise the budget"
-        )
+    method_estimates: dict[str, int] = {}
+    for method in methods:
+        if method.startswith("hedonic_"):
+            method_estimates[method] = hedonic_bytes
+        elif method == "demon":
+            method_estimates[method] = int(networkx_bytes * 1.25)
+        else:
+            method_estimates[method] = baseline_bytes or igraph_bytes
+    raw_peak = max(method_estimates.values(), default=igraph_bytes)
+    unbounded_estimated_peak = max(
+        math.ceil(raw_peak * safety_factor),
+        max((int(value * 1.25) for value in historical_peaks.values()), default=0),
+    )
+    # The hard detector cap is the safe budget even when the conservative
+    # unbounded estimate is larger. Such a job is still planned as a solo wave
+    # and any hit is reported as memory_limit/non-scalable; it is never allowed
+    # to borrow the OS reserve or another worker's budget.
+    estimated_peak = min(unbounded_estimated_peak, memory_budget_bytes)
+    parent_allowance = n * 64 + m * 32 + gib
+    detector_limit = max(gib // 2, estimated_peak - parent_allowance)
+    detector_limit = min(detector_limit, estimated_peak)
     # Do not retain any full graph while profiling the next job.
     del dataset
     gc.collect()
@@ -319,7 +363,22 @@ def _job_memory_profile(
             "networkx_baseline_bytes": networkx_bytes if baseline_bytes else 0,
             "safety_factor": safety_factor,
             "estimated_peak_bytes": estimated_peak,
-            "detector_memory_limit_bytes": estimated_peak,
+            "unbounded_estimated_peak_bytes": unbounded_estimated_peak,
+            "parent_memory_allowance_bytes": parent_allowance,
+            "detector_memory_limit_bytes": detector_limit,
+            "memory_estimate_clamped_to_hard_budget": unbounded_estimated_peak > memory_budget_bytes,
+            "method_estimates_bytes": method_estimates,
+            "historical_observed_peaks_bytes": historical_peaks,
+            "history_uncertain": history_uncertain,
+            "schedule_reason": (
+                "livejournal_must_be_serialized"
+                if job["dataset"] == "livejournal"
+                else "unbounded_estimate_exceeds_budget_hard_cap_applied"
+                if unbounded_estimated_peak > memory_budget_bytes
+                else "historical_peak_missing_or_incomplete"
+                if history_uncertain
+                else "graph_and_method_estimate"
+            ),
         },
     }
 
@@ -328,9 +387,12 @@ def _schedule_memory_waves(
     jobs: list[dict[str, Any]], *, memory_budget_bytes: int, worker_limit: int
 ) -> list[list[dict[str, Any]]]:
     """Pack independent jobs into waves whose estimated peaks fit the budget."""
+    # Start with the least demanding dataset so the protocol validates its
+    # full record/merge path before reaching the largest memory-risk jobs.
+    # LiveJournal remains a dedicated wave regardless of this ordering.
     remaining = sorted(
         jobs,
-        key=lambda job: (-int(job["memory"]["estimated_peak_bytes"]), int(job["index"])),
+        key=lambda job: (int(job["memory"]["estimated_peak_bytes"]), int(job["index"])),
     )
     waves: list[list[dict[str, Any]]] = []
     while remaining:
@@ -338,6 +400,10 @@ def _schedule_memory_waves(
         used = 0
         for job in list(remaining):
             estimate = int(job["memory"]["estimated_peak_bytes"])
+            if job.get("dataset") == "livejournal" and wave:
+                continue
+            if any(item.get("dataset") == "livejournal" for item in wave):
+                continue
             if len(wave) < worker_limit and used + estimate <= memory_budget_bytes:
                 wave.append(job)
                 remaining.remove(job)
@@ -407,9 +473,14 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
     if timeout <= 0:
         raise ValueError("overlapping_paper.timeout_per_run must be positive")
 
-    reserve_gb = float(raw.get("memory_reserve_gb", 16))
+    reserve_gb = float(raw.get("memory_reserve_gb", DEFAULT_MAC_RESERVE_GB))
+    if profile == "full" and reserve_gb < MIN_MAC_RESERVE_GB:
+        raise ValueError(
+            f"Full paper protocol must reserve at least {MIN_MAC_RESERVE_GB:.0f} GiB for macOS; "
+            "use 20--24 GiB or more"
+        )
     memory_budget_bytes = _memory_budget_bytes(raw.get("memory_budget_gb", "auto"), reserve_gb)
-    safety_factor = float(raw.get("memory_safety_factor", 1.5))
+    safety_factor = float(raw.get("memory_safety_factor", DEFAULT_SAFETY_FACTOR))
     if safety_factor < 1:
         raise ValueError("overlapping_paper.memory_safety_factor must be >= 1")
     membership_cap_raw = raw.get("max_memberships")
@@ -429,17 +500,24 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
             memory_budget_bytes=memory_budget_bytes,
             safety_factor=safety_factor,
             configured_membership_cap=membership_cap,
+            output_dir=output_dir,
         )
         for job in jobs
     ]
+    if isinstance(worker_setting, str) and worker_setting.strip().lower() == "auto" and any(
+        bool(job["memory"].get("history_uncertain")) for job in profiled_jobs
+    ):
+        worker_limit = 1
     waves = _schedule_memory_waves(
         profiled_jobs, memory_budget_bytes=memory_budget_bytes, worker_limit=worker_limit
     )
     workers = max(len(wave) for wave in waves)
 
-    retries = int(raw.get("retry_attempts", 1))
+    retries = int(raw.get("retry_attempts", 0))
     if retries < 0:
         raise ValueError("overlapping_paper.retry_attempts must be >= 0")
+    if retries > 1:
+        raise ValueError("overlapping_paper.retry_attempts must be 0 or 1")
     poll_seconds = float(raw.get("poll_seconds", 10))
     if poll_seconds <= 0:
         raise ValueError("overlapping_paper.poll_seconds must be positive")
@@ -456,11 +534,24 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         "seeds": str(raw.get("seeds", "0-4")),
         "resolutions": str(raw.get("resolutions", "auto")),
         "timeout_per_run": timeout,
+        "timeout_by_method": benchmark._parse_timeout_map(
+            raw.get("timeout_by_method", raw.get("timeout_per_method")),
+            "overlapping_paper.timeout_by_method",
+        ),
+        "timeout_by_dataset": benchmark._parse_timeout_map(
+            raw.get("timeout_by_dataset"), "overlapping_paper.timeout_by_dataset"
+        ),
         "max_nodes": max_nodes,
         "omega": bool(raw.get("omega", True)),
         "omega_sample_size": int(raw.get("omega_sample_size", 100_000)),
         "resume": bool(raw.get("resume", True)),
         "retry_attempts": retries,
+        "retry_policy": {
+            "default_attempts": retries,
+            "timeout_memory_limit_oom_max_attempts": 0,
+            "failed_max_attempts": retries,
+            "baseline_resource_failures": "skipped_not_scalable_without_repeat",
+        },
         "compile_paper": bool(raw.get("compile_paper", True)),
         "poll_seconds": poll_seconds,
         "memory_budget_bytes": memory_budget_bytes,
@@ -489,17 +580,56 @@ def _make_plan(options: dict[str, Any]) -> dict[str, Any]:
     assignments = [
         wave + [None] * (workers - len(wave)) for wave in options["waves"]
     ]
+    gib = 1024**3
+    wave_reports = []
+    for index, wave in enumerate(options["waves"]):
+        used = sum(int(job["memory"]["estimated_peak_bytes"]) for job in wave)
+        wave_reports.append(
+            {
+                "index": index,
+                "jobs": [job["name"] for job in wave],
+                "estimated_peak_bytes": used,
+                "estimated_peak_gib": round(used / gib, 3),
+                "unbounded_estimated_peak_bytes": sum(
+                    int(job["memory"].get("unbounded_estimated_peak_bytes", job["memory"]["estimated_peak_bytes"]))
+                    for job in wave
+                ),
+                "budget_bytes": int(options["memory_budget_bytes"]),
+                "fits_budget": used <= int(options["memory_budget_bytes"]),
+                "unbounded_estimate_fits_budget": all(
+                    int(job["memory"].get("unbounded_estimated_peak_bytes", job["memory"]["estimated_peak_bytes"]))
+                    <= int(options["memory_budget_bytes"])
+                    for job in wave
+                ),
+                "decision": "livejournal_serialized"
+                if any(job.get("dataset") == "livejournal" for job in wave)
+                else "hard_cap_applied_to_unbounded_estimate"
+                if any(job["memory"].get("memory_estimate_clamped_to_hard_budget") for job in wave)
+                else "conservative_memory_fit",
+            }
+        )
     return {
         **options,
         "plan_id": uuid.uuid4().hex,
         "started_at": _timestamp(),
         "assignments": assignments,
+        "wave_reports": wave_reports,
+        "scheduler_policy": {
+            "memory_budget_is_hard_limit": True,
+            "livejournal_never_coScheduled": True,
+            "uncertain_estimates_force_serial_workers": True,
+            "reserve_for_macOS_gib": max(float(options["memory_reserve_gb"]), MIN_MAC_RESERVE_GB),
+        },
     }
 
 
 def _write_new_plan(options: dict[str, Any]) -> dict[str, Any]:
     output_dir = Path(options["output_dir"])
     plan = _make_plan(options)
+    old_plan = _plan_path(output_dir)
+    if old_plan.is_file():
+        backup = old_plan.with_name(f"plan.previous.{int(time.time())}.json")
+        shutil.copy2(old_plan, backup)
     _write_json(_plan_path(output_dir), plan)
     workers = int(plan["workers"])
     for index in range(workers):
@@ -513,6 +643,7 @@ def _write_new_plan(options: dict[str, Any]) -> dict[str, Any]:
             {
                 "plan_id": plan["plan_id"],
                 "worker_index": index,
+                "worker_pid": None,
                 "status": "pending",
                 "jobs": jobs,
                 "waves": [
@@ -535,7 +666,9 @@ def _load_plan(path: Path) -> dict[str, Any]:
     return plan
 
 
-def _benchmark_argv(plan: dict[str, Any], job: dict[str, Any], output_dir: Path) -> list[str]:
+def _benchmark_argv(
+    plan: dict[str, Any], job: dict[str, Any], output_dir: Path, *, execution: str = "fresh"
+) -> list[str]:
     argv = [
         "--profile",
         str(plan["profile"]),
@@ -553,6 +686,10 @@ def _benchmark_argv(plan: dict[str, Any], job: dict[str, Any], output_dir: Path)
         str(plan["resolutions"]),
         "--timeout_per_run",
         str(plan["timeout_per_run"]),
+        "--timeout_by_method",
+        ",".join(f"{name}={seconds}" for name, seconds in plan.get("timeout_by_method", {}).items()),
+        "--timeout_by_dataset",
+        ",".join(f"{name}={seconds}" for name, seconds in plan.get("timeout_by_dataset", {}).items()),
         "--max_nodes",
         str(plan["max_nodes"]),
         "--max_memberships",
@@ -562,6 +699,8 @@ def _benchmark_argv(plan: dict[str, Any], job: dict[str, Any], output_dir: Path)
         "--output_dir",
         str(output_dir),
         "--no-plots",
+        "--execution",
+        execution,
     ]
     if bool(plan.get("resume", True)):
         argv.append("--resume")
@@ -619,6 +758,7 @@ def run_worker(plan: dict[str, Any], worker_index: int, *, synchronize: bool = T
     state = {
         "plan_id": plan["plan_id"],
         "worker_index": worker_index,
+        "worker_pid": os.getpid(),
         "status": "running",
         "jobs": planned_jobs,
         "completed_jobs": [],
@@ -644,21 +784,42 @@ def run_worker(plan: dict[str, Any], worker_index: int, *, synchronize: bool = T
         if isinstance(job, dict):
             shard_dir = output_dir / "shards" / str(job["name"])
             attempts = 0
+            retry_events = 0
             try:
                 while True:
-                    code = benchmark.main(_benchmark_argv(plan, job, shard_dir))
+                    code = benchmark.main(
+                        _benchmark_argv(
+                            plan,
+                            job,
+                            shard_dir,
+                            execution="retry" if attempts else "fresh",
+                        )
+                    )
                     retryable = _job_retryable_records(shard_dir, plan, job)
-                    if code == 0 and (retryable == 0 or attempts >= int(plan["retry_attempts"])):
+                    can_retry = (
+                        retryable > 0
+                        and attempts < min(int(plan["retry_attempts"]), 1)
+                    )
+                    if not can_retry:
                         break
                     attempts += 1
-                    if attempts > int(plan["retry_attempts"]):
-                        break
+                    retry_events += 1
                 if code != 0:
-                    raise RuntimeError(f"benchmark returned exit code {code}")
-                state["completed_jobs"].append(
-                    {"name": job["name"], "attempts": attempts + 1, "retryable_records": retryable}
-                )
-                state["waves"][wave_index]["status"] = "completed"
+                    state["failures"].append(
+                        {"name": job["name"], "error": f"benchmark returned exit code {code}"}
+                    )
+                    state["waves"][wave_index]["status"] = "error"
+                else:
+                    state["completed_jobs"].append(
+                        {
+                            "name": job["name"],
+                            "attempts": attempts + 1,
+                            "retry_events": retry_events,
+                            "retryable_records": retryable,
+                            "retry_policy": "bounded_no_loop",
+                        }
+                    )
+                    state["waves"][wave_index]["status"] = "completed"
             except BaseException as exc:
                 state["failures"].append({"name": job["name"], "error": f"{type(exc).__name__}: {exc}"})
                 state["waves"][wave_index]["status"] = "error"
@@ -715,14 +876,83 @@ def _collect_shard_records(plan: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
 
+def _collect_execution_counts(plan: dict[str, Any]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for job in plan["jobs"]:
+        manifest = _read_json(Path(plan["output_dir"]) / "shards" / str(job["name"]) / "manifest.json")
+        if not manifest:
+            continue
+        for name, value in (manifest.get("execution_counts") or {}).items():
+            try:
+                counts[str(name)] += int(value)
+            except (TypeError, ValueError):
+                continue
+    return dict(sorted(counts.items()))
+
+
 def _expected_count(plan: dict[str, Any]) -> int:
     seeds = benchmark.parse_seeds(str(plan["seeds"])) or []
     resolutions = benchmark.parse_resolutions(str(plan["resolutions"])) or []
     return len(plan["jobs"]) * len(plan["methods"]) * len(seeds) * len(resolutions)
 
 
+def _condition_summary(plan: dict[str, Any], records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Materialize one honest row for every dataset/method/seed condition."""
+    seeds = benchmark.parse_seeds(str(plan["seeds"])) or []
+    resolutions = benchmark.parse_resolutions(str(plan["resolutions"])) or []
+    rows: list[dict[str, Any]] = []
+    for job in plan["jobs"]:
+        for method in plan["methods"]:
+            for seed in seeds:
+                candidates = [
+                    record
+                    for record in records
+                    if record.get("dataset") == job["dataset"]
+                    and record.get("cover") == job["cover"]
+                    and record.get("method") == method
+                    and int(record.get("seed", -1)) == seed
+                ]
+                if not candidates:
+                    for requested in resolutions:
+                        rows.append(
+                            {
+                                "dataset": job["dataset"],
+                                "cover": job["cover"],
+                                "method": method,
+                                "seed": seed,
+                                "requested_resolution": requested,
+                                "status": "missing",
+                                "reason": "no resumable run record",
+                            }
+                        )
+                    continue
+                for record in candidates:
+                    rows.append(
+                        {
+                            "dataset": record.get("dataset"),
+                            "cover": record.get("cover"),
+                            "method": record.get("method"),
+                            "seed": record.get("seed"),
+                            "requested_resolution": "auto" if "auto" in resolutions else record.get("resolution"),
+                            "resolution": record.get("resolution"),
+                            "status": record.get("status"),
+                            "execution": record.get("execution"),
+                            "runtime_seconds": record.get("runtime_seconds"),
+                            "failure_kind": record.get("failure_kind"),
+                            "resource_status": record.get("resource_status"),
+                            "reason": record.get("reason") or record.get("error"),
+                        }
+                    )
+    return rows
+
+
 def _audit_records(plan: dict[str, Any], records: list[dict[str, Any]]) -> dict[str, Any]:
     counts = Counter(str(record.get("status", "unknown")) for record in records)
+    resource_counts = Counter(
+        str(record.get("resource_status"))
+        for record in records
+        if record.get("resource_status")
+    )
     expected = _expected_count(plan)
     retryable = sum(counts[status] for status in RETRYABLE_STATUSES)
     seeds = benchmark.parse_seeds(str(plan["seeds"])) or []
@@ -746,16 +976,60 @@ def _audit_records(plan: dict[str, Any], records: list[dict[str, Any]]) -> dict[
         "expected_records": expected,
         "observed_records": len(records),
         "status_counts": dict(sorted(counts.items())),
+        "resource_status_counts": dict(sorted(resource_counts.items())),
         "missing_records": max(0, expected - len(records)),
         "missing_or_incomplete_conditions": missing_bases,
         "retryable_records": retryable,
         "non_completed_records": expected - counts["completed"],
+        "failure_records": [
+            {
+                "dataset": record.get("dataset"),
+                "cover": record.get("cover"),
+                "method": record.get("method"),
+                "seed": record.get("seed"),
+                "resolution": record.get("resolution"),
+                "status": record.get("status"),
+                "resource_status": record.get("resource_status"),
+                "failure_kind": record.get("failure_kind"),
+                "reason": record.get("reason") or record.get("error"),
+                "runtime_seconds": record.get("runtime_seconds"),
+                "memory": record.get("memory") or record.get("detector_memory"),
+            }
+            for record in records
+            if record.get("status") != "completed"
+        ],
+        "execution_counts": dict(
+            Counter(str(record.get("execution", "unknown")) for record in records)
+        ),
         "ready_for_paper": (
             plan.get("profile") == "full"
             and len(records) == expected
             and not missing_bases
             and counts["completed"] == expected
         ),
+    }
+
+
+def _coverage_report(plan: dict[str, Any], records: list[dict[str, Any]], audit: dict[str, Any]) -> dict[str, Any]:
+    """One inspectable coverage row per requested condition and its outcome."""
+    rows = _condition_summary(plan, records)
+    status_counts = Counter(str(row.get("status", "unknown")) for row in rows)
+    resource_counts = Counter(
+        str(row.get("resource_status")) for row in rows if row.get("resource_status")
+    )
+    return {
+        "schema_version": PAPER_SCHEMA_VERSION,
+        "created_at": _timestamp(),
+        "expected_records": audit["expected_records"],
+        "completed": status_counts["completed"],
+        "not_scalable": status_counts["skipped_not_scalable"],
+        "timeout": resource_counts["timeout"] + status_counts["timeout"],
+        "oom": resource_counts["oom"] + status_counts["oom"],
+        "memory_limit": resource_counts["memory_limit"] + status_counts["memory_limit"],
+        "missing": status_counts["missing"],
+        "status_counts": dict(sorted(status_counts.items())),
+        "resource_status_counts": dict(sorted(resource_counts.items())),
+        "rows": rows,
     }
 
 
@@ -908,6 +1182,12 @@ def _write_paper_tex(output_dir: Path, plan: dict[str, Any], audit: dict[str, An
                 + ", ".join(f"{_tex_escape(status)}={count}" for status, count in sorted(status_counts.items()))
                 + "."
             ),
+            (
+                r"\par\smallskip\footnotesize Completed estimates are the only values used in "
+                r"means. Records marked \texttt{timeout}, \texttt{memory\_limit}, "
+                r"\texttt{oom}, \texttt{failed}, or \texttt{skipped\_unsupported} are explicit "
+                r"non-results and are reported in the failure report."
+            ),
             r"\end{table*}",
             r"\subsection{Overlap structure and CPM quality}",
             (
@@ -946,22 +1226,35 @@ def _write_paper_tex(output_dir: Path, plan: dict[str, Any], audit: dict[str, An
     (output_dir / "paper_results.tex").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _write_paper_status(output_dir: Path, audit: dict[str, Any]) -> None:
+def _write_paper_status(output_dir: Path, audit: dict[str, Any], *, partial: bool = False) -> None:
+    warning = ""
     if audit["ready_for_paper"]:
         state = r"\smokeresultsfalse"
         label = "complete full protocol"
+    elif partial:
+        state = r"\smokeresultstrue"
+        label = "EXPLICIT PARTIAL COMPILE: incomplete protocol; inspect failure_report.json"
+        warning = (
+            r"\newcommand{\partialcompilewarning}{%" "\n"
+            r"\par\noindent\colorbox{yellow!35}{\parbox{0.94\linewidth}{%" "\n"
+            r"\textbf{EXPLICIT PARTIAL COMPILE.} This PDF contains provisional "
+            r"results; inspect \texttt{artifacts/full/failure\_report.json}.}}\par}"
+            "\n"
+        )
     else:
         state = r"\smokeresultstrue"
         label = "incomplete or non-full protocol"
     (output_dir / "paper_status.tex").write_text(
         "% Generated by hedonic-exp reproduce-overlapping-paper.\n"
-        f"% State: {label}.\n{state}\n",
+        f"% State: {label}.\n{state}\n{warning}",
         encoding="utf-8",
     )
 
 
 def _compile_paper(plan: dict[str, Any], audit: dict[str, Any]) -> int:
-    if not bool(plan.get("compile_paper")) or not bool(audit["ready_for_paper"]):
+    if not bool(plan.get("compile_paper")):
+        return 0
+    if not bool(audit["ready_for_paper"]) and not bool(plan.get("compile_partial")):
         return 0
     latexmk = shutil.which("latexmk")
     if latexmk is None:
@@ -981,11 +1274,30 @@ def finalize(plan: dict[str, Any]) -> int:
     output_dir = Path(plan["output_dir"])
     records = _collect_shard_records(plan)
     audit = _audit_records(plan, records)
+    audit["execution_counts"] = _collect_execution_counts(plan)
     rows = benchmark._write_results(output_dir, records)
     benchmark._write_summary(output_dir, rows)
+    condition_rows = _condition_summary(plan, records)
+    _write_csv(output_dir / "condition_summary.csv", condition_rows)
+    _write_json(output_dir / "condition_summary.json", {"rows": condition_rows})
+    coverage = _coverage_report(plan, records, audit)
+    _write_json(output_dir / "coverage_report.json", coverage)
+    _write_csv(output_dir / "coverage_report.csv", coverage["rows"])
     plots = benchmark._write_plots(output_dir, rows)
     paper_rows = _paper_summary(records)
     _write_csv(output_dir / "paper_summary.csv", paper_rows)
+    failure_rows = audit["failure_records"]
+    _write_json(
+        output_dir / "failure_report.json",
+        {
+            "schema_version": PAPER_SCHEMA_VERSION,
+            "created_at": _timestamp(),
+            "complete_protocol": bool(audit["ready_for_paper"]),
+            "records": failure_rows,
+            "status_counts": audit["status_counts"],
+        },
+    )
+    _write_csv(output_dir / "failure_report.csv", failure_rows)
     paper_manifest = {
         "schema_version": PAPER_SCHEMA_VERSION,
         "created_at": _timestamp(),
@@ -998,7 +1310,13 @@ def finalize(plan: dict[str, Any]) -> int:
             "results_csv": str(output_dir / "results.csv.gz"),
             "summary_csv": str(output_dir / "summary.csv"),
             "paper_summary_csv": str(output_dir / "paper_summary.csv"),
+            "condition_summary_csv": str(output_dir / "condition_summary.csv"),
+            "condition_summary_json": str(output_dir / "condition_summary.json"),
+            "coverage_report_csv": str(output_dir / "coverage_report.csv"),
+            "coverage_report_json": str(output_dir / "coverage_report.json"),
             "paper_results_tex": str(output_dir / "paper_results.tex"),
+            "failure_report_json": str(output_dir / "failure_report.json"),
+            "failure_report_csv": str(output_dir / "failure_report.csv"),
             "plots": plots,
         },
     }
@@ -1008,7 +1326,7 @@ def finalize(plan: dict[str, Any]) -> int:
     # explicit stable name for this orchestration layer.
     _write_json(output_dir / "manifest.json", paper_manifest)
     _write_paper_tex(output_dir, plan, audit, paper_rows)
-    _write_paper_status(output_dir, audit)
+    _write_paper_status(output_dir, audit, partial=bool(plan.get("compile_partial")))
     compile_code = _compile_paper(plan, audit)
     if compile_code != 0:
         # Do not leave a status file that asks TeX to use full results after a
@@ -1024,7 +1342,7 @@ def finalize(plan: dict[str, Any]) -> int:
     print(f"[finalize] artifacts: {output_dir}")
     if not audit["ready_for_paper"]:
         print(
-            "[finalize] full-paper switch remains disabled: every expected condition must complete; fix unavailable/error/timeout records, then rerun with --finalize.",
+            "[finalize] full-paper switch remains disabled: inspect failure_report.json; use --compile-partial only with an explicit visible warning.",
             file=sys.stderr,
         )
     return 0
@@ -1037,6 +1355,19 @@ def run_coordinator(plan: dict[str, Any]) -> int:
     print(f"[coordinator] waiting for {worker_count} worker windows", flush=True)
     while True:
         states = [_read_json(_state_path(output_dir, index)) for index in range(worker_count)]
+        for index, state in enumerate(states):
+            if state is None or state.get("plan_id") != plan["plan_id"]:
+                continue
+            if state.get("status") == "running" and isinstance(state.get("worker_pid"), int):
+                try:
+                    os.kill(int(state["worker_pid"]), 0)
+                except OSError:
+                    state["status"] = "error"
+                    state.setdefault("failures", []).append(
+                        {"name": "worker", "error": "worker process disappeared before finalizing its waves"}
+                    )
+                    state["updated_at"] = _timestamp()
+                    _write_json(_state_path(output_dir, index), state)
         final = [
             state is not None
             and state.get("plan_id") == plan["plan_id"]
@@ -1133,6 +1464,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-tmux", action="store_true", help="Foreground serial debug/test run; normal reproduction uses tmux")
     parser.add_argument("--dry-run", action="store_true", help="Validate TOML and write the balanced worker plan without running it")
     parser.add_argument("--finalize", action="store_true", help="Merge existing shard caches and regenerate paper artifacts only")
+    parser.add_argument(
+        "--compile-partial",
+        action="store_true",
+        help="Explicitly compile an incomplete paper with a visible warning in paper_status.tex",
+    )
     parser.add_argument("--plan", help=argparse.SUPPRESS)
     parser.add_argument("--worker-index", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--coordinator", action="store_true", help=argparse.SUPPRESS)
@@ -1154,6 +1490,7 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("Internal worker/coordinator actions require --plan")
 
     options, _config_path = _load_options(args)
+    options["compile_partial"] = bool(args.compile_partial)
     plan = _write_new_plan(options)
     if args.dry_run:
         print(
@@ -1164,6 +1501,8 @@ def main(argv: list[str] | None = None) -> int:
                     "memory_reserve_gib": plan["memory_reserve_gb"],
                     "workers": plan["workers"],
                     "assignments": plan["assignments"],
+                    "wave_reports": plan["wave_reports"],
+                    "scheduler_policy": plan["scheduler_policy"],
                 },
                 indent=2,
             )

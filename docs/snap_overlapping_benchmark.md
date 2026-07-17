@@ -64,15 +64,26 @@ tmux attach -t hedonic-overlapping-paper
 
 Before launching tmux, the launcher measures each graph and supplied cover,
 derives `max_memberships` from the maximum ground-truth memberships of any
-single node, and estimates parent/child igraph plus NetworkX baseline memory.
-It packs only compatible jobs into waves below the detected-memory budget
-(48 GiB on the default 64-GiB Mac after a 16-GiB reserve). A parent RSS monitor
-terminates any detector exceeding its planned per-job limit. A coordinator merges all cache records into
+single node, and estimates parent/child igraph plus method-specific NetworkX
+and historical peak memory. The default 64-GiB Mac plan reserves 24 GiB for
+macOS and treats the remaining 40 GiB as a hard budget. LiveJournal is never
+co-scheduled with another dataset; uncertain estimates force serial workers.
+The detector monitor sums RSS for the root and all descendants at high
+frequency, records the observed peak and enforcement reason, and classifies
+`memory_limit`, `timeout`, `oom`/`exit=-9`, and `failed` separately. A coordinator merges all cache records into
 `docs/papers/overlapping_communities/artifacts/full/`, regenerates plots and
 the paper table fragment, and runs `latexmk` only after every planned full-run
 record is present and completed. Adjust all normal settings in
 TOML—not an ad-hoc shell command—and use `--no-tmux` only for smoke/debug
 configs.
+
+Large detector covers are returned through a private temporary pickle artifact,
+not a `multiprocessing.Queue`. This avoids bounded-pipe deadlocks when a child
+finishes detection with a cover too large to flush before process exit; the
+temporary artifact is removed immediately after the parent reads it.
+The transport and shared-warm-start changes increment the run protocol, so
+legacy singleton-start and affected timeout records are retained as
+incompatible backups and recalculated on `--resume`.
 
 ## Methods
 
@@ -82,7 +93,10 @@ maximum number of supplied ground-truth communities containing any one node
 (at least two), not the total number of communities. The local method uses only
 the local-moving phase; the multi-phase variants enable full Leiden refinement
 and aggregation. They set `allow_isolation=True` and cache the effective
-density multiplier resolution in each per-run record.
+density multiplier resolution in each per-run record. For a given dataset and
+seed, every hedonic variant receives the same seeded random disjoint warm start,
+requesting one initial label per supplied ground-truth community. CPM and DEMON
+do not accept an initial cover.
 
 Two independent default overlapping baselines are included in the experiments
 extra:
@@ -118,10 +132,50 @@ Results are incremental and resume-safe:
 └── plots/
 ```
 
-Per-run records distinguish `completed`, `timeout`, `unavailable`, `skipped`,
-`data_unavailable`, and detector errors. `--resume` skips terminal completed
-or unavailable records but retries errors/timeouts. Summary and plots separate
+Per-run records distinguish `completed`, `timeout`, `memory_limit`, `oom`,
+`failed`, `skipped_unsupported`, and `skipped_not_scalable`. Each isolated
+run records wall-clock time, configured timeout and memory limit, aggregate
+detector-tree RSS peak, process count, termination reason, and compact RSS
+samples. `--resume` reuses only compatible `completed` records (or an explicit
+unsupported-dependency decision); it never prints `[resume]` for a failure.
+Protocol/method/dataset/seed/resolution/membership/timeout/memory/Omega changes
+make a record incompatible and retain its JSON beside the replacement.
+CPM/DEMON resource exhaustion is an explicit `skipped_not_scalable` policy
+decision rather than a metric or a repeated detector invocation. Hedonic
+resource failures remain explicitly classified as timeout/OOM/memory-limit,
+but are likewise not automatically launched again under the same protocol.
+Retries default to zero; timeout, memory-limit, and OOM records are never retried.
+Summary and plots separate
 recovery scores (best-match, one-to-one, node-membership and weighted F1),
 structural overlap behavior (inclusion, coverage, overlap, distribution,
 coverage/size/membership diagnostics), CPM graph quality, and runtime. Omega
 is opt-in and sampled; no dense vertex-pair matrix is allocated.
+
+## Safe paper reproduction
+
+Inspect the complete plan without starting detectors or a tmux session:
+
+```bash
+uv run hedonic-exp reproduce-overlapping-paper --dry-run
+```
+
+The dry-run prints the hard budget, reserve, worker count, every wave, and the
+reason for serialization. It writes `orchestration/plan.json`; previous plans
+are retained as timestamped `plan.previous.*.json` files. The coordinator waits
+for every worker wave and writes `failure_report.json`/`.csv`. It never switches
+the manuscript to full results or compiles the paper when any condition is
+missing or non-completed. `--compile-partial` is an explicit opt-in and leaves
+an `EXPLICIT PARTIAL COMPILE` warning in `paper_status.tex`.
+
+The paper artifact directory also contains `condition_summary.csv` and
+`condition_summary.json`, plus `coverage_report.csv`/`.json` with expected,
+completed, not-scalable, timeout, OOM, memory-limit, and missing counts for
+each planned dataset/method/seed condition.
+
+The exact full launch, after reviewing the dry-run, is:
+
+```bash
+uv run hedonic-exp reproduce-overlapping-paper
+```
+
+Do not launch this command automatically from a correction or CI smoke run.

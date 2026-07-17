@@ -93,7 +93,104 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
         waves = reproduce_paper._schedule_memory_waves(
             jobs, memory_budget_bytes=7, worker_limit=2
         )
-        self.assertEqual([[job["name"] for job in wave] for wave in waves], [["large"], ["medium", "small"]])
+        self.assertEqual([[job["name"] for job in wave] for wave in waves], [["small", "medium"], ["large"]])
+
+    def test_memory_scheduler_never_co_schedules_livejournal(self):
+        jobs = [
+            {"name": "livejournal", "dataset": "livejournal", "index": 0, "memory": {"estimated_peak_bytes": 2}},
+            {"name": "youtube", "dataset": "youtube", "index": 1, "memory": {"estimated_peak_bytes": 2}},
+            {"name": "amazon", "dataset": "amazon", "index": 2, "memory": {"estimated_peak_bytes": 1}},
+        ]
+        waves = reproduce_paper._schedule_memory_waves(jobs, memory_budget_bytes=10, worker_limit=3)
+        self.assertTrue(all(len(wave) == 1 for wave in waves if any(j["dataset"] == "livejournal" for j in wave)))
+        self.assertTrue(all(not (any(j["dataset"] == "livejournal" for j in wave) and len(wave) > 1) for wave in waves))
+
+    def test_single_worker_scheduler_keeps_every_dataset_in_its_own_wave(self):
+        jobs = [
+            {"name": name, "dataset": name, "index": index,
+             "memory": {"estimated_peak_bytes": 1}}
+            for index, name in enumerate(("amazon", "dblp", "livejournal", "youtube", "wikipedia"))
+        ]
+        waves = reproduce_paper._schedule_memory_waves(
+            jobs, memory_budget_bytes=64, worker_limit=1
+        )
+        self.assertEqual(
+            [[job["dataset"] for job in wave] for wave in waves],
+            [["amazon"], ["dblp"], ["livejournal"], ["youtube"], ["wikipedia"]],
+        )
+
+    def test_scheduler_budget_and_process_tree_rss(self):
+        jobs = [
+            {"name": "root", "index": 0, "memory": {"estimated_peak_bytes": 6}},
+            {"name": "child", "index": 1, "memory": {"estimated_peak_bytes": 1}},
+        ]
+        waves = reproduce_paper._schedule_memory_waves(jobs, memory_budget_bytes=7, worker_limit=2)
+        self.assertTrue(all(sum(j["memory"]["estimated_peak_bytes"] for j in wave) <= 7 for wave in waves))
+        with patch.object(
+            benchmark,
+            "_process_tree_snapshot",
+            return_value={10: {"ppid": 1, "rss_bytes": 100}, 11: {"ppid": 10, "rss_bytes": 250}},
+        ):
+            rss, pids = benchmark._process_tree_rss_bytes(10)
+        self.assertEqual(rss, 350)
+        self.assertEqual(pids, {10, 11})
+
+    def test_exit_minus_nine_is_oom_and_cache_parameters_are_strict(self):
+        self.assertEqual(benchmark._classify_exit(-9)[0], "oom")
+        expected = {
+            "dataset": "amazon", "cover": "all", "method": "cpm", "seed": 0,
+            "resolution": 0.1, "max_memberships": 2, "timeout_seconds": 10.0,
+            "memory_limit_bytes": 100, "run_options": {"omega": True, "omega_sample_size": 10},
+        }
+        existing = {**expected, "protocol_version": benchmark.RUN_PROTOCOL_VERSION, "status": "timeout"}
+        self.assertFalse(benchmark._cache_compatible(existing, expected))
+        completed = {**existing, "status": "completed"}
+        self.assertTrue(benchmark._cache_compatible(completed, expected))
+        skipped = {**existing, "status": "skipped_unsupported", "failure_kind": "unsupported"}
+        self.assertTrue(benchmark._cache_compatible(skipped, expected))
+        self.assertFalse(benchmark._cache_compatible(existing, {**expected, "timeout_seconds": 11.0}))
+        self.assertFalse(benchmark._cache_compatible({**existing, "protocol_version": 2}, expected))
+        self.assertFalse(
+            benchmark._cache_compatible(
+                {
+                    **existing,
+                    "status": "failed",
+                    "error": "TypeError: _record() got multiple values for keyword argument 'timeout_seconds'",
+                },
+                expected,
+            )
+        )
+
+    def test_paper_summary_excludes_failed_numeric_values_and_reports_coverage(self):
+        records = [
+            {"dataset": "amazon", "cover": "all", "method": "hedonic_multiphase", "seed": 0,
+             "resolution": 0.1, "status": "completed", "metrics": {"symmetric_best_match_f1": 0.8}},
+            {"dataset": "amazon", "cover": "all", "method": "hedonic_multiphase", "seed": 1,
+             "resolution": 0.1, "status": "timeout", "runtime_seconds": 12.0},
+        ]
+        summary = reproduce_paper._paper_summary(records)
+        self.assertEqual(summary[0]["n_completed"], 1)
+        self.assertEqual(summary[0]["mean_symmetric_best_match_f1"], 0.8)
+        self.assertNotIn("mean_runtime_seconds", summary[0])
+        plan = {
+            "profile": "full", "jobs": [{"dataset": "amazon", "cover": "all"}],
+            "methods": ["hedonic_multiphase"], "seeds": "0-1", "resolutions": "auto",
+        }
+        coverage = reproduce_paper._coverage_report(
+            plan, records, reproduce_paper._audit_records(plan, records)
+        )
+        self.assertEqual(coverage["completed"], 1)
+        self.assertEqual(coverage["timeout"], 1)
+
+    def test_partial_compile_status_defines_a_visible_tex_warning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            reproduce_paper._write_paper_status(
+                output, {"ready_for_paper": False}, partial=True
+            )
+            status = (output / "paper_status.tex").read_text()
+            self.assertIn("EXPLICIT PARTIAL COMPILE", status)
+            self.assertIn(r"\partialcompilewarning", status)
     def test_toml_driven_smoke_foreground_merges_and_preserves_smoke_switch(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -114,6 +211,9 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
             self.assertEqual(manifest["audit"]["observed_records"], 8)
             self.assertFalse(manifest["audit"]["ready_for_paper"])
             self.assertTrue((output / "paper_summary.csv").is_file())
+            self.assertTrue((output / "condition_summary.csv").is_file())
+            self.assertEqual(len(json.loads((output / "condition_summary.json").read_text())["rows"]), 8)
+            self.assertTrue((output / "failure_report.json").is_file())
             self.assertTrue((output / "paper_results.tex").is_file())
             self.assertIn("\\smokeresultstrue", (output / "paper_status.tex").read_text())
             self.assertTrue((output / "plots" / "accuracy_by_dataset.pdf").is_file())
@@ -127,6 +227,17 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
             self.assertTrue(
                 all(record["detector_memory"]["limit_bytes"] == record["memory_limit_bytes"] for record in records)
             )
+
+    def test_dry_run_never_launches_workers_or_detectors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = _smoke_config(Path(directory))
+            with patch.object(reproduce_paper, "launch_tmux", side_effect=AssertionError("tmux launched")), patch.object(
+                reproduce_paper, "run_foreground", side_effect=AssertionError("foreground detector launched")
+            ):
+                self.assertEqual(
+                    CLI.main(["reproduce-overlapping-paper", "--config", str(config), "--dry-run"]),
+                    0,
+                )
 
     def test_local_only_variant_is_rejected_by_the_paper_protocol(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -191,6 +302,25 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
         self.assertTrue(reproduce_paper._audit_records(plan, records)["ready_for_paper"])
         records[1]["status"] = "unavailable"
         self.assertFalse(reproduce_paper._audit_records(plan, records)["ready_for_paper"])
+
+    def test_failure_summary_keeps_non_scalable_baseline_explicit(self):
+        plan = {
+            "profile": "full",
+            "jobs": [{"dataset": "livejournal", "cover": "top5000"}],
+            "methods": ["cpm", "demon"],
+            "seeds": "0",
+            "resolutions": "auto",
+        }
+        records = [
+            {"dataset": "livejournal", "cover": "top5000", "method": "cpm", "seed": 0,
+             "resolution": 0.1, "status": "timeout", "runtime_seconds": 4.0},
+            {"dataset": "livejournal", "cover": "top5000", "method": "demon", "seed": 0,
+             "resolution": 0.1, "status": "skipped_unsupported", "reason": "known non-scalable"},
+        ]
+        audit = reproduce_paper._audit_records(plan, records)
+        self.assertEqual(audit["status_counts"]["timeout"], 1)
+        self.assertEqual(audit["status_counts"]["skipped_unsupported"], 1)
+        self.assertEqual(len(audit["failure_records"]), 2)
 
     @unittest.skipUnless(shutil.which("latexmk"), "latexmk is required for manuscript render test")
     def test_complete_full_records_generate_and_compile_the_paper_branch(self):

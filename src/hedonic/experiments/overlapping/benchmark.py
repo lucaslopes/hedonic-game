@@ -13,8 +13,12 @@ import csv
 import gzip
 import json
 import multiprocessing as mp
+import os
+import pickle
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from collections import defaultdict
@@ -29,6 +33,7 @@ from hedonic.experiments.overlapping.methods import (
     method_availability,
     resolve_methods,
     run_method,
+    seeded_initial_membership,
 )
 from hedonic.experiments.overlapping.metrics import (
     evaluate_cover,
@@ -47,7 +52,19 @@ from hedonic.experiments.overlapping.snap import (
 )
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+# Version 6 gives every hedonic method a shared seed-dependent disjoint warm
+# start. Singleton-start and warm-start records are different experimental
+# conditions and must never share a cache entry.
+RUN_PROTOCOL_VERSION = 6
+RSS_POLL_SECONDS = 0.05
+RSS_RECORD_INTERVAL_SECONDS = 1.0
+RESUMABLE_CACHE_STATUSES = {
+    "completed",
+    "skipped_unsupported",
+}
+RESOURCE_FAILURE_STATUSES = {"memory_limit", "timeout", "oom"}
+NON_SCALABLE_BASELINES = {"cpm", "demon"}
 PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
     "smoke": {
         "cover": "all",
@@ -211,16 +228,120 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _parse_timeout_map(value: Any, field: str) -> dict[str, float]:
+    """Parse TOML/CLI timeout maps written as tables or ``name=seconds``."""
+    if value is None or value == "":
+        return {}
+    if isinstance(value, dict):
+        items = value.items()
+    elif isinstance(value, str):
+        items = (part.split("=", 1) for part in value.split(",") if part.strip())
+    else:
+        raise ValueError(f"{field} must be a TOML table or comma-list name=seconds")
+    result: dict[str, float] = {}
+    for item in items:
+        try:
+            name, seconds = item
+            seconds = float(seconds)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid {field} entry; expected name=positive_seconds") from None
+        name = str(name).strip().lower()
+        if not name or seconds <= 0:
+            raise ValueError(f"Invalid {field} entry; names and seconds must be positive")
+        result[name] = seconds
+    return result
+
+
+def _timeout_for(options: dict[str, Any], dataset: str, method: str) -> float:
+    """Use the most conservative applicable global, method, and data limit."""
+    limits = [float(options["timeout_per_run"])]
+    method_limit = options.get("timeout_by_method", {}).get(method)
+    dataset_limit = options.get("timeout_by_dataset", {}).get(dataset)
+    if method_limit is not None:
+        limits.append(float(method_limit))
+    if dataset_limit is not None:
+        limits.append(float(dataset_limit))
+    return min(limits)
+
+
+def _cache_parameters_compatible(existing: dict[str, Any], expected: dict[str, Any]) -> bool:
+    """Check the full identity of an experimental condition, excluding outcome."""
+    try:
+        protocol_version = int(existing.get("protocol_version", -1))
+    except (TypeError, ValueError):
+        return False
+    if protocol_version != RUN_PROTOCOL_VERSION:
+        return False
+    for key in (
+        "dataset",
+        "cover",
+        "method",
+        "seed",
+        "max_memberships",
+        "allow_isolation",
+        "initialization",
+    ):
+        if existing.get(key) != expected.get(key):
+            return False
+    for key in ("resolution", "timeout_seconds"):
+        try:
+            if abs(float(existing.get(key)) - float(expected.get(key))) > 1e-12:
+                return False
+        except (TypeError, ValueError):
+            return False
+    if existing.get("memory_limit_bytes") != expected.get("memory_limit_bytes"):
+        return False
+    existing_options = existing.get("run_options")
+    expected_options = expected.get("run_options")
+    if not isinstance(existing_options, dict) or not isinstance(expected_options, dict):
+        return False
+    for key in ("omega", "omega_sample_size"):
+        if existing_options.get(key) != expected_options.get(key):
+            return False
+    # The previously shipped coordinator could persist this construction
+    # failure after a detector finished.  It is not a detector result, so a
+    # post-fix --resume must rerun it while preserving the old JSON as an
+    # incompatible-cache backup.
+    if "_record() got multiple values for keyword argument 'timeout_seconds'" in str(
+        existing.get("error", "")
+    ):
+        return False
+    return True
+
+
+def _cache_compatible(existing: dict[str, Any], expected: dict[str, Any]) -> bool:
+    """Only valid metrics (or an explicit unavailable dependency) can resume."""
+    if not _cache_parameters_compatible(existing, expected):
+        return False
+    status = str(existing.get("status"))
+    if status not in RESUMABLE_CACHE_STATUSES:
+        return False
+    if status == "completed":
+        return True
+    # This is a capability decision, not a numerical result.  It is safe to
+    # retain it only if the record says why the adapter is unavailable.
+    return status == "skipped_unsupported" and bool(existing.get("failure_kind") == "unsupported")
+
+
 def _worker(
-    queue,
+    result_path: str,
     method_name: str,
     graph,
     max_memberships: int,
     resolution: float,
     seed: int,
     memory_limit_bytes: int | None,
+    initial_membership: list[int] | list[list[int]] | None,
+    method_parameters: dict[str, Any] | None,
 ) -> None:
-    """Subprocess entry point used for enforceable per-run wall-clock limits."""
+    """Run one detector and persist its potentially large result off-pipe."""
+    # Give the detector and every subprocess it creates a private process
+    # group.  Killing only the multiprocessing child is unsafe: NetworkX and
+    # external baselines can leave descendants alive after the parent exits.
+    try:
+        os.setsid()
+    except (AttributeError, OSError):  # pragma: no cover - platform-specific
+        pass
     memory: dict[str, Any] = {"limit_bytes": memory_limit_bytes}
     try:
         cover, method_meta = run_method(
@@ -229,20 +350,28 @@ def _worker(
             max_memberships=max_memberships,
             resolution=resolution,
             seed=seed,
+            parameters=method_parameters,
+            initial_membership=initial_membership,
         )
         try:
             import resource
 
             peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+            child_peak = int(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
             # macOS reports bytes; Linux reports KiB.
-            memory["peak_rss_bytes"] = peak if sys.platform == "darwin" else peak * 1024
+            memory["resource_peak_rss_bytes"] = peak if sys.platform == "darwin" else peak * 1024
+            memory["resource_children_peak_rss_bytes"] = (
+                child_peak if sys.platform == "darwin" else child_peak * 1024
+            )
         except (AttributeError, ValueError):  # pragma: no cover - platform-specific
             pass
-        queue.put(
-            {"status": "ok", "cover": cover, "method_meta": method_meta, "memory": memory}
+        _write_worker_packet(
+            result_path,
+            {"status": "ok", "cover": cover, "method_meta": method_meta, "memory": memory},
         )
     except BaseException as exc:  # child errors must reach a resumable run record
-        queue.put(
+        _write_worker_packet(
+            result_path,
             {
                 "status": "error",
                 "error": f"{type(exc).__name__}: {exc}",
@@ -252,17 +381,116 @@ def _worker(
         )
 
 
-def _process_rss_bytes(pid: int) -> int | None:
-    """Return current RSS for an isolated detector process, if observable."""
+def _write_worker_packet(result_path: str, packet: dict[str, Any]) -> None:
+    """Atomically write a detector packet without a bounded IPC pipe.
+
+    A full overlapping cover can be hundreds of megabytes. Sending it through
+    ``multiprocessing.Queue`` deadlocks when the parent waits for process exit
+    before draining the queue: the queue feeder fills its pipe and prevents the
+    child from exiting. A private temporary file has no bounded pipe and is
+    read only after the child has terminated.
+    """
+    target = Path(result_path)
+    staging = target.with_suffix(target.suffix + ".partial")
+    with staging.open("wb") as stream:
+        pickle.dump(packet, stream, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(staging, target)
+
+
+def _process_tree_snapshot(pid: int) -> dict[int, dict[str, int]]:
+    """Return ``pid -> {ppid, rss_bytes}`` for the current process table."""
     try:
         output = subprocess.check_output(
-            ["ps", "-o", "rss=", "-p", str(pid)],
+            ["ps", "-axo", "pid=,ppid=,rss="],
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-        return int(output) * 1024 if output else None
-    except (OSError, subprocess.CalledProcessError, ValueError):
-        return None
+    except (OSError, subprocess.CalledProcessError):
+        return {}
+    result: dict[int, dict[str, int]] = {}
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        try:
+            child_pid, parent_pid, rss_kib = (int(fields[0]), int(fields[1]), int(fields[2]))
+        except ValueError:
+            continue
+        result[child_pid] = {"ppid": parent_pid, "rss_bytes": max(0, rss_kib) * 1024}
+    return result
+
+
+def _process_tree_pids(pid: int, snapshot: dict[int, dict[str, int]]) -> set[int]:
+    """Find the root and all descendants in one process-table snapshot."""
+    pids = {pid}
+    changed = True
+    while changed:
+        changed = False
+        for child_pid, info in snapshot.items():
+            if info.get("ppid") in pids and child_pid not in pids:
+                pids.add(child_pid)
+                changed = True
+    return pids
+
+
+def _process_tree_rss_bytes(pid: int) -> tuple[int, set[int]]:
+    """Sum RSS for an isolated detector and every observable descendant."""
+    snapshot = _process_tree_snapshot(pid)
+    pids = _process_tree_pids(pid, snapshot)
+    return sum(snapshot.get(item, {}).get("rss_bytes", 0) for item in pids), pids
+
+
+def _process_rss_bytes(pid: int) -> int | None:
+    """Backward-compatible root-RSS helper; new enforcement uses process trees."""
+    rss, pids = _process_tree_rss_bytes(pid)
+    return rss if pid in pids and rss else None
+
+
+def _terminate_process_tree(process, *, grace_seconds: float = 1.0) -> None:
+    """Terminate a detector process group and reap the multiprocessing root."""
+    pid = int(process.pid)
+    try:
+        pgid = os.getpgid(pid)
+    except (AttributeError, OSError):
+        pgid = None
+    private_group = pgid == pid
+    if private_group:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except OSError:
+            pass
+    else:
+        # A failed setsid must never turn a kill request into a kill of the
+        # coordinator's process group. Best-effort terminate observed
+        # descendants individually, then use multiprocessing's root kill.
+        _, descendants = _process_tree_rss_bytes(pid)
+        for descendant in sorted(descendants - {pid}, reverse=True):
+            try:
+                os.kill(descendant, signal.SIGTERM)
+            except OSError:
+                pass
+        process.terminate()
+    process.join(max(0.05, grace_seconds))
+    if process.is_alive():
+        if private_group:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
+        else:
+            process.kill() if hasattr(process, "kill") else process.terminate()
+        process.join(max(0.05, grace_seconds))
+
+
+def _classify_exit(exit_code: int | None, *, enforced_reason: str | None = None) -> tuple[str, str]:
+    """Classify an exited detector without hiding an OS-level SIGKILL."""
+    if enforced_reason:
+        return enforced_reason, f"detector terminated by {enforced_reason} enforcement"
+    if exit_code == -signal.SIGKILL:
+        return "oom", "detector exited with SIGKILL (exit=-9); likely system or allocator OOM"
+    if exit_code is None:
+        return "failed", "detector subprocess exit code was unavailable"
+    return "failed", f"detector subprocess exited without a result (exit={exit_code})"
 
 
 def _run_with_timeout(
@@ -274,9 +502,11 @@ def _run_with_timeout(
     seed: int,
     timeout_seconds: float | None,
     memory_limit_bytes: int | None = None,
+    initial_membership: list[int] | list[list[int]] | None = None,
+    method_parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run a detector in an isolated process, terminating genuine timeouts."""
-    if timeout_seconds is None or timeout_seconds <= 0:
+    """Run a detector with process-tree RSS and wall-clock enforcement."""
+    if (timeout_seconds is None or timeout_seconds <= 0) and memory_limit_bytes is None:
         try:
             cover, method_meta = run_method(
                 METHODS[method_name],
@@ -284,6 +514,8 @@ def _run_with_timeout(
                 max_memberships=max_memberships,
                 resolution=resolution,
                 seed=seed,
+                parameters=method_parameters,
+                initial_membership=initial_membership,
             )
             return {"status": "ok", "cover": cover, "method_meta": method_meta}
         except BaseException as exc:
@@ -294,66 +526,127 @@ def _run_with_timeout(
             }
 
     # ``fork`` avoids copying bounded igraph inputs through a second pickle on
-    # Unix; Windows falls back to spawn.  The result still crosses a queue.
+    # Unix; Windows falls back to spawn. Large results are persisted to a
+    # private temporary file because a multiprocessing queue can deadlock once
+    # its bounded pipe fills while the parent is waiting for child exit.
     methods = mp.get_all_start_methods()
     context = mp.get_context("fork" if "fork" in methods else "spawn")
-    queue = context.Queue()
+    result_dir = tempfile.TemporaryDirectory(prefix="hedonic-detector-")
+    result_path = Path(result_dir.name) / "result.pickle"
+
+    def finish(packet: dict[str, Any]) -> dict[str, Any]:
+        result_dir.cleanup()
+        return packet
+
     process = context.Process(
         target=_worker,
         args=(
-            queue,
+            str(result_path),
             method_name,
             graph,
             max_memberships,
             resolution,
             seed,
             memory_limit_bytes,
+            initial_membership,
+            method_parameters,
         ),
     )
     started = time.monotonic()
-    process.start()
+    try:
+        process.start()
+    except BaseException:
+        result_dir.cleanup()
+        raise
     peak_rss_bytes = 0
+    peak_pids: set[int] = set()
+    monitor_samples = 0
+    rss_samples: list[dict[str, int | float]] = []
+    last_sample_at = -RSS_RECORD_INTERVAL_SECONDS
+    termination_reason: str | None = None
     while process.is_alive():
         elapsed = time.monotonic() - started
-        if elapsed >= timeout_seconds:
-            process.terminate()
-            process.join(5)
-            return {
-                "status": "timeout",
-                "runtime_seconds": elapsed,
-                "timeout_seconds": timeout_seconds,
-                "memory": {
-                    "limit_bytes": memory_limit_bytes,
-                    "enforcement": "parent_rss_monitor" if memory_limit_bytes else None,
-                    "observed_peak_rss_bytes": peak_rss_bytes,
-                },
-            }
-        rss_bytes = _process_rss_bytes(process.pid)
-        if rss_bytes is not None:
-            peak_rss_bytes = max(peak_rss_bytes, rss_bytes)
+        rss_bytes, pids = _process_tree_rss_bytes(process.pid)
+        monitor_samples += 1
+        # Persist a compact, bounded-rate trace.  This gives a reviewer the
+        # process-tree observation behind a peak without turning a one-hour
+        # run into tens of thousands of JSON entries.
+        if elapsed - last_sample_at >= RSS_RECORD_INTERVAL_SECONDS:
+            rss_samples.append(
+                {
+                    "elapsed_seconds": round(elapsed, 6),
+                    "rss_bytes": int(rss_bytes),
+                    "process_count": len(pids),
+                }
+            )
+            last_sample_at = elapsed
+        if rss_bytes:
+            if rss_bytes > peak_rss_bytes:
+                peak_rss_bytes = rss_bytes
+                peak_pids = set(pids)
             if memory_limit_bytes is not None and rss_bytes > memory_limit_bytes:
-                process.terminate()
-                process.join(5)
-                return {
+                termination_reason = "memory_limit"
+                _terminate_process_tree(process)
+                return finish({
                     "status": "memory_limit",
                     "runtime_seconds": elapsed,
                     "memory": {
                         "limit_bytes": memory_limit_bytes,
-                        "enforcement": "parent_rss_monitor",
+                        "enforcement": "process_tree_rss_polling",
                         "observed_peak_rss_bytes": peak_rss_bytes,
+                        "peak_process_count": max(1, len(peak_pids)),
+                        "monitor_samples": monitor_samples,
+                        "monitor_interval_seconds": RSS_POLL_SECONDS,
+                        "rss_samples": rss_samples,
+                        "termination_reason": termination_reason,
                     },
-                }
-        process.join(min(0.25, max(0.01, timeout_seconds - elapsed)))
+                    "termination_reason": termination_reason,
+                })
+        if timeout_seconds is not None and timeout_seconds > 0 and elapsed >= timeout_seconds:
+            termination_reason = "timeout"
+            _terminate_process_tree(process)
+            return finish({
+                "status": "timeout",
+                "runtime_seconds": elapsed,
+                "memory": {
+                    "limit_bytes": memory_limit_bytes,
+                    "enforcement": "process_tree_rss_polling" if memory_limit_bytes else None,
+                    "observed_peak_rss_bytes": peak_rss_bytes,
+                    "peak_process_count": max(1, len(peak_pids)),
+                    "monitor_samples": monitor_samples,
+                    "monitor_interval_seconds": RSS_POLL_SECONDS,
+                    "rss_samples": rss_samples,
+                    "termination_reason": termination_reason,
+                },
+                "termination_reason": termination_reason,
+            })
+        process.join(RSS_POLL_SECONDS)
     elapsed = time.monotonic() - started
     try:
-        packet = queue.get(timeout=2)
-    except Exception:
-        return {
-            "status": "error",
+        with result_path.open("rb") as stream:
+            packet = pickle.load(stream)
+        if not isinstance(packet, dict):
+            raise TypeError(f"detector packet must be a dict, got {type(packet).__name__}")
+    except Exception as exc:
+        status, reason = _classify_exit(process.exitcode)
+        return finish({
+            "status": status,
             "runtime_seconds": elapsed,
-            "error": f"Detector subprocess exited without a result (exit={process.exitcode})",
-        }
+            "error": f"{reason}; result artifact unreadable: {type(exc).__name__}: {exc}",
+            "exit_code": process.exitcode,
+            "termination_reason": reason,
+            "memory": {
+                "limit_bytes": memory_limit_bytes,
+                "enforcement": "process_tree_rss_polling" if memory_limit_bytes else None,
+                "observed_peak_rss_bytes": peak_rss_bytes,
+                "peak_process_count": max(1, len(peak_pids)),
+                "monitor_samples": monitor_samples,
+                "monitor_interval_seconds": RSS_POLL_SECONDS,
+                "rss_samples": rss_samples,
+            },
+        })
     packet["runtime_seconds"] = elapsed
+    packet["exit_code"] = process.exitcode
     memory = packet.get("memory")
     if not isinstance(memory, dict):
         memory = {}
@@ -361,11 +654,20 @@ def _run_with_timeout(
     memory.update(
         {
             "limit_bytes": memory_limit_bytes,
-            "enforcement": "parent_rss_monitor" if memory_limit_bytes else None,
-            "observed_peak_rss_bytes": peak_rss_bytes,
+            "enforcement": "process_tree_rss_polling" if memory_limit_bytes else None,
+            "observed_peak_rss_bytes": max(
+                peak_rss_bytes,
+                int(memory.get("resource_peak_rss_bytes", 0) or 0),
+                int(memory.get("resource_children_peak_rss_bytes", 0) or 0),
+            ),
+            "peak_process_count": max(1, len(peak_pids)),
+            "monitor_samples": monitor_samples,
+            "monitor_interval_seconds": RSS_POLL_SECONDS,
+            "rss_samples": rss_samples,
+            "result_transport": "temporary_pickle_file",
         }
     )
-    return packet
+    return finish(packet)
 
 
 def _record(
@@ -380,8 +682,21 @@ def _record(
     dataset_report: dict[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
+    # Keep identity and outcome fields owned by this constructor.  In
+    # particular, ``timeout_seconds`` is the configured limit computed by the
+    # coordinator, rather than an incidental value returned by the monitor.
+    # This catches future call sites that accidentally try to override a
+    # record's identity/status through ``**extra``.
+    owned = {
+        "schema_version", "protocol_version", "created_at", "dataset", "cover",
+        "method", "seed", "resolution", "status", "profile", "dataset_report",
+    }
+    conflict = owned.intersection(extra)
+    if conflict:
+        raise ValueError(f"_record extra fields conflict with record fields: {sorted(conflict)}")
     return {
         "schema_version": SCHEMA_VERSION,
+        "protocol_version": RUN_PROTOCOL_VERSION,
         "created_at": _timestamp(),
         "dataset": dataset,
         "cover": cover,
@@ -456,6 +771,13 @@ def _summary(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str,
             "status": status,
             "n_runs": len(group),
         }
+        # Resource and detector failures are diagnostics, never observations.
+        # In particular, a timeout duration must not become a mean runtime or
+        # a failed record contribute an accidental numeric F1 in a future
+        # schema extension.
+        if status != "completed":
+            summary_rows.append(summary_row)
+            continue
         numeric_keys = {
             key
             for row in group
@@ -596,6 +918,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output_dir", help="Artifact root (default: ~/Databases/Hedonic/experiments/snap_benchmark)")
     parser.add_argument("--resume", action="store_true", help="Skip existing per-run records")
     parser.add_argument("--timeout_per_run", type=float, help="Hard wall-clock limit per detector run (seconds; <=0 disables)")
+    parser.add_argument(
+        "--timeout_by_method",
+        help="Per-method overrides, e.g. demon=900,cpm=1800",
+    )
+    parser.add_argument(
+        "--timeout_by_dataset",
+        help="Per-dataset overrides, e.g. livejournal=1800,youtube=1800",
+    )
     parser.add_argument("--max_nodes", type=int, help="Deterministic GT-informed induced-subgraph cap; <=0 disables")
     parser.add_argument(
         "--max_memberships",
@@ -610,7 +940,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help=(
             "RSS limit for each isolated detector process; <=0 disables. A parent monitor "
-            "terminates an over-limit child. The paper scheduler supplies a graph-aware value."
+            "sums the detector process tree and terminates an over-limit group. The paper "
+            "scheduler supplies a graph-aware value."
         ),
     )
     parser.add_argument("--omega", action="store_true", help="Compute memory-safe sampled Omega")
@@ -620,6 +951,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-networks", action="store_true", help="List supported overlapping SNAP datasets and exit")
     parser.add_argument("--list-methods", action="store_true", help="List adapters and availability then exit")
     parser.add_argument("--dry-run", action="store_true", help="Inspect/validate selected data and write no detector runs")
+    parser.add_argument("--execution", choices=("fresh", "rerun", "retry"), default="fresh", help=argparse.SUPPRESS)
     return parser
 
 
@@ -652,6 +984,13 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--max_memberships must be >= 1")
     if args.memory_limit_gb is not None and args.memory_limit_gb <= 0:
         raise ValueError("--memory_limit_gb must be positive when supplied")
+    timeout_per_run = (
+        args.timeout_per_run
+        if args.timeout_per_run is not None
+        else profile["timeout_per_run"]
+    )
+    if timeout_per_run <= 0 and not args.dry_run:
+        raise ValueError("--timeout_per_run must be positive unless used only for a dry-run")
     return {
         "datasets": datasets,
         "methods": methods,
@@ -665,11 +1004,9 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
             if args.memory_limit_gb is not None
             else None
         ),
-        "timeout_per_run": (
-            args.timeout_per_run
-            if args.timeout_per_run is not None
-            else profile["timeout_per_run"]
-        ),
+        "timeout_per_run": timeout_per_run,
+        "timeout_by_method": _parse_timeout_map(args.timeout_by_method, "--timeout_by_method"),
+        "timeout_by_dataset": _parse_timeout_map(args.timeout_by_dataset, "--timeout_by_dataset"),
         "plots": args.plots if args.plots is not None else profile["plots"],
     }
 
@@ -698,6 +1035,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "method_availability": availability,
         "datasets": {},
         "run_status_counts": {},
+        "execution_counts": {"cached": 0, "rerun": 0, "retry": 0, "fresh": 0},
     }
     _write_json(output_dir / "manifest.json", manifest)
 
@@ -717,7 +1055,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
             print_dataset_report(dataset.report)
             manifest["datasets"][dataset_name] = {"status": "loaded", "report": dataset.report}
         except UnsupportedCoverVariant as exc:
-            manifest["datasets"][dataset_name] = {"status": "skipped", "reason": str(exc)}
+            manifest["datasets"][dataset_name] = {"status": "skipped_unsupported", "reason": str(exc)}
             records.extend(
                 _write_dataset_status_records(
                     output_dir=output_dir,
@@ -727,7 +1065,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     seeds=options["seeds"],
                     resolutions=options["resolutions"],
                     profile=args.profile,
-                    status="skipped",
+                    status="skipped_unsupported",
                     reason=str(exc),
                 )
             )
@@ -786,20 +1124,123 @@ def run_benchmark(args: argparse.Namespace) -> int:
             for adapter in selected_methods:
                 resolution = effective_resolution(adapter, dataset.graph, requested_value)
                 for seed in options["seeds"]:
+                    initialization = (
+                        {
+                            "kind": "seeded_random_disjoint",
+                            "requested_community_count": len(dataset.cover),
+                            "seed": int(seed),
+                            "shared_across_hedonic_methods": True,
+                        }
+                        if adapter.name.startswith("hedonic_")
+                        else None
+                    )
                     path = _run_path(output_dir, dataset.name, options["cover"], adapter.name, seed, resolution)
+                    execution_event = str(args.execution)
+                    incompatible_cache = False
+                    timeout_seconds = _timeout_for(options, dataset.name, adapter.name)
+                    expected_cache = {
+                        "dataset": dataset.name,
+                        "cover": options["cover"],
+                        "method": adapter.name,
+                        "seed": seed,
+                        "resolution": resolution,
+                        "max_memberships": max_memberships,
+                        "allow_isolation": bool(
+                            adapter.parameters.get("allow_isolation", False)
+                        ),
+                        "initialization": initialization,
+                        "timeout_seconds": timeout_seconds,
+                        "memory_limit_bytes": options["memory_limit_bytes"],
+                        "run_options": {
+                            "omega": bool(args.omega),
+                            "omega_sample_size": int(args.omega_sample_size),
+                        },
+                    }
                     if args.resume and path.is_file():
                         existing = _read_json(path)
-                        if existing is not None and existing.get("status") in {
-                            "completed",
-                            "unavailable",
-                            "skipped",
-                            "data_unavailable",
-                            "memory_limit",
-                        } and existing.get("max_memberships") == max_memberships:
+                        if existing is not None and _cache_compatible(existing, expected_cache):
                             existing["run_path"] = str(path)
+                            existing["execution"] = "cached"
                             records.append(existing)
+                            manifest["execution_counts"]["cached"] += 1
                             print(f"[resume] {dataset.name}/{adapter.name}/seed={seed}/resolution={resolution:.6g}")
                             continue
+                        # A compatible resource failure is a policy decision,
+                        # not a cached metric.  Do not print [resume] or
+                        # launch the same deterministic condition again.
+                        if (
+                            existing is not None
+                            and adapter.name not in NON_SCALABLE_BASELINES
+                            and _cache_parameters_compatible(existing, expected_cache)
+                            and str(existing.get("status")) in RESOURCE_FAILURE_STATUSES
+                        ):
+                            existing["run_path"] = str(path)
+                            existing["execution"] = "resource_failure_policy"
+                            _write_json(path, existing)
+                            records.append(existing)
+                            manifest["execution_counts"]["resource_failure_policy"] = (
+                                manifest["execution_counts"].get("resource_failure_policy", 0) + 1
+                            )
+                            print(f"[resource-failure] {dataset.name}/{adapter.name}/seed={seed}/resolution={resolution:.6g}")
+                            continue
+                        if (
+                            existing is not None
+                            and adapter.name in NON_SCALABLE_BASELINES
+                            and _cache_parameters_compatible(existing, expected_cache)
+                            and str(existing.get("status"))
+                            in RESOURCE_FAILURE_STATUSES | {"skipped_not_scalable"}
+                        ):
+                            if str(existing.get("status")) != "skipped_not_scalable":
+                                backup = path.with_name(
+                                    f"{path.name}.incompatible.{int(time.time() * 1000)}"
+                                )
+                                try:
+                                    path.replace(backup)
+                                except OSError:
+                                    pass
+                                existing = _record(
+                                    dataset=dataset.name,
+                                    cover=options["cover"],
+                                    method=adapter.name,
+                                    seed=seed,
+                                    resolution=resolution,
+                                    status="skipped_not_scalable",
+                                    profile=args.profile,
+                                    dataset_report=dataset.report,
+                                    max_memberships=max_memberships,
+                                    allow_isolation=expected_cache["allow_isolation"],
+                                    initialization=initialization,
+                                    timeout_seconds=timeout_seconds,
+                                    memory_limit_bytes=options["memory_limit_bytes"],
+                                    run_options=expected_cache["run_options"],
+                                    failure_kind="resource_exhausted",
+                                    resource_status=existing.get("status"),
+                                    reason="baseline previously exceeded its identical resource limit",
+                                    detector_memory=existing.get("detector_memory") or existing.get("memory"),
+                                    runtime_seconds=existing.get("runtime_seconds"),
+                                )
+                                _write_json(path, existing)
+                            existing["run_path"] = str(path)
+                            existing["execution"] = "not_scalable_policy"
+                            _write_json(path, existing)
+                            records.append(existing)
+                            manifest["execution_counts"]["not_scalable_policy"] = (
+                                manifest["execution_counts"].get("not_scalable_policy", 0) + 1
+                            )
+                            print(f"[not-scalable] {dataset.name}/{adapter.name}/seed={seed}/resolution={resolution:.6g}")
+                            continue
+                        if existing is not None:
+                            incompatible_cache = True
+                            execution_event = "rerun"
+                            manifest["execution_counts"]["rerun"] += 1
+                            _append_log(
+                                output_dir,
+                                f"cache_incompatible dataset={dataset.name} method={adapter.name} "
+                                f"seed={seed} resolution={resolution:.12g}",
+                            )
+                        else:
+                            execution_event = "fresh"
+                            manifest["execution_counts"]["fresh"] += 1
                     if not availability[adapter.name]["available"]:
                         record = _record(
                             dataset=dataset.name,
@@ -807,11 +1248,18 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             method=adapter.name,
                             seed=seed,
                             resolution=resolution,
-                            status="unavailable",
+                            status="skipped_unsupported",
                             profile=args.profile,
                             dataset_report=dataset.report,
                             reason=availability[adapter.name]["reason"],
+                            failure_kind="unsupported",
                             install_requirement=availability[adapter.name]["install_requirement"],
+                            max_memberships=max_memberships,
+                            allow_isolation=expected_cache["allow_isolation"],
+                            initialization=initialization,
+                            timeout_seconds=timeout_seconds,
+                            memory_limit_bytes=options["memory_limit_bytes"],
+                            run_options=expected_cache["run_options"],
                         )
                     else:
                         print(
@@ -819,15 +1267,24 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             f"resolution={resolution:.6g}",
                             flush=True,
                         )
+                        initial_membership = (
+                            seeded_initial_membership(
+                                dataset.graph.vcount(), len(dataset.cover), seed
+                            )
+                            if initialization is not None
+                            else None
+                        )
                         outcome = _run_with_timeout(
                             adapter.name,
                             dataset.graph,
                             max_memberships=max_memberships,
                             resolution=resolution,
                             seed=seed,
-                            timeout_seconds=options["timeout_per_run"],
+                            timeout_seconds=timeout_seconds,
                             memory_limit_bytes=options["memory_limit_bytes"],
+                            initial_membership=initial_membership,
                         )
+                        del initial_membership
                         if outcome["status"] == "ok":
                             cover = outcome.pop("cover")
                             method_meta = outcome.pop("method_meta")
@@ -863,7 +1320,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 max_memberships=max_memberships,
                                 ground_truth_max_memberships=ground_truth_membership_cap,
                                 memory_limit_bytes=options["memory_limit_bytes"],
+                                timeout_seconds=timeout_seconds,
+                                run_options=expected_cache["run_options"],
                                 detector_memory=detector_memory,
+                                runtime_seconds=metrics["runtime_seconds"],
                                 n_iterations=-1,
                                 only_local_moving=bool(
                                     adapter.parameters.get("only_local_moving", False)
@@ -871,24 +1331,63 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 allow_isolation=bool(
                                     adapter.parameters.get("allow_isolation", False)
                                 ),
+                                initialization=initialization,
                                 method_metadata=method_meta,
                                 metrics=metrics,
                             )
                         else:
+                            outcome_status = str(outcome.pop("status"))
+                            failure_kind = "error" if outcome_status == "error" else outcome_status
+                            if outcome_status == "error":
+                                outcome_status = "failed"
+                            # The coordinator owns these two configured
+                            # resource fields.  Older/interrupted workers may
+                            # still return timeout_seconds, so discard it
+                            # rather than passing it once explicitly and again
+                            # via **outcome (which caused the reported
+                            # TypeError).  Normalize monitor memory under the
+                            # stable detector_memory JSON field for all
+                            # terminal outcomes.
+                            outcome.pop("timeout_seconds", None)
+                            outcome.pop("memory_limit_bytes", None)
+                            detector_memory = outcome.pop("memory", None)
+                            reported_detector_memory = outcome.pop("detector_memory", None)
+                            if detector_memory is None:
+                                detector_memory = reported_detector_memory
+                            resource_status = outcome_status if outcome_status in RESOURCE_FAILURE_STATUSES else None
+                            if adapter.name in NON_SCALABLE_BASELINES and resource_status is not None:
+                                outcome_status = "skipped_not_scalable"
+                                failure_kind = "resource_exhausted"
                             record = _record(
                                 dataset=dataset.name,
                                 cover=options["cover"],
                                 method=adapter.name,
                                 seed=seed,
                                 resolution=resolution,
-                                status=outcome.pop("status"),
+                                status=outcome_status,
                                 profile=args.profile,
                                 dataset_report=dataset.report,
                                 max_memberships=max_memberships,
                                 ground_truth_max_memberships=ground_truth_membership_cap,
+                                allow_isolation=expected_cache["allow_isolation"],
+                                initialization=initialization,
                                 memory_limit_bytes=options["memory_limit_bytes"],
+                                timeout_seconds=timeout_seconds,
+                                run_options=expected_cache["run_options"],
+                                failure_kind=failure_kind,
+                                resource_status=resource_status,
+                                detector_memory=detector_memory,
                                 **outcome,
                             )
+                    if incompatible_cache and path.is_file():
+                        backup = path.with_name(
+                            f"{path.name}.incompatible.{int(time.time() * 1000)}"
+                        )
+                        try:
+                            path.replace(backup)
+                        except OSError:
+                            pass
+                    record["execution"] = execution_event
                     _write_json(path, record)
                     _append_log(
                         output_dir,

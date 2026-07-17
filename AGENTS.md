@@ -378,17 +378,23 @@ original community IDs correctly.
 
 The benchmark writes resumable JSON per method/dataset/seed/resolution under
 `runs/`, plus `manifest.json`, `results.jsonl`, `results.csv.gz`, summaries,
-method availability, and plots. `--resume` skips existing run records.
-`--timeout_per_run` terminates an isolated detector subprocess; unavailable
-optional methods, timeouts, and unsupported variants are explicit records
-rather than silently omitted. Use `--omega --omega_sample_size …` for the
+method availability, and plots. `--resume` reuses only compatible completed
+records (or an explicit unsupported dependency), never a timeout/OOM/memory
+limit/failed record.
+`--timeout_per_run` plus optional per-method/per-dataset maps terminates an
+isolated detector process tree; unavailable optional methods, timeouts, OOM,
+memory limits, and unsupported variants are explicit records rather than
+silently omitted. Use `--omega --omega_sample_size …` for the
 memory-safe sampled Omega metric.
+Large detector covers return through a private temporary pickle artifact rather
+than `multiprocessing.Queue`; this prevents a bounded-pipe deadlock while the
+parent is waiting for process exit. The artifact is deleted after loading.
 
 Methods are adapters, not new core algorithms: `hedonic_local` and the three
 `hedonic_multiphase*` variants call `Game.community_hedonic` with
 `n_iterations=-1` and the maximum per-node ground-truth membership count as
 `max_memberships`.
-The multi-phase variants enable `allow_isolation=True` and fix resolution to
+The multi-phase variants set `allow_isolation=True` and fix resolution to
 `min(density × {1,10,100}, 1)`; CPM uses NetworkX clique percolation; DEMON
 uses its maintained external Python package. Install all baselines with
 `uv sync --extra experiments`; `--list-methods` reports availability,
@@ -407,20 +413,25 @@ resolutions, timeout, sampled Omega, retry count, tmux name, worker cap, RAM
 budget, and the five dataset/cover jobs. The paper protocol intentionally uses
 the three density-scaled multi-phase variants (`hedonic_multiphase`, `_x10`,
 `_x100`) with `cpm,demon`; it rejects `hedonic_local`. All three pass
-`allow_isolation=True`.
+`allow_isolation=True`. For each dataset and seed, all hedonic variants receive
+the same seeded random disjoint warm start with one requested label per supplied
+ground-truth community; CPM and DEMON do not expose an initial-cover API.
 
 The command measures graph/cover sizes before launch, records conservative
-per-job peak-memory estimates and parent-RSS detector limits in `plan.json`,
-then opens tmux workers in memory-budgeted waves so incompatible large graphs
-cannot overlap. Shards remain resumable under
+method-aware peak-memory estimates, descendant-RSS detector limits, and the
+24-GiB Mac reserve in `plan.json`, then opens tmux workers in memory-budgeted
+waves. LiveJournal is always a solo wave and uncertain estimates force one
+worker. Shards remain resumable under
 `artifacts/full/shards/`; the coordinator creates the merged `results.*`,
-`summary.*`, `paper_summary.csv`, regenerated `plots/`, and TeX fragments.
+`summary.*`, `paper_summary.csv`, regenerated `plots/`, TeX fragments, and a
+per-condition `coverage_report.*`.
 `main.tex` stays on its smoke branch until all expected full-protocol records
 are present and completed. Only then does the coordinator
 enable the generated results branch and run `latexmk`.
 
 Run `hedonic-exp reproduce-overlapping-paper --dry-run` to inspect the CPU/RAM
-bounded assignment first. Use `--no-tmux` only for small smoke/debug configs;
+bounded assignment first. Use `--compile-partial` only for an explicitly
+warning-labeled partial paper. Use `--no-tmux` only for small smoke/debug configs;
 the normal command is the overnight tmux workflow.
 
 ---

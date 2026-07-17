@@ -17,10 +17,26 @@ from typing import Any, Callable, Sequence
 import igraph as ig
 from hedonic import Game
 from hedonic.experiments.overlapping.metrics import partition_to_cover_lists
+from hedonic.utils import sample_uniform_ints
 
 
 class MethodUnavailable(RuntimeError):
     """A method's optional implementation is not installed."""
+
+
+def seeded_initial_membership(
+    n_vertices: int, n_communities: int, seed: int
+) -> list[int]:
+    """Return reproducible contiguous disjoint labels for a warm start."""
+    k = max(1, int(n_communities))
+    if k == 1:
+        return [0] * int(n_vertices)
+    raw = sample_uniform_ints(int(n_vertices), k - 1, int(seed)).tolist()
+    unique = sorted(set(raw))
+    if len(unique) == k and unique[0] == 0 and unique[-1] == k - 1:
+        return [int(label) for label in raw]
+    remap = {old: new for new, old in enumerate(unique)}
+    return [remap[int(label)] for label in raw]
 
 
 @dataclass(frozen=True)
@@ -80,7 +96,7 @@ def normalize_cover(
 
 
 def _hedonic_local(
-    graph: ig.Graph, k: int, resolution: float, seed: int, _parameters: dict[str, Any]
+    graph: ig.Graph, k: int, resolution: float, seed: int, parameters: dict[str, Any]
 ) -> list[list[int]]:
     # lucas-igraph's community_leiden binding does not expose a ``seed``
     # argument.  Set igraph's Python RNG explicitly so a benchmark seed is a
@@ -92,6 +108,7 @@ def _hedonic_local(
         max_memberships=max(2, k),
         only_local_moving=True,
         n_iterations=-1,
+        initial_membership=parameters.get("_initial_membership"),
         seed=seed,
     )
     return partition_to_cover_lists(result)
@@ -107,6 +124,7 @@ def _hedonic_multiphase(
         only_local_moving=False,
         n_iterations=-1,
         allow_isolation=bool(parameters.get("allow_isolation", True)),
+        initial_membership=parameters.get("_initial_membership"),
         seed=seed,
     )
     return partition_to_cover_lists(result)
@@ -325,11 +343,17 @@ def run_method(
     resolution: float,
     seed: int,
     parameters: dict[str, Any] | None = None,
+    initial_membership: list[int] | list[list[int]] | None = None,
 ) -> tuple[list[list[int]], dict[str, Any]]:
     """Run an adapter and return a valid normalized cover with provenance."""
     params = {**adapter.parameters, **(parameters or {})}
     started = time.monotonic()
-    raw_cover = adapter.runner(graph, max_memberships, resolution, seed, params)
+    runner_params = params
+    if initial_membership is not None:
+        runner_params = {**params, "_initial_membership": initial_membership}
+    raw_cover = adapter.runner(
+        graph, max_memberships, resolution, seed, runner_params
+    )
     cover, normalization = normalize_cover(raw_cover, graph.vcount())
     if not cover:
         raise RuntimeError(f"{adapter.name} produced no valid communities")
@@ -340,6 +364,7 @@ def run_method(
         "implementation": adapter.implementation,
         "parameters": params,
         "seed": seed,
+        "initial_membership_supplied": initial_membership is not None,
         "normalization": normalization,
         "directed_input_converted_to_undirected": (
             graph.is_directed() and adapter.name in {"cpm", "demon"}

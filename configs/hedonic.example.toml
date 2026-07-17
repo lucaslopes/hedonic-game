@@ -37,12 +37,16 @@ timeout_per_run = 3600
 omega = true
 omega_sample_size = 100000
 resume = true
-retry_attempts = 1
+retry_attempts = 0
+timeout_by_method = { cpm = 1800, demon = 1800, hedonic_multiphase = 3600, hedonic_multiphase_x10 = 3600, hedonic_multiphase_x100 = 3600 }
+timeout_by_dataset = { livejournal = 1800, youtube = 1800, wikipedia = 1800 }
+# When both maps apply, the conservative (smaller) timeout is used. CPM/DEMON
+# resource exhaustion becomes skipped_not_scalable and is not repeated.
 
 # The runner measures graph/cover sizes and packs only jobs whose conservative
 # estimated peaks fit this budget. `auto` means physical RAM minus the reserve.
 memory_budget_gb = "auto"
-memory_reserve_gb = 16
+memory_reserve_gb = 24
 memory_safety_factor = 1.5
 max_parallel_workers = "auto"
 max_parallel_cap = 2

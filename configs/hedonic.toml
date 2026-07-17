@@ -41,24 +41,30 @@ paper_dir = "docs/papers/overlapping_communities"
 tmux_session = "hedonic-overlapping-paper"
 
 # The paper compares three multi-phase hedonic density resolutions with
-# independent baselines. Every hedonic variant uses allow_isolation = true.
+# independent baselines. Every multi-phase hedonic variant uses
+# allow_isolation = true and the same seed-dependent disjoint warm start.
 # hedonic_local is intentionally excluded from this protocol.
 methods = ["hedonic_multiphase", "hedonic_multiphase_x10", "hedonic_multiphase_x100", "cpm", "demon"]
 seeds = "0-4"
 resolutions = "auto"
 max_nodes = 0                 # <=0 disables the benchmark's bounded-subgraph cap
 timeout_per_run = 3600        # seconds, enforced in a detector subprocess
+# Baselines get shorter explicit limits. When both method and dataset limits
+# apply, the runner uses the smaller value. A resource-exhausted CPM/DEMON run
+# is recorded as skipped_not_scalable and is not automatically repeated.
+timeout_by_method = { cpm = 1800, demon = 1800, hedonic_multiphase = 3600, hedonic_multiphase_x10 = 3600, hedonic_multiphase_x100 = 3600 }
+timeout_by_dataset = { livejournal = 1800, youtube = 1800, wikipedia = 1800 }
 omega = true
 omega_sample_size = 100000
 resume = true
-retry_attempts = 1            # retry timeout/error records once in the same overnight run
+retry_attempts = 0            # never repeat timeout/OOM/memory failures by default
 
-# On this 64-GiB unified-memory Mac, reserve 16 GiB for macOS and other apps.
-# The remaining 48 GiB is a hard scheduling budget; a parent RSS monitor kills
-# any child detector exceeding its per-job limit. Do not raise this without
+# On this 64-GiB unified-memory Mac, reserve 24 GiB for macOS and other apps.
+# The remaining 40 GiB is a hard scheduling budget; a process-tree RSS monitor
+# kills any detector/descendant exceeding its per-job limit. Do not raise this without
 # examining plan.json.
 memory_budget_gb = "auto"
-memory_reserve_gb = 16
+memory_reserve_gb = 24
 memory_safety_factor = 1.5
 max_parallel_workers = "auto"
 max_parallel_cap = 2
