@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import importlib.metadata
 import json
+import re
 import subprocess
 import tomllib
 from collections import Counter
@@ -21,7 +23,7 @@ from typing import Any
 
 
 LOCK_PATH = Path(__file__).resolve().parents[4] / "configs" / "overlapping-paper-protocol.lock.json"
-IDENTITY_SCHEMA_VERSION = 1
+IDENTITY_SCHEMA_VERSION = 2
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -69,6 +71,53 @@ def _git_revision(path: Path) -> str | None:
     return result.stdout.strip() or None
 
 
+def _normalise_distribution_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", str(name)).lower()
+
+
+def _distribution_version(name: str) -> str | None:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _igraph_version() -> str | None:
+    try:
+        import igraph
+    except ImportError:
+        return None
+    value = getattr(igraph, "__version__", None)
+    return str(value) if value is not None else None
+
+
+def _resolve_path(repo_root: Path, value: Any) -> Path | None:
+    if value is None:
+        return None
+    path = Path(str(value)).expanduser()
+    return path if path.is_absolute() else repo_root / path
+
+
+def _uv_lock_package_sha256(path: Path | None, distribution: str) -> str | None:
+    """Hash the canonical uv.lock package entry for a distribution.
+
+    The digest is deliberately independent of the host platform: the package
+    entry contains the version, dependency set, sdist, and all locked wheels.
+    The selected wheel's hash is still preserved inside that canonical entry.
+    """
+    if path is None:
+        return None
+    try:
+        packages = tomllib.loads(path.read_text(encoding="utf-8")).get("package", [])
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    wanted = _normalise_distribution_name(distribution)
+    for package in packages:
+        if _normalise_distribution_name(package.get("name", "")) == wanted:
+            return _canonical_hash(package)
+    return None
+
+
 @cache
 def current_experiment_identity(lock_path: Path = LOCK_PATH) -> dict[str, Any]:
     """Return reproducible code/config/dependency identity for new records."""
@@ -78,8 +127,45 @@ def current_experiment_identity(lock_path: Path = LOCK_PATH) -> dict[str, Any]:
         relative: _sha256_file(repo_root / relative)
         for relative in lock.get("tracked_files", {})
     }
-    source = repo_root / str(lock["lucas_igraph"]["source_path"])
-    actual_revision = _git_revision(source)
+    dependency = lock.get("lucas_igraph", {})
+    distribution = str(dependency.get("distribution", "lucas-igraph"))
+    uv_lock_path = _resolve_path(repo_root, dependency.get("uv_lock_path", "uv.lock"))
+    expected_version = dependency.get("version")
+    expected_igraph_version = dependency.get("igraph_version")
+    expected_uv_lock_sha256 = dependency.get("uv_lock_sha256")
+    expected_package_lock_sha256 = dependency.get("package_lock_sha256")
+    actual_version = _distribution_version(distribution)
+    actual_igraph_version = _igraph_version()
+    actual_uv_lock_sha256 = _sha256_file(uv_lock_path) if uv_lock_path else None
+    actual_package_lock_sha256 = _uv_lock_package_sha256(uv_lock_path, distribution)
+
+    source_path = _resolve_path(repo_root, dependency.get("source_path"))
+    actual_source_revision = _git_revision(source_path) if source_path else None
+    released_native_sha = dependency.get("released_native_sha")
+    source_revision_matches_release = (
+        None
+        if released_native_sha is None
+        else actual_source_revision is None or actual_source_revision == released_native_sha
+    )
+    version_matches_lock = expected_version is None or actual_version == expected_version
+    igraph_version_matches_lock = (
+        expected_igraph_version is None or actual_igraph_version == expected_igraph_version
+    )
+    uv_lock_matches_lock = (
+        expected_uv_lock_sha256 is None or actual_uv_lock_sha256 == expected_uv_lock_sha256
+    )
+    package_lock_matches_lock = (
+        expected_package_lock_sha256 is None
+        or actual_package_lock_sha256 == expected_package_lock_sha256
+    )
+    package_identity_matches_lock = all(
+        (
+            version_matches_lock,
+            igraph_version_matches_lock,
+            uv_lock_matches_lock,
+            package_lock_matches_lock,
+        )
+    )
     return {
         "schema_version": IDENTITY_SCHEMA_VERSION,
         "protocol_lock_sha256": _sha256_file(lock_path),
@@ -92,10 +178,25 @@ def current_experiment_identity(lock_path: Path = LOCK_PATH) -> dict[str, Any]:
             for relative, digest in files.items()
         ),
         "lucas_igraph": {
-            "distribution": lock["lucas_igraph"]["distribution"],
-            "expected_revision": lock["lucas_igraph"]["revision"],
-            "actual_revision": actual_revision,
-            "revision_matches_lock": actual_revision == lock["lucas_igraph"]["revision"],
+            "distribution": distribution,
+            "expected_version": expected_version,
+            "actual_version": actual_version,
+            "version_matches_lock": version_matches_lock,
+            "expected_igraph_version": expected_igraph_version,
+            "actual_igraph_version": actual_igraph_version,
+            "igraph_version_matches_lock": igraph_version_matches_lock,
+            "uv_lock_path": _portable_path(uv_lock_path) if uv_lock_path else None,
+            "expected_uv_lock_sha256": expected_uv_lock_sha256,
+            "actual_uv_lock_sha256": actual_uv_lock_sha256,
+            "uv_lock_matches_lock": uv_lock_matches_lock,
+            "expected_package_lock_sha256": expected_package_lock_sha256,
+            "actual_package_lock_sha256": actual_package_lock_sha256,
+            "package_lock_matches_lock": package_lock_matches_lock,
+            "package_identity_matches_lock": package_identity_matches_lock,
+            "released_native_sha": released_native_sha,
+            "source_path": str(dependency.get("source_path")) if dependency.get("source_path") else None,
+            "actual_source_revision": actual_source_revision,
+            "source_revision_matches_release": source_revision_matches_release,
         },
     }
 
@@ -104,6 +205,8 @@ def identity_rejection_reasons(existing: Any, expected: dict[str, Any]) -> list[
     if not isinstance(existing, dict):
         return ["missing_experiment_identity"]
     reasons: list[str] = []
+    if existing.get("schema_version") != expected.get("schema_version"):
+        reasons.append("experiment_identity.schema_version_mismatch")
     for key in (
         "protocol_lock_sha256", "protocol_name", "run_protocol_version",
         "analysis_graph_policy",
@@ -114,8 +217,31 @@ def identity_rejection_reasons(existing: Any, expected: dict[str, Any]) -> list[
     new_dep = expected.get("lucas_igraph")
     if not isinstance(old_dep, dict):
         reasons.append("missing_lucas_igraph_identity")
-    elif old_dep.get("actual_revision") != new_dep.get("expected_revision"):
-        reasons.append("lucas_igraph_revision_mismatch")
+    elif not isinstance(new_dep, dict):
+        reasons.append("missing_expected_lucas_igraph_identity")
+    else:
+        if old_dep.get("distribution") != new_dep.get("distribution"):
+            reasons.append("lucas_igraph_distribution_mismatch")
+        comparisons = (
+            ("actual_version", "expected_version", "lucas_igraph_version_mismatch"),
+            ("actual_igraph_version", "expected_igraph_version", "igraph_version_mismatch"),
+            ("actual_uv_lock_sha256", "expected_uv_lock_sha256", "lucas_igraph_lockfile_mismatch"),
+            (
+                "actual_package_lock_sha256",
+                "expected_package_lock_sha256",
+                "lucas_igraph_package_lock_mismatch",
+            ),
+        )
+        package_identity_fields_present = False
+        for actual_key, expected_key, reason in comparisons:
+            expected_value = new_dep.get(expected_key)
+            if expected_value is None:
+                continue
+            package_identity_fields_present = True
+            if old_dep.get(actual_key) != expected_value:
+                reasons.append(reason)
+        if not package_identity_fields_present:
+            reasons.append("missing_lucas_igraph_package_identity")
     if existing.get("tracked_files") != expected.get("tracked_files"):
         reasons.append("tracked_code_or_config_hash_mismatch")
     return reasons

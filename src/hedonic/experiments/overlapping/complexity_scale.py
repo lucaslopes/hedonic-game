@@ -41,6 +41,7 @@ from hedonic import Game
 from hedonic.experiments.config import DBLP_DIR
 from hedonic.experiments.overlapping.dblp_full import load_dblp
 from hedonic.experiments.overlapping.dblp_subgraph import extract_subgraph
+from hedonic.experiments.overlapping.protocol import current_experiment_identity
 
 # Fixed algorithm flags (not CLI knobs) — match the experiment contract.
 N_ITERATIONS = -1
@@ -534,6 +535,7 @@ def run_scale_experiment(
                 log(f"  → stop further growth for local_move_only={only_lm}")
 
     meta = {
+        "experiment_identity": current_experiment_identity(),
         "timeout_s": None if unlimited else timeout_s,
         "timeout_unlimited": unlimited,
         "n_iterations": N_ITERATIONS,

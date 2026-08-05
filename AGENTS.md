@@ -244,7 +244,7 @@ hedonic-exp reproduce-disjoint --plots-only \
 # Defaults: n_iterations=-1 (to equilibrium), max_memberships=n_GT communities
 hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 \
   --methods leiden,hedonic_v1 --output /tmp/subgraph_smoke.json
-hedonic-exp overlapping-full --resolution 1e-4 --output /tmp/dblp_full.json
+hedonic-exp overlapping-full --resolution 1e-4 --seed 0 --output /tmp/dblp_full.json
 
 # Complexity scale: network size vs wallclock to equilibrium
 # Two lines: local_move_only True vs False; density γ; K = #GT in window
@@ -468,6 +468,11 @@ The benchmark writes resumable JSON per method/dataset/seed/resolution under
 method availability, and plots. `--resume` reuses only compatible completed
 records (or an explicit unsupported dependency), never a timeout/OOM/memory
 limit/failed record.
+For a release-sensitive rerun whose change is confined to native Leiden,
+`--skip-methods cpm,demon` records explicit
+`skipped_external_unchanged` conditions without invoking those external
+baselines; the paper TOML exposes the same policy as
+`not_rerun_external_methods`. It must not be used for native Hedonic methods.
 `--timeout_per_run` plus optional per-method/per-dataset maps terminates an
 isolated detector process tree; unavailable optional methods, timeouts, OOM,
 memory limits, and unsupported variants are explicit records rather than

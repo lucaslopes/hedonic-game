@@ -56,6 +56,7 @@ from hedonic.experiments.overlapping.metrics import (
     quality_overlapping_cpm,
     symmetric_best_match_metrics,
 )
+from hedonic.experiments.overlapping.protocol import current_experiment_identity
 from hedonic.experiments.overlapping.methods import seeded_initial_membership
 
 # Fixed algorithm flags (not CLI knobs) — match the experiment contract.
@@ -469,6 +470,7 @@ def run_one(
         "initial_membership": [int(x) for x in init],
         "completed_at": utc_now_iso(),
         "from_cache": False,
+        "experiment_identity": current_experiment_identity(),
     }
     return rescore_record(
         record,
@@ -756,6 +758,7 @@ def run_resolution_f1_experiment(
 
     aggregated = aggregate_runs(runs, confidence=confidence)
     meta = {
+        "experiment_identity": current_experiment_identity(),
         "n_iterations": N_ITERATIONS,
         "local_move_only": LOCAL_MOVE_ONLY,
         "allow_isolation": ALLOW_ISOLATION,

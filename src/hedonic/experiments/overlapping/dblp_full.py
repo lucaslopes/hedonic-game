@@ -10,6 +10,7 @@ import argparse
 import gzip
 import json
 import pickle
+import random
 import time
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from hedonic.experiments.overlapping.metrics import (
     partition_to_cover_lists,
     quality_overlapping_cpm,
 )
+from hedonic.experiments.overlapping.protocol import current_experiment_identity
 
 
 def log(msg: str, t0: float | None = None) -> None:
@@ -332,6 +334,12 @@ def main(argv=None):
         ),
     )
     parser.add_argument("--resolution_sweep", action="store_true")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed the igraph RNG before the detector calls (default: 0).",
+    )
     parser.add_argument("--output", default="results.json")
     args = parser.parse_args(argv)
 
@@ -343,6 +351,7 @@ def main(argv=None):
     log(f"  sweep      : {args.resolution_sweep}")
     log(f"  resolution : {args.resolution:.2e}")
     log(f"  n_iterations : {args.n_iterations}")
+    log(f"  seed         : {args.seed}")
     mm_log = (
         "auto (n GT communities)"
         if args.max_memberships is None
@@ -358,6 +367,18 @@ def main(argv=None):
 
     t_start = time.time()
     g, gt, _ = load_dblp(args.data_dir)
+    ig.set_random_number_generator(random.Random(args.seed))
+
+    run_metadata = {
+        "data_dir": str(Path(args.data_dir).expanduser()),
+        "analysis_graph_policy": "dblp_cached_or_raw_undirected_simple_v1",
+        "seed": int(args.seed),
+        "graph": {
+            "n_vertices": int(g.vcount()),
+            "n_edges": int(g.ecount()),
+            "directed": bool(g.is_directed()),
+        },
+    }
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
@@ -368,13 +389,29 @@ def main(argv=None):
             game, gt, resolutions, args.n_iterations, args.max_memberships
         )
         with open(args.output, "w", encoding="utf-8") as f:
-            json.dump({"resolution_sweep": sweep}, f, indent=2)
+            json.dump(
+                {
+                    "experiment_identity": current_experiment_identity(),
+                    "run_metadata": run_metadata,
+                    "resolution_sweep": sweep,
+                },
+                f,
+                indent=2,
+            )
     else:
         results = run_experiment(
             g, gt, args.resolution, args.n_iterations, args.max_memberships
         )
         with open(args.output, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=2)
+            json.dump(
+                {
+                    "experiment_identity": current_experiment_identity(),
+                    "run_metadata": run_metadata,
+                    **results,
+                },
+                f,
+                indent=2,
+            )
 
     log(f"\n[done] Results saved to {args.output}")
     log("[done] Total time", t_start)

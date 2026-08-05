@@ -45,6 +45,11 @@ tmux_session = "hedonic-overlapping-paper"
 # allow_isolation = true and the same seed-dependent disjoint warm start.
 # hedonic_local is intentionally excluded from this protocol.
 methods = ["hedonic_multiphase", "hedonic_multiphase_x10", "hedonic_multiphase_x100", "cpm", "demon"]
+# Optional release-sensitive rerun policy. External baselines can be recorded
+# as explicit non-results when the change under validation is confined to the
+# native community_leiden implementation. Keep empty for a conventional full
+# detector run; the release follow-up may set ["cpm", "demon"] in a copied TOML.
+not_rerun_external_methods = []
 seeds = "0-4"
 resolutions = "auto"
 max_nodes = 0                 # <=0 disables the benchmark's bounded-subgraph cap

@@ -71,7 +71,13 @@ DEFAULT_JOBS = (
 # retried automatically. A detector exception is the only potentially
 # transient outcome, and even that defaults to zero retries in TOML.
 RETRYABLE_STATUSES = {"failed"}
-NON_RETRYABLE_FAILURES = {"timeout", "memory_limit", "oom", "skipped_not_scalable"}
+NON_RETRYABLE_FAILURES = {
+    "timeout",
+    "memory_limit",
+    "oom",
+    "skipped_not_scalable",
+    "skipped_external_unchanged",
+}
 _DATASET_WEIGHT = {
     "dblp": 1,
     "amazon": 2,
@@ -438,6 +444,27 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         )
     if "hedonic_multiphase" not in methods:
         raise ValueError("The paper protocol must include hedonic_multiphase")
+    raw_not_rerun_external_methods = raw.get("not_rerun_external_methods", [])
+    not_rerun_external_methods = (
+        []
+        if raw_not_rerun_external_methods in (None, "", [])
+        else _as_list(raw_not_rerun_external_methods, "not_rerun_external_methods")
+    )
+    unknown_not_rerun = sorted(set(not_rerun_external_methods) - set(methods))
+    if unknown_not_rerun:
+        raise ValueError(
+            "overlapping_paper.not_rerun_external_methods must be a subset of methods: "
+            + ", ".join(unknown_not_rerun)
+        )
+    unsupported_not_rerun = sorted(
+        set(not_rerun_external_methods) - benchmark.NON_SCALABLE_BASELINES
+    )
+    if unsupported_not_rerun:
+        raise ValueError(
+            "overlapping_paper.not_rerun_external_methods is limited to external "
+            "baselines cpm,demon: "
+            + ", ".join(unsupported_not_rerun)
+        )
 
     profile = str(raw.get("profile", "full")).strip().lower()
     if profile not in benchmark.PROFILE_DEFAULTS:
@@ -524,8 +551,8 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
     experiment_identity = benchmark.current_experiment_identity()
     if not experiment_identity["tracked_files_match_lock"]:
         raise ValueError("Protocol-locked code/config hashes do not match; refresh and review the lock")
-    if not experiment_identity["lucas_igraph"]["revision_matches_lock"]:
-        raise ValueError("lucas-igraph checkout does not match the protocol-locked revision")
+    if not experiment_identity["lucas_igraph"]["package_identity_matches_lock"]:
+        raise ValueError("installed lucas-igraph package does not match the protocol-locked release")
     options = {
         "schema_version": PAPER_SCHEMA_VERSION,
         "created_at": _timestamp(),
@@ -537,6 +564,7 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         "paper_dir": str(paper_dir),
         "tmux_session": session,
         "methods": methods,
+        "not_rerun_external_methods": not_rerun_external_methods,
         "seeds": str(raw.get("seeds", "0-4")),
         "resolutions": str(raw.get("resolutions", "auto")),
         "timeout_per_run": timeout,
@@ -557,6 +585,9 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
             "timeout_memory_limit_oom_max_attempts": 0,
             "failed_max_attempts": retries,
             "baseline_resource_failures": "skipped_not_scalable_without_repeat",
+            "external_baseline_policy": (
+                "skipped_external_unchanged_without_detector_invocation"
+            ),
         },
         "compile_paper": bool(raw.get("compile_paper", True)),
         "poll_seconds": poll_seconds,
@@ -708,6 +739,8 @@ def _benchmark_argv(
         "--execution",
         execution,
     ]
+    if plan.get("not_rerun_external_methods"):
+        argv.extend(["--skip-methods", ",".join(plan["not_rerun_external_methods"])])
     if bool(plan.get("resume", True)):
         argv.append("--resume")
     if bool(plan.get("omega", True)):
@@ -1029,6 +1062,7 @@ def _coverage_report(plan: dict[str, Any], records: list[dict[str, Any]], audit:
         "expected_records": audit["expected_records"],
         "completed": status_counts["completed"],
         "not_scalable": status_counts["skipped_not_scalable"],
+        "not_rerun_external": status_counts["skipped_external_unchanged"],
         "timeout": resource_counts["timeout"] + status_counts["timeout"],
         "oom": resource_counts["oom"] + status_counts["oom"],
         "memory_limit": resource_counts["memory_limit"] + status_counts["memory_limit"],
@@ -1191,7 +1225,8 @@ def _write_paper_tex(output_dir: Path, plan: dict[str, Any], audit: dict[str, An
             (
                 r"\par\smallskip\footnotesize Completed estimates are the only values used in "
                 r"means. Records marked \texttt{timeout}, \texttt{memory\_limit}, "
-                r"\texttt{oom}, \texttt{failed}, or \texttt{skipped\_unsupported} are explicit "
+                r"\texttt{oom}, \texttt{failed}, \texttt{skipped\_unsupported}, or "
+                r"\texttt{skipped\_external\_unchanged} are explicit "
                 r"non-results and are reported in the failure report."
             ),
             r"\end{table*}",
@@ -1387,13 +1422,25 @@ def run_coordinator(plan: dict[str, Any]) -> int:
     return finalize(plan)
 
 
-def _tmux_command(plan_path: Path, action: str, worker_index: int | None = None) -> str:
+def _tmux_command(
+    plan_path: Path,
+    action: str,
+    worker_index: int | None = None,
+    window_target: str | None = None,
+) -> str:
     argv = [sys.executable, "-m", "hedonic.experiments.CLI", "reproduce-overlapping-paper", "--plan", str(plan_path)]
     if action == "worker":
         argv.extend(["--worker-index", str(worker_index)])
     else:
         argv.append("--coordinator")
-    return "exec " + shlex.join(argv)
+    command = "exec " + shlex.join(argv)
+    if window_target is not None:
+        # A worker can fail before the parent gets a chance to set the option
+        # in a second tmux command. Set it from the pane's shell first so the
+        # window remains inspectable even for immediate failures.
+        target = shlex.quote(window_target)
+        return f"tmux set-window-option -t {target} remain-on-exit on; {command}"
+    return command
 
 
 def _print_memory_plan(plan: dict[str, Any]) -> None:
@@ -1418,7 +1465,10 @@ def _print_memory_plan(plan: dict[str, Any]) -> None:
 def launch_tmux(plan: dict[str, Any]) -> int:
     if shutil.which("tmux") is None:
         raise RuntimeError("tmux is required; install it or use --no-tmux for a foreground debug run")
-    session = str(plan["tmux_session"])
+    # tmux 3.5a normalizes periods in session names to underscores. Use the
+    # normalized target for every subsequent command or later windows fail to
+    # resolve even though the initial session was created successfully.
+    session = str(plan["tmux_session"]).replace(".", "_")
     exists = subprocess.run(
         ["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     ).returncode == 0
@@ -1429,17 +1479,24 @@ def launch_tmux(plan: dict[str, Any]) -> int:
     plan_path = _plan_path(Path(plan["output_dir"])).resolve()
     for index in range(int(plan["workers"])):
         target = f"worker-{index + 1}"
-        command = _tmux_command(plan_path, "worker", index)
+        command = _tmux_command(plan_path, "worker", index, target)
         if index == 0:
             subprocess.run(["tmux", "new-session", "-d", "-s", session, "-n", target, command], check=True)
         else:
             subprocess.run(["tmux", "new-window", "-d", "-t", session, "-n", target, command], check=True)
-        subprocess.run(["tmux", "set-window-option", "-t", f"{session}:{target}", "remain-on-exit", "on"], check=True)
     subprocess.run(
-        ["tmux", "new-window", "-d", "-t", session, "-n", "coordinator", _tmux_command(plan_path, "coordinator")],
+        [
+            "tmux",
+            "new-window",
+            "-d",
+            "-t",
+            session,
+            "-n",
+            "coordinator",
+            _tmux_command(plan_path, "coordinator", window_target="coordinator"),
+        ],
         check=True,
     )
-    subprocess.run(["tmux", "set-window-option", "-t", f"{session}:coordinator", "remain-on-exit", "on"], check=True)
     print(f"[launch] tmux session: {session}")
     print(f"[launch] attach with: tmux attach -t {session}")
     print(f"[launch] plan: {plan_path}")

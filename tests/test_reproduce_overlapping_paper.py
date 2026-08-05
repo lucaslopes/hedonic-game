@@ -66,6 +66,27 @@ def _smoke_config(root: Path) -> Path:
 
 
 class TestOverlappingPaperReproduction(unittest.TestCase):
+    def test_external_baseline_policy_is_recorded_in_plan_and_worker_argv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = _smoke_config(root)
+            config.write_text(
+                config.read_text(encoding="utf-8").replace(
+                    'methods = ["hedonic_multiphase", "cpm"]',
+                    'methods = ["hedonic_multiphase", "cpm"]\n'
+                    'not_rerun_external_methods = ["cpm"]',
+                ),
+                encoding="utf-8",
+            )
+            args = reproduce_paper.build_parser().parse_args(["--config", str(config)])
+            options, _ = reproduce_paper._load_options(args)
+            self.assertEqual(options["not_rerun_external_methods"], ["cpm"])
+            plan = reproduce_paper._make_plan(options)
+            argv = reproduce_paper._benchmark_argv(
+                plan, plan["jobs"][0], root / "shard", execution="fresh"
+            )
+            self.assertEqual(argv[argv.index("--skip-methods") + 1], "cpm")
+
     def test_memory_plan_uses_per_node_membership_capacity_and_budgeted_waves(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

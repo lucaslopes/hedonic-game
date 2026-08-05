@@ -155,6 +155,27 @@ structural overlap behavior (inclusion, coverage, overlap, distribution,
 coverage/size/membership diagnostics), CPM graph quality, and runtime. Omega
 is opt-in and sampled; no dense vertex-pair matrix is allocated.
 
+For the historical five-network paper snapshot, see the readable
+[network × method failure report](papers/overlapping_communities/evidence/benchmark_failure_report.md),
+which lists every non-result and distinguishes memory limits, OOM exits,
+timeouts, baseline scalability skips, and deliberate user skips.
+
+For a release follow-up whose code change is confined to native Leiden, the
+paper coordinator accepts `not_rerun_external_methods = ["cpm", "demon"]` in
+a copied TOML. It writes one explicit
+`skipped_external_unchanged` record per requested external-baseline condition,
+with current package/graph identity and no metrics; it never presents that
+record as a detector result. The lower-level equivalent is
+`overlapping-benchmark --skip-methods cpm,demon`.
+
+The release-labelled post-release ledger records 125/125 explicit conditions
+under `lucas-igraph==1.0.0.2`: 20 completed native results, 10 native
+memory-limit outcomes, one native YouTube timeout, 44 explicit native
+resource-policy non-results, and 50 `skipped_external_unchanged` baseline
+records. It is a resource-bounded ledger, not a claim that all five networks
+have post-release detector metrics. See the [post-release protocol audit](papers/overlapping_communities/evidence/postrelease_protocol_audit_1.0.0.2.json)
+and [paired comparison](papers/overlapping_communities/evidence/postrelease_paired_comparison_1.0.0.2.csv).
+
 ## Safe paper reproduction
 
 Inspect the complete plan without starting detectors or a tmux session:
@@ -197,8 +218,9 @@ hedonic-exp overlapping-audit \
 The command is read-only with respect to experiment artifacts: it never loads
 a graph or launches a detector. It inventories all 125 requested conditions
 and records the exact reason each present record is accepted or rejected. The
-JSON lock pins the modified `lucas-igraph` Git revision and SHA-256 hashes of
-the authoritative config and detector/orchestration sources. New manifests and
-run records embed that identity plus a hash of the loader's dataset metadata.
-Changing a resource envelope, protocol field, code hash, or native dependency
-therefore cannot silently reuse evidence from another condition.
+JSON lock pins the released `lucas-igraph==1.0.0.2` distribution, the
+`uv.lock` and canonical package-entry SHA-256 hashes, and hashes of the
+authoritative config and detector/orchestration sources. New manifests and run
+records embed that identity plus a hash of the loader's dataset metadata. An
+available sibling source checkout SHA is optional provenance rather than a
+runtime requirement.

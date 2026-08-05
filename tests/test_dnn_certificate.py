@@ -96,6 +96,8 @@ class TestDnnCertificate(unittest.TestCase):
             / "evidence"
             / "dnn_certificate_v1.json"
         )
+        if not artifact_path.is_file():
+            self.skipTest("private paper reference artifact is not present in this checkout")
         artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
         self.assertEqual(
             artifact["protocol"]["implementation_sha256"],

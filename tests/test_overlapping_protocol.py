@@ -12,10 +12,12 @@ from hedonic.experiments.overlapping import protocol
 
 
 class TestOverlappingProtocol(unittest.TestCase):
-    def test_tracked_lock_matches_code_and_native_revision(self):
+    def test_tracked_lock_matches_code_and_released_package(self):
         identity = protocol.current_experiment_identity()
         self.assertTrue(identity["tracked_files_match_lock"])
-        self.assertTrue(identity["lucas_igraph"]["revision_matches_lock"])
+        self.assertTrue(identity["lucas_igraph"]["package_identity_matches_lock"])
+        self.assertEqual(identity["lucas_igraph"]["actual_version"], "1.0.0.2")
+        self.assertEqual(identity["lucas_igraph"]["actual_igraph_version"], "1.0.0.2")
         self.assertEqual(protocol.load_protocol_lock()["expected_conditions"], 125)
         self.assertIn("overlapping-audit", CLI.COMMANDS)
 
@@ -55,7 +57,7 @@ cover = "all"
 """)
             lock = root / "protocol.lock.json"
             lock.write_text(json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
                 "protocol_name": "test",
                 "run_protocol_version": 6,
                 "expected_conditions": 1,
@@ -74,6 +76,23 @@ cover = "all"
             self.assertIn("missing_dataset_metadata_identity", report["rows"][0]["rejection_reasons"])
             self.assertIn("missing_analysis_graph_identity", report["rows"][0]["rejection_reasons"])
             self.assertEqual(run.read_bytes(), before)
+
+    def test_old_revision_only_identity_is_not_package_admissible(self):
+        expected = protocol.current_experiment_identity()
+        old = {
+            **{key: expected[key] for key in (
+                "protocol_lock_sha256", "protocol_name", "run_protocol_version",
+                "analysis_graph_policy", "tracked_files",
+            )},
+            "schema_version": 1,
+            "lucas_igraph": {
+                "distribution": "lucas-igraph",
+                "actual_revision": expected["lucas_igraph"]["released_native_sha"],
+            },
+        }
+        reasons = protocol.identity_rejection_reasons(old, expected)
+        self.assertIn("experiment_identity.schema_version_mismatch", reasons)
+        self.assertTrue(any(reason.startswith("lucas_igraph_") for reason in reasons))
 
 
 if __name__ == "__main__":

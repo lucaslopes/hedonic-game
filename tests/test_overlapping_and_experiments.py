@@ -606,6 +606,11 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(data["meta"]["n_iterations"], -1)
             self.assertFalse(data["meta"]["local_move_only"])
             self.assertTrue(data["meta"]["allow_isolation"])
+            self.assertTrue(
+                data["meta"]["experiment_identity"]["lucas_igraph"][
+                    "package_identity_matches_lock"
+                ]
+            )
             self.assertTrue(data["meta"]["smoke"])
             # 3 resolutions × 2 seeds
             self.assertEqual(len(data["runs"]), 6)
@@ -651,6 +656,11 @@ class TestCLI(unittest.TestCase):
             self.assertIn("meta", data)
             self.assertEqual(data["meta"]["n_iterations"], -1)
             self.assertTrue(data["meta"]["allow_isolation"])
+            self.assertTrue(
+                data["meta"]["experiment_identity"]["lucas_igraph"][
+                    "package_identity_matches_lock"
+                ]
+            )
             self.assertGreaterEqual(len(data["points"]), 2)
 
     def test_overlapping_small_via_cli(self):
@@ -978,6 +988,7 @@ class TestResolutionF1(unittest.TestCase):
             "status",
             "n_vertices",
             "n_edges",
+            "experiment_identity",
         ):
             self.assertIn(key, rec, msg=key)
         self.assertEqual(rec["status"], "complete")

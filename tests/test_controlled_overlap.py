@@ -174,6 +174,8 @@ class TestControlledOverlap(unittest.TestCase):
             Path(__file__).resolve().parents[1]
             / "docs/papers/overlapping_communities/evidence/controlled_overlap_v1.json"
         )
+        if not artifact.is_file():
+            self.skipTest("private paper reference artifact is not present in this checkout")
         raw = artifact.read_text(encoding="utf-8")
         payload = json.loads(
             raw,

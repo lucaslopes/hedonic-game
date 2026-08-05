@@ -68,9 +68,11 @@ RSS_RECORD_INTERVAL_SECONDS = 1.0
 RESUMABLE_CACHE_STATUSES = {
     "completed",
     "skipped_unsupported",
+    "skipped_external_unchanged",
 }
 RESOURCE_FAILURE_STATUSES = {"memory_limit", "timeout", "oom"}
 NON_SCALABLE_BASELINES = {"cpm", "demon"}
+SKIPPED_EXTERNAL_STATUS = "skipped_external_unchanged"
 PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
     "smoke": {
         "cover": "all",
@@ -309,7 +311,7 @@ def _cache_parameters_compatible(existing: dict[str, Any], expected: dict[str, A
     expected_options = expected.get("run_options")
     if not isinstance(existing_options, dict) or not isinstance(expected_options, dict):
         return False
-    for key in ("omega", "omega_sample_size"):
+    for key in ("omega", "omega_sample_size", "external_baseline_policy"):
         if existing_options.get(key) != expected_options.get(key):
             return False
     # The previously shipped coordinator could persist this construction
@@ -928,6 +930,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--datasets", help="Comma list: amazon,dblp,livejournal,youtube,wikipedia")
     parser.add_argument("--cover", choices=("all", "top5000"), help="Supplied GT cover variant; Wikipedia provides all categories only")
     parser.add_argument("--methods", help="Comma-list of methods; use --list-methods for details")
+    parser.add_argument(
+        "--skip-methods",
+        help=(
+            "Comma-list of external baselines to record as intentionally not rerun; "
+            "only cpm and demon are allowed"
+        ),
+    )
     parser.add_argument("--profile", choices=tuple(PROFILE_DEFAULTS), default="standard")
     parser.add_argument("--seeds", help="Comma/range syntax, e.g. 0-4")
     parser.add_argument("--resolutions", help="auto, comma floats, or start:stop:count")
@@ -996,6 +1005,19 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
     profile = PROFILE_DEFAULTS[args.profile]
     datasets = _parse_csv(args.datasets, network_names(), "dataset") or profile["datasets"]
     methods = _parse_csv(args.methods, METHODS, "method") or profile["methods"]
+    skip_methods = _parse_csv(args.skip_methods, METHODS, "skip-methods") or []
+    unknown_skip_methods = sorted(set(skip_methods) - set(methods))
+    if unknown_skip_methods:
+        raise ValueError(
+            "--skip-methods must be a subset of --methods: "
+            + ", ".join(unknown_skip_methods)
+        )
+    unsupported_skip_methods = sorted(set(skip_methods) - NON_SCALABLE_BASELINES)
+    if unsupported_skip_methods:
+        raise ValueError(
+            "--skip-methods is limited to external baselines cpm,demon: "
+            + ", ".join(unsupported_skip_methods)
+        )
     if args.max_memberships is not None and args.max_memberships < 1:
         raise ValueError("--max_memberships must be >= 1")
     if args.memory_limit_gb is not None and args.memory_limit_gb <= 0:
@@ -1010,6 +1032,7 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "datasets": datasets,
         "methods": methods,
+        "skip_methods": skip_methods,
         "cover": args.cover or profile["cover"],
         "seeds": parse_seeds(args.seeds) or profile["seeds"],
         "resolutions": parse_resolutions(args.resolutions) or profile["resolutions"],
@@ -1033,8 +1056,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
     experiment_identity = current_experiment_identity()
     if not experiment_identity["tracked_files_match_lock"]:
         raise ValueError("Protocol-locked code/config hashes do not match; refresh and review the lock")
-    if not experiment_identity["lucas_igraph"]["revision_matches_lock"]:
-        raise ValueError("lucas-igraph checkout does not match the protocol-locked revision")
+    if not experiment_identity["lucas_igraph"]["package_identity_matches_lock"]:
+        raise ValueError("installed lucas-igraph package does not match the protocol-locked release")
     selected_methods = resolve_methods(options["methods"])
     data_root = Path(args.data_root).expanduser() if args.data_root else DEFAULT_NETWORKS_DIR
     default_output = Path(OUTPUT_DIR) / "snap_benchmark"
@@ -1180,8 +1203,81 @@ def run_benchmark(args: argparse.Namespace) -> int:
                         "run_options": {
                             "omega": bool(args.omega),
                             "omega_sample_size": int(args.omega_sample_size),
+                            "external_baseline_policy": adapter.name in options["skip_methods"],
                         },
                     }
+                    if adapter.name in options["skip_methods"]:
+                        existing = _read_json(path) if path.is_file() else None
+                        if (
+                            args.resume
+                            and existing is not None
+                            and _cache_parameters_compatible(existing, expected_cache)
+                            and str(existing.get("status")) == SKIPPED_EXTERNAL_STATUS
+                        ):
+                            existing["run_path"] = str(path)
+                            existing["execution"] = "cached"
+                            records.append(existing)
+                            manifest["execution_counts"]["cached"] += 1
+                            print(
+                                f"[resume] {dataset.name}/{adapter.name}/seed={seed}/"
+                                f"resolution={resolution:.6g} (external baseline not rerun)"
+                            )
+                            continue
+                        if existing is not None:
+                            backup = path.with_name(
+                                f"{path.name}.incompatible.{int(time.time() * 1000)}"
+                            )
+                            try:
+                                path.replace(backup)
+                            except OSError:
+                                pass
+                        record = _record(
+                            dataset=dataset.name,
+                            cover=options["cover"],
+                            method=adapter.name,
+                            seed=seed,
+                            resolution=resolution,
+                            status=SKIPPED_EXTERNAL_STATUS,
+                            profile=args.profile,
+                            dataset_report=dataset.report,
+                            max_memberships=max_memberships,
+                            ground_truth_max_memberships=ground_truth_membership_cap,
+                            allow_isolation=expected_cache["allow_isolation"],
+                            initialization=initialization,
+                            timeout_seconds=timeout_seconds,
+                            memory_limit_bytes=options["memory_limit_bytes"],
+                            run_options=expected_cache["run_options"],
+                            failure_kind="external_baseline_not_rerun",
+                            reason=(
+                                "External baseline intentionally not rerun: the release-sensitive "
+                                "change is confined to native community_leiden; historical external "
+                                "baseline outcomes are retained separately."
+                            ),
+                            method_metadata={
+                                "name": adapter.name,
+                                "family": adapter.family,
+                                "implementation": adapter.implementation,
+                                "parameters": adapter.parameters,
+                                "execution": "not_run_external_baseline",
+                            },
+                        )
+                        record["execution"] = "external_baseline_policy"
+                        _write_json(path, record)
+                        _append_log(
+                            output_dir,
+                            f"dataset={dataset.name} method={adapter.name} seed={seed} "
+                            f"resolution={resolution:.12g} status={record['status']}",
+                        )
+                        record["run_path"] = str(path)
+                        records.append(record)
+                        manifest["execution_counts"]["external_baseline_policy"] = (
+                            manifest["execution_counts"].get("external_baseline_policy", 0) + 1
+                        )
+                        print(
+                            f"[external-baseline-policy] {dataset.name}/{adapter.name}/seed={seed}/"
+                            f"resolution={resolution:.6g}"
+                        )
+                        continue
                     if args.resume and path.is_file():
                         existing = _read_json(path)
                         if existing is not None and _cache_compatible(existing, expected_cache):

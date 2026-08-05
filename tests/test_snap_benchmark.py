@@ -259,6 +259,44 @@ class TestBenchmarkHelpers(unittest.TestCase):
             self.assertEqual(record["status"], "timeout")
             self.assertEqual(record["execution"], "resource_failure_policy")
 
+    def test_external_baseline_policy_writes_explicit_nonresult_without_detector(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "benchmark"
+            argv = [
+                "overlapping-benchmark",
+                "--profile", "smoke",
+                "--datasets", "amazon",
+                "--methods", "cpm,demon",
+                "--skip-methods", "cpm,demon",
+                "--output_dir", str(output),
+                "--no-plots",
+            ]
+            with patch.object(
+                benchmark,
+                "_run_with_timeout",
+                side_effect=AssertionError("external baseline detector must not run"),
+            ):
+                self.assertEqual(CLI.main(argv), 0)
+            records = [
+                json.loads(path.read_text())
+                for path in (output / "runs").rglob("*.json")
+            ]
+            self.assertEqual(len(records), 2)
+            self.assertEqual(
+                {record["status"] for record in records},
+                {benchmark.SKIPPED_EXTERNAL_STATUS},
+            )
+            self.assertTrue(
+                all(record["execution"] == "external_baseline_policy" for record in records)
+            )
+            self.assertTrue(
+                all(record["failure_kind"] == "external_baseline_not_rerun" for record in records)
+            )
+            manifest = json.loads((output / "manifest.json").read_text())
+            self.assertEqual(
+                manifest["run_status_counts"][benchmark.SKIPPED_EXTERNAL_STATUS], 2
+            )
+
     def test_cover_normalization_and_method_registry(self):
         cover, validation = normalize_cover([[0, 0, 1, 9, "bad"], []], 3)
         self.assertEqual(cover, [[0, 1]])
@@ -347,7 +385,7 @@ class TestBenchmarkHelpers(unittest.TestCase):
             self.assertEqual(manifest["run_status_counts"].get("completed"), 6)
             self.assertTrue(manifest["experiment_identity"]["tracked_files_match_lock"])
             self.assertTrue(
-                manifest["experiment_identity"]["lucas_igraph"]["revision_matches_lock"]
+                manifest["experiment_identity"]["lucas_igraph"]["package_identity_matches_lock"]
             )
             self.assertTrue((output / "results.jsonl").is_file())
             self.assertTrue((output / "results.csv.gz").is_file())
