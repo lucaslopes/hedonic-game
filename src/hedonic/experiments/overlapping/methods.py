@@ -106,7 +106,7 @@ def _hedonic_local(
     result = Game(graph).community_hedonic(
         resolution=resolution,
         max_memberships=max(2, k),
-        only_local_moving=True,
+        local_move_only=True,
         n_iterations=-1,
         initial_membership=parameters.get("_initial_membership"),
         seed=seed,
@@ -121,7 +121,7 @@ def _hedonic_multiphase(
     result = Game(graph).community_hedonic(
         resolution=resolution,
         max_memberships=max(2, k),
-        only_local_moving=False,
+        local_move_only=False,
         n_iterations=-1,
         allow_isolation=bool(parameters.get("allow_isolation", True)),
         initial_membership=parameters.get("_initial_membership"),
@@ -187,7 +187,7 @@ METHODS: dict[str, MethodAdapter] = {
         family="hedonic local-moving",
         implementation="hedonic.Game.community_hedonic (lucas-igraph)",
         parameters={
-            "only_local_moving": True,
+            "local_move_only": True,
             "n_iterations": -1,
             "igraph_rng": "random.Random(seed)",
         },
@@ -201,7 +201,7 @@ METHODS: dict[str, MethodAdapter] = {
         family="hedonic / Leiden multi-phase",
         implementation="hedonic.Game.community_hedonic (lucas-igraph)",
         parameters={
-            "only_local_moving": False,
+            "local_move_only": False,
             "n_iterations": -1,
             "allow_isolation": True,
             "igraph_rng": "random.Random(seed)",
@@ -218,7 +218,7 @@ METHODS: dict[str, MethodAdapter] = {
         family="hedonic / Leiden multi-phase",
         implementation="hedonic.Game.community_hedonic (lucas-igraph)",
         parameters={
-            "only_local_moving": False,
+            "local_move_only": False,
             "n_iterations": -1,
             "allow_isolation": True,
             "igraph_rng": "random.Random(seed)",
@@ -235,7 +235,7 @@ METHODS: dict[str, MethodAdapter] = {
         family="hedonic / Leiden multi-phase",
         implementation="hedonic.Game.community_hedonic (lucas-igraph)",
         parameters={
-            "only_local_moving": False,
+            "local_move_only": False,
             "n_iterations": -1,
             "allow_isolation": True,
             "igraph_rng": "random.Random(seed)",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import os
 import re
 import tempfile
@@ -49,6 +50,22 @@ from hedonic.experiments.overlapping.metrics import (
 
 
 class TestCommunityHedonic(unittest.TestCase):
+    def test_local_move_only_is_the_public_parameter(self):
+        parameter_names = inspect.signature(Game.community_hedonic).parameters
+        self.assertIn("local_move_only", parameter_names)
+        deprecated_keyword = "only" + "_local_moving"
+        self.assertNotIn(deprecated_keyword, parameter_names)
+        graph = Game(ig.Graph.Famous("Petersen"))
+        cover = graph.community_hedonic(
+            resolution=graph.density(),
+            max_memberships=2,
+            local_move_only=True,
+            n_iterations=-1,
+        )
+        self.assertEqual(len(cover.membership), graph.vcount())
+        with self.assertRaises(TypeError):
+            graph.community_hedonic(**{deprecated_keyword: True})
+
     def test_max_memberships_returns_cover(self):
         g = Game(ig.Graph.Famous("Petersen"))
         cover = g.community_hedonic(
@@ -542,11 +559,14 @@ class TestCLI(unittest.TestCase):
             "plots",
             "reproduce-disjoint",
             "overlapping-small",
+            "overlapping-dnn",
+            "overlapping-controlled",
             "overlapping-subgraph",
             "overlapping-full",
             "overlapping-scale",
             "overlapping-resolution",
             "overlapping-benchmark",
+            "overlapping-audit",
             "reproduce-overlapping-paper",
         }
         self.assertEqual(set(CLI.COMMANDS), expected)
@@ -584,7 +604,7 @@ class TestCLI(unittest.TestCase):
             self.assertIn("aggregated", data)
             self.assertIn("meta", data)
             self.assertEqual(data["meta"]["n_iterations"], -1)
-            self.assertFalse(data["meta"]["only_local_moving"])
+            self.assertFalse(data["meta"]["local_move_only"])
             self.assertTrue(data["meta"]["allow_isolation"])
             self.assertTrue(data["meta"]["smoke"])
             # 3 resolutions × 2 seeds
@@ -597,7 +617,7 @@ class TestCLI(unittest.TestCase):
                 self.assertIn("f1_samples", row)
                 self.assertEqual(len(row["f1_samples"]), 2)
                 self.assertEqual(row["n_seeds"], 2)
-                self.assertFalse(row["only_local_moving"])
+                self.assertFalse(row["local_move_only"])
                 self.assertTrue(row["allow_isolation"])
                 self.assertEqual(row["n_iterations"], -1)
 
@@ -788,7 +808,7 @@ class TestComplexityScale(unittest.TestCase):
         )
         self.assertGreaterEqual(len(result.points), 2)
         for rec in result.points:
-            self.assertIn(rec["only_local_moving"], (True, False))
+            self.assertIn(rec["local_move_only"], (True, False))
             self.assertEqual(rec["n_iterations"], -1)
             self.assertTrue(rec["allow_isolation"])
             self.assertGreater(rec["n_nodes"], 0)
@@ -818,7 +838,7 @@ class TestComplexityScale(unittest.TestCase):
         # First size for each variant should be timed_out; no further sizes.
         by_olm: dict[bool, list] = {True: [], False: []}
         for p in result.points:
-            by_olm[bool(p["only_local_moving"])].append(p)
+            by_olm[bool(p["local_move_only"])].append(p)
         for olm, rows in by_olm.items():
             self.assertGreaterEqual(len(rows), 1, msg=olm)
             self.assertTrue(rows[0]["timed_out"])
@@ -886,7 +906,7 @@ class TestComplexityScale(unittest.TestCase):
             variants=complexity_scale.parse_variants("full"),
         )
         self.assertTrue(result.points)
-        self.assertTrue(all(p["only_local_moving"] is False for p in result.points))
+        self.assertTrue(all(p["local_move_only"] is False for p in result.points))
         self.assertFalse(result.completed_for(True))
         self.assertGreaterEqual(len(result.completed_for(False)), 1)
 
@@ -939,7 +959,7 @@ class TestResolutionF1(unittest.TestCase):
             max_memberships=k,
         )
         self.assertEqual(rec["n_iterations"], -1)
-        self.assertFalse(rec["only_local_moving"])
+        self.assertFalse(rec["local_move_only"])
         self.assertTrue(rec["allow_isolation"])
         self.assertEqual(rec["max_memberships"], k)
         self.assertIn("f1", rec)
@@ -980,7 +1000,7 @@ class TestResolutionF1(unittest.TestCase):
         self.assertEqual(len(result.runs), 6)
         self.assertEqual(len(result.aggregated), 3)
         self.assertEqual(result.meta["n_iterations"], -1)
-        self.assertFalse(result.meta["only_local_moving"])
+        self.assertFalse(result.meta["local_move_only"])
         self.assertTrue(result.meta["allow_isolation"])
         self.assertEqual(result.meta["max_memberships"], 3)
         for row in result.aggregated:
@@ -1024,7 +1044,7 @@ class TestResolutionF1(unittest.TestCase):
                 "n_gt_communities_size_gt_1",
             )
             self.assertEqual(data["meta"]["n_iterations"], -1)
-            self.assertFalse(data["meta"]["only_local_moving"])
+            self.assertFalse(data["meta"]["local_move_only"])
             self.assertTrue(data["meta"]["allow_isolation"])
 
     def test_help_documents_resolution_span_and_seeds(self):

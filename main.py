@@ -32,7 +32,7 @@ g = Graph.Erdos_Renyi(n=1_000, m=5_000)
 g = Game(g)
 gamma = g.density()
 
-p = g.community_hedonic(n_iterations=-1, resolution=g.density(), allow_isolation=False, only_local_moving=True)
+p = g.community_hedonic(n_iterations=-1, resolution=g.density(), allow_isolation=False, local_move_only=True)
 
 p1 = g.community_hedonic(n_iterations=1, resolution=gamma)
 # g.initialize_game(p1.membership)

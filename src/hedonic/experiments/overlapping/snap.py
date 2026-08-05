@@ -30,6 +30,7 @@ from hedonic.experiments.config import NETWORKS_DIR
 # the portable default and environment/TOML precedence.
 DEFAULT_NETWORKS_DIR = NETWORKS_DIR
 CACHE_SCHEMA_VERSION = 1
+ANALYSIS_GRAPH_POLICY = "common_undirected_simple_v1"
 
 
 class SnapLoadError(RuntimeError):
@@ -574,6 +575,51 @@ def bounded_induced_dataset(dataset: SnapDataset, max_nodes: int | None) -> Snap
     report["community_size_statistics"] = stats["community_size"]
     report["overlap_statistics"] = stats["overlap"]
     return SnapDataset(dataset.name, dataset.cover_variant, graph, cover, report)
+
+
+def common_undirected_analysis_dataset(dataset: SnapDataset) -> SnapDataset:
+    """Return the single undirected simple graph used by every detector.
+
+    SNAP's Wikipedia archive is directed, whereas the formal hedonic model and
+    the two external baselines in this benchmark are undirected.  Keeping the
+    raw directionality in the loader is useful provenance, but comparing a
+    directed hedonic run with undirected baselines is not a valid method
+    comparison.  This explicit boundary therefore projects *every* loaded
+    graph to the same undirected, loop-free, simple representation before any
+    resolution, detection, quality, or metric calculation.
+    """
+    source = dataset.graph
+    graph = source.copy()
+    if graph.is_directed():
+        graph.to_undirected(mode="collapse")
+    before_simplify_edges = graph.ecount()
+    graph.simplify(multiple=True, loops=True, combine_edges=None)
+    report = dict(dataset.report)
+    source_graph = {
+        "n": source.vcount(),
+        "m": source.ecount(),
+        "directed": source.is_directed(),
+    }
+    analysis_graph = {
+        "policy": ANALYSIS_GRAPH_POLICY,
+        "n": graph.vcount(),
+        "m": graph.ecount(),
+        "directed": graph.is_directed(),
+        "source_directed": source.is_directed(),
+        "edges_after_direction_collapse_before_simplify": before_simplify_edges,
+        "edges_removed_by_simplification": before_simplify_edges - graph.ecount(),
+        "applied_before_all_methods_and_metrics": True,
+    }
+    report.update(
+        {
+            "source_graph": source_graph,
+            "analysis_graph": analysis_graph,
+            "n": graph.vcount(),
+            "m": graph.ecount(),
+            "directed": graph.is_directed(),
+        }
+    )
+    return SnapDataset(dataset.name, dataset.cover_variant, graph, dataset.cover, report)
 
 
 def smoke_dataset(name: str, *, cover_variant: str = "top5000") -> SnapDataset:

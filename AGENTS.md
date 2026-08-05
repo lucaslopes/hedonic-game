@@ -69,15 +69,15 @@ All exploratory community detection (disjoint **and** overlapping) should go thr
 |------|----------------|-------------|
 | Disjoint partition | `max_memberships=1` (default) | `VertexClustering` |
 | Overlapping cover | `max_memberships > 1` | `VertexCover` |
-| Hedonic local-moving only | `only_local_moving=True` (default) | same as above |
-| Full Leiden (refine + aggregate) | `only_local_moving=False` | same as above |
+| Hedonic local-moving only | `local_move_only=True` (default) | same as above |
+| Full Leiden (refine + aggregate) | `local_move_only=False` | same as above |
 
 ```python
 # Disjoint — main exploratory method
 part = g.community_hedonic(
     resolution=g.density(),   # CPM γ; default is density if omitted
     max_memberships=1,
-    only_local_moving=True,
+    local_move_only=True,
     n_iterations=-1,
     initial_membership=None,  # default: singleton partition
 )
@@ -86,7 +86,7 @@ part = g.community_hedonic(
 cover = g.community_hedonic(
     resolution=g.density(),
     max_memberships=4,
-    only_local_moving=True,
+    local_move_only=True,
     n_iterations=-1,
 )
 
@@ -105,7 +105,7 @@ cover = g.community_hedonic(
 - `allow_isolation` — allow empty-community moves
 - `edge_weights`, `seed`, `beta` — weights, RNG for random init, Leiden refinement noise
 
-**Do not** call raw `community_leiden` in experiment code unless you are debugging the binding itself. Prefer `community_hedonic` so defaults stay consistent (`only_local_moving=True`, density resolution, membership normalization).
+**Do not** call raw `community_leiden` in experiment code unless you are debugging the binding itself. Prefer `community_hedonic` so defaults stay consistent (`local_move_only=True`, density resolution, membership normalization).
 
 ---
 
@@ -113,7 +113,7 @@ cover = g.community_hedonic(
 
 ```toml
 # Core
-lucas-igraph   # path editable: ../python-igraph (see pyproject [tool.uv.sources])
+lucas-igraph==1.0.0.2   # released native dependency
 numpy
 
 # Optional: pip install "hedonic[experiments]"  or  uv sync --extra experiments
@@ -190,11 +190,14 @@ Subcommands are registered in **`COMMANDS`** (the single source of truth in `CLI
 | `plots` | `plots.paper_figures` | PHYSA V1020 paper figures from CSV (`gt_robustness`, `noise`, …) | synthetic CSV |
 | `reproduce-disjoint` | `disjoint.reproduce` | End-to-end: sweep → CSV → figures | synthetic |
 | `overlapping-small` | `overlapping.small_graphs` | Smoke + metrics on small graphs | none |
+| `overlapping-dnn` | `overlapping.dnn_certificate` | Locked tiny graphs: exact valid-cover optimum + DNN SDP outer certificate | none |
+| `overlapping-controlled` | `overlapping.controlled_overlap` | LFR-derived controlled overlap with cap, initialization, phase, and resolution ablations (not canonical overlapping LFR) | none |
 | `overlapping-subgraph` | `overlapping.dblp_subgraph` | L-hop around GT communities | DBLP |
 | `overlapping-full` | `overlapping.dblp_full` | Full DBLP + optional resolution sweep | DBLP |
 | `overlapping-scale` | `overlapping.complexity_scale` | Wallclock scaling as subnetworks grow (local-moving T/F, timeout stop + plot) | DBLP (or `--smoke`) |
 | `overlapping-resolution` | `overlapping.resolution_f1` | Full-DBLP overlap metrics vs resolution [0,1] (cached-cover rescoring, singleton modes, optional sampled Omega) | DBLP (or `--smoke`) |
 | `overlapping-benchmark` | `overlapping.benchmark` | Resumable Amazon/DBLP/LiveJournal/YouTube/Wikipedia overlapping-cover benchmark with hedonic, CPM, and DEMON | saved SNAP networks (or `--profile smoke`) |
+| `overlapping-audit` | `overlapping.protocol` | Read-only locked-protocol audit of all 125 overlapping-paper shard records | saved artifacts only |
 | `reproduce-overlapping-paper` | `overlapping.reproduce_paper` | TOML-driven paper protocol: RAM-bounded tmux shards → merged records/plots/tables → guarded `main.tex` compilation | saved SNAP networks |
 | `list` | meta | List subcommands | — |
 
@@ -202,6 +205,10 @@ Subcommands are registered in **`COMMANDS`** (the single source of truth in `CLI
 # Isolated / CI-friendly (no databases)
 hedonic-exp smoke
 hedonic-exp overlapping-small
+hedonic-exp overlapping-dnn --output /tmp/hedonic-dnn.json
+hedonic-exp overlapping-dnn --list-instances
+hedonic-exp overlapping-controlled --smoke \
+  --output /tmp/hedonic-controlled-overlap.json
 hedonic-exp disjoint --smoke --output_root /tmp/hedonic-smoke
 
 # Reproduce disjoint SBM sweep (subset of methods)
@@ -240,12 +247,12 @@ hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 \
 hedonic-exp overlapping-full --resolution 1e-4 --output /tmp/dblp_full.json
 
 # Complexity scale: network size vs wallclock to equilibrium
-# Two lines: only_local_moving True vs False; density γ; K = #GT in window
+# Two lines: local_move_only True vs False; density γ; K = #GT in window
 # Growth stops per line when --timeout is hit (full graph not required)
 hedonic-exp overlapping-scale --smoke --output_dir /tmp/hedonic-scale
 hedonic-exp overlapping-scale --timeout 30 --max-levels 6 \
   --output_dir /tmp/hedonic-scale-dblp
-# Full multi-phase only (only_local_moving=False), 10 min budget per size
+# Full multi-phase only (local_move_only=False), 10 min budget per size
 hedonic-exp overlapping-scale --variant full --timeout 600 --max-levels 6 \
   --community_idx 1004 --output_dir /tmp/hedonic-scale-dblp-full
 
@@ -281,6 +288,11 @@ hedonic-exp overlapping-benchmark --datasets amazon,dblp,livejournal,youtube,wik
   --output_dir ~/Databases/Hedonic/Networks/SNAP_BENCHMARK_CLI
 hedonic-exp overlapping-benchmark --list-networks
 hedonic-exp overlapping-benchmark --list-methods
+
+# Reconcile existing evidence without loading graphs or rerunning detectors.
+# JSON output also produces a sibling CSV with one row per condition.
+hedonic-exp overlapping-audit \
+  --output docs/papers/overlapping_communities/evidence/protocol_audit.json
 
 # Complete overlapping SNAP paper reproduction. All run parameters are in
 # configs/hedonic.toml [overlapping_paper]; raw SNAP archives stay read-only.
@@ -322,7 +334,7 @@ Do **not** add a second entrypoint module or a parallel `cli.py`; extend `CLI.py
 1. Build an SBM with `generate_graph` → `Game`.
 2. Ground truth via block labels; optional noisy `initial_membership`.
 3. Methods table maps **name → `method_call_name` + parameters**.
-4. **Hedonic** and **Leiden** both call `community_hedonic` with `max_memberships=1` (Leiden uses `only_local_moving=False`). Spectral sets `clusters = n_communities`.
+4. **Hedonic** and **Leiden** both call `community_hedonic` with `max_memberships=1` (Leiden uses `local_move_only=False`). Spectral sets `clusters = n_communities`.
 5. Output layouts:
    - **`v1020`** (preset default): `resultados/{n}C_{size}N/Noise = …/P_in = …/Difficulty = …/Network (NNN)/partition_MMM.json` — list of method result dicts (matches archived PHYSA V1020).
    - **`legacy`**: `{folder}/{n} Communities of {size} nodes/.../Partition (MMM)/{Method}.json`.
@@ -359,10 +371,85 @@ Or one shot: `hedonic-exp reproduce-disjoint --preset v1020 --output_root …/V1
 - Metrics vs covers: **`experiments.overlapping.metrics`** (`evaluate_cover`, `partition_to_cover_lists`, `cover_quality`, baselines, optional Nash check).
 - DBLP load: `dblp_full.load_dblp` (cache `dblp.pkl`, or `pkl/`, or `raw/*.gz`).
 - Subgraph methods:
-  - `leiden` — `community_hedonic(max_memberships=1, only_local_moving=False)`
-  - `hedonic_v1` — overlapping local-moving (`only_local_moving=True`), warm-started from Leiden
-  - `hedonic_v2` — overlapping full multi-phase (`only_local_moving=False`)
+  - `leiden` — `community_hedonic(max_memberships=1, local_move_only=False)`
+  - `hedonic_v1` — overlapping local-moving (`local_move_only=True`), warm-started from Leiden
+  - `hedonic_v2` — overlapping full multi-phase (`local_move_only=False`)
   - `singleton` / `grand_coalition` / `total_overlap` — deterministic control baselines
+
+### LFR-derived controlled overlap
+
+`hedonic-exp overlapping-controlled` starts from NetworkX's **disjoint** LFR
+graph and primary partition, then deterministically assigns a requested
+fraction of vertices to secondary communities and adds seeded reinforcing
+edges into those communities. It is deliberately named **LFR-derived
+controlled overlap**, never canonical overlapping LFR. The JSON/CSV output
+records requested and realized overlap, memberships per overlapping vertex,
+base LFR mixing `mu`, secondary-edge probability, realized edge mixing, and
+the effective retry seed used by the LFR generator.
+
+The detector grid compares local moving and multi-phase execution,
+`max_memberships` caps (`1`, numeric, or GT-informed `gt`), singleton,
+data-derived neutral-disjoint, and GT-primary initializations, and density
+resolution multipliers. Every hedonic call uses
+`Game.community_hedonic(..., n_iterations=-1, allow_isolation=False)`, and all
+cells for one generated graph share its graph seed as the detector seed so
+phase comparisons are paired. Keep GT-informed cap and
+initialization results visibly labeled as supervised ablations.
+Each cell runs in a forked child with a five-second hard wall-clock timeout
+while retaining `n_iterations=-1`; summaries preserve expected/completed/
+timeout/failed coverage and use completed observations only.
+
+```bash
+# Tiny 16-run structural check; writes JSON plus a sibling CSV.
+hedonic-exp overlapping-controlled --smoke \
+  --output /tmp/hedonic-controlled-overlap.json
+
+# Example controlled grid (still LFR-derived, not canonical overlapping LFR).
+hedonic-exp overlapping-controlled --n 80 --mus 0.2,0.4 \
+  --overlap-fractions 0.1,0.3 --overlap-memberships 2,3 \
+  --secondary-edge-probabilities 0.1,0.3 --graph-seeds 0,1,2 \
+  --max-memberships 1,2,gt \
+  --starts singleton,neutral-disjoint,gt-primary \
+  --resolution-multipliers 1,10 --output /tmp/controlled-overlap.json
+```
+
+Guide: [`docs/controlled_overlap.md`](docs/controlled_overlap.md). The tracked
+16-condition software reference is
+[`docs/papers/overlapping_communities/evidence/controlled_overlap_smoke.json`](docs/papers/overlapping_communities/evidence/controlled_overlap_smoke.json)
+with a sibling flat CSV; it is not substantive multi-seed paper evidence.
+The locked multi-seed v1 also stays at `n=80`; an `n=200` equilibrium run was
+abandoned after a native multi-phase call exceeded 23 minutes, so these
+controlled results are not scalability evidence.
+The false-both isolation setting is deliberate: a true-both diagnostic stalled
+at local/cap-2/singleton/resolution-x1/seed-0. V1 therefore isolates the phase
+flag but does not reproduce the paper's isolation-enabled multi-phase setting.
+
+### Small-instance DNN certificate diagnostic
+
+`hedonic-exp overlapping-dnn` implements the Chapter 5 Equation (5.11)
+diagnostic on literal, SHA-256-identified graphs small enough for complete
+enumeration. It enumerates all labelled, nonempty, equal-intensity membership
+assignments under each instance's label and membership caps, runs
+`Game.community_hedonic` from recorded seeded warm starts, and solves the
+doubly-nonnegative SDP with CVXPY/SCS. The strict JSON output records instances,
+seeds, covers, factors, Gram matrices, exact and SDP objectives, raw solver
+status/version/tolerances, primal residual checks, and a numerically repaired
+feasible-dual upper bound. It reports the algorithm-to-exact gap separately
+from the combined valid-cover-to-DNN outer gap; it does not infer a separate
+completely-positive representation gap.
+
+```bash
+uv sync --extra experiments
+hedonic-exp overlapping-dnn --output /tmp/hedonic-dnn.json
+hedonic-exp overlapping-dnn --instances path4,bow_tie5 --seeds 0,1,2 \
+  --eps 1e-8 --max-iters 200000 --output /tmp/hedonic-dnn-subset.json
+hedonic-exp overlapping-dnn --list-instances
+```
+
+The tracked reference run is
+[`docs/papers/overlapping_communities/evidence/dnn_certificate_v1.json`](docs/papers/overlapping_communities/evidence/dnn_certificate_v1.json).
+It is a small-instance certificate calibration only, not evidence that the DNN
+relaxation is generally tight or that the detector scales.
 
 ### SNAP overlapping benchmark
 
@@ -389,6 +476,12 @@ memory-safe sampled Omega metric.
 Large detector covers return through a private temporary pickle artifact rather
 than `multiprocessing.Queue`; this prevents a bounded-pipe deadlock while the
 parent is waiting for process exit. The artifact is deleted after loading.
+
+The raw Wikipedia loader preserves SNAP edge direction for provenance, but the
+benchmark applies the recorded `common_undirected_simple_v1` projection before
+density, detection, quality, or metric calculations. Every method therefore
+receives the same undirected simple analysis graph; legacy mixed-direction
+records are not compatible paper evidence.
 
 Methods are adapters, not new core algorithms: `hedonic_local` and the three
 `hedonic_multiphase*` variants call `Game.community_hedonic` with

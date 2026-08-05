@@ -23,7 +23,9 @@ from hedonic.experiments.overlapping.methods import (
 )
 from hedonic.experiments.overlapping.metrics import structural_overlap_metrics
 from hedonic.experiments.overlapping.snap import (
+    ANALYSIS_GRAPH_POLICY,
     bounded_induced_dataset,
+    common_undirected_analysis_dataset,
     load_snap_dataset,
     smoke_dataset,
 )
@@ -100,6 +102,17 @@ class TestSnapLoader(unittest.TestCase):
             )
             self.assertTrue(dataset.graph.is_directed())
             self.assertEqual(dataset.cover, [[0, 1], [1, 2]])
+
+            analysis = common_undirected_analysis_dataset(dataset)
+            self.assertFalse(analysis.graph.is_directed())
+            self.assertEqual(analysis.graph.get_edgelist(), [(0, 1), (1, 2)])
+            self.assertTrue(analysis.report["source_graph"]["directed"])
+            self.assertEqual(
+                analysis.report["analysis_graph"]["policy"], ANALYSIS_GRAPH_POLICY
+            )
+            self.assertTrue(
+                analysis.report["analysis_graph"]["applied_before_all_methods_and_metrics"]
+            )
 
     def test_bounded_dataset_reindexes_cover(self):
         dataset = smoke_dataset("amazon", cover_variant="all")
@@ -332,6 +345,10 @@ class TestBenchmarkHelpers(unittest.TestCase):
             manifest = json.loads((output / "manifest.json").read_text())
             self.assertEqual(manifest["schema_version"], 2)
             self.assertEqual(manifest["run_status_counts"].get("completed"), 6)
+            self.assertTrue(manifest["experiment_identity"]["tracked_files_match_lock"])
+            self.assertTrue(
+                manifest["experiment_identity"]["lucas_igraph"]["revision_matches_lock"]
+            )
             self.assertTrue((output / "results.jsonl").is_file())
             self.assertTrue((output / "results.csv.gz").is_file())
             self.assertTrue((output / "summary.csv").is_file())
@@ -340,6 +357,8 @@ class TestBenchmarkHelpers(unittest.TestCase):
                 for path in (output / "runs").rglob("*.json")
             ]
             self.assertTrue(all(record["allow_isolation"] for record in hedonic_records))
+            self.assertTrue(all(record["experiment_identity"] for record in hedonic_records))
+            self.assertTrue(all(record["dataset_metadata_identity"] for record in hedonic_records))
             self.assertTrue(
                 all(
                     record["initialization"]["kind"]

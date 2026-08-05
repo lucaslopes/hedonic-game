@@ -3,8 +3,8 @@
 Times two ``community_hedonic`` configurations to equilibrium on increasingly
 large induced subnetworks (L-hop around a GT seed on DBLP, or synthetic SBMs):
 
-* ``only_local_moving=True``  (hedonic local-moving only)
-* ``only_local_moving=False`` (full multi-phase Leiden-style)
+* ``local_move_only=True``  (hedonic local-moving only)
+* ``local_move_only=False`` (full multi-phase Leiden-style)
 
 Shared settings (required for the experiment):
 
@@ -45,14 +45,14 @@ from hedonic.experiments.overlapping.dblp_subgraph import extract_subgraph
 # Fixed algorithm flags (not CLI knobs) — match the experiment contract.
 N_ITERATIONS = -1
 ALLOW_ISOLATION = True
-ONLY_LOCAL_MOVING_VARIANTS: tuple[bool, bool] = (True, False)
+LOCAL_MOVE_ONLY_VARIANTS: tuple[bool, bool] = (True, False)
 
-# CLI names → only_local_moving flags.
+# CLI names → local_move_only flags.
 VARIANT_CHOICES = ("both", "local", "full")
 VARIANT_TO_FLAGS: dict[str, tuple[bool, ...]] = {
     "both": (True, False),
-    "local": (True,),  # only_local_moving=True
-    "full": (False,),  # only_local_moving=False (full multi-phase)
+    "local": (True,),  # local_move_only=True
+    "full": (False,),  # local_move_only=False (full multi-phase)
 }
 
 DEFAULT_TIMEOUT_S = 60.0
@@ -61,7 +61,7 @@ DEFAULT_OUTPUT_DIR = Path("overlapping_scale_results")
 
 
 def parse_variants(name: str) -> tuple[bool, ...]:
-    """Map CLI ``--variant`` to ``only_local_moving`` flags."""
+    """Map CLI ``--variant`` to ``local_move_only`` flags."""
     key = (name or "both").strip().lower()
     if key not in VARIANT_TO_FLAGS:
         raise ValueError(
@@ -163,7 +163,7 @@ def _worker_community_hedonic(payload: dict[str, Any], queue: mp.Queue) -> None:
         n = int(payload["n_nodes"])
         edges = payload["edges"]
         max_memberships = int(payload["max_memberships"])
-        only_local_moving = bool(payload["only_local_moving"])
+        local_move_only = bool(payload["local_move_only"])
         g = Game(ig.Graph(n=n, edges=edges, directed=False))
         # Simple undirected graphs may have multi-edges if input did; simplify.
         g.simplify()
@@ -172,7 +172,7 @@ def _worker_community_hedonic(payload: dict[str, Any], queue: mp.Queue) -> None:
         g.community_hedonic(
             resolution=resolution,
             max_memberships=max_memberships,
-            only_local_moving=only_local_moving,
+            local_move_only=local_move_only,
             allow_isolation=ALLOW_ISOLATION,
             n_iterations=N_ITERATIONS,
         )
@@ -184,7 +184,7 @@ def _worker_community_hedonic(payload: dict[str, Any], queue: mp.Queue) -> None:
                 "resolution": resolution,
                 "n_nodes": n,
                 "n_edges": int(g.ecount()),
-                "only_local_moving": only_local_moving,
+                "local_move_only": local_move_only,
                 "max_memberships": max_memberships,
                 "timed_out": False,
                 "error": None,
@@ -198,7 +198,7 @@ def _worker_community_hedonic(payload: dict[str, Any], queue: mp.Queue) -> None:
                 "resolution": None,
                 "n_nodes": payload.get("n_nodes"),
                 "n_edges": None,
-                "only_local_moving": payload.get("only_local_moving"),
+                "local_move_only": payload.get("local_move_only"),
                 "max_memberships": payload.get("max_memberships"),
                 "timed_out": False,
                 "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
@@ -209,7 +209,7 @@ def _worker_community_hedonic(payload: dict[str, Any], queue: mp.Queue) -> None:
 def time_community_hedonic(
     point: SubgraphPoint,
     *,
-    only_local_moving: bool,
+    local_move_only: bool,
     timeout_s: float | None = None,
     use_process: bool = True,
 ) -> dict[str, Any]:
@@ -219,7 +219,7 @@ def time_community_hedonic(
     ----------
     point :
         Subnetwork descriptor (nodes/edges/K).
-    only_local_moving :
+    local_move_only :
         True → local-moving only; False → full multi-phase.
     timeout_s :
         If set and the run exceeds this many seconds, mark ``timed_out`` and
@@ -235,7 +235,7 @@ def time_community_hedonic(
         "density": point.density,
         "max_memberships": point.max_memberships,
         "n_gt_in_subgraph": point.n_gt_in_subgraph,
-        "only_local_moving": only_local_moving,
+        "local_move_only": local_move_only,
         "allow_isolation": ALLOW_ISOLATION,
         "n_iterations": N_ITERATIONS,
         "levels": point.levels,
@@ -255,7 +255,7 @@ def time_community_hedonic(
         "n_nodes": point.n_nodes,
         "edges": point.edges,
         "max_memberships": point.max_memberships,
-        "only_local_moving": only_local_moving,
+        "local_move_only": local_move_only,
     }
 
     if use_process and timeout_s is not None and timeout_s > 0:
@@ -296,7 +296,7 @@ def time_community_hedonic(
     g.community_hedonic(
         resolution=resolution,
         max_memberships=point.max_memberships,
-        only_local_moving=only_local_moving,
+        local_move_only=local_move_only,
         allow_isolation=ALLOW_ISOLATION,
         n_iterations=N_ITERATIONS,
     )
@@ -459,11 +459,11 @@ class ScaleResult:
     points: list[dict[str, Any]]
     meta: dict[str, Any]
 
-    def completed_for(self, only_local_moving: bool) -> list[dict[str, Any]]:
+    def completed_for(self, local_move_only: bool) -> list[dict[str, Any]]:
         return [
             p
             for p in self.points
-            if p.get("only_local_moving") is only_local_moving
+            if p.get("local_move_only") is local_move_only
             and not p.get("timed_out")
             and p.get("wallclock_s") is not None
             and p.get("error") is None
@@ -475,9 +475,9 @@ def run_scale_experiment(
     *,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     use_process: bool = True,
-    variants: Sequence[bool] = ONLY_LOCAL_MOVING_VARIANTS,
+    variants: Sequence[bool] = LOCAL_MOVE_ONLY_VARIANTS,
 ) -> ScaleResult:
-    """Time both only_local_moving settings on each size; stop a line on timeout.
+    """Time both local_move_only settings on each size; stop a line on timeout.
 
     Growth of a configuration stops after the first timed-out (or failed) point
     for that configuration; the other line may continue further.
@@ -491,7 +491,7 @@ def run_scale_experiment(
     unlimited = timeout_s is None or timeout_s <= 0
     log(f"  sizes         : {[p.n_nodes for p in series]}")
     log(f"  timeout_s     : {'none (unlimited)' if unlimited else timeout_s}")
-    log(f"  variants      : only_local_moving in {list(variants)}")
+    log(f"  variants      : local_move_only in {list(variants)}")
     log(f"  n_iterations  : {N_ITERATIONS}")
     log(f"  allow_isolation: {ALLOW_ISOLATION}")
     log(f"  resolution    : density (per subgraph)")
@@ -510,12 +510,12 @@ def run_scale_experiment(
         for only_lm in variants:
             only_lm = bool(only_lm)
             if not active.get(only_lm, False):
-                log(f"  only_local_moving={only_lm}: skipped (already stopped)")
+                log(f"  local_move_only={only_lm}: skipped (already stopped)")
                 continue
             t0 = time.time()
             rec = time_community_hedonic(
                 point,
-                only_local_moving=only_lm,
+                local_move_only=only_lm,
                 timeout_s=None if unlimited else timeout_s,
                 use_process=use_process and not unlimited,
             )
@@ -526,12 +526,12 @@ def run_scale_experiment(
             wc = rec.get("wallclock_s")
             wc_s = f"{wc:.4f}s" if isinstance(wc, (int, float)) else "n/a"
             log(
-                f"  only_local_moving={str(only_lm):5s}  {status:7s}  "
+                f"  local_move_only={str(only_lm):5s}  {status:7s}  "
                 f"wallclock={wc_s}  [{time.time() - t0:.1f}s wall]"
             )
             if rec["timed_out"] or rec.get("error"):
                 active[only_lm] = False
-                log(f"  → stop further growth for only_local_moving={only_lm}")
+                log(f"  → stop further growth for local_move_only={only_lm}")
 
     meta = {
         "timeout_s": None if unlimited else timeout_s,
@@ -575,7 +575,7 @@ def plot_complexity_scale(
 ) -> Path:
     """Two-line plot: network size (x) vs wallclock to equilibrium (y).
 
-    One line for ``only_local_moving=True``, one for ``False``. Timed-out
+    One line for ``local_move_only=True``, one for ``False``. Timed-out
     points are omitted from the line (may end earlier).
     """
     # Non-interactive backend before pyplot.
@@ -595,7 +595,7 @@ def plot_complexity_scale(
     for p in points:
         if p.get("timed_out") or p.get("error") or p.get("wallclock_s") is None:
             continue
-        olm = bool(p["only_local_moving"])
+        olm = bool(p["local_move_only"])
         series[olm].append((int(p["n_nodes"]), float(p["wallclock_s"])))
 
     for key in series:
@@ -606,8 +606,8 @@ def plot_complexity_scale(
 
     fig, ax = plt.subplots(figsize=(7.5, 4.5))
     styles = {
-        True: ("o-", "only_local_moving=True"),
-        False: ("s--", "only_local_moving=False"),
+        True: ("o-", "local_move_only=True"),
+        False: ("s--", "local_move_only=False"),
     }
     for olm, (style, label) in styles.items():
         pts = series[olm]
@@ -641,7 +641,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="hedonic-exp overlapping-scale",
         description=(
             "Wallclock complexity of overlapping community_hedonic as "
-            "subnetworks grow toward the full graph. Times only_local_moving "
+            "subnetworks grow toward the full graph. Times local_move_only "
             "True vs False with density resolution, GT-based max_memberships, "
             "allow_isolation=True, n_iterations=-1. Stops growth on --timeout."
         ),
@@ -662,7 +662,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=DEFAULT_TIMEOUT_S,
         help=(
-            "Wallclock seconds per (size, only_local_moving) run; "
+            "Wallclock seconds per (size, local_move_only) run; "
             "growth for that line stops after a timeout. "
             "Use 0 or a negative value for no timeout (run until equilibrium "
             "even on the full hop ladder / near-full graph)."
@@ -673,7 +673,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=VARIANT_CHOICES,
         default="both",
         help=(
-            "Which only_local_moving setting(s) to time: "
+            "Which local_move_only setting(s) to time: "
             "'local' = True (local-moving only), "
             "'full' = False (full multi-phase refine+aggregate), "
             "'both' = two lines (default)"
@@ -791,16 +791,16 @@ def main(argv: list[str] | None = None) -> int:
     for olm in (True, False):
         done = result.completed_for(olm)
         if not done:
-            log(f"  only_local_moving={olm}: (none)")
+            log(f"  local_move_only={olm}: (none)")
             continue
         for p in done:
             log(
-                f"  only_local_moving={olm}: n={p['n_nodes']:,}  "
+                f"  local_move_only={olm}: n={p['n_nodes']:,}  "
                 f"t={p['wallclock_s']:.4f}s  K={p['max_memberships']}"
             )
         last = done[-1]
         log(
-            f"  → max completed size for only_local_moving={olm}: "
+            f"  → max completed size for local_move_only={olm}: "
             f"n={last['n_nodes']:,}"
         )
 

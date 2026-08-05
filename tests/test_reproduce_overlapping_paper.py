@@ -138,6 +138,7 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
     def test_exit_minus_nine_is_oom_and_cache_parameters_are_strict(self):
         self.assertEqual(benchmark._classify_exit(-9)[0], "oom")
         expected = {
+            "experiment_identity": benchmark.current_experiment_identity(),
             "dataset": "amazon", "cover": "all", "method": "cpm", "seed": 0,
             "resolution": 0.1, "max_memberships": 2, "timeout_seconds": 10.0,
             "memory_limit_bytes": 100, "run_options": {"omega": True, "omega_sample_size": 10},
@@ -207,6 +208,7 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
             output = root / "paper" / "artifacts" / "full"
             manifest = json.loads((output / "paper_manifest.json").read_text())
             self.assertEqual(manifest["methods"], ["hedonic_multiphase", "cpm"])
+            self.assertTrue(manifest["experiment_identity"]["tracked_files_match_lock"])
             self.assertEqual(manifest["audit"]["expected_records"], 8)
             self.assertEqual(manifest["audit"]["observed_records"], 8)
             self.assertFalse(manifest["audit"]["ready_for_paper"])
@@ -334,6 +336,7 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
             output = paper / "artifacts" / "full"
             plan = {
                 "plan_id": "render-test",
+                "experiment_identity": benchmark.current_experiment_identity(),
                 "config_path": "test.toml",
                 "profile": "full",
                 "output_dir": str(output),

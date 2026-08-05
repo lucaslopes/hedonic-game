@@ -98,7 +98,7 @@ resolution = game.density()  # or an explicit CPM gamma
 partition = game.community_hedonic(
     resolution=resolution,
     max_memberships=1,
-    only_local_moving=False,
+    local_move_only=False,
     n_iterations=-1,
 )
 
@@ -106,7 +106,7 @@ k = max(1, len(ground_truth))
 cover = game.community_hedonic(
     resolution=resolution,
     max_memberships=k,
-    only_local_moving=True,
+    local_move_only=True,
     n_iterations=-1,
     initial_membership=list(partition.membership),
 )
@@ -122,7 +122,7 @@ Follow these defaults unless the experiment intentionally changes them:
 - Use `n_iterations=-1` (or another negative value) to run to equilibrium.
 - Use `max_memberships=1` for the disjoint baseline and `max_memberships=len(ground_truth)` for an overlapping run. For an L-hop subgraph, use the number of ground-truth communities with at least two nodes in that window.
 - Warm-start overlapping detection from the disjoint partition when comparing method roles.
-- Use `only_local_moving=True` for the hedonic local-moving method and `False` for full Leiden refinement/aggregation.
+- Use `local_move_only=True` for the hedonic local-moving method and `False` for full Leiden refinement/aggregation.
 - Pass `allow_isolation=True` only when empty-community moves are part of the design; record it in the output.
 
 Prefer `hedonic-exp overlapping-benchmark` for the five-network SNAP suite;
@@ -172,8 +172,8 @@ The default profile runs all four adapters:
 
 | Method | Family / implementation | Important behavior |
 |---|---|---|
-| hedonic_local | Game.community_hedonic local-moving | only_local_moving=True, n_iterations=-1, max_memberships=K |
-| hedonic_multiphase | Game.community_hedonic full Leiden | only_local_moving=False, n_iterations=-1, max_memberships=K |
+| hedonic_local | Game.community_hedonic local-moving | local_move_only=True, n_iterations=-1, max_memberships=K |
+| hedonic_multiphase | Game.community_hedonic full Leiden | local_move_only=False, n_iterations=-1, max_memberships=K |
 | cpm | NetworkX clique percolation | clique_size=3; clique-rich graphs can be costly |
 | demon | external demon.Demon local expansion | epsilon=0.25, min_community_size=2 |
 
@@ -237,6 +237,6 @@ For synthetic or known-cover data, report F1/Jaccard plus membership and overlap
 
 ## Reproducibility and output discipline
 
-Record dataset name, input paths, cover variant (`all`, `top5000`, or categories), ID mapping strategy, graph `n`/`m`/directedness, resolution, `n_iterations`, `max_memberships`, `only_local_moving`, seed, runtime, and metric singleton mode. Write generated JSON/CSV/plots outside the archived input tree or under an explicitly named results directory such as `DBLP_CLI/` or `SNAP_BENCHMARK_CLI/`; never overwrite the original SNAP files or archived V1020 data.
+Record dataset name, input paths, cover variant (`all`, `top5000`, or categories), ID mapping strategy, graph `n`/`m`/directedness, resolution, `n_iterations`, `max_memberships`, `local_move_only`, seed, runtime, and metric singleton mode. Write generated JSON/CSV/plots outside the archived input tree or under an explicitly named results directory such as `DBLP_CLI/` or `SNAP_BENCHMARK_CLI/`; never overwrite the original SNAP files or archived V1020 data.
 
 When changing an experiment module in this repository, keep the `hedonic-exp` registry and the experiment documentation synchronized, as required by `AGENTS.md`.

@@ -107,8 +107,12 @@ extra:
 | `demon` | Local expansion via the external `demon.Demon` package | `epsilon=0.25`, `min_community_size=2` | Direct node cover; local ego-network expansion can be expensive on high-degree graphs. |
 
 Use `hedonic-exp overlapping-benchmark --list-methods` for the exact installed
-availability and requirements. Baselines operate on an undirected NetworkX
-view; this conversion is recorded for Wikipedia's directed input.
+availability and requirements. The archive loader preserves Wikipedia's raw
+directed graph for provenance, then the benchmark applies the tracked
+`common_undirected_simple_v1` projection before computing density or passing
+the graph to any detector or metric. Hedonic, CPM, and DEMON therefore consume
+the same loop-free undirected simple graph. Historical records without this
+analysis-graph identity are inadmissible under the locked paper protocol.
 
 ## Results and interpretation
 
@@ -179,3 +183,22 @@ uv run hedonic-exp reproduce-overlapping-paper
 ```
 
 Do not launch this command automatically from a correction or CI smoke run.
+
+### Locked evidence audit
+
+Before launching or interpreting a full-paper run, reconcile its evidence with
+the tracked protocol lock:
+
+```bash
+hedonic-exp overlapping-audit \
+  --output docs/papers/overlapping_communities/evidence/protocol_audit.json
+```
+
+The command is read-only with respect to experiment artifacts: it never loads
+a graph or launches a detector. It inventories all 125 requested conditions
+and records the exact reason each present record is accepted or rejected. The
+JSON lock pins the modified `lucas-igraph` Git revision and SHA-256 hashes of
+the authoritative config and detector/orchestration sources. New manifests and
+run records embed that identity plus a hash of the loader's dataset metadata.
+Changing a resource envelope, protocol field, code hash, or native dependency
+therefore cannot silently reuse evidence from another condition.

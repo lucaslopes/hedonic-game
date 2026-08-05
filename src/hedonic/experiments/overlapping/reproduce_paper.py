@@ -521,10 +521,16 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
     poll_seconds = float(raw.get("poll_seconds", 10))
     if poll_seconds <= 0:
         raise ValueError("overlapping_paper.poll_seconds must be positive")
+    experiment_identity = benchmark.current_experiment_identity()
+    if not experiment_identity["tracked_files_match_lock"]:
+        raise ValueError("Protocol-locked code/config hashes do not match; refresh and review the lock")
+    if not experiment_identity["lucas_igraph"]["revision_matches_lock"]:
+        raise ValueError("lucas-igraph checkout does not match the protocol-locked revision")
     options = {
         "schema_version": PAPER_SCHEMA_VERSION,
         "created_at": _timestamp(),
         "config_path": str(config_path),
+        "experiment_identity": experiment_identity,
         "profile": profile,
         "data_root": str(data_root),
         "output_dir": str(output_dir),
@@ -1303,6 +1309,7 @@ def finalize(plan: dict[str, Any]) -> int:
         "created_at": _timestamp(),
         "plan_id": plan["plan_id"],
         "config_path": plan["config_path"],
+        "experiment_identity": plan["experiment_identity"],
         "methods": plan["methods"],
         "jobs": plan["jobs"],
         "audit": audit,

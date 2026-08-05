@@ -92,7 +92,7 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
         resolution=resolution,
         n_iterations=-1,
         max_memberships=1,
-        only_local_moving=False,
+        local_move_only=False,
     )
     t_leiden = time.time() - t
     if "leiden" in METHODS:
@@ -106,7 +106,7 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
             resolution=resolution,
             n_iterations=n_iterations,
             max_memberships=k,
-            only_local_moving=True,
+            local_move_only=True,
             initial_membership=list(part.membership),
         )
         covers["hedonic_v1"] = partition_to_cover_lists(cover_obj)
@@ -119,7 +119,7 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
             resolution=resolution,
             max_memberships=k,
             n_iterations=n_iterations,
-            only_local_moving=False,
+            local_move_only=False,
         )
         covers["hedonic_v2"] = partition_to_cover_lists(cover_obj_v2)
         timings["hedonic_v2"] = time.time() - t

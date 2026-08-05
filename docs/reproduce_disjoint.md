@@ -98,8 +98,8 @@ All methods are run through the current library (`Game` / `community_hedonic` wh
 | **Mirror** | Identity on the noisy initial membership |
 | **OnePass** | One-pass neighbour-majority improvement |
 | **Spectral** | Leading eigenvector (`clusters = n_communities`) |
-| **Leiden** | Full Leiden CPM (`only_local_moving=False`) |
-| **Hedonic** | Local-moving phase only (`only_local_moving=True`) |
+| **Leiden** | Full Leiden CPM (`local_move_only=False`) |
+| **Hedonic** | Local-moving phase only (`local_move_only=True`) |
 
 Hedonic and Leiden both call `Game.community_hedonic(..., max_memberships=1)` with density as resolution.
 
@@ -294,7 +294,7 @@ hedonic-exp plots --smoke --output_dir /tmp/hedonic-figs --format png --no-persi
 |---------------------|-------------|
 | Pre-generated `networks/*.pkl` + `memberships/*.csv` | Graphs and noisy memberships generated on the fly |
 | `scripts/exp.py` per network pickle | `hedonic-exp disjoint` / `reproduce-disjoint` |
-| `community_leiden(only_first_phase=…)` | `community_hedonic(only_local_moving=…)` |
+| `community_leiden(only_first_phase=…)` | `community_hedonic(local_move_only=…)` |
 | networkx SBM → igraph | igraph SBM (`Game`) |
 | `scripts/plot/paper_plots/plot_figures.py` | `hedonic-exp plots` |
 | Hardcoded paths under `~/Databases/…` | `--output_root` + `HEDONIC_SYNTHETIC_DIR` |

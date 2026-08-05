@@ -178,7 +178,7 @@ def run_experiment(
         resolution=resolution,
         n_iterations=-1,
         max_memberships=1,
-        only_local_moving=False,
+        local_move_only=False,
     )
     t_leiden = time.time() - t0
     leiden_cover = partition_to_cover_lists(leiden_part)
@@ -205,7 +205,7 @@ def run_experiment(
         resolution=resolution,
         n_iterations=n_iter,
         max_memberships=k,
-        only_local_moving=True,
+        local_move_only=True,
         initial_membership=list(leiden_part.membership),
     )
     t_hedonic = time.time() - t0
@@ -271,7 +271,7 @@ def resolution_sweep(game, gt, resolutions, n_iter, max_memberships: int | None 
             resolution=res,
             n_iterations=-1,
             max_memberships=1,
-            only_local_moving=False,
+            local_move_only=False,
         )
         log(f"  {max(part.membership) + 1:,} communities in {time.time() - t:.1f}s")
 
@@ -281,7 +281,7 @@ def resolution_sweep(game, gt, resolutions, n_iter, max_memberships: int | None 
             resolution=res,
             n_iterations=n_iter,
             max_memberships=k,
-            only_local_moving=True,
+            local_move_only=True,
             initial_membership=list(part.membership),
         )
         cover = partition_to_cover_lists(cover_obj)

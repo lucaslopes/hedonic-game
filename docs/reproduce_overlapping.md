@@ -120,9 +120,9 @@ All detection goes through **`Game.community_hedonic`** (not the removed `Overla
 
 | Name | Role | Call pattern |
 |------|------|----------------|
-| **leiden** | Disjoint CPM baseline | `community_hedonic(max_memberships=1, only_local_moving=False, n_iterations=-1)` |
-| **hedonic_v1** | Overlapping local-moving only | `community_hedonic(max_memberships=K, only_local_moving=True)`, warm-started from Leiden membership |
-| **hedonic_v2** | Overlapping multi-phase | `community_hedonic(max_memberships=K, only_local_moving=False)` |
+| **leiden** | Disjoint CPM baseline | `community_hedonic(max_memberships=1, local_move_only=False, n_iterations=-1)` |
+| **hedonic_v1** | Overlapping local-moving only | `community_hedonic(max_memberships=K, local_move_only=True)`, warm-started from Leiden membership |
+| **hedonic_v2** | Overlapping multi-phase | `community_hedonic(max_memberships=K, local_move_only=False)` |
 | **singleton** | Max-granularity control | One community per node |
 | **grand_coalition** | Min-granularity control | Single community = all nodes |
 | **total_overlap** | Max-redundancy control | `n_gt_in_subgraph` copies of the full vertex set |
@@ -178,7 +178,7 @@ Defaults already use `--n_iterations -1` and auto `max_memberships`; the flags a
 ### Complexity scale (hardware limits)
 
 Wallclock time to equilibrium as L-hop subnetworks grow. Two lines:
-`only_local_moving=True` vs `False`. Shared settings: resolution = edge density,
+`local_move_only=True` vs `False`. Shared settings: resolution = edge density,
 `max_memberships` = #GT communities in the window, `allow_isolation=True`,
 `n_iterations=-1`. Each line stops when `--timeout` is exceeded (full DBLP not required).
 
@@ -192,7 +192,7 @@ hedonic-exp overlapping-scale \
   --max-levels 6 \
   --output_dir "$OUT/scale_dblp"
 
-# Full multi-phase only (only_local_moving=False), 10 min per size point
+# Full multi-phase only (local_move_only=False), 10 min per size point
 hedonic-exp overlapping-scale \
   --variant full \
   --timeout 600 \

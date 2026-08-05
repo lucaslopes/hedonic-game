@@ -104,7 +104,7 @@ class Game(Graph):
         n_iterations: int = -1,
         resolution: float | None = None,
         allow_isolation: bool = False,
-        only_local_moving: bool = True,
+        local_move_only: bool = True,
         edge_weights=None,
         seed: int | None = None,
         beta: float = 0.01,
@@ -134,7 +134,7 @@ class Game(Graph):
             CPM resolution γ. Defaults to graph density.
         allow_isolation :
             Allow moves into empty communities (new clusters).
-        only_local_moving :
+        local_move_only :
             If True (default), run only the local-moving phase — the hedonic
             best-response phase. If False, run full Leiden (refine + aggregate).
         edge_weights :
@@ -142,7 +142,7 @@ class Game(Graph):
         seed :
             RNG seed for random disjoint initialization.
         beta :
-            Leiden refinement randomness (used when ``only_local_moving`` is False).
+            Leiden refinement randomness (used when ``local_move_only`` is False).
 
         Returns
         -------
@@ -189,7 +189,7 @@ class Game(Graph):
             n_iterations=n_iterations,
             resolution=res,
             allow_isolation=allow_isolation,
-            only_local_moving=only_local_moving,
+            local_move_only=local_move_only,
             weights=edge_weights,
             max_memberships=max_memberships,
             beta=beta,

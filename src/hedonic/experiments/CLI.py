@@ -7,6 +7,8 @@ Install with experiments extra, then::
     hedonic-exp smoke
     hedonic-exp disjoint --smoke --output_root /tmp/hedonic-smoke
     hedonic-exp overlapping-small
+    hedonic-exp overlapping-dnn --output /tmp/hedonic-dnn.json
+    hedonic-exp overlapping-controlled --smoke --output /tmp/controlled-overlap.json
     hedonic-exp overlapping-subgraph --levels 1 --n_communities 5
     hedonic-exp overlapping-full --n_iterations -1
     hedonic-exp overlapping-scale --smoke --output_dir /tmp/scale
@@ -82,6 +84,25 @@ COMMANDS: dict[str, Command] = {
         needs_data=None,
         has_argparse_help=False,
     ),
+    "overlapping-controlled": Command(
+        name="overlapping-controlled",
+        module="hedonic.experiments.overlapping.controlled_overlap",
+        attr="main",
+        summary=(
+            "LFR-derived controlled overlap: cap, initialization, phase, "
+            "and resolution ablations (not canonical overlapping LFR)"
+        ),
+        needs_data=None,
+    ),
+    "overlapping-dnn": Command(
+        name="overlapping-dnn",
+        module="hedonic.experiments.overlapping.dnn_certificate",
+        attr="main",
+        summary=(
+            "Locked tiny-graph exact-cover enumeration + DNN SDP certificate diagnostic"
+        ),
+        needs_data=None,
+    ),
     "overlapping-subgraph": Command(
         name="overlapping-subgraph",
         module="hedonic.experiments.overlapping.dblp_subgraph",
@@ -102,7 +123,7 @@ COMMANDS: dict[str, Command] = {
         attr="main",
         summary=(
             "Wallclock scaling of overlapping hedonic as subnetworks grow "
-            "(only_local_moving T/F vs size; timeout stop + plot)"
+            "(local_move_only T/F vs size; timeout stop + plot)"
         ),
         needs_data="dblp",
     ),
@@ -125,6 +146,13 @@ COMMANDS: dict[str, Command] = {
             "benchmark (hedonic + CPM/DEMON baselines)"
         ),
         needs_data="snap-networks",
+    ),
+    "overlapping-audit": Command(
+        name="overlapping-audit",
+        module="hedonic.experiments.overlapping.protocol",
+        attr="main",
+        summary="Read-only reconciliation of the 125 locked paper conditions",
+        needs_data=None,
     ),
     "reproduce-overlapping-paper": Command(
         name="reproduce-overlapping-paper",
@@ -236,6 +264,10 @@ examples:
   # Isolated local check (no databases required)
   hedonic-exp smoke
   hedonic-exp overlapping-small
+  hedonic-exp overlapping-dnn --output /tmp/hedonic-dnn.json
+  hedonic-exp overlapping-dnn --list-instances
+  hedonic-exp overlapping-controlled --smoke \
+      --output /tmp/controlled-overlap.json
   hedonic-exp disjoint --smoke --output_root /tmp/hedonic-smoke
 
   # Tiny V1020-compatible structural smoke (safe output root)
@@ -283,6 +315,9 @@ examples:
   hedonic-exp overlapping-benchmark --datasets amazon,dblp,livejournal,youtube,wikipedia \\
       --cover top5000 --profile standard \\
       --output_dir ~/Databases/Hedonic/Networks/SNAP_BENCHMARK_CLI
+
+  # Read-only reconciliation of the 125 locked paper conditions.
+  hedonic-exp overlapping-audit --output /tmp/overlapping-protocol-audit.json
 
   # Full overlapping-paper protocol: preflights graph/cover/method memory,
   # serializes LiveJournal, and writes a plan without launching detectors.

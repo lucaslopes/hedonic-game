@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "lucas-igraph",
+    "lucas-igraph==1.0.0.2",
     "numpy",
 ]
 
@@ -22,6 +22,7 @@ experiments = [
     "seaborn>=0.13",
     "networkx>=3.2",
     "demon>=2.0.6",
+    "cvxpy>=1.7,<2",
 ]
 
 [project.scripts]
@@ -30,6 +31,3 @@ hedonic-exp = "hedonic.experiments.CLI:main"
 [build-system]
 requires = ["uv_build>=0.8.11,<0.9.0"]
 build-backend = "uv_build"
-
-[tool.uv.sources]
-lucas-igraph = { path = "../python-igraph", editable = true }

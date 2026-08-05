@@ -68,7 +68,7 @@ METHODS = {
         },
     },
     "Leiden": {
-        # Full Leiden via community_hedonic (only_local_moving=False)
+        # Full Leiden via community_hedonic (local_move_only=False)
         # Old tmp/hedonic used community_leiden(only_first_phase=False).
         "method_call_name": "community_hedonic",
         "parameters": {
@@ -76,7 +76,7 @@ METHODS = {
             "beta": 0.01,
             "initial_membership": None,
             "n_iterations": -1,
-            "only_local_moving": False,
+            "local_move_only": False,
             "allow_isolation": False,
             "max_memberships": 1,
         },
@@ -90,7 +90,7 @@ METHODS = {
             "beta": 0.01,
             "initial_membership": None,
             "n_iterations": -1,
-            "only_local_moving": True,
+            "local_move_only": True,
             "allow_isolation": False,
             "max_memberships": 1,
         },

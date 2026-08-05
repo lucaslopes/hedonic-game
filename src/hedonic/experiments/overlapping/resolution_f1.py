@@ -4,7 +4,7 @@ Sweeps resolution γ over [0, 1], runs::
 
     community_hedonic(
         n_iterations=-1,
-        only_local_moving=False,
+        local_move_only=False,
         allow_isolation=True,
         max_memberships=K,
     )
@@ -60,7 +60,7 @@ from hedonic.experiments.overlapping.methods import seeded_initial_membership
 
 # Fixed algorithm flags (not CLI knobs) — match the experiment contract.
 N_ITERATIONS = -1
-ONLY_LOCAL_MOVING = False
+LOCAL_MOVE_ONLY = False
 ALLOW_ISOLATION = True
 
 DEFAULT_OUTPUT_DIR = Path("overlapping_resolution_f1_results")
@@ -425,7 +425,7 @@ def run_one(
     seed: int,
     max_memberships: int,
     n_iterations: int = N_ITERATIONS,
-    only_local_moving: bool = ONLY_LOCAL_MOVING,
+    local_move_only: bool = LOCAL_MOVE_ONLY,
     allow_isolation: bool = ALLOW_ISOLATION,
     singleton_mode: str = DEFAULT_SINGLETON_MODE,
     compute_omega: bool = False,
@@ -441,7 +441,7 @@ def run_one(
     cover_obj = game.community_hedonic(
         resolution=float(resolution),
         n_iterations=int(n_iterations),
-        only_local_moving=bool(only_local_moving),
+        local_move_only=bool(local_move_only),
         allow_isolation=bool(allow_isolation),
         max_memberships=k,
         initial_membership=init,
@@ -458,7 +458,7 @@ def run_one(
         "seed": int(seed),
         "max_memberships": k,
         "n_iterations": int(n_iterations),
-        "only_local_moving": bool(only_local_moving),
+        "local_move_only": bool(local_move_only),
         "allow_isolation": bool(allow_isolation),
         "wallclock_s": float(elapsed),
         "quality": float(q) if q is not None else None,
@@ -524,8 +524,8 @@ def aggregate_runs(
                 ),
                 "max_memberships": int(group[0].get("max_memberships", 1)),
                 "n_iterations": int(group[0].get("n_iterations", N_ITERATIONS)),
-                "only_local_moving": bool(
-                    group[0].get("only_local_moving", ONLY_LOCAL_MOVING)
+                "local_move_only": bool(
+                    group[0].get("local_move_only", LOCAL_MOVE_ONLY)
                 ),
                 "allow_isolation": bool(
                     group[0].get("allow_isolation", ALLOW_ISOLATION)
@@ -659,7 +659,7 @@ def run_resolution_f1_experiment(
     log(f"  n_gt_gt1        : {count_gt_communities_gt1(gt)}")
     log(f"  max_memberships : {k}")
     log(f"  n_iterations    : {N_ITERATIONS}")
-    log(f"  only_local_moving: {ONLY_LOCAL_MOVING}")
+    log(f"  local_move_only: {LOCAL_MOVE_ONLY}")
     log(f"  allow_isolation : {ALLOW_ISOLATION}")
     log(f"  resolutions     : {resolutions}")
     log(f"  seeds           : {seeds}")
@@ -757,7 +757,7 @@ def run_resolution_f1_experiment(
     aggregated = aggregate_runs(runs, confidence=confidence)
     meta = {
         "n_iterations": N_ITERATIONS,
-        "only_local_moving": ONLY_LOCAL_MOVING,
+        "local_move_only": LOCAL_MOVE_ONLY,
         "allow_isolation": ALLOW_ISOLATION,
         "max_memberships": k,
         "max_memberships_rule": "n_gt_communities_size_gt_1",
@@ -941,7 +941,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="hedonic-exp overlapping-resolution",
         description=(
             "Full-DBLP (or --smoke) F1 vs resolution for multi-phase "
-            "community_hedonic: n_iterations=-1, only_local_moving=False, "
+            "community_hedonic: n_iterations=-1, local_move_only=False, "
             "allow_isolation=True, max_memberships=#GT communities with "
             "size>1. Reports legacy symmetric best-match F1 plus one-to-one, "
             "node-membership, size-weighted, and diagnostic metrics. "

@@ -39,12 +39,18 @@ from hedonic.experiments.overlapping.metrics import (
     evaluate_cover,
     quality_overlapping_cpm,
 )
+from hedonic.experiments.overlapping.protocol import (
+    current_experiment_identity,
+    dataset_metadata_identity,
+    identity_rejection_reasons,
+)
 from hedonic.experiments.overlapping.snap import (
     DEFAULT_NETWORKS_DIR,
     SnapDataset,
     SnapLoadError,
     UnsupportedCoverVariant,
     bounded_induced_dataset,
+    common_undirected_analysis_dataset,
     load_snap_dataset,
     network_names,
     print_dataset_report,
@@ -266,6 +272,10 @@ def _timeout_for(options: dict[str, Any], dataset: str, method: str) -> float:
 
 def _cache_parameters_compatible(existing: dict[str, Any], expected: dict[str, Any]) -> bool:
     """Check the full identity of an experimental condition, excluding outcome."""
+    if identity_rejection_reasons(
+        existing.get("experiment_identity"), expected.get("experiment_identity", {})
+    ):
+        return False
     try:
         protocol_version = int(existing.get("protocol_version", -1))
     except (TypeError, ValueError):
@@ -290,6 +300,10 @@ def _cache_parameters_compatible(existing: dict[str, Any], expected: dict[str, A
         except (TypeError, ValueError):
             return False
     if existing.get("memory_limit_bytes") != expected.get("memory_limit_bytes"):
+        return False
+    if existing.get("dataset_metadata_identity") != expected.get("dataset_metadata_identity"):
+        return False
+    if existing.get("dataset_report", {}).get("analysis_graph") != expected.get("analysis_graph"):
         return False
     existing_options = existing.get("run_options")
     expected_options = expected.get("run_options")
@@ -706,6 +720,8 @@ def _record(
         "status": status,
         "profile": profile,
         "dataset_report": dataset_report,
+        "dataset_metadata_identity": dataset_metadata_identity(dataset_report),
+        "experiment_identity": current_experiment_identity(),
         **extra,
     }
 
@@ -1014,6 +1030,11 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
 def run_benchmark(args: argparse.Namespace) -> int:
     """Run the configured suite. Public for small-fixture tests and scripts."""
     options = _effective_options(args)
+    experiment_identity = current_experiment_identity()
+    if not experiment_identity["tracked_files_match_lock"]:
+        raise ValueError("Protocol-locked code/config hashes do not match; refresh and review the lock")
+    if not experiment_identity["lucas_igraph"]["revision_matches_lock"]:
+        raise ValueError("lucas-igraph checkout does not match the protocol-locked revision")
     selected_methods = resolve_methods(options["methods"])
     data_root = Path(args.data_root).expanduser() if args.data_root else DEFAULT_NETWORKS_DIR
     default_output = Path(OUTPUT_DIR) / "snap_benchmark"
@@ -1033,6 +1054,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "output_dir": str(output_dir),
         "options": {**options, "omega": args.omega, "omega_sample_size": args.omega_sample_size},
         "method_availability": availability,
+        "experiment_identity": experiment_identity,
         "datasets": {},
         "run_status_counts": {},
         "execution_counts": {"cached": 0, "rerun": 0, "retry": 0, "fresh": 0},
@@ -1052,6 +1074,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 )
             )
             dataset = bounded_induced_dataset(dataset, options["max_nodes"])
+            dataset = common_undirected_analysis_dataset(dataset)
             print_dataset_report(dataset.report)
             manifest["datasets"][dataset_name] = {"status": "loaded", "report": dataset.report}
         except UnsupportedCoverVariant as exc:
@@ -1139,6 +1162,9 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     incompatible_cache = False
                     timeout_seconds = _timeout_for(options, dataset.name, adapter.name)
                     expected_cache = {
+                        "experiment_identity": experiment_identity,
+                        "dataset_metadata_identity": dataset_metadata_identity(dataset.report),
+                        "analysis_graph": dataset.report.get("analysis_graph"),
                         "dataset": dataset.name,
                         "cover": options["cover"],
                         "method": adapter.name,
@@ -1325,8 +1351,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 detector_memory=detector_memory,
                                 runtime_seconds=metrics["runtime_seconds"],
                                 n_iterations=-1,
-                                only_local_moving=bool(
-                                    adapter.parameters.get("only_local_moving", False)
+                                local_move_only=bool(
+                                    adapter.parameters.get("local_move_only", False)
                                 ),
                                 allow_isolation=bool(
                                     adapter.parameters.get("allow_isolation", False)
