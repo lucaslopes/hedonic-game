@@ -1,0 +1,200 @@
+{
+  "schema_version": 3,
+  "protocol_name": "overlapping-benchmark-public-v1",
+  "run_protocol_version": 10,
+  "protocol_config": {
+    "path": "configs/hedonic.toml",
+    "sha256": "a8dbae899d059e5bacb42932438f5a478de7c8326e9dd7f590caf06b3884aef1"
+  },
+  "expected_conditions": 125,
+  "analysis_graph_policy": "common_undirected_simple_v1",
+  "condition_axes": {
+    "datasets": 5,
+    "methods": 5,
+    "seeds": 5,
+    "resolutions_per_condition": 1
+  },
+  "cache_identity": {
+    "schema_version": 5,
+    "content_identity_schema_version": 2,
+    "source_root_namespaced": true,
+    "source_artifact_relative_paths_and_sha256": true,
+    "cached_graph_and_labeled_cover_content_validated": true
+  },
+  "cover_semantics": {
+    "name": "canonical_unique_vertex_set_cover_v1",
+    "canonicalize_supplied_cover_before_bounded_selection": true,
+    "canonicalize_after_induction_and_remap": true,
+    "canonicalize_predictions_before_scoring": true,
+    "source_duplicates_and_projection_collisions_reported_separately": true
+  },
+  "final_artifacts": {
+    "analysis_graph_gzip_json": true,
+    "analysis_graph_content_and_file_sha256": true,
+    "canonical_ground_truth_cover_gzip_json": true,
+    "ground_truth_cover_content_and_file_sha256": true,
+    "canonical_final_cover_gzip_json": true,
+    "canonical_final_cover_content_and_file_sha256": true,
+    "hedonic_pre_cleanup_memberships_gzip_json": true,
+    "hedonic_final_memberships_gzip_json": true,
+    "membership_content_and_file_sha256": true,
+    "portable_relative_paths": true
+  },
+  "equilibrium_cleanup": {
+    "hedonic_methods": true,
+    "pipeline": "full_leiden_then_local_only",
+    "allow_isolation": true,
+    "n_iterations": -1,
+    "pre_cleanup_memberships_persisted": true,
+    "exact_final_memberships_persisted": true,
+    "independent_audit_required": true,
+    "independent_auditor": "hedonic.experiments.overlapping.robustness.audit_cover",
+    "certificate_binds_exact_final_membership_sha256": true,
+    "certificate_target": "exact_labeled_final_memberships",
+    "canonical_scoring_projection_certified_as_equilibrium": false,
+    "certificate_binds_canonical_scoring_cover_sha256": true,
+    "certificate_binds_analysis_graph_sha256": true,
+    "resume_recomputes_metrics_from_bound_covers": true,
+    "resume_replays_independent_exact_state_audit": true,
+    "reconciliation_recomputes_metrics_and_exact_state_audit": true,
+    "tolerance": {
+      "atol": 1e-10,
+      "rtol": 1e-09
+    }
+  },
+  "dataset_content_identities": {
+    "amazon/top5000": {
+      "schema_version": 2,
+      "graph_sha256": "31347cc46a2a1f805e8a0172ab701938376653d73036d0e63aa2d0e9b1fba8d5",
+      "ground_truth_cover_sha256": "99150b37e302d931426e784d924fa1df79925739fd51075ad36a5e1f7eae0d3d",
+      "n": 3000,
+      "m": 2999,
+      "directed": false,
+      "ground_truth_community_count": 1221,
+      "ground_truth_max_memberships_per_node": 5
+    },
+    "dblp/top5000": {
+      "schema_version": 2,
+      "graph_sha256": "a0262fbe33b81832ab5e97b7c5a83200c70d5d13c3c0a0117627f0ded4afae30",
+      "ground_truth_cover_sha256": "5d25913fe337052df91f41506a28cde9346aa92330c5a5168b32f24b41dcc881",
+      "n": 3000,
+      "m": 2016,
+      "directed": false,
+      "ground_truth_community_count": 1765,
+      "ground_truth_max_memberships_per_node": 11
+    },
+    "livejournal/top5000": {
+      "schema_version": 2,
+      "graph_sha256": "1f4e029e6195d3a28a42651739c3ba63830a4a0faeb5252f084c029a38e0d304",
+      "ground_truth_cover_sha256": "5e263502c68f038cf929ae113868c4f7749fb44f280401fa5b2bdf6c4ce73ad2",
+      "n": 3000,
+      "m": 2089,
+      "directed": false,
+      "ground_truth_community_count": 1787,
+      "ground_truth_max_memberships_per_node": 9
+    },
+    "youtube/top5000": {
+      "schema_version": 2,
+      "graph_sha256": "8b295902fffe96a9e07ec01bdd4828be2698557565a993c95bf578dde8aaf20e",
+      "ground_truth_cover_sha256": "a730a1102a37d66076f21dd0b8a83b73145ffbe7001098f76797472764869e27",
+      "n": 3000,
+      "m": 10026,
+      "directed": false,
+      "ground_truth_community_count": 2518,
+      "ground_truth_max_memberships_per_node": 51
+    },
+    "wikipedia/all": {
+      "schema_version": 2,
+      "graph_sha256": "2adfaddc79d28c1df8533df38821c37457eb76057ecd52dda1e932c787f5bb99",
+      "ground_truth_cover_sha256": "1f1f2012dbe71cfc0715937528a383cee19dc37a9f422736753ed0509bb820ee",
+      "n": 3000,
+      "m": 4431,
+      "directed": false,
+      "ground_truth_community_count": 5953,
+      "ground_truth_max_memberships_per_node": 47
+    }
+  },
+  "lucas_igraph": {
+    "distribution": "lucas-igraph",
+    "version": "1.0.0.3",
+    "igraph_version": "1.0.0.3",
+    "uv_lock_path": "uv.lock",
+    "uv_lock_sha256": "ae2ae1f2b038be045d3aca9d474f1e4da18d167c6233a87fe2d7d5c2cbc73fd0",
+    "package_lock_sha256": "52d416ffcb15119c3abdc123c722a5fb86b0781780a3a1dd25a52d876cd8a890",
+    "distribution_tree_sha256": "a00cbf4603946d677b13a436f1a90616d578322c2bfc9605ab6f198b08cf8db6",
+    "module": "igraph._igraph",
+    "module_path": "igraph/_igraph.abi3.so",
+    "module_sha256": "6da6cc1ea9b23525b75901385e5224ffbe3b0300f72594e52540107a3b2cd933",
+    "released_native_sha": "e441a21c3663062d9ebe6b98451c826325f886ad",
+    "source_path": "../python-igraph",
+    "source_revision_is_optional": true
+  },
+  "external_dependencies": {
+    "cpm": {
+      "distribution": "networkx",
+      "version": "3.6.1",
+      "package_lock_sha256": "b4b34f529a904ecc46791500310c72a7906e5bee747700ba29203234e631479c",
+      "distribution_tree_sha256": "2075795444112ca4c6b57ee9d01c42bd5a9fc20d687ece3a2d5ebe32286552bf",
+      "implementation_module": "networkx.algorithms.community.kclique",
+      "implementation_attribute": "k_clique_communities",
+      "implementation_path": "networkx/algorithms/community/kclique.py",
+      "implementation_sha256": "0d3afd8944ff5d6bf44b763bf4a425e8e5de7e3ced34c73d4801d685d14ec5c5"
+    },
+    "demon": {
+      "distribution": "demon",
+      "version": "2.0.6",
+      "package_lock_sha256": "be40e562ec825655af9d2a99547fc183d8c081e798645399d51e31ef83c3e04f",
+      "distribution_tree_sha256": "a32f8aaab737c173388b898b97e614e6107a485ff50c79feb16c2a2af1814f43",
+      "implementation_module": "demon.alg.Demon",
+      "implementation_attribute": "Demon",
+      "implementation_path": "demon/alg/Demon.py",
+      "implementation_sha256": "5524f16add67f8c72f8a6cb14fd770929e133f25e31be4edca83c4236701966e"
+    }
+  },
+  "scientific_dependencies": {
+    "numpy": {
+      "distribution": "numpy",
+      "version": "2.3.3",
+      "package_lock_sha256": "8fae8cf57b15ab1b21ecfc85ecf8a61e365bccdc94ae5722a56d6a519623aef8",
+      "distribution_tree_sha256": "fbc57d96b96f11096549d8d1eb7924cfb899d880279b7300c2c4cb86623857c9",
+      "module": "numpy",
+      "module_path": "numpy/__init__.py",
+      "module_sha256": "8236a753805db34c29ef9cd03694e0af883b6325eb4fd246cc83d2be0b847e89"
+    },
+    "scipy": {
+      "distribution": "scipy",
+      "version": "1.18.0",
+      "package_lock_sha256": "c9d3fb261faa499aa9729613b001b4b291cfd3bf62eb29f37c64e4bd5e9c9e29",
+      "distribution_tree_sha256": "e8cc5eea699618a8a79c684808e790e3da1341deb3eca1927c0643b4b55a7476",
+      "module": "scipy.optimize._lsap",
+      "module_path": "scipy/optimize/_lsap.cpython-312-darwin.so",
+      "module_sha256": "a338bae8b94becb4f8d48b9bb9ec0a3f188fcdba63f8b2be47232c80436e14ca"
+    }
+  },
+  "tracked_files": {
+    "configs/hedonic.toml": "a8dbae899d059e5bacb42932438f5a478de7c8326e9dd7f590caf06b3884aef1",
+    "pyproject.toml": "cb2f4efe56af8c90314dd25b03437519b01eeb3b49286a991cf9943fb63152cb",
+    "src/hedonic/Game.py": "99d627dd3b6c8a7ffaa09db73df0e2bbd1d33f08a601a347aab73f73d34be13a",
+    "src/hedonic/__init__.py": "e6d51e54d5b1cabb1f5ad75f9924467e4c965c7173d1a4f043d3b1985165cd25",
+    "src/hedonic/experiments/CLI.py": "f8864da6572a13ea576746e1faee5fd79323e018692f27710b001ddef4f34d4c",
+    "src/hedonic/experiments/__init__.py": "a67a28e5f68fc0fc02be8640aab5f43436f8fdcde87e1ed17cac8cfc34cc0210",
+    "src/hedonic/experiments/config.py": "c328d827c63babd5b94c68fc068f43fd634e9ea50c5dc8317c356d989264d4cb",
+    "src/hedonic/experiments/overlapping/__init__.py": "bfb6e2bea1f80be7abb8d843a4c8ab23f57907941eb947accca6f8439d904132",
+    "src/hedonic/experiments/overlapping/benchmark.py": "6538d42a228d43248f14f271ad99cbe0847630eaf8bec67ac1c1d81e37dad909",
+    "src/hedonic/experiments/overlapping/complexity_scale.py": "bda13a47ec6df4468a4a0a88dc72665bc0662dcca6571bdd62095dbd823846cd",
+    "src/hedonic/experiments/overlapping/controlled_overlap.py": "b4f3c9c7211e5f2f03148081489e7be74ea9f50159bbff087b01d6f6d5abf821",
+    "src/hedonic/experiments/overlapping/dblp_full.py": "bfdbd8b7d933447c342cd680c5a6489cf09a2cd400d89769dff213cc7b938387",
+    "src/hedonic/experiments/overlapping/dblp_subgraph.py": "2e02c12509593b96741398aba32027d69d79ffc2a1171b22d1de3c048dfc6eb9",
+    "src/hedonic/experiments/overlapping/dnn_certificate.py": "bd10bd6924b40efc3caf87919d996a25412b85f5b956a7d0504e56053bcacaf2",
+    "src/hedonic/experiments/overlapping/methods.py": "8d1ac5c93cf5dc49d8f8ee3384b62ad024c5b9ddafb5dd870260fd97e7001465",
+    "src/hedonic/experiments/overlapping/metrics.py": "761c98e403f4e666df72147be71d125b9849de4ae63ca372709d9a14c8b83eff",
+    "src/hedonic/experiments/overlapping/protocol.py": "5e0d77b38ff608fa0893004f639af433296995180f0badf91498af63c1ae8d10",
+    "src/hedonic/experiments/overlapping/reproduce_paper.py": "4b97d427bd4df81cc28da8b799810b77d3d9d67f3f12bd38bb1c2395f4643646",
+    "src/hedonic/experiments/overlapping/resolution_f1.py": "12319c7ad2d2ce38650d7b840f04dde96f67192400bf3ff2f45e9fb1fb96224b",
+    "src/hedonic/experiments/overlapping/robustness.py": "23950bdfab4a55949fb98e7ab1cc86fc2426dd0e03887eebb6197f149b7a54a4",
+    "src/hedonic/experiments/overlapping/small_graphs.py": "9194c7c96ae77db7a95bbd5b516cb88fbd73582558979a97cb74280ab0a5eade",
+    "src/hedonic/experiments/overlapping/snap.py": "ea314998156ac5f7a8f9c5500cc22e3bcaa13d1f5d7e33d8c203179115e60093",
+    "src/hedonic/utils.py": "95994a0144deee7754015205bd30ad870a494e1f4c81ee350c6fbff89dec150d",
+    "uv.lock": "ae2ae1f2b038be045d3aca9d474f1e4da18d167c6233a87fe2d7d5c2cbc73fd0"
+  }
+}

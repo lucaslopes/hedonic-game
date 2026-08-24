@@ -13,7 +13,7 @@ from unittest.mock import patch
 import igraph as ig
 
 from hedonic.experiments import CLI
-from hedonic.experiments.overlapping import benchmark
+from hedonic.experiments.overlapping import benchmark, reproduce_paper, snap
 from hedonic.experiments.overlapping.methods import (
     METHODS,
     effective_resolution,
@@ -22,6 +22,7 @@ from hedonic.experiments.overlapping.methods import (
     run_method,
 )
 from hedonic.experiments.overlapping.metrics import structural_overlap_metrics
+from hedonic.experiments.overlapping.robustness import audit_cover
 from hedonic.experiments.overlapping.snap import (
     ANALYSIS_GRAPH_POLICY,
     bounded_induced_dataset,
@@ -58,13 +59,153 @@ class TestSnapLoader(unittest.TestCase):
             self.assertEqual(dataset.report["id_mapping_strategy"], "raw_sorted_original_id_to_contiguous_index")
             self.assertEqual(dataset.report["validation"]["missing_member_count"], 2)
             self.assertEqual(dataset.report["validation"]["dropped_communities_lt_2_members"], 1)
-            self.assertTrue(Path(dataset.report["normalized_cache_path"]).is_file())
+            self.assertTrue((cache / dataset.report["normalized_cache_path"]).is_file())
 
             cached = load_snap_dataset(
                 "amazon", cover_variant="top5000", data_root=root, cache_dir=cache
             )
             self.assertEqual(cached.cover, dataset.cover)
             self.assertEqual(cached.report["source_kind"], "validated_normalized_cache")
+
+            cache_path = cache / dataset.report["normalized_cache_path"]
+            with cache_path.open("rb") as stream:
+                payload = pickle.load(stream)
+            payload["cover"] = [[0, 2]]
+            with cache_path.open("wb") as stream:
+                pickle.dump(payload, stream)
+            repaired = load_snap_dataset(
+                "amazon", cover_variant="top5000", data_root=root, cache_dir=cache
+            )
+            self.assertEqual(repaired.cover, dataset.cover)
+            self.assertEqual(repaired.report["source_kind"], "streamed_raw_gzip")
+
+            with cache_path.open("rb") as stream:
+                payload = pickle.load(stream)
+            payload["report"]["overlap_statistics"][
+                "max_memberships_per_node"
+            ] = 999
+            with cache_path.open("wb") as stream:
+                pickle.dump(payload, stream)
+            stats_repaired = load_snap_dataset(
+                "amazon", cover_variant="top5000", data_root=root, cache_dir=cache
+            )
+            self.assertEqual(
+                stats_repaired.report["overlap_statistics"][
+                    "max_memberships_per_node"
+                ],
+                2,
+            )
+            self.assertEqual(
+                stats_repaired.report["source_kind"], "streamed_raw_gzip"
+            )
+            reviewed = common_undirected_analysis_dataset(
+                bounded_induced_dataset(dataset, 0)
+            ).report["content_identity"]
+            with patch.object(
+                reproduce_paper,
+                "load_snap_dataset",
+                return_value=stats_repaired,
+            ):
+                accepted = reproduce_paper._job_memory_profile(
+                    {
+                        "name": "amazon-top5000",
+                        "dataset": "amazon",
+                        "cover": "top5000",
+                    },
+                    data_root=root,
+                    profile="standard",
+                    max_nodes=0,
+                    methods=["hedonic_multiphase"],
+                    memory_budget_bytes=16 * 1024**3,
+                    safety_factor=1.5,
+                    configured_membership_cap=None,
+                    output_dir=Path(directory) / "accepted-output",
+                    locked_dataset_identities={"amazon/top5000": reviewed},
+                )
+            self.assertEqual(accepted["dataset_content_identity"], reviewed)
+
+            # A pickle cache can self-consistently rewrite its graph, cover,
+            # self-digest, and report statistics.  The locked paper coordinator
+            # must still reject that content against its independent reviewed
+            # graph/GT identity before scheduling any detector.
+            with cache_path.open("rb") as stream:
+                payload = pickle.load(stream)
+            forged_graph = ig.Graph(n=3, edges=[(0, 2)], directed=False)
+            forged_cover = [[0, 2]]
+            forged_stats = snap.cover_statistics(forged_cover)
+            payload["graph"] = forged_graph
+            payload["cover"] = forged_cover
+            payload["cache_content_identity"] = snap._cache_content_identity(
+                forged_graph, forged_cover
+            )
+            payload["report"].update({
+                "n": forged_graph.vcount(),
+                "m": forged_graph.ecount(),
+                "directed": forged_graph.is_directed(),
+                "number_of_communities": forged_stats["n_communities"],
+                "number_of_covered_nodes": forged_stats["n_covered_nodes"],
+                "community_size_statistics": forged_stats["community_size"],
+                "overlap_statistics": forged_stats["overlap"],
+            })
+            with cache_path.open("wb") as stream:
+                pickle.dump(payload, stream)
+            poisoned = load_snap_dataset(
+                "amazon", cover_variant="top5000", data_root=root, cache_dir=cache
+            )
+            self.assertEqual(poisoned.report["source_kind"], "validated_normalized_cache")
+            with patch.object(
+                reproduce_paper, "load_snap_dataset", return_value=poisoned
+            ):
+                with self.assertRaisesRegex(ValueError, "reviewed protocol lock"):
+                    reproduce_paper._job_memory_profile(
+                        {
+                            "name": "amazon-top5000",
+                            "dataset": "amazon",
+                            "cover": "top5000",
+                        },
+                        data_root=root,
+                        profile="standard",
+                        max_nodes=0,
+                        methods=["hedonic_multiphase"],
+                        memory_budget_bytes=16 * 1024**3,
+                        safety_factor=1.5,
+                        configured_membership_cap=None,
+                        output_dir=Path(directory) / "output",
+                        locked_dataset_identities={"amazon/top5000": reviewed},
+                    )
+
+    def test_normalized_cache_is_bound_to_the_requested_data_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            cache = base / "cache"
+            roots = [base / "first", base / "second"]
+            for root, edge in zip(roots, ("10 20\n", "10 20\n20 30\n")):
+                amazon = root / "Amazon"
+                _write_gzip(amazon / "com-amazon.ungraph.txt.gz", edge)
+                _write_gzip(amazon / "top5000.cmty.txt.gz", "10 20\n")
+            first = load_snap_dataset(
+                "amazon", cover_variant="top5000", data_root=roots[0], cache_dir=cache
+            )
+            second = load_snap_dataset(
+                "amazon", cover_variant="top5000", data_root=roots[1], cache_dir=cache
+            )
+            self.assertNotEqual(first.graph.vcount(), second.graph.vcount())
+            self.assertNotEqual(
+                first.report["normalized_cache_path"],
+                second.report["normalized_cache_path"],
+            )
+            _write_gzip(
+                roots[0] / "Amazon" / "com-amazon.ungraph.txt.gz",
+                "10 20\n20 40\n",
+            )
+            changed = load_snap_dataset(
+                "amazon", cover_variant="top5000", data_root=roots[0], cache_dir=cache
+            )
+            self.assertNotEqual(
+                changed.report["normalized_cache_path"],
+                first.report["normalized_cache_path"],
+            )
+            self.assertEqual(changed.graph.vcount(), 3)
 
     def test_dblp_label_attribute_remaps_cached_cover_ids(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -123,6 +264,123 @@ class TestSnapLoader(unittest.TestCase):
 
 
 class TestBenchmarkHelpers(unittest.TestCase):
+    def test_cached_metrics_reject_extra_identity_shadow_keys(self):
+        dataset = common_undirected_analysis_dataset(
+            bounded_induced_dataset(
+                smoke_dataset("amazon", cover_variant="all"), 0
+            )
+        )
+        resolution = dataset.graph.density()
+        metrics = benchmark.evaluate_cover(
+            dataset.cover,
+            dataset.cover,
+            dataset.graph.vcount(),
+            compute_omega=False,
+            omega_sample_size=100,
+            omega_seed=0,
+        )
+        metrics["cpm_overlapping_quality"] = (
+            benchmark.quality_overlapping_cpm(
+                dataset.graph, dataset.cover, resolution
+            )
+        )
+        metrics["cpm_overlapping_quality_status"] = "computed"
+        metrics["runtime_seconds"] = 0.1
+        record = {
+            "runtime_seconds": 0.1,
+            "metrics": metrics,
+            "metrics_sha256": benchmark._metrics_digest(metrics),
+        }
+        expected = {
+            "seed": 0,
+            "resolution": resolution,
+            "dataset_content_identity": dataset.report["content_identity"],
+            "run_options": {"omega": False, "omega_sample_size": 100},
+            "_analysis_graph_object": dataset.graph,
+            "_ground_truth_cover": dataset.cover,
+        }
+        self.assertTrue(
+            benchmark._cached_metrics_match(record, expected, dataset.cover)
+        )
+        tampered_metrics = {**metrics, "status": "failed", "dataset": "evil"}
+        tampered = {
+            **record,
+            "metrics": tampered_metrics,
+            "metrics_sha256": benchmark._metrics_digest(tampered_metrics),
+        }
+        self.assertFalse(
+            benchmark._cached_metrics_match(tampered, expected, dataset.cover)
+        )
+        flattened = benchmark._flatten_record({
+            "dataset": "amazon",
+            "status": "completed",
+            "metrics": tampered_metrics,
+        })
+        self.assertEqual(flattened["dataset"], "amazon")
+        self.assertEqual(flattened["status"], "completed")
+
+    def test_exact_labeled_equilibrium_is_not_transferred_to_scoring_projection(self):
+        graph = ig.Graph(n=4, edges=[(0, 1), (0, 2), (0, 3)])
+        exact_memberships = [[2], [0, 1], [2], [2]]
+        exact_audit = audit_cover(
+            graph,
+            exact_memberships,
+            max_memberships=3,
+            allow_isolation=True,
+            gamma=0.5,
+            compute_intervals=False,
+        )
+        projection = benchmark._cover_projection_from_membership_rows(
+            exact_memberships, graph.vcount()
+        )
+        self.assertIsNotNone(projection)
+        scoring_cover, metadata = projection
+        projected_memberships = [[] for _ in range(graph.vcount())]
+        for label, community in enumerate(scoring_cover):
+            for vertex in community:
+                projected_memberships[vertex].append(label)
+        projected_audit = audit_cover(
+            graph,
+            projected_memberships,
+            max_memberships=3,
+            allow_isolation=True,
+            gamma=0.5,
+            compute_intervals=False,
+        )
+        self.assertTrue(exact_audit["is_local_equilibrium_at_resolution"])
+        self.assertFalse(projected_audit["is_local_equilibrium_at_resolution"])
+        self.assertEqual(metadata["duplicate_community_bodies_removed"], 1)
+        self.assertTrue(metadata["projection_changed"])
+        self.assertFalse(
+            metadata["canonical_scoring_projection_certified_as_equilibrium"]
+        )
+        scoring_sha256 = benchmark.cover_sha256(scoring_cover)
+        certificate = benchmark._equilibrium_certificate(
+            "hedonic_multiphase",
+            graph,
+            exact_memberships,
+            final_membership_sha256=benchmark._raw_membership_digest(
+                exact_memberships
+            ),
+            canonical_scoring_cover_sha256=scoring_sha256,
+            max_memberships=3,
+            resolution=0.5,
+            allow_isolation=True,
+        )
+        self.assertEqual(certificate["status"], "verified")
+        self.assertEqual(
+            certificate["certificate_target"],
+            "exact_labeled_final_memberships",
+        )
+        self.assertEqual(
+            certificate["canonical_scoring_cover_sha256"], scoring_sha256
+        )
+        self.assertFalse(
+            certificate[
+                "canonical_scoring_projection_certified_as_equilibrium"
+            ]
+        )
+
     def test_large_detector_cover_does_not_deadlock_result_transport(self):
         if "fork" not in benchmark.mp.get_all_start_methods():
             self.skipTest("large-result transport regression requires fork inheritance")
@@ -133,7 +391,7 @@ class TestBenchmarkHelpers(unittest.TestCase):
             benchmark, "run_method", return_value=(large_cover, method_meta)
         ):
             outcome = benchmark._run_with_timeout(
-                "hedonic_multiphase",
+                "cpm",
                 dataset.graph,
                 max_memberships=2,
                 resolution=dataset.graph.density(),
@@ -169,8 +427,12 @@ class TestBenchmarkHelpers(unittest.TestCase):
 
         packets = {
             "success": {
-                "status": "ok", "cover": [[0, 1], [2, 3]],
-                "method_meta": {"runtime_seconds": 0.01, "parameters": {}},
+                "status": "ok", "cover": outcome["cover"],
+                "method_meta": outcome["method_meta"],
+                "pre_cleanup_memberships": outcome[
+                    "pre_cleanup_memberships"
+                ],
+                "final_memberships": outcome["final_memberships"],
                 "memory": {"observed_peak_rss_bytes": 10}, "runtime_seconds": 0.01,
             },
             "timeout": {
@@ -218,7 +480,7 @@ class TestBenchmarkHelpers(unittest.TestCase):
             )
             self.assertEqual(timeout_record["timeout_seconds"], 17.0)
 
-    def test_resource_failed_baseline_becomes_explicit_not_scalable_without_resume(self):
+    def test_resource_failed_baseline_is_rerun_on_resume(self):
         packet = {
             "status": "memory_limit", "runtime_seconds": 0.02,
             "memory": {"observed_peak_rss_bytes": 100, "rss_samples": []},
@@ -235,12 +497,15 @@ class TestBenchmarkHelpers(unittest.TestCase):
             record = json.loads(record_path.read_text())
             self.assertEqual(record["status"], "skipped_not_scalable")
             self.assertEqual(record["resource_status"], "memory_limit")
-            with patch.object(benchmark, "_run_with_timeout", side_effect=AssertionError("must not rerun")):
+            with patch.object(
+                benchmark, "_run_with_timeout", return_value=dict(packet)
+            ) as rerun:
                 self.assertEqual(CLI.main(argv + ["--resume"]), 0)
+            rerun.assert_called_once()
             record = json.loads(record_path.read_text())
-            self.assertEqual(record["execution"], "not_scalable_policy")
+            self.assertEqual(record["execution"], "rerun")
 
-    def test_resource_failed_hedonic_run_is_not_restarted_as_resume(self):
+    def test_resource_failed_hedonic_run_is_rerun_on_resume(self):
         packet = {
             "status": "timeout", "runtime_seconds": 0.02,
             "memory": {"observed_peak_rss_bytes": 100, "rss_samples": []},
@@ -253,11 +518,14 @@ class TestBenchmarkHelpers(unittest.TestCase):
             ]
             with patch.object(benchmark, "_run_with_timeout", return_value=dict(packet)):
                 self.assertEqual(CLI.main(argv), 0)
-            with patch.object(benchmark, "_run_with_timeout", side_effect=AssertionError("must not rerun")):
+            with patch.object(
+                benchmark, "_run_with_timeout", return_value=dict(packet)
+            ) as rerun:
                 self.assertEqual(CLI.main(argv + ["--resume"]), 0)
+            rerun.assert_called_once()
             record = json.loads(next((output / "runs").rglob("*.json")).read_text())
             self.assertEqual(record["status"], "timeout")
-            self.assertEqual(record["execution"], "resource_failure_policy")
+            self.assertEqual(record["execution"], "rerun")
 
     def test_external_baseline_policy_writes_explicit_nonresult_without_detector(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -298,10 +566,13 @@ class TestBenchmarkHelpers(unittest.TestCase):
             )
 
     def test_cover_normalization_and_method_registry(self):
-        cover, validation = normalize_cover([[0, 0, 1, 9, "bad"], []], 3)
+        cover, validation = normalize_cover(
+            [[1, 0, 0, 9, "bad"], [0, 1], []], 3
+        )
         self.assertEqual(cover, [[0, 1]])
         self.assertEqual(validation["invalid_members_dropped"], 2)
         self.assertEqual(validation["duplicate_members_removed"], 1)
+        self.assertEqual(validation["duplicate_communities_removed"], 1)
         availability = method_availability()
         self.assertTrue(
             {
@@ -331,6 +602,7 @@ class TestBenchmarkHelpers(unittest.TestCase):
                 resolution,
             )
             self.assertTrue(adapter.parameters["allow_isolation"])
+            self.assertTrue(adapter.parameters["ensure_equilibrium"])
 
     def test_structural_metrics_are_overlap_aware(self):
         metrics = structural_overlap_metrics(
@@ -381,7 +653,7 @@ class TestBenchmarkHelpers(unittest.TestCase):
             ]
             self.assertEqual(CLI.main(argv), 0)
             manifest = json.loads((output / "manifest.json").read_text())
-            self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(manifest["schema_version"], 4)
             self.assertEqual(manifest["run_status_counts"].get("completed"), 6)
             self.assertTrue(manifest["experiment_identity"]["tracked_files_match_lock"])
             self.assertTrue(
@@ -395,6 +667,102 @@ class TestBenchmarkHelpers(unittest.TestCase):
                 for path in (output / "runs").rglob("*.json")
             ]
             self.assertTrue(all(record["allow_isolation"] for record in hedonic_records))
+            self.assertTrue(all(record["ensure_equilibrium"] for record in hedonic_records))
+            self.assertTrue(
+                all(record["equilibrium_status"] == "verified_independent_audit" for record in hedonic_records)
+            )
+            self.assertTrue(
+                all(
+                    record["equilibrium_certificate"]["status"] == "verified"
+                    and record["equilibrium_certificate"][
+                        "is_local_equilibrium_at_resolution"
+                    ]
+                    and record["equilibrium_certificate"][
+                        "analysis_graph_sha256"
+                    ]
+                    == record["dataset_report"]["content_identity"][
+                        "graph_sha256"
+                    ]
+                    and record["equilibrium_certificate"][
+                        "max_positive_regret"
+                    ]
+                    <= record["equilibrium_certificate"][
+                        "max_stability_tolerance"
+                    ]
+                    and record["equilibrium_certificate"][
+                        "certificate_target"
+                    ]
+                    == "exact_labeled_final_memberships"
+                    and record["equilibrium_certificate"][
+                        "canonical_scoring_cover_sha256"
+                    ]
+                    == record["final_cover_sha256"]
+                    and record["equilibrium_certificate"][
+                        "canonical_scoring_projection_certified_as_equilibrium"
+                    ]
+                    is False
+                    for record in hedonic_records
+                )
+            )
+            self.assertTrue(
+                all(
+                    record["metrics_sha256"]
+                    == benchmark._metrics_digest(record["metrics"])
+                    for record in hedonic_records
+                )
+            )
+            self.assertTrue(all(record.get("raw_membership_hash") for record in hedonic_records))
+            self.assertTrue(
+                all(
+                    record.get("raw_membership_artifact")
+                    and (output / record["raw_membership_artifact"]).is_file()
+                    for record in hedonic_records
+                )
+            )
+            self.assertTrue(
+                all(
+                    record.get("analysis_graph_artifact")
+                    and (output / record["analysis_graph_artifact"]).is_file()
+                    and record.get("ground_truth_cover_artifact")
+                    and (output / record["ground_truth_cover_artifact"]).is_file()
+                    and record["analysis_graph_sha256"]
+                    == record["dataset_report"]["content_identity"]["graph_sha256"]
+                    and record["ground_truth_cover_sha256"]
+                    == record["dataset_report"]["content_identity"][
+                        "ground_truth_cover_sha256"
+                    ]
+                    for record in hedonic_records
+                )
+            )
+            self.assertTrue(
+                all(
+                    record.get("final_cover_artifact")
+                    and (output / record["final_cover_artifact"]).is_file()
+                    and record.get("final_cover_sha256")
+                    for record in hedonic_records
+                )
+            )
+            self.assertTrue(
+                all(
+                    record.get("pre_cleanup_membership_artifact")
+                    and (output / record["pre_cleanup_membership_artifact"]).is_file()
+                    and record.get("final_membership_artifact")
+                    and (output / record["final_membership_artifact"]).is_file()
+                    and record["equilibrium_certificate"][
+                        "final_membership_sha256"
+                    ]
+                    == record["final_membership_sha256"]
+                    and record["final_membership_projection"][
+                        "exact_final_membership_sha256"
+                    ]
+                    == record["final_membership_sha256"]
+                    and record["final_membership_projection"][
+                        "canonical_scoring_cover_sha256"
+                    ]
+                    == record["final_cover_sha256"]
+                    for record in hedonic_records
+                )
+            )
             self.assertTrue(all(record["experiment_identity"] for record in hedonic_records))
             self.assertTrue(all(record["dataset_metadata_identity"] for record in hedonic_records))
             self.assertTrue(
@@ -407,6 +775,14 @@ class TestBenchmarkHelpers(unittest.TestCase):
             self.assertTrue(
                 all(
                     record["initialization"]["requested_community_count"] == 3
+                    for record in hedonic_records
+                )
+            )
+            self.assertTrue(
+                all(
+                    record["initialization"]["realized_community_count"]
+                    <= record["initialization"]["requested_community_count"]
+                    and record["initialization"]["membership_sha256"]
                     for record in hedonic_records
                 )
             )
@@ -448,6 +824,30 @@ class TestBenchmarkHelpers(unittest.TestCase):
             changed = json.loads(run.read_text())
             self.assertEqual(changed["execution"], "rerun")
             self.assertTrue(changed["allow_isolation"])
+            changed["equilibrium_certificate"]["status"] = "not_verified"
+            run.write_text(json.dumps(changed))
+            self.assertEqual(CLI.main(argv + ["--resume"]), 0)
+            changed = json.loads(run.read_text())
+            self.assertEqual(changed["execution"], "rerun")
+            self.assertEqual(
+                changed["equilibrium_certificate"]["status"], "verified"
+            )
+            changed["equilibrium_certificate"]["max_positive_regret"] = 0.0
+            changed["equilibrium_certificate"]["max_stability_tolerance"] = 1.0
+            run.write_text(json.dumps(changed))
+            self.assertEqual(CLI.main(argv + ["--resume"]), 0)
+            changed = json.loads(run.read_text())
+            self.assertEqual(changed["execution"], "rerun")
+            self.assertLess(
+                changed["equilibrium_certificate"]["max_stability_tolerance"],
+                1.0,
+            )
+            changed["metrics"]["matching_f1"] = 999.0
+            run.write_text(json.dumps(changed))
+            self.assertEqual(CLI.main(argv + ["--resume"]), 0)
+            changed = json.loads(run.read_text())
+            self.assertEqual(changed["execution"], "rerun")
+            self.assertLessEqual(changed["metrics"]["matching_f1"], 1.0)
 
 
 if __name__ == "__main__":

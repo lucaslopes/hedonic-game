@@ -1,6 +1,6 @@
 # Observed SNAP archive
 
-The inspected root is `~/Databases/Hedonic/Networks` (about 2.5 GB at inspection time). Use `~/Databases/Hedonic/Networks` or an explicit user path in reusable code; do not hard-code the user’s home directory.
+The inspected root was `~/Databases/Hedonic/Networks` (about 2.5 GB at inspection time). Use that home-relative path or an explicit user path in reusable code; do not hard-code a developer’s home directory.
 
 ## Ground-truth classification
 

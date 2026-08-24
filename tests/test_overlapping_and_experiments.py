@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import gzip
 import json
+import hashlib
 import inspect
 import os
+import random
 import re
 import tempfile
 import unittest
@@ -30,6 +33,24 @@ from hedonic.experiments.disjoint import data_loader, sbm_sweep
 from hedonic.experiments.overlapping import small_graphs
 from hedonic.experiments.overlapping import complexity_scale
 from hedonic.experiments.overlapping import resolution_f1
+from hedonic.experiments.overlapping import execution as gt_execution
+from hedonic.experiments.overlapping.ground_truth_data import (
+    covered_induced_dataset,
+    prepare_dataset,
+    singleton_completed_dataset,
+)
+from hedonic.experiments.overlapping.ground_truth_robustness import (
+    _expected_condition_axis_keys,
+    _json_hash,
+    _load_cover_artifact,
+    _load_membership_artifact,
+    _normalize_raw_memberships,
+    _persist_cover,
+    _persist_memberships,
+    _publication_evidence_index,
+    _raw_cover_hash,
+    main as ground_truth_robustness_main,
+)
 from hedonic.experiments.overlapping.dblp_full import (
     resolve_max_memberships as resolve_mm_full,
 )
@@ -47,6 +68,18 @@ from hedonic.experiments.overlapping.metrics import (
     size_weighted_community_f1,
     symmetric_best_match_f1,
 )
+from hedonic.experiments.overlapping.robustness import (
+    audit_cover,
+    best_response,
+    build_fractional_state,
+    cover_hash,
+    cover_to_vertex_memberships,
+    exhaustive_best_response,
+    nearest_equilibrium_tiny,
+    fractional_phi,
+    perturb_cover_incidence,
+)
+from hedonic.experiments.overlapping.snap import SnapDataset
 
 
 class TestCommunityHedonic(unittest.TestCase):
@@ -65,6 +98,132 @@ class TestCommunityHedonic(unittest.TestCase):
         self.assertEqual(len(cover.membership), graph.vcount())
         with self.assertRaises(TypeError):
             graph.community_hedonic(**{deprecated_keyword: True})
+
+    def test_ensure_equilibrium_native_full_result_is_audited(self):
+        edges = [
+            (0, 1),
+            (0, 9),
+            (0, 10),
+            (1, 4),
+            (1, 10),
+            (1, 11),
+            (2, 6),
+            (2, 8),
+            (3, 6),
+            (3, 9),
+            (4, 6),
+            (4, 9),
+            (7, 8),
+            (8, 9),
+        ]
+        initial = [
+            [0],
+            [3],
+            [0],
+            [2],
+            [3],
+            [1],
+            [0],
+            [1],
+            [2],
+            [2],
+            [2],
+            [0],
+        ]
+        graph = Game(ig.Graph(n=12, edges=edges))
+        ig.set_random_number_generator(random.Random(10001))
+        result = graph.community_hedonic(
+            initial_membership=initial,
+            max_memberships=3,
+            resolution=graph.density(),
+            local_move_only=False,
+            allow_isolation=True,
+            n_iterations=-1,
+            ensure_equilibrium=True,
+        )
+        audit = audit_cover(
+            graph,
+            [list(labels) for labels in result.membership],
+            max_memberships=3,
+            allow_isolation=True,
+            gamma=graph.density(),
+            dense=True,
+        )
+        self.assertTrue(audit["is_local_equilibrium_at_resolution"])
+        self.assertEqual(audit["profitable_vertex_count_at_resolution"], 0)
+
+    def test_native_equilibrium_supports_isolation_disabled_mode(self):
+        graph = Game(ig.Graph(n=6, edges=[(1, 2), (3, 4)]))
+        result = graph.community_hedonic(
+            initial_membership=[[0], [1], [1], [2], [2], [2]],
+            max_memberships=2,
+            resolution=0.1,
+            local_move_only=True,
+            allow_isolation=False,
+            ensure_equilibrium=True,
+        )
+        self.assertEqual(result.membership[5], [0])
+        audit = audit_cover(
+            graph,
+            [list(labels) for labels in result.membership],
+            max_memberships=2,
+            allow_isolation=False,
+            gamma=0.1,
+            dense=True,
+        )
+        self.assertTrue(audit["is_local_equilibrium_at_resolution"])
+        self.assertEqual(audit["profitable_vertex_count_at_resolution"], 0)
+
+    def test_ensure_equilibrium_uses_one_native_call(self):
+        graph = Game(ig.Graph(n=3, edges=[(0, 1), (1, 2)]))
+        calls = []
+
+        class Result:
+            def __init__(self, membership):
+                self.membership = membership
+
+        def fake_leiden(**kwargs):
+            calls.append(kwargs)
+            return Result([[100], [100, 300], [300]])
+
+        with patch.object(graph, "community_leiden", side_effect=fake_leiden):
+            result = graph.community_hedonic(
+                initial_membership=[[0], [0, 1], [1]],
+                max_memberships=2,
+                local_move_only=False,
+                allow_isolation=True,
+                n_iterations=-1,
+                ensure_equilibrium=True,
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["initial_membership"], [[0], [0, 1], [1]])
+        self.assertEqual(calls[0]["n_iterations"], -1)
+        self.assertEqual(result.membership, [[100], [100, 300], [300]])
+        self.assertEqual(
+            result._hedonic_raw_memberships,
+            [[100], [100, 300], [300]],
+        )
+
+    def test_ensure_equilibrium_does_not_reencode_native_labels(self):
+        graph = Game(ig.Graph(n=3, edges=[(0, 1), (1, 2)]))
+
+        class Result:
+            membership = [[100, 400], [200], [300]]
+
+        with patch.object(graph, "community_leiden", return_value=Result()):
+            result = graph.community_hedonic(
+                initial_membership=[[0], [0, 1], [1]],
+                max_memberships=2,
+                local_move_only=False,
+                allow_isolation=False,
+                n_iterations=2,
+                ensure_equilibrium=True,
+            )
+        self.assertEqual(result.membership, [[100, 400], [200], [300]])
+        self.assertEqual(
+            result._hedonic_raw_memberships,
+            [[100, 400], [200], [300]],
+        )
 
     def test_max_memberships_returns_cover(self):
         g = Game(ig.Graph.Famous("Petersen"))
@@ -103,14 +262,14 @@ class TestCommunityHedonic(unittest.TestCase):
         self.assertAlmostEqual(metrics["jaccard"], 1.0)
         self.assertAlmostEqual(metrics["omega"], 1.0)
 
-    def test_one_to_one_matching_penalizes_duplicate_prediction(self):
+    def test_one_to_one_matching_uses_canonical_unique_set_cover(self):
         metrics = one_to_one_community_metrics(
             [[0, 1], [0, 1]], [[0, 1]]
         )
-        self.assertAlmostEqual(metrics["matching_precision"], 0.5)
+        self.assertAlmostEqual(metrics["matching_precision"], 1.0)
         self.assertAlmostEqual(metrics["matching_recall"], 1.0)
-        self.assertAlmostEqual(metrics["matching_f1"], 2.0 / 3.0)
-        self.assertEqual(metrics["n_unmatched_predicted_comms"], 1)
+        self.assertAlmostEqual(metrics["matching_f1"], 1.0)
+        self.assertEqual(metrics["n_unmatched_predicted_comms"], 0)
         # Historical best-match remains deliberately duplicate-insensitive.
         self.assertAlmostEqual(
             symmetric_best_match_f1([[0, 1], [0, 1]], [[0, 1]]), 1.0
@@ -195,7 +354,7 @@ class TestCommunityHedonic(unittest.TestCase):
 
 class TestExperimentsConfig(unittest.TestCase):
     def test_defaults(self):
-        from hedonic.experiments.config import expand_path
+        from hedonic.experiments.config import ARTIFACTS_DIR, expand_path
 
         self.assertEqual(
             DEFAULT_DBLP_DIR,
@@ -211,8 +370,9 @@ class TestExperimentsConfig(unittest.TestCase):
         )
         self.assertEqual(
             DEFAULT_OUTPUT_DIR,
-            expand_path("~/Databases/Hedonic/experiments"),
+            ARTIFACTS_DIR,
         )
+        self.assertEqual(DEFAULT_OUTPUT_DIR, expand_path("artifacts"))
         self.assertTrue(
             str(DEFAULT_DBLP_DIR).endswith("Databases/Hedonic/Networks/DBLP")
         )
@@ -302,6 +462,39 @@ class TestExperimentsConfig(unittest.TestCase):
                 self.assertEqual(str(resolved_cli["output_dir"]), "/cli/out")
             reload_paths()
 
+    def test_relative_artifact_paths_are_anchored_at_repo_root(self):
+        from hedonic.experiments.config import ARTIFACTS_DIR
+
+        with tempfile.TemporaryDirectory() as d:
+            toml_path = Path(d) / "hedonic.toml"
+            toml_path.write_text(
+                "\n".join(
+                    [
+                        "[paths]",
+                        'output_dir = "artifacts"',
+                        "",
+                        "[overlapping_resolution]",
+                        'output_dir = "artifacts/overlapping/resolution_f1"',
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("HEDONIC_OUTPUT_DIR", None)
+                resolved = resolve_experiment_paths(
+                    config_path=toml_path,
+                    data_dir=None,
+                    output_dir=None,
+                    experiment_section="overlapping_resolution",
+                    search_cwd=False,
+                )
+            self.assertEqual(
+                resolved["output_dir"],
+                ARTIFACTS_DIR / "overlapping" / "resolution_f1",
+            )
+        reload_paths()
+
     def test_example_toml_ships_and_parses(self):
         root = Path(__file__).resolve().parents[1]
         configs_dir = root / "configs"
@@ -339,6 +532,66 @@ class TestExperimentsConfig(unittest.TestCase):
             self.assertTrue(str(found).endswith("configs/hedonic.toml"))
         finally:
             os.chdir(old)
+
+    def test_ground_truth_protocol_config_and_lock_ship(self):
+        root = Path(__file__).resolve().parents[1]
+        config_path = root / "configs" / "overlapping-ground-truth.toml"
+        lock_path = root / "configs" / "overlapping-ground-truth-protocol.lock.json"
+        self.assertTrue(config_path.is_file())
+        self.assertTrue(lock_path.is_file())
+        config = read_toml(config_path)
+        self.assertIn("overlapping_ground_truth_robustness", config)
+        self.assertEqual(
+            config["overlapping_ground_truth_robustness"]["uncovered_policy"],
+            "covered-induced",
+        )
+        self.assertEqual(
+            [job["dataset"] for job in config["overlapping_ground_truth_robustness"]["jobs"]],
+            ["amazon", "dblp", "livejournal", "youtube"],
+        )
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        self.assertEqual(lock["schema_version"], 3)
+        self.assertEqual(lock["protocol_name"], "overlapping-ground-truth-robustness-v3")
+        self.assertNotIn("run_protocol_version", lock)
+        self.assertEqual(lock["expected_conditions"], 3840)
+        self.assertEqual(lock["canonical_grid"]["expected_detector_conditions"], 3840)
+        self.assertEqual(lock["external_dependencies"], {})
+        self.assertEqual(
+            set(lock["dataset_content_identities"]),
+            {
+                "amazon/top5000",
+                "dblp/top5000",
+                "livejournal/top5000",
+                "youtube/top5000",
+            },
+        )
+        self.assertIn(
+            "src/hedonic/experiments/overlapping/ground_truth_robustness.py",
+            lock["tracked_files"],
+        )
+        for relative, expected in lock["tracked_files"].items():
+            self.assertRegex(expected, r"^[0-9a-f]{64}$", relative)
+            actual = hashlib.sha256((root / relative).read_bytes()).hexdigest()
+            self.assertEqual(actual, expected, relative)
+        for dataset, content in lock["dataset_content_identities"].items():
+            for field in ("graph_sha256", "ground_truth_cover_sha256"):
+                self.assertRegex(
+                    content[field], r"^[0-9a-f]{64}$", f"{dataset}.{field}"
+                )
+
+        from hedonic.experiments.overlapping.protocol import (
+            current_experiment_identity,
+        )
+
+        identity = current_experiment_identity(lock_path)
+        self.assertTrue(identity["tracked_files_match_lock"])
+        self.assertTrue(
+            identity["lucas_igraph"]["package_identity_matches_lock"]
+        )
+        self.assertTrue(identity["external_dependency_lock_complete"])
+        self.assertTrue(identity["external_dependencies_match_lock"])
+        self.assertTrue(identity["scientific_dependency_lock_complete"])
+        self.assertTrue(identity["scientific_dependencies_match_lock"])
 
 
 class TestDataLoaderHelpers(unittest.TestCase):
@@ -566,6 +819,7 @@ class TestCLI(unittest.TestCase):
             "overlapping-scale",
             "overlapping-resolution",
             "overlapping-benchmark",
+            "overlapping-gt-robustness",
             "overlapping-audit",
             "reproduce-overlapping-paper",
         }
@@ -577,6 +831,10 @@ class TestCLI(unittest.TestCase):
 
     def test_reproduce_overlapping_paper_help(self):
         code = CLI.main(["reproduce-overlapping-paper", "--help"])
+        self.assertEqual(code, 0)
+
+    def test_overlapping_ground_truth_robustness_help(self):
+        code = CLI.main(["overlapping-gt-robustness", "--help"])
         self.assertEqual(code, 0)
 
     def test_overlapping_resolution_smoke_via_cli(self):
@@ -1268,6 +1526,486 @@ class TestResolutionF1(unittest.TestCase):
             self.assertTrue((out / "resolution_f1.json").is_file())
             self.assertTrue((out / "runs").is_dir())
             self.assertGreaterEqual(len(list((out / "runs").glob("res_*.json"))), 2)
+
+
+class TestGroundTruthRobustness(unittest.TestCase):
+    def test_rescore_artifact_loaders_reject_tampered_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            cover_digest = _persist_cover(output, [[0, 1], [1, 2]])
+            self.assertEqual(
+                _load_cover_artifact(output, cover_digest), [[0, 1], [1, 2]]
+            )
+            with gzip.open(
+                output / "covers" / f"{cover_digest}.json.gz",
+                "wt",
+                encoding="utf-8",
+            ) as stream:
+                json.dump([[0, 2]], stream)
+            self.assertIsNone(_load_cover_artifact(output, cover_digest))
+
+            memberships = [[0], [0, 1], [1]]
+            membership_digest = _persist_memberships(output, memberships, 3)
+            self.assertEqual(
+                _load_membership_artifact(output, membership_digest), memberships
+            )
+            with gzip.open(
+                output / "raw_memberships" / f"{membership_digest}.json.gz",
+                "wt",
+                encoding="utf-8",
+            ) as stream:
+                json.dump([[0], [0], [0]], stream)
+            self.assertIsNone(
+                _load_membership_artifact(output, membership_digest)
+            )
+
+    def test_raw_memberships_preserve_duplicate_communities(self):
+        raw = _normalize_raw_memberships(
+            [[0, 1], [0, 1], [0, 1], [2], [2], [2]],
+            n_vertices=6,
+            cap=2,
+        )
+        raw_cover = []
+        for label in range(3):
+            raw_cover.append(
+                [vertex for vertex, labels in enumerate(raw) if label in labels]
+            )
+        self.assertEqual(raw_cover, [[0, 1, 2], [0, 1, 2], [3, 4, 5]])
+        self.assertNotEqual(_raw_cover_hash(raw_cover), cover_hash(raw_cover))
+
+    @staticmethod
+    def _fixture():
+        graph = ig.Graph(
+            n=6,
+            edges=[
+                (0, 1),
+                (1, 2),
+                (2, 0),
+                (2, 3),
+                (3, 4),
+                (4, 2),
+                (4, 5),
+                (5, 0),
+            ],
+        )
+        cover = [[0, 1, 2], [2, 3, 4], [0, 4, 5]]
+        return graph, cover
+
+    def test_prefix_best_response_matches_exhaustive_oracle(self):
+        graph, cover = self._fixture()
+        memberships = cover_to_vertex_memberships(cover, graph.vcount())
+        state = build_fractional_state(graph, memberships)
+        for gamma in (0.0, 0.2, 0.7, 1.0):
+            for allow_isolation in (False, True):
+                for vertex in range(graph.vcount()):
+                    fast = best_response(
+                        state,
+                        vertex,
+                        gamma,
+                        max_memberships=3,
+                        allow_isolation=allow_isolation,
+                        dense=True,
+                    )
+                    slow = exhaustive_best_response(
+                        state,
+                        vertex,
+                        gamma,
+                        max_memberships=3,
+                        allow_isolation=allow_isolation,
+                    )
+                    self.assertAlmostEqual(fast["best_utility"], slow["best_utility"])
+                    self.assertAlmostEqual(fast["regret"], slow["regret"])
+                    sparse = best_response(
+                        state,
+                        vertex,
+                        gamma,
+                        max_memberships=3,
+                        allow_isolation=allow_isolation,
+                        dense=False,
+                    )
+                    self.assertAlmostEqual(sparse["best_utility"], slow["best_utility"])
+
+    def test_endpoint_certificate_and_disjoint_limit(self):
+        graph, cover = self._fixture()
+        memberships = cover_to_vertex_memberships(cover, graph.vcount())
+        audit = audit_cover(
+            graph,
+            memberships,
+            max_memberships=3,
+            allow_isolation=False,
+            gamma=0.5,
+            dense=True,
+        )
+        direct = 0
+        state = build_fractional_state(graph, memberships)
+        for vertex in range(graph.vcount()):
+            endpoints = [
+                best_response(state, vertex, gamma, 3, False, dense=True)
+                for gamma in (0.0, 1.0)
+            ]
+            direct += int(all(item["regret"] <= 1e-9 for item in endpoints))
+        self.assertEqual(audit["robust_vertex_count_gamma_0_1"], direct)
+        self.assertEqual(
+            audit["robust_fraction_gamma_0_1"],
+            direct / graph.vcount(),
+        )
+
+        # With one membership per vertex the fractional potential reduces to
+        # the ordinary CPM expression under the same 2m normalization.
+        disjoint = [[0, 1, 2], [3, 4, 5]]
+        disjoint_memberships = cover_to_vertex_memberships(disjoint, graph.vcount())
+        gamma = 0.25
+        internal = sum(
+            1
+            for first, second in graph.get_edgelist()
+            if any(first in community and second in community for community in disjoint)
+        )
+        expected = (2.0 * internal - gamma * sum(len(c) ** 2 for c in disjoint)) / (
+            2.0 * graph.ecount()
+        )
+        self.assertAlmostEqual(
+            fractional_phi(graph, disjoint_memberships, gamma), expected
+        )
+        disjoint_audit = audit_cover(
+            graph,
+            disjoint_memberships,
+            max_memberships=1,
+            allow_isolation=False,
+            gamma=graph.density(),
+            dense=True,
+        )
+        self.assertAlmostEqual(
+            disjoint_audit["robust_fraction_gamma_0_1"],
+            sbm_sweep.robustness(Game(graph), [0, 0, 0, 1, 1, 1]),
+        )
+
+    def test_incidence_switch_preserves_both_degree_sequences(self):
+        graph, cover = self._fixture()
+        perturbed, metadata = perturb_cover_incidence(
+            cover,
+            graph.vcount(),
+            swaps=1,
+            seed=4,
+        )
+        original_memberships = cover_to_vertex_memberships(cover, graph.vcount())
+        final_memberships = cover_to_vertex_memberships(perturbed, graph.vcount())
+        self.assertEqual(
+            list(map(len, original_memberships)), list(map(len, final_memberships))
+        )
+        self.assertEqual(sorted(map(len, cover)), sorted(map(len, perturbed)))
+        self.assertTrue(metadata["vertex_membership_counts_preserved"])
+        self.assertTrue(metadata["community_sizes_preserved"])
+        self.assertEqual(metadata["successful_swaps"], 1)
+        self.assertAlmostEqual(
+            metadata["realized_incidence_distance"],
+            2.0
+            * metadata["successful_swaps"]
+            / metadata["initial_incidence_count"],
+        )
+
+    def test_tiny_nearest_equilibrium_calibration(self):
+        graph = ig.Graph(n=4, edges=[(0, 1), (1, 2), (2, 3), (3, 0)])
+        result = nearest_equilibrium_tiny(
+            graph,
+            [[0, 1], [2, 3]],
+            gamma=0.5,
+            n_communities=2,
+            max_memberships=1,
+            allow_isolation=False,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertGreater(result["candidate_count"], 0)
+        self.assertGreater(result["equilibrium_count"], 0)
+        self.assertIsNotNone(result["nearest"])
+        self.assertGreaterEqual(result["nearest"]["distance_to_ground_truth"], 0.0)
+
+    def test_partial_cover_policies_are_explicit(self):
+        graph = ig.Graph(n=5, edges=[(0, 1), (1, 2), (2, 3), (3, 4)])
+        raw = SnapDataset(
+            "fixture",
+            "all",
+            graph,
+            [[0, 1], [1, 2]],
+            {"id_mapping_strategy": "fixture"},
+        )
+        induced = covered_induced_dataset(raw)
+        self.assertEqual(induced.graph.vcount(), 3)
+        self.assertEqual(induced.cover, [[0, 1], [1, 2]])
+        self.assertEqual(
+            induced.report["ground_truth_completion"]["policy"], "covered-induced"
+        )
+        completed = singleton_completed_dataset(raw)
+        self.assertEqual(completed.graph.vcount(), 5)
+        self.assertEqual(completed.cover[-2:], [[3], [4]])
+        self.assertEqual(
+            completed.report["ground_truth_completion"]["synthetic_memberships_added"],
+            2,
+        )
+        prepared = prepare_dataset(raw, policy="covered-induced")
+        self.assertEqual(prepared.policy, "covered-induced")
+        self.assertEqual(prepared.dataset.graph.vcount(), 3)
+        self.assertTrue(prepared.graph_identity)
+
+    def test_smoke_runner_and_detector_free_rescore(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d) / "artifacts"
+            common = [
+                "--smoke",
+                "--output-dir",
+                str(output),
+                "--phases",
+                "local",
+                "--isolation-policies",
+                "fixed_labels",
+                "--seeds",
+                "0",
+                "--resolution-multipliers",
+                "1",
+                "--perturbation-distances",
+                "0",
+                "--timeout-per-run",
+                "30",
+            ]
+            self.assertEqual(ground_truth_robustness_main(common), 0)
+            self.assertTrue((output / "results.csv").is_file())
+            header = (output / "results.csv").read_text(encoding="utf-8").splitlines()[0]
+            self.assertIn("action_policy", header)
+            self.assertIn("completion_policy", header)
+            with patch.object(
+                Game,
+                "community_hedonic",
+                side_effect=AssertionError("detection called during rescore"),
+            ):
+                self.assertEqual(
+                    ground_truth_robustness_main(common + ["--rescore-only"]), 0
+                )
+            records = list((output / "runs" / "amazon-top5000").glob("*.json"))
+            self.assertEqual(len(records), 1)
+            record = json.loads(records[0].read_text(encoding="utf-8"))
+            self.assertIn("rescored_at", record)
+            self.assertEqual(record["schema_version"], 3)
+            self.assertEqual(record["condition"]["protocol"], "canonical_unique_cover_v3")
+            self.assertTrue(record["condition_axis_key"])
+            self.assertTrue(record["raw_membership_hash"])
+            self.assertTrue(
+                (output / "raw_memberships" / f"{record['raw_membership_hash']}.json.gz").is_file()
+            )
+            records[0].unlink()
+            self.assertEqual(
+                ground_truth_robustness_main(common + ["--rescore-only"]), 0
+            )
+            coverage = json.loads(
+                (output / "coverage_report.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(coverage["expected_detector_conditions"], 1)
+            self.assertEqual(coverage["observed_detector_records"], 0)
+            self.assertFalse(coverage["complete"])
+            self.assertIn("results.csv", coverage["artifact_sha256"])
+            self.assertTrue(coverage["ground_truth_records_sha256"])
+
+    def test_rescore_reconstructs_and_rejects_altered_detector_condition(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d) / "artifacts"
+            common = [
+                "--smoke", "--output-dir", str(output), "--phases", "local",
+                "--isolation-policies", "fixed_labels", "--seeds", "0",
+                "--resolution-multipliers", "1", "--perturbation-distances", "0",
+                "--timeout-per-run", "30",
+            ]
+            self.assertEqual(ground_truth_robustness_main(common), 0)
+            record_path = next((output / "runs" / "amazon-top5000").glob("*.json"))
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["condition"]["beta"] = 0.2
+            record["condition_identity"] = _json_hash(record["condition"])
+            record["condition_key"] = record["condition_identity"][:24]
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            self.assertEqual(
+                ground_truth_robustness_main(common + ["--rescore-only"]), 0
+            )
+            coverage = json.loads(
+                (output / "coverage_report.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(coverage["observed_detector_records"], 0)
+            self.assertEqual(coverage["missing_condition_count"], 1)
+
+    def test_canonical_grid_has_3840_nonredundant_conditions(self):
+        options = {
+            "audit_only": False,
+            "datasets": ["amazon", "dblp", "livejournal", "youtube"],
+            "cover": "top5000",
+            "policy": "covered-induced",
+            "phases": ["local", "multiphase"],
+            "isolation_policies": ["fixed_labels", "open_labels"],
+            "multipliers": [1.0, 10.0, 100.0],
+            "detector_seeds": [0, 1, 2, 3, 4],
+            "perturbation_distances": [0.0, 0.005, 0.02, 0.05],
+            "perturbation_seeds": [100, 101, 102, 103, 104],
+        }
+        keys = _expected_condition_axis_keys(options)
+        self.assertEqual(len(keys), 3840)
+
+    def test_ground_truth_runner_rejects_foreign_identity_records(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d) / "artifacts"
+            common = [
+                "--smoke", "--output-dir", str(output), "--phases", "local",
+                "--isolation-policies", "fixed_labels", "--seeds", "0",
+                "--resolution-multipliers", "1", "--perturbation-distances", "0",
+                "--timeout-per-run", "30",
+            ]
+            self.assertEqual(ground_truth_robustness_main(common), 0)
+            record_path = next((output / "runs" / "amazon-top5000").glob("*.json"))
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["protocol_identity"] = None
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "foreign or legacy"):
+                ground_truth_robustness_main(common + ["--rescore-only"])
+
+    def test_corrupt_membership_artifact_is_rerun_and_repaired(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d) / "artifacts"
+            common = [
+                "--smoke", "--output-dir", str(output), "--phases", "local",
+                "--isolation-policies", "fixed_labels", "--seeds", "0",
+                "--resolution-multipliers", "1", "--perturbation-distances", "0",
+                "--timeout-per-run", "30",
+            ]
+            self.assertEqual(ground_truth_robustness_main(common), 0)
+            record_path = next((output / "runs" / "amazon-top5000").glob("*.json"))
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            digest = record["final_membership_hash"]
+            artifact = output / "raw_memberships" / f"{digest}.json.gz"
+            artifact.write_bytes(b"corrupt")
+            self.assertEqual(ground_truth_robustness_main(common), 0)
+            self.assertIsNotNone(_load_membership_artifact(output, digest))
+
+    def test_publication_index_binds_records_and_exact_state_artifacts(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d)
+            cover = [[0, 1]]
+            memberships = [[0], [0]]
+            cover_digest = _persist_cover(output, cover)
+            membership_digest = _persist_memberships(output, memberships, 2)
+            identity = {"protocol": "test"}
+            record = {
+                "condition_key": "condition",
+                "condition_axis_key": "axis",
+                "dataset": "amazon",
+                "cover": "top5000",
+                "status": "completed",
+                "protocol_identity": identity,
+                "initial_cover_hash": cover_digest,
+                "ground_truth_cover_hash": cover_digest,
+                "final_cover_hash": cover_digest,
+                "final_membership_hash": membership_digest,
+                "pre_cleanup_membership_hash": membership_digest,
+                "robustness": {
+                    "selected_policy": {
+                        "is_local_equilibrium_at_resolution": True
+                    }
+                },
+            }
+            path = output / "runs" / "amazon-top5000" / "condition.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(record), encoding="utf-8")
+            row = {
+                key: record[key]
+                for key in (
+                    "condition_key",
+                    "condition_axis_key",
+                    "dataset",
+                    "cover",
+                    "status",
+                )
+            }
+            index = _publication_evidence_index(output, [row], identity)
+            self.assertTrue(index["valid"], index["reasons"])
+            artifact = output / "raw_memberships" / f"{membership_digest}.json.gz"
+            artifact.write_bytes(b"corrupt")
+            index = _publication_evidence_index(output, [row], identity)
+            self.assertFalse(index["valid"])
+            self.assertTrue(
+                any("invalid_membership_artifact" in value for value in index["reasons"])
+            )
+
+    def test_publication_index_accepts_registered_capacity_terminal(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d)
+            identity = {
+                "protocol": "test",
+                "effective_grid": {
+                    "terminal_outcome_policy": {
+                        "allowed_statuses": ["unsupported_cleanup"],
+                        "native_label_capacity_is_explicit": True,
+                    }
+                },
+            }
+            record = {
+                "condition_key": "terminal",
+                "condition_axis_key": "terminal-axis",
+                "dataset": "youtube",
+                "cover": "top5000",
+                "status": "unsupported_cleanup",
+                "error_kind": "native_label_capacity",
+                "protocol_identity": identity,
+            }
+            path = output / "runs" / "youtube-top5000" / "terminal.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(record), encoding="utf-8")
+            row = {
+                key: record[key]
+                for key in (
+                    "condition_key",
+                    "condition_axis_key",
+                    "dataset",
+                    "cover",
+                    "status",
+                )
+            }
+            index = _publication_evidence_index(output, [row], identity)
+            self.assertTrue(index["valid"], index["reasons"])
+
+    def test_subprocess_interrupt_terminates_worker_and_removes_packet(self):
+        class FakeProcess:
+            def __init__(self):
+                self.alive = False
+                self.terminated = False
+
+            def start(self):
+                self.alive = True
+
+            def join(self, _timeout=None):
+                if not self.terminated:
+                    raise KeyboardInterrupt
+
+            def is_alive(self):
+                return self.alive
+
+            def terminate(self):
+                self.terminated = True
+                self.alive = False
+
+            def kill(self):
+                self.alive = False
+
+        process = FakeProcess()
+
+        class FakeContext:
+            def Process(self, **_kwargs):
+                return process
+
+        with tempfile.TemporaryDirectory() as d, patch.object(
+            gt_execution.mp, "get_context", return_value=FakeContext()
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                gt_execution.run_in_subprocess(
+                    int,
+                    "1",
+                    timeout_seconds=30,
+                    packet_dir=d,
+                )
+            self.assertTrue(process.terminated)
+            self.assertEqual(list(Path(d).glob("hedonic-gt-worker-*.pkl")), [])
 
 
 class TestNoOverlappingModule(unittest.TestCase):

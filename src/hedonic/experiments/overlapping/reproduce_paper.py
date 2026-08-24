@@ -8,14 +8,14 @@ records free of concurrent-writer races.  A coordinator then merges the run
 records, regenerates paper plots and tables, and (when the full protocol has
 no retryable records) compiles the manuscript.
 
-All normal experiment parameters live in ``[overlapping_paper]`` in the TOML
-file.  The public one-command entry point is::
+All normal experiment parameters live in ``[overlapping_paper]`` in an
+externally supplied TOML file.  The optional one-command entry point is::
 
     hedonic-exp reproduce-overlapping-paper
 
-The default repository config is deliberately conservative: it chooses at
-most the configured memory-safe number of concurrent dataset workers.  See
-``configs/hedonic.toml`` for the full protocol and all fields.
+The public checkout does not ship a manuscript configuration.  A private
+research checkout can supply the full protocol and manuscript directory when
+that workflow is required.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gc
+import hashlib
 import json
 import math
 import os
@@ -32,6 +33,7 @@ import statistics
 import subprocess
 import sys
 import time
+import tomllib
 import uuid
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
@@ -40,9 +42,11 @@ from typing import Any, Iterable
 
 from hedonic.experiments import config as experiment_config
 from hedonic.experiments.overlapping import benchmark
+from hedonic.experiments.overlapping import protocol
 from hedonic.experiments.overlapping.methods import METHODS
 from hedonic.experiments.overlapping.snap import (
     bounded_induced_dataset,
+    common_undirected_analysis_dataset,
     load_snap_dataset,
     network_names,
     smoke_dataset,
@@ -97,6 +101,13 @@ _PAPER_METRICS = (
     "inclusion_rate",
     "cpm_overlapping_quality",
 )
+_PAPER_METRIC_ALIASES = {
+    # Current protocol records bind the nested ``metrics`` mapping with a
+    # content digest.  These are semantic aliases within that mapping only;
+    # unbound top-level fields must never shadow audited values.
+    "node_membership_micro_f1": ("node_membership_micro_f1", "node_micro_f1"),
+    "size_weighted_f1": ("size_weighted_f1", "size_weighted_community_f1"),
+}
 
 
 def _timestamp() -> str:
@@ -135,7 +146,10 @@ def _as_list(value: Any, field: str) -> list[str]:
 def _path(value: Any, field: str) -> Path:
     if not isinstance(value, (str, Path)) or not str(value).strip():
         raise ValueError(f"overlapping_paper.{field} must be a non-empty path")
-    return Path(os.path.expanduser(str(value))).expanduser().resolve()
+    path = Path(os.path.expanduser(str(value))).expanduser()
+    if not path.is_absolute():
+        path = experiment_config.PROJECT_ROOT / path
+    return path.resolve()
 
 
 def _physical_memory_bytes() -> int | None:
@@ -276,6 +290,7 @@ def _job_memory_profile(
     safety_factor: float,
     configured_membership_cap: int | None,
     output_dir: Path | None = None,
+    locked_dataset_identities: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Estimate one job's peak and cap the hedonic workspace before launch.
 
@@ -291,13 +306,30 @@ def _job_memory_profile(
             str(job["dataset"]), cover_variant=str(job["cover"]), data_root=data_root
         )
     )
-    dataset = bounded_induced_dataset(dataset, max_nodes)
+    dataset = common_undirected_analysis_dataset(
+        bounded_induced_dataset(dataset, max_nodes)
+    )
     report = dataset.report
+    if profile != "smoke":
+        dataset_key = f"{job['dataset']}/{job['cover']}"
+        expected_content = (locked_dataset_identities or {}).get(dataset_key)
+        if not isinstance(expected_content, dict):
+            raise ValueError(
+                f"Protocol lock has no dataset identity for {dataset_key}"
+            )
+        if report.get("content_identity") != expected_content:
+            raise ValueError(
+                f"{dataset_key} bounded graph/ground-truth content does not "
+                "match the reviewed protocol lock"
+            )
     n, m = int(report["n"]), int(report["m"])
     overlap = report.get("overlap_statistics", {})
+    content = report.get("content_identity") or {}
     memberships = int(overlap.get("memberships", 0))
-    community_count = int(report.get("number_of_communities", len(dataset.cover)))
-    gt_membership_cap = max(1, int(overlap.get("max_memberships_per_node", 1)))
+    community_count = int(content.get("ground_truth_community_count", len(dataset.cover)))
+    gt_membership_cap = max(
+        1, int(content.get("ground_truth_max_memberships_per_node", 1))
+    )
     requested_cap = min(
         gt_membership_cap,
         configured_membership_cap if configured_membership_cap is not None else gt_membership_cap,
@@ -355,6 +387,8 @@ def _job_memory_profile(
     return {
         **job,
         "max_memberships": effective_cap,
+        "dataset_content_identity": report.get("content_identity"),
+        "dataset_metadata_identity": protocol.dataset_metadata_identity(report),
         "memory": {
             "n": n,
             "m": m,
@@ -422,17 +456,45 @@ def _schedule_memory_waves(
 
 
 def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
-    toml = experiment_config.load_config_file(args.config, search_cwd=True, apply=True)
-    config_path = experiment_config.get_loaded_config_path()
+    config_path = experiment_config.find_config_file(
+        args.config, search_cwd=True
+    )
     if config_path is None:
         raise ValueError(
             "No TOML configuration found. Run from the repository root or pass --config."
         )
+    encoded_config = config_path.read_bytes()
+    toml = tomllib.loads(encoded_config.decode("utf-8"))
+    if not isinstance(toml, dict):
+        raise ValueError(f"TOML root must be a table: {config_path}")
+    # Apply path settings from the exact byte snapshot whose digest is carried
+    # into the plan.  Reopening through load_config_file would permit a swap
+    # between parsing and hashing.
+    experiment_config._LOADED_TOML = toml
+    experiment_config._LOADED_TOML_PATH = config_path
+    extracted_paths = experiment_config._paths_from_toml(toml)
+    experiment_config.apply_path_overrides(
+        **{
+            key: value
+            for key, value in extracted_paths.items()
+            if value is not None
+        }
+    )
+    experiment_config._apply_env_overrides()
+    config_sha256 = hashlib.sha256(encoded_config).hexdigest()
     raw = toml.get("overlapping_paper")
     if not isinstance(raw, dict):
         raise ValueError(
             f"{config_path} needs an [overlapping_paper] table for this command"
         )
+    encoded_protocol_lock = protocol.LOCK_PATH.read_bytes()
+    locked_protocol = protocol._parse_protocol_lock(encoded_protocol_lock)
+    experiment_identity = protocol.current_experiment_identity(
+        protocol.LOCK_PATH, lock_bytes=encoded_protocol_lock
+    )
+    locked_dataset_identities = locked_protocol.get(
+        "dataset_content_identities"
+    ) or {}
     methods = _as_list(raw.get("methods", list(DEFAULT_METHODS)), "methods")
     unknown = [name for name in methods if name not in METHODS]
     if unknown:
@@ -487,11 +549,22 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
     paper_dir = _path(raw.get("paper_dir"), "paper_dir")
     if not (paper_dir / "main.tex").is_file():
         raise ValueError(f"overlapping_paper.paper_dir has no main.tex: {paper_dir}")
-    expected_artifact_dir = (paper_dir / "artifacts" / "full").resolve()
-    if output_dir != expected_artifact_dir:
+    expected_artifact_dir = (experiment_config.PAPER_ARTIFACTS_DIR / "full").resolve()
+    legacy_artifact_dir = (paper_dir / "artifacts" / "full").resolve()
+    artifact_root = experiment_config.PAPER_ARTIFACTS_DIR.resolve()
+    output_is_registered_artifact = output_dir == expected_artifact_dir or artifact_root in output_dir.parents
+    if not output_is_registered_artifact and output_dir != legacy_artifact_dir:
         raise ValueError(
-            "overlapping_paper.output_dir must be paper_dir/artifacts/full so main.tex "
-            "can consume the generated status, tables, and plots"
+            "overlapping_paper.output_dir must be "
+            "under artifacts/papers/overlapping_communities; the legacy "
+            "paper_dir/artifacts/full path is accepted only for isolated "
+            "backward-compatible runs"
+        )
+    if output_dir == legacy_artifact_dir and output_dir != expected_artifact_dir:
+        print(
+            "[paper] warning: using legacy paper_dir/artifacts/full output; "
+            "new runs should use artifacts/papers/overlapping_communities/full",
+            file=sys.stderr,
         )
     benchmark._safe_output_dir(output_dir, data_root)
 
@@ -528,6 +601,7 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
             safety_factor=safety_factor,
             configured_membership_cap=membership_cap,
             output_dir=output_dir,
+            locked_dataset_identities=locked_dataset_identities,
         )
         for job in jobs
     ]
@@ -548,15 +622,50 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
     poll_seconds = float(raw.get("poll_seconds", 10))
     if poll_seconds <= 0:
         raise ValueError("overlapping_paper.poll_seconds must be positive")
-    experiment_identity = benchmark.current_experiment_identity()
     if not experiment_identity["tracked_files_match_lock"]:
         raise ValueError("Protocol-locked code/config hashes do not match; refresh and review the lock")
     if not experiment_identity["lucas_igraph"]["package_identity_matches_lock"]:
         raise ValueError("installed lucas-igraph package does not match the protocol-locked release")
+    if not experiment_identity["scientific_dependencies_match_lock"]:
+        raise ValueError(
+            "installed numerical packages do not match the protocol-locked implementations"
+        )
+    selected_external_mismatches = [
+        method
+        for method in methods
+        if method in benchmark.NON_SCALABLE_BASELINES
+        and (
+            not isinstance(
+                experiment_identity["external_dependencies"].get(method), dict
+            )
+            or (
+                experiment_identity["external_dependencies"][method].get(
+                    "actual_version"
+                )
+                is not None
+                and not all(
+                    experiment_identity["external_dependencies"][method].get(field)
+                    is True
+                    for field in (
+                        "version_matches_lock",
+                        "package_lock_matches_lock",
+                        "distribution_tree_matches_lock",
+                        "implementation_matches_lock",
+                    )
+                )
+            )
+        )
+    ]
+    if selected_external_mismatches:
+        raise ValueError(
+            "installed external baseline packages do not match the protocol-locked "
+            "implementations: " + ", ".join(selected_external_mismatches)
+        )
     options = {
         "schema_version": PAPER_SCHEMA_VERSION,
         "created_at": _timestamp(),
         "config_path": str(config_path),
+        "config_sha256": config_sha256,
         "experiment_identity": experiment_identity,
         "profile": profile,
         "data_root": str(data_root),
@@ -657,6 +766,9 @@ def _make_plan(options: dict[str, Any]) -> dict[str, Any]:
             "uncertain_estimates_force_serial_workers": True,
             "reserve_for_macOS_gib": max(float(options["memory_reserve_gb"]), MIN_MAC_RESERVE_GB),
         },
+        "worker_startup_timeout_seconds": max(
+            120.0, 4.0 * float(options["poll_seconds"])
+        ),
     }
 
 
@@ -690,17 +802,66 @@ def _write_new_plan(options: dict[str, Any]) -> dict[str, Any]:
                 "updated_at": _timestamp(),
             },
         )
-    return plan
+    return _load_plan(_plan_path(output_dir))
 
 
 def _load_plan(path: Path) -> dict[str, Any]:
-    plan = _read_json(path)
-    if plan is None:
+    path = path.expanduser().resolve()
+    try:
+        encoded = path.read_bytes()
+        plan = json.loads(encoded)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        plan = None
+    if not isinstance(plan, dict):
         raise ValueError(f"Paper orchestration plan is missing or invalid: {path}")
     assignments = plan.get("assignments")
     if not isinstance(assignments, list):
         raise ValueError(f"Paper orchestration plan has no assignments: {path}")
+    plan["_plan_source_path"] = str(path)
+    plan["_plan_source_sha256"] = hashlib.sha256(encoded).hexdigest()
     return plan
+
+
+def _bound_finalization_plan(
+    supplied: dict[str, Any],
+) -> tuple[dict[str, Any], bytes | None, list[str]]:
+    """Bind finalization to the canonical on-disk plan bytes.
+
+    The caller may have loaded a stale, alternate, or subsequently mutated
+    plan.  Publication decisions always use the single byte snapshot stored at
+    ``<output_dir>/orchestration/plan.json``; any disagreement fails closed.
+    """
+    failures: list[str] = []
+    supplied_public = {
+        key: value for key, value in supplied.items() if not key.startswith("_plan_source_")
+    }
+    try:
+        output_dir = Path(str(supplied_public["output_dir"])).expanduser().resolve()
+    except (KeyError, TypeError, ValueError):
+        return supplied_public, None, ["invalid_supplied_plan_output_dir"]
+    canonical_path = _plan_path(output_dir).resolve()
+    source_path = supplied.get("_plan_source_path")
+    if source_path is None:
+        failures.append("missing_supplied_plan_source_identity")
+    else:
+        try:
+            if Path(str(source_path)).expanduser().resolve() != canonical_path:
+                failures.append("supplied_plan_path_is_not_canonical")
+        except (OSError, TypeError, ValueError):
+            failures.append("invalid_supplied_plan_source_path")
+    try:
+        encoded = canonical_path.read_bytes()
+        disk_plan = json.loads(encoded)
+        if not isinstance(disk_plan, dict):
+            raise TypeError("plan must be a JSON object")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return supplied_public, None, failures + ["canonical_plan_missing_or_invalid"]
+    digest = hashlib.sha256(encoded).hexdigest()
+    if supplied.get("_plan_source_sha256") != digest:
+        failures.append("supplied_plan_sha256_mismatch")
+    if supplied_public != disk_plan:
+        failures.append("supplied_plan_content_mismatch")
+    return disk_plan, encoded, list(dict.fromkeys(failures))
 
 
 def _benchmark_argv(
@@ -738,6 +899,8 @@ def _benchmark_argv(
         "--no-plots",
         "--execution",
         execution,
+        "--expected_dataset_metadata_sha256",
+        str(job["dataset_metadata_identity"]["sha256"]),
     ]
     if plan.get("not_rerun_external_methods"):
         argv.extend(["--skip-methods", ",".join(plan["not_rerun_external_methods"])])
@@ -763,19 +926,80 @@ def _job_retryable_records(
     )
 
 
+def _process_is_alive(pid: Any) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _mark_worker_terminal(
+    plan: dict[str, Any], worker_index: int, state: dict[str, Any], reason: str
+) -> dict[str, Any]:
+    """Atomically turn every unfinished wave into an error terminal state."""
+    repaired = dict(state)
+    repaired["status"] = "error"
+    repaired.setdefault("failures", []).append({"name": "worker", "error": reason})
+    waves = list(repaired.get("waves") or [])
+    for index, wave in enumerate(waves):
+        current = dict(wave) if isinstance(wave, dict) else {"index": index}
+        if current.get("status") not in {"completed", "error", "idle"}:
+            current["status"] = "error"
+            current["reason"] = reason
+        waves[index] = current
+    repaired["waves"] = waves
+    repaired["updated_at"] = _timestamp()
+    _write_json(_state_path(Path(plan["output_dir"]), worker_index), repaired)
+    return repaired
+
+
+def _repair_worker_liveness(
+    plan: dict[str, Any], states: list[dict[str, Any] | None], *, started: float
+) -> list[dict[str, Any] | None]:
+    startup_timeout = float(plan.get("worker_startup_timeout_seconds", 120.0))
+    for index, state in enumerate(states):
+        if state is None or state.get("plan_id") != plan.get("plan_id"):
+            continue
+        status = state.get("status")
+        pid = state.get("worker_pid")
+        if status == "running" and not _process_is_alive(pid):
+            states[index] = _mark_worker_terminal(
+                plan,
+                index,
+                state,
+                "worker process disappeared before finalizing its waves",
+            )
+        elif status == "pending" and time.monotonic() - started >= startup_timeout:
+            states[index] = _mark_worker_terminal(
+                plan,
+                index,
+                state,
+                f"worker did not start within {startup_timeout:g} seconds",
+            )
+    return states
+
+
 def _wait_for_wave(plan: dict[str, Any], wave_index: int) -> None:
     """Barrier preventing a later wave from overlapping the current one."""
     output_dir = Path(plan["output_dir"])
     worker_count = int(plan["workers"])
     final_statuses = {"completed", "error", "idle"}
+    started = time.monotonic()
     while True:
         states = [_read_json(_state_path(output_dir, index)) for index in range(worker_count)]
+        states = _repair_worker_liveness(plan, states, started=started)
         if all(
             state is not None
             and state.get("plan_id") == plan["plan_id"]
             and isinstance(state.get("waves"), list)
             and len(state["waves"]) > wave_index
-            and state["waves"][wave_index].get("status") in final_statuses
+            and (
+                state["waves"][wave_index].get("status") in final_statuses
+                or state.get("status") == "error"
+            )
             for state in states
         ):
             return
@@ -874,24 +1098,23 @@ def run_worker(plan: dict[str, Any], worker_index: int, *, synchronize: bool = T
     return 0 if state["status"] == "completed" else 1
 
 
-def _selected_record(record: dict[str, Any], plan: dict[str, Any]) -> bool:
+def _selected_record(
+    record: dict[str, Any], plan: dict[str, Any], job: dict[str, Any]
+) -> bool:
     return (
         record.get("method") in set(plan["methods"])
-        and any(
-            record.get("dataset") == job["dataset"] and record.get("cover") == job["cover"]
-            for job in plan["jobs"]
-        )
+        and record.get("dataset") == job["dataset"]
+        and record.get("cover") == job["cover"]
     )
 
 
 def _collect_shard_records(plan: dict[str, Any]) -> list[dict[str, Any]]:
     output_dir = Path(plan["output_dir"])
-    records: list[dict[str, Any]] = []
-    seen: set[tuple[Any, ...]] = set()
+    selected: dict[tuple[Any, ...], dict[str, Any]] = {}
     for job in plan["jobs"]:
         shard_dir = output_dir / "shards" / str(job["name"])
         for record in benchmark._completed_records(shard_dir):
-            if not _selected_record(record, plan):
+            if not _selected_record(record, plan, job):
                 continue
             key = (
                 record.get("dataset"),
@@ -900,9 +1123,12 @@ def _collect_shard_records(plan: dict[str, Any]) -> list[dict[str, Any]]:
                 record.get("seed"),
                 record.get("resolution"),
             )
-            if key not in seen:
-                seen.add(key)
-                records.append(record)
+            previous = selected.get(key)
+            if previous is None or str(record.get("created_at", "")) > str(
+                previous.get("created_at", "")
+            ):
+                selected[key] = record
+    records = list(selected.values())
     return sorted(
         records,
         key=lambda record: (
@@ -913,6 +1139,108 @@ def _collect_shard_records(plan: dict[str, Any]) -> list[dict[str, Any]]:
             float(record.get("resolution", 0)),
         ),
     )
+
+
+def _load_protocol_admissible_records(
+    output_dir: Path, protocol_audit: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Load the exact record bytes admitted by reconciliation.
+
+    Condition keys alone are insufficient when duplicate or misplaced shard
+    files exist.  Bind publication aggregation to the reconciler's precise
+    relative path and SHA-256, and recheck the bytes immediately before use.
+    """
+    records: list[dict[str, Any]] = []
+    failures: list[str] = []
+    for row in protocol_audit.get("rows", []):
+        if not row.get("admissible"):
+            continue
+        reference = row.get("record_path")
+        expected_sha256 = row.get("record_sha256")
+        if not isinstance(reference, str) or not isinstance(expected_sha256, str):
+            failures.append("missing_admitted_record_identity")
+            continue
+        relative = Path(reference)
+        if relative.is_absolute() or ".." in relative.parts:
+            failures.append(f"nonportable_admitted_record_path:{reference}")
+            continue
+        path = output_dir / relative
+        try:
+            encoded = path.read_bytes()
+        except OSError:
+            failures.append(f"missing_admitted_record:{reference}")
+            continue
+        actual_sha256 = hashlib.sha256(encoded).hexdigest()
+        if actual_sha256 != expected_sha256:
+            failures.append(f"admitted_record_sha256_mismatch:{reference}")
+            continue
+        try:
+            record = json.loads(encoded)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            record = None
+        if not isinstance(record, dict):
+            failures.append(f"invalid_admitted_record:{reference}")
+            continue
+        verified_artifacts = row.get("verified_artifacts")
+        required_prefixes = {
+            "analysis_graph",
+            "ground_truth_cover",
+            "final_cover",
+        }
+        if str(record.get("method", "")).startswith("hedonic_"):
+            required_prefixes.update(
+                {"pre_cleanup_membership", "final_membership"}
+            )
+        if not isinstance(verified_artifacts, dict) or not required_prefixes.issubset(
+            verified_artifacts
+        ):
+            failures.append(f"missing_admitted_artifact_bindings:{reference}")
+            continue
+        artifact_root = path.parent
+        while artifact_root != artifact_root.parent and artifact_root.name != "runs":
+            artifact_root = artifact_root.parent
+        if artifact_root.name != "runs":
+            failures.append(f"invalid_admitted_artifact_root:{reference}")
+            continue
+        artifact_root = artifact_root.parent
+        artifact_failure = False
+        for prefix in sorted(required_prefixes):
+            identity = verified_artifacts.get(prefix)
+            if not isinstance(identity, dict):
+                artifact_failure = True
+                failures.append(f"missing_admitted_{prefix}_binding:{reference}")
+                continue
+            artifact_reference = identity.get("path")
+            artifact_sha256 = identity.get("artifact_sha256")
+            content_sha256 = identity.get("content_sha256")
+            if (
+                artifact_reference != record.get(f"{prefix}_artifact")
+                or artifact_sha256 != record.get(f"{prefix}_artifact_sha256")
+                or content_sha256 != record.get(f"{prefix}_sha256")
+                or not isinstance(artifact_reference, str)
+            ):
+                artifact_failure = True
+                failures.append(f"admitted_{prefix}_identity_mismatch:{reference}")
+                continue
+            artifact_relative = Path(artifact_reference)
+            if artifact_relative.is_absolute() or ".." in artifact_relative.parts:
+                artifact_failure = True
+                failures.append(f"nonportable_admitted_{prefix}_path:{reference}")
+                continue
+            try:
+                artifact_bytes = (artifact_root / artifact_relative).read_bytes()
+            except OSError:
+                artifact_failure = True
+                failures.append(f"missing_admitted_{prefix}:{reference}")
+                continue
+            if hashlib.sha256(artifact_bytes).hexdigest() != artifact_sha256:
+                artifact_failure = True
+                failures.append(f"admitted_{prefix}_sha256_mismatch:{reference}")
+        if artifact_failure:
+            continue
+        record["run_path"] = relative.as_posix()
+        records.append(record)
+    return records, failures
 
 
 def _collect_execution_counts(plan: dict[str, Any]) -> dict[str, int]:
@@ -1012,6 +1340,7 @@ def _audit_records(plan: dict[str, Any], records: list[dict[str, Any]]) -> dict[
         if observed_bases[base] != expected_per_base
     )
     return {
+        "profile": plan.get("profile"),
         "expected_records": expected,
         "observed_records": len(records),
         "status_counts": dict(sorted(counts.items())),
@@ -1041,7 +1370,7 @@ def _audit_records(plan: dict[str, Any], records: list[dict[str, Any]]) -> dict[
             Counter(str(record.get("execution", "unknown")) for record in records)
         ),
         "ready_for_paper": (
-            plan.get("profile") == "full"
+            plan.get("profile") in {"standard", "full"}
             and len(records) == expected
             and not missing_bases
             and counts["completed"] == expected
@@ -1056,6 +1385,12 @@ def _coverage_report(plan: dict[str, Any], records: list[dict[str, Any]], audit:
     resource_counts = Counter(
         str(row.get("resource_status")) for row in rows if row.get("resource_status")
     )
+    def resource_total(name: str) -> int:
+        return sum(
+            row.get("status") == name or row.get("resource_status") == name
+            for row in rows
+        )
+
     return {
         "schema_version": PAPER_SCHEMA_VERSION,
         "created_at": _timestamp(),
@@ -1063,9 +1398,9 @@ def _coverage_report(plan: dict[str, Any], records: list[dict[str, Any]], audit:
         "completed": status_counts["completed"],
         "not_scalable": status_counts["skipped_not_scalable"],
         "not_rerun_external": status_counts["skipped_external_unchanged"],
-        "timeout": resource_counts["timeout"] + status_counts["timeout"],
-        "oom": resource_counts["oom"] + status_counts["oom"],
-        "memory_limit": resource_counts["memory_limit"] + status_counts["memory_limit"],
+        "timeout": resource_total("timeout"),
+        "oom": resource_total("oom"),
+        "memory_limit": resource_total("memory_limit"),
         "missing": status_counts["missing"],
         "status_counts": dict(sorted(status_counts.items())),
         "resource_status_counts": dict(sorted(resource_counts.items())),
@@ -1087,6 +1422,19 @@ def _mean_ci(values: list[float]) -> tuple[float | None, float | None]:
     if len(values) < 2:
         return mean, 0.0
     return mean, 1.96 * statistics.stdev(values) / math.sqrt(len(values))
+
+
+def _record_metric(record: dict[str, Any], metric: str) -> float | None:
+    """Read a paper metric exclusively from the protocol-bound mapping."""
+    candidates = _PAPER_METRIC_ALIASES.get(metric, (metric,))
+    nested = record.get("metrics")
+    if not isinstance(nested, dict):
+        return None
+    for candidate in candidates:
+        value = _numeric(nested.get(candidate))
+        if value is not None:
+            return value
+    return None
 
 
 def _paper_summary(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1119,7 +1467,7 @@ def _paper_summary(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             values = [
                 value
                 for record in completed
-                for value in [_numeric((record.get("metrics") or {}).get(metric))]
+                for value in [_record_metric(record, metric)]
                 if value is not None
             ]
             mean, ci = _mean_ci(values)
@@ -1174,6 +1522,12 @@ def _format_metric(row: dict[str, Any], metric: str, *, seconds: bool = False) -
 def _write_paper_tex(output_dir: Path, plan: dict[str, Any], audit: dict[str, Any], rows: list[dict[str, Any]]) -> None:
     complete_rows = [row for row in rows if int(row.get("n_completed", 0)) > 0]
     status_counts = audit["status_counts"]
+    max_nodes = int(plan.get("max_nodes", 0) or 0)
+    scope_text = (
+        f"a deterministic induced-subgraph cap of {max_nodes:,} vertices"
+        if max_nodes > 0
+        else "the full validated graph"
+    )
     lines = [
         "% Generated by hedonic-exp reproduce-overlapping-paper. Do not edit.",
         r"\subsection{Ground-truth recovery}",
@@ -1184,9 +1538,24 @@ def _write_paper_tex(output_dir: Path, plan: dict[str, Any], audit: dict[str, An
             "normal-approximation confidence interval across completed seeds; status counts "
             "remain explicit rather than being silently discarded."
         ),
+        (
+            "The reported comparison uses "
+            + scope_text
+            + ".  Hedonic rows use full Leiden followed by local-only cleanup and are "
+            "published only when an independent unit-$\\ell_2$ best-response audit verifies "
+            "the exact labelled final-membership state at the recorded resolution and "
+            "membership cap. Recovery metrics use its bound canonical unique-set projection; "
+            "duplicate label bodies, if present, are not claimed to preserve equilibrium "
+            "after that scoring projection. "
+            "CPM and DEMON have no hedonic-equilibrium claim."
+        ),
         r"\begin{table*}[t]",
         r"\centering",
-        r"\caption{Full SNAP recovery results generated from cached run records. $n$ is the number of completed seeds; \texttt{--} means no completed estimate.}",
+        (
+            r"\caption{SNAP recovery results generated from cached run records on "
+            + scope_text
+            + r". $n$ is the number of completed seeds; \texttt{--} means no completed estimate.}"
+        ),
         r"\label{tab:full-recovery}",
         r"\small",
         r"\setlength{\tabcolsep}{3pt}",
@@ -1234,19 +1603,16 @@ def _write_paper_tex(output_dir: Path, plan: dict[str, Any], audit: dict[str, An
             (
                 "The machine-readable paper summary includes coverage, inclusion, predicted overlap, "
                 "community-size, membership, and CPM-quality diagnostics for every completed condition. "
-                "CPM quality is deliberately marked unavailable where full-network computation is skipped."
+                "CPM quality is deliberately marked unavailable where full-network computation is skipped. "
+                "The primary recovery, structure, and runtime scorecard is shown in "
+                r"Fig.~\ref{fig:full-overview}."
             ),
             r"\begin{figure*}[t]",
             r"  \centering",
-            r"  \includegraphics[width=.96\textwidth]{accuracy_by_dataset.pdf}",
-            r"  \caption{Symmetric best-match recovery by dataset and method; regenerated from the full cached runs.}",
-            r"  \label{fig:full-accuracy}",
-            r"\end{figure*}",
-            r"\begin{figure*}[t]",
-            r"  \centering",
-            r"  \includegraphics[width=.96\textwidth]{overlap_structure.pdf}",
-            r"  \caption{Predicted overlapping-node fractions by dataset and method.}",
-            r"  \label{fig:full-overlap}",
+            r"  \includegraphics[width=.96\textwidth]{benchmark_overview.pdf}",
+            r"  \caption{Primary recovery, structure, and runtime scorecard on the bounded SNAP comparison. Each point is a mean over completed seeds with a 95\% normal-approximation interval; colors identify methods consistently across panels. The black marks in the overlap panel are the supplied metadata fractions, and the runtime panel uses a logarithmic scale.}",
+            r"  \Description{Five panels compare best-match F1, one-to-one matched F1, Omega agreement, predicted overlap, and logarithmic detector runtime for five datasets and five methods.}",
+            r"  \label{fig:full-overview}",
             r"\end{figure*}",
             r"\subsection{Runtime and completion}",
             (
@@ -1254,12 +1620,6 @@ def _write_paper_tex(output_dir: Path, plan: dict[str, Any], audit: dict[str, An
                 "Timeouts, errors, unavailable baselines, and intentionally skipped conditions are retained "
                 "in the artifact manifest and are not converted into artificial runtimes."
             ),
-            r"\begin{figure*}[t]",
-            r"  \centering",
-            r"  \includegraphics[width=.96\textwidth]{runtime_by_dataset.pdf}",
-            r"  \caption{Completed-condition detector runtime by dataset and method.}",
-            r"  \label{fig:full-runtime}",
-            r"\end{figure*}",
         ]
     )
     if not complete_rows:
@@ -1271,7 +1631,7 @@ def _write_paper_status(output_dir: Path, audit: dict[str, Any], *, partial: boo
     warning = ""
     if audit["ready_for_paper"]:
         state = r"\smokeresultsfalse"
-        label = "complete full protocol"
+        label = "complete bounded protocol" if audit.get("profile") == "standard" else "complete full protocol"
     elif partial:
         state = r"\smokeresultstrue"
         label = "EXPLICIT PARTIAL COMPILE: incomplete protocol; inspect failure_report.json"
@@ -1279,7 +1639,7 @@ def _write_paper_status(output_dir: Path, audit: dict[str, Any], *, partial: boo
             r"\newcommand{\partialcompilewarning}{%" "\n"
             r"\par\noindent\colorbox{yellow!35}{\parbox{0.94\linewidth}{%" "\n"
             r"\textbf{EXPLICIT PARTIAL COMPILE.} This PDF contains provisional "
-            r"results; inspect \texttt{artifacts/full/failure\_report.json}.}}\par}"
+            r"results; inspect \texttt{artifacts/papers/overlapping\_communities/full/failure\_report.json}.}}\par}"
             "\n"
         )
     else:
@@ -1302,8 +1662,16 @@ def _compile_paper(plan: dict[str, Any], audit: dict[str, Any]) -> int:
         print("[paper] latexmk is unavailable; artifacts were generated but PDF was not compiled.", file=sys.stderr)
         return 1
     paper_dir = Path(plan["paper_dir"])
+    build_dir = Path(plan["output_dir"]).parent / "build"
+    build_dir.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
-        [latexmk, "-pdf", "-interaction=nonstopmode", "main.tex"],
+        [
+            latexmk,
+            "-pdf",
+            "-interaction=nonstopmode",
+            f"-outdir={build_dir}",
+            "main.tex",
+        ],
         cwd=paper_dir,
         text=True,
     )
@@ -1312,11 +1680,93 @@ def _compile_paper(plan: dict[str, Any], audit: dict[str, Any]) -> int:
 
 def finalize(plan: dict[str, Any]) -> int:
     """Merge shard caches and materialize aggregate, plot, and paper artifacts."""
+    plan, bound_plan_bytes, plan_binding_failures = _bound_finalization_plan(plan)
     output_dir = Path(plan["output_dir"])
     records = _collect_shard_records(plan)
     audit = _audit_records(plan, records)
     audit["execution_counts"] = _collect_execution_counts(plan)
-    rows = benchmark._write_results(output_dir, records)
+    try:
+        protocol_audit = protocol.reconcile(
+            output_dir,
+            Path(plan["config_path"]),
+            protocol.LOCK_PATH,
+            plan_bytes=bound_plan_bytes,
+        )
+    except (OSError, KeyError, ValueError, tomllib.TOMLDecodeError) as exc:
+        protocol_audit = {
+            "ready_for_publication": False,
+            "expected_conditions": _expected_count(plan),
+            "admissible_records": 0,
+            "rejected_records": len(records),
+            "missing_records": max(0, _expected_count(plan) - len(records)),
+            "rejection_reason_counts": {
+                f"reconcile_error:{type(exc).__name__}": len(records) or 1
+            },
+            "rows": [],
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    if plan_binding_failures:
+        protocol_audit["ready_for_publication"] = False
+        protocol_audit["finalize_plan_binding_failures"] = plan_binding_failures
+        global_reasons = list(protocol_audit.get("global_rejection_reasons") or [])
+        global_reasons.extend(
+            f"finalize_plan_binding:{reason}" for reason in plan_binding_failures
+        )
+        protocol_audit["global_rejection_reasons"] = list(
+            dict.fromkeys(global_reasons)
+        )
+        counts = Counter(protocol_audit.get("rejection_reason_counts") or {})
+        for reason in plan_binding_failures:
+            counts[f"finalize_plan_binding:{reason}"] += 1
+        protocol_audit["rejection_reason_counts"] = dict(sorted(counts.items()))
+    if plan.get("profile") in {"standard", "full"}:
+        publication_records, binding_failures = _load_protocol_admissible_records(
+            output_dir, protocol_audit
+        )
+        if binding_failures:
+            protocol_audit["ready_for_publication"] = False
+            protocol_audit["finalize_artifact_binding_failures"] = binding_failures
+            counts = Counter(protocol_audit.get("rejection_reason_counts") or {})
+            counts["finalize_admitted_record_binding_failure"] += len(binding_failures)
+            protocol_audit["rejection_reason_counts"] = dict(sorted(counts.items()))
+    else:
+        # Smoke output remains useful as a diagnostic aggregate, but the
+        # publication gate below can never mark it ready.
+        publication_records = records
+    audit["protocol_reconciliation"] = {
+        key: protocol_audit.get(key)
+        for key in (
+            "ready_for_publication",
+            "expected_conditions",
+            "present_records",
+            "admissible_records",
+            "rejected_records",
+            "missing_records",
+            "rejection_reason_counts",
+            "global_rejection_reasons",
+            "error",
+        )
+        if key in protocol_audit
+    }
+    _write_json(output_dir / "protocol_reconciliation.json", protocol_audit)
+    _write_csv(
+        output_dir / "protocol_reconciliation.csv",
+        [
+            {
+                **row,
+                "rejection_reasons": ";".join(
+                    row.get("rejection_reasons") or []
+                ),
+            }
+            for row in protocol_audit.get("rows", [])
+        ],
+    )
+    audit["ready_for_paper"] = bool(
+        audit["ready_for_paper"]
+        and protocol_audit.get("ready_for_publication")
+        and plan.get("profile") in {"standard", "full"}
+    )
+    rows = benchmark._write_results(output_dir, publication_records)
     benchmark._write_summary(output_dir, rows)
     condition_rows = _condition_summary(plan, records)
     _write_csv(output_dir / "condition_summary.csv", condition_rows)
@@ -1325,9 +1775,24 @@ def finalize(plan: dict[str, Any]) -> int:
     _write_json(output_dir / "coverage_report.json", coverage)
     _write_csv(output_dir / "coverage_report.csv", coverage["rows"])
     plots = benchmark._write_plots(output_dir, rows)
-    paper_rows = _paper_summary(records)
+    paper_rows = _paper_summary(publication_records)
     _write_csv(output_dir / "paper_summary.csv", paper_rows)
     failure_rows = audit["failure_records"]
+    protocol_failure_rows = [
+        {
+            "dataset": row.get("dataset"),
+            "cover": row.get("cover"),
+            "method": row.get("method"),
+            "seed": row.get("seed"),
+            "resolution": row.get("resolution"),
+            "status": "protocol_rejected",
+            "reason": ";".join(row.get("rejection_reasons") or []),
+            "record_path": row.get("record_path"),
+        }
+        for row in protocol_audit.get("rows", [])
+        if not row.get("admissible")
+    ]
+    failure_rows = failure_rows + protocol_failure_rows
     _write_json(
         output_dir / "failure_report.json",
         {
@@ -1336,6 +1801,7 @@ def finalize(plan: dict[str, Any]) -> int:
             "complete_protocol": bool(audit["ready_for_paper"]),
             "records": failure_rows,
             "status_counts": audit["status_counts"],
+            "protocol_reconciliation": protocol_audit,
         },
     )
     _write_csv(output_dir / "failure_report.csv", failure_rows)
@@ -1343,23 +1809,31 @@ def finalize(plan: dict[str, Any]) -> int:
         "schema_version": PAPER_SCHEMA_VERSION,
         "created_at": _timestamp(),
         "plan_id": plan["plan_id"],
-        "config_path": plan["config_path"],
+        "config_path": Path(plan["config_path"]).name,
+        "config_sha256": plan.get("config_sha256"),
         "experiment_identity": plan["experiment_identity"],
         "methods": plan["methods"],
         "jobs": plan["jobs"],
         "audit": audit,
         "artifacts": {
-            "results_csv": str(output_dir / "results.csv.gz"),
-            "summary_csv": str(output_dir / "summary.csv"),
-            "paper_summary_csv": str(output_dir / "paper_summary.csv"),
-            "condition_summary_csv": str(output_dir / "condition_summary.csv"),
-            "condition_summary_json": str(output_dir / "condition_summary.json"),
-            "coverage_report_csv": str(output_dir / "coverage_report.csv"),
-            "coverage_report_json": str(output_dir / "coverage_report.json"),
-            "paper_results_tex": str(output_dir / "paper_results.tex"),
-            "failure_report_json": str(output_dir / "failure_report.json"),
-            "failure_report_csv": str(output_dir / "failure_report.csv"),
-            "plots": plots,
+            "results_csv": "results.csv.gz",
+            "summary_csv": "summary.csv",
+            "paper_summary_csv": "paper_summary.csv",
+            "condition_summary_csv": "condition_summary.csv",
+            "condition_summary_json": "condition_summary.json",
+            "coverage_report_csv": "coverage_report.csv",
+            "coverage_report_json": "coverage_report.json",
+            "paper_results_tex": "paper_results.tex",
+            "failure_report_json": "failure_report.json",
+            "failure_report_csv": "failure_report.csv",
+            "protocol_reconciliation_json": "protocol_reconciliation.json",
+            "protocol_reconciliation_csv": "protocol_reconciliation.csv",
+            "plots": [
+                Path(path).relative_to(output_dir).as_posix()
+                if Path(path).is_absolute() and output_dir in Path(path).parents
+                else str(path)
+                for path in plots
+            ],
         },
     }
     _write_json(output_dir / "paper_manifest.json", paper_manifest)
@@ -1395,21 +1869,10 @@ def run_coordinator(plan: dict[str, Any]) -> int:
     output_dir = Path(plan["output_dir"])
     worker_count = int(plan["workers"])
     print(f"[coordinator] waiting for {worker_count} worker windows", flush=True)
+    started = time.monotonic()
     while True:
         states = [_read_json(_state_path(output_dir, index)) for index in range(worker_count)]
-        for index, state in enumerate(states):
-            if state is None or state.get("plan_id") != plan["plan_id"]:
-                continue
-            if state.get("status") == "running" and isinstance(state.get("worker_pid"), int):
-                try:
-                    os.kill(int(state["worker_pid"]), 0)
-                except OSError:
-                    state["status"] = "error"
-                    state.setdefault("failures", []).append(
-                        {"name": "worker", "error": "worker process disappeared before finalizing its waves"}
-                    )
-                    state["updated_at"] = _timestamp()
-                    _write_json(_state_path(output_dir, index), state)
+        states = _repair_worker_liveness(plan, states, started=started)
         final = [
             state is not None
             and state.get("plan_id") == plan["plan_id"]
@@ -1516,8 +1979,9 @@ def run_foreground(plan: dict[str, Any]) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Reproduce docs/papers/overlapping_communities/main.tex from the "
-            "[overlapping_paper] TOML protocol. Launches RAM-bounded tmux workers, "
+            "Reproduce a full overlapping-paper protocol from an externally "
+            "supplied [overlapping_paper] TOML configuration and manuscript directory. "
+            "Launches RAM-bounded tmux workers, "
             "merges their caches, regenerates figures/tables, and compiles only a complete full run."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -1542,7 +2006,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.plan:
-        plan = _load_plan(Path(args.plan).expanduser().resolve())
+        plan = _load_plan(experiment_config.expand_path(args.plan).resolve())
         if args.worker_index is not None:
             return run_worker(plan, args.worker_index)
         if args.coordinator:

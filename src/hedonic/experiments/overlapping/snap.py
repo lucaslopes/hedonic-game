@@ -5,14 +5,15 @@ igraph works with contiguous vertex indices.  This module is deliberately the
 only place that knows the archive layout: experiments consume
 :class:`SnapDataset`, whose cover is already normalized to igraph indices.
 
-Input archives are read-only.  A validated normalized cache is written to a
-user cache directory (``~/.cache/hedonic/snap`` by default), never next to the
-archived SNAP files.
+Input archives are read-only.  A validated normalized cache is written below
+the repository artifact root by default, never next to the archived SNAP
+files.
 """
 
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import pickle
@@ -24,13 +25,14 @@ from typing import Any, Iterable, Sequence
 
 import igraph as ig
 
-from hedonic.experiments.config import NETWORKS_DIR
+from hedonic.experiments.config import NETWORKS_DIR, SNAP_CACHE_DIR, expand_path
 
 # Alias retained as part of this loader's public surface; configuration owns
 # the portable default and environment/TOML precedence.
 DEFAULT_NETWORKS_DIR = NETWORKS_DIR
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 5
 ANALYSIS_GRAPH_POLICY = "common_undirected_simple_v1"
+CONTENT_IDENTITY_SCHEMA_VERSION = 2
 
 
 class SnapLoadError(RuntimeError):
@@ -166,12 +168,9 @@ def network_names() -> tuple[str, ...]:
 
 
 def default_cache_dir() -> Path:
-    """Return the external normalized-data cache location."""
-    return Path(
-        os.path.expanduser(
-            os.getenv("HEDONIC_SNAP_CACHE_DIR", "~/.cache/hedonic/snap")
-        )
-    )
+    """Return the repository-local normalized-data cache location."""
+    configured = os.getenv("HEDONIC_SNAP_CACHE_DIR")
+    return expand_path(configured) if configured else SNAP_CACHE_DIR
 
 
 def _dataset_dir(root: Path, spec: SnapDatasetSpec) -> Path:
@@ -274,10 +273,20 @@ def _mapping_for_cached_graph(graph: ig.Graph) -> tuple[dict[int, int], str]:
 
 
 def _remap_cover(
-    raw_cover: Sequence[Sequence[int]], id_to_index: dict[int, int]
+    raw_cover: Sequence[Sequence[int]],
+    id_to_index: dict[int, int],
+    *,
+    canonicalize_communities: bool = False,
 ) -> tuple[list[list[int]], dict[str, Any]]:
-    """Map every original ID and make dropped members/communities explicit."""
-    normalized: list[list[int]] = []
+    """Map IDs while retaining labelled-cover provenance until bounding.
+
+    Duplicate labels in the supplied archive are counted and retained here so
+    their provenance is not lost.  The bounded selector canonicalizes this
+    labelled multicover before ranking vertices, then canonicalizes once more
+    after projection so both source duplicates and projection collisions are
+    removed from the registered set-cover semantics.
+    """
+    remapped: list[list[int]] = []
     missing_member_count = 0
     missing_ids: set[int] = set()
     duplicate_member_count = 0
@@ -298,15 +307,164 @@ def _remap_cover(
             seen.add(new_id)
             members.append(new_id)
         if len(members) >= 2:
-            normalized.append(members)
+            remapped.append(members)
         else:
             dropped_communities += 1
+    canonical, canonicalization = canonicalize_cover(
+        remapped, n_vertices=len(id_to_index), minimum_size=2
+    )
+    normalized = canonical if canonicalize_communities else remapped
     return normalized, {
         "raw_community_count": len(raw_cover),
         "dropped_communities_lt_2_members": dropped_communities,
         "missing_member_count": missing_member_count,
         "missing_id_examples": sorted(missing_ids),
         "duplicate_members_removed": duplicate_member_count,
+        "duplicate_communities_observed": canonicalization[
+            "duplicate_communities_removed"
+        ],
+        "duplicate_communities_removed": (
+            canonicalization["duplicate_communities_removed"]
+            if canonicalize_communities
+            else 0
+        ),
+        "labeled_community_count": len(remapped),
+        "canonical_community_count": len(canonical),
+        "community_semantics": (
+            "canonical_set_cover"
+            if canonicalize_communities
+            else "labeled_multicover_provenance"
+        ),
+    }
+
+
+def canonicalize_cover(
+    cover: Sequence[Sequence[int]],
+    *,
+    n_vertices: int | None = None,
+    minimum_size: int = 1,
+) -> tuple[list[list[int]], dict[str, int]]:
+    """Return a label-invariant cover made of unique sorted vertex sets.
+
+    This is the experiment-wide serialization boundary for supplied and
+    predicted covers.  Community labels and detector iteration order are not
+    scientific content, while duplicate members or duplicate vertex sets
+    would otherwise change metric denominators.
+    """
+    if minimum_size < 1:
+        raise ValueError("minimum_size must be >= 1")
+    communities: set[tuple[int, ...]] = set()
+    duplicate_members = 0
+    duplicate_communities = 0
+    dropped_small = 0
+    for community in cover:
+        members: list[int] = []
+        seen: set[int] = set()
+        for member in community:
+            vertex = int(member)
+            if n_vertices is not None and not 0 <= vertex < n_vertices:
+                raise ValueError("cover contains a vertex outside the graph")
+            if vertex in seen:
+                duplicate_members += 1
+                continue
+            seen.add(vertex)
+            members.append(vertex)
+        key = tuple(sorted(members))
+        if len(key) < minimum_size:
+            dropped_small += 1
+            continue
+        if key in communities:
+            duplicate_communities += 1
+            continue
+        communities.add(key)
+    canonical = [list(members) for members in sorted(communities)]
+    return canonical, {
+        "input_community_count": len(cover),
+        "canonical_community_count": len(canonical),
+        "duplicate_members_removed": duplicate_members,
+        "duplicate_communities_removed": duplicate_communities,
+        "communities_below_minimum_size_dropped": dropped_small,
+    }
+
+
+def cover_sha256(cover: Sequence[Sequence[int]]) -> str:
+    """Hash an already canonicalized cover using a portable JSON encoding."""
+    payload = json.dumps(cover, separators=(",", ":"), ensure_ascii=True).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def graph_sha256(graph: ig.Graph) -> str:
+    """Hash graph topology in a deterministic vertex/edge representation."""
+    directed = bool(graph.is_directed())
+    digest = hashlib.sha256()
+    digest.update(
+        json.dumps(
+            {
+                "directed": directed,
+                "n": int(graph.vcount()),
+                "m": int(graph.ecount()),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
+    # Source-major sorted adjacency is a canonical edge stream and avoids
+    # materializing/sorting tens of millions of edge tuples for LiveJournal.
+    mode = "out" if directed else "all"
+    for source in range(graph.vcount()):
+        for target in sorted(int(value) for value in graph.neighbors(source, mode=mode)):
+            if directed or source <= target:
+                digest.update(f"{source},{target};".encode())
+    return digest.hexdigest()
+
+
+def _ordered_cover_sha256(cover: Sequence[Sequence[int]]) -> str:
+    payload = [[int(member) for member in community] for community in cover]
+    return hashlib.sha256(
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode()
+    ).hexdigest()
+
+
+def _cache_content_identity(
+    graph: ig.Graph, cover: Sequence[Sequence[int]]
+) -> dict[str, Any]:
+    return {
+        "graph_sha256": graph_sha256(graph),
+        "labeled_cover_sha256": _ordered_cover_sha256(cover),
+        "n": graph.vcount(),
+        "m": graph.ecount(),
+        "directed": graph.is_directed(),
+        "labeled_community_count": len(cover),
+    }
+
+
+def content_identity(graph: ig.Graph, cover: Sequence[Sequence[int]]) -> dict[str, Any]:
+    """Return exact topology and canonical-ground-truth identities."""
+    canonical, _ = canonicalize_cover(
+        cover, n_vertices=graph.vcount(), minimum_size=1
+    )
+    memberships = Counter(
+        vertex for community in canonical for vertex in community
+    )
+    return {
+        "schema_version": CONTENT_IDENTITY_SCHEMA_VERSION,
+        "graph_sha256": graph_sha256(graph),
+        "ground_truth_cover_sha256": cover_sha256(canonical),
+        "n": int(graph.vcount()),
+        "m": int(graph.ecount()),
+        "directed": bool(graph.is_directed()),
+        "ground_truth_community_count": len(canonical),
+        "ground_truth_max_memberships_per_node": max(
+            memberships.values(), default=0
+        ),
     }
 
 
@@ -375,33 +533,181 @@ def _make_report(
     }
 
 
-def _normalized_cache_path(cache_dir: Path, name: str, cover_variant: str) -> Path:
-    return cache_dir / f"{name}-{cover_variant}-normalized-v{CACHE_SCHEMA_VERSION}.pkl"
+def _source_root_sha256(root: Path) -> str:
+    return hashlib.sha256(str(root.expanduser().resolve()).encode()).hexdigest()
 
 
-def _load_normalized_cache(path: Path) -> SnapDataset | None:
+def _source_artifact_identity(
+    spec: SnapDatasetSpec, base: Path, cover_variant: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """Fingerprint the exact source pair selected by loader precedence."""
+    graph_path = _first_existing(base, spec.graph_files)
+    cover_path = _first_existing(base, spec.cover_files.get(cover_variant, ()))
+    source_kind = "trusted_archive_pickle"
+    if graph_path is None or cover_path is None:
+        graph_path = _first_existing(base, spec.raw_edge_files)
+        cover_path = _first_existing(base, spec.raw_cover_files.get(cover_variant, ()))
+        source_kind = "streamed_raw_gzip"
+    if graph_path is None or cover_path is None:
+        return source_kind, []
+    artifacts = []
+    for role, path in (("graph", graph_path), ("ground_truth", cover_path)):
+        artifacts.append(
+            {
+                "role": role,
+                "relative_path": path.relative_to(base).as_posix(),
+                "sha256": _file_sha256(path),
+                "size_bytes": path.stat().st_size,
+            }
+        )
+    return source_kind, artifacts
+
+
+def _source_fingerprint(source_kind: str, artifacts: list[dict[str, Any]]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {"source_kind": source_kind, "artifacts": artifacts},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def _normalized_cache_path(
+    cache_dir: Path,
+    name: str,
+    cover_variant: str,
+    source_root_sha256: str,
+    source_fingerprint: str,
+) -> Path:
+    # Namespace caches by the requested archive root.  A shared cache directory
+    # can therefore never return another root's graph merely because dataset
+    # and cover names happen to match.
+    return cache_dir / (
+        f"{name}-{cover_variant}-{source_root_sha256[:12]}-"
+        f"{source_fingerprint[:16]}-"
+        f"normalized-v{CACHE_SCHEMA_VERSION}.pkl"
+    )
+
+
+def _load_normalized_cache(
+    path: Path,
+    *,
+    expected_dataset: str,
+    expected_cover_variant: str,
+    expected_source_root_sha256: str,
+    expected_source_kind: str,
+    expected_source_artifacts: list[dict[str, Any]],
+) -> SnapDataset | None:
     try:
         payload = _read_pickle(path)
         if not isinstance(payload, dict) or payload.get("schema") != CACHE_SCHEMA_VERSION:
             return None
+        if payload.get("source_root_sha256") != expected_source_root_sha256:
+            return None
+        if payload.get("source_kind") != expected_source_kind:
+            return None
+        if payload.get("source_artifacts") != expected_source_artifacts:
+            return None
         graph, cover, report = payload["graph"], payload["cover"], payload["report"]
         if not isinstance(graph, ig.Graph) or not isinstance(report, dict):
+            return None
+        if (
+            report.get("dataset") != expected_dataset
+            or report.get("cover_variant") != expected_cover_variant
+            or report.get("source_kind") != expected_source_kind
+            or report.get("source_artifacts") != expected_source_artifacts
+            or report.get("normalized_cache_path") != path.name
+            or report.get("normalized_cache_namespace")
+            != expected_source_root_sha256[:16]
+            or report.get("source_artifact_fingerprint_sha256")
+            != _source_fingerprint(expected_source_kind, expected_source_artifacts)
+        ):
+            return None
+        source_paths = {
+            artifact["role"]: artifact["relative_path"]
+            for artifact in expected_source_artifacts
+        }
+        if (
+            report.get("graph_path") != source_paths.get("graph")
+            or report.get("ground_truth_path") != source_paths.get("ground_truth")
+        ):
             return None
         cover = _coerce_cover(cover, path)
         if any(member < 0 or member >= graph.vcount() for c in cover for member in c):
             return None
+        if any(
+            len(community) < 2
+            or len(community) != len(set(community))
+            for community in cover
+        ):
+            return None
+        if payload.get("cache_content_identity") != _cache_content_identity(
+            graph, cover
+        ):
+            return None
+        stats = cover_statistics(cover)
+        if any(
+            report.get(key) != expected
+            for key, expected in {
+                "n": graph.vcount(),
+                "m": graph.ecount(),
+                "directed": graph.is_directed(),
+                "number_of_communities": stats["n_communities"],
+                "number_of_covered_nodes": stats["n_covered_nodes"],
+                "community_size_statistics": stats["community_size"],
+                "overlap_statistics": stats["overlap"],
+            }.items()
+        ):
+            return None
         report = dict(report)
+        canonical, _ = canonicalize_cover(
+            cover, n_vertices=graph.vcount(), minimum_size=2
+        )
+        if (
+            isinstance(report.get("bounded_content_identity"), dict)
+            and report["bounded_content_identity"]
+            != content_identity(graph, canonical)
+        ):
+            return None
+        if (
+            isinstance(report.get("content_identity"), dict)
+            and report["content_identity"] != content_identity(graph, canonical)
+        ):
+            return None
         report["source_kind"] = "validated_normalized_cache"
-        report["normalized_cache_path"] = str(path)
+        report["normalized_cache_path"] = path.name
         return SnapDataset(str(report["dataset"]), str(report["cover_variant"]), graph, cover, report)
-    except (OSError, KeyError, pickle.PickleError, SnapLoadError):
+    except (
+        OSError,
+        EOFError,
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        pickle.PickleError,
+        SnapLoadError,
+    ):
         return None
 
 
-def _write_normalized_cache(path: Path, dataset: SnapDataset) -> None:
+def _write_normalized_cache(
+    path: Path,
+    dataset: SnapDataset,
+    *,
+    source_root_sha256: str,
+    source_kind: str,
+    source_artifacts: list[dict[str, Any]],
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": CACHE_SCHEMA_VERSION,
+        "source_root_sha256": source_root_sha256,
+        "source_kind": source_kind,
+        "source_artifacts": source_artifacts,
+        "cache_content_identity": _cache_content_identity(
+            dataset.graph, dataset.cover
+        ),
         "graph": dataset.graph,
         "cover": dataset.cover,
         "report": dataset.report,
@@ -430,8 +736,8 @@ def _load_from_pickles(
         spec=spec,
         cover_variant=cover_variant,
         graph=graph,
-        graph_path=str(graph_path),
-        cover_path=str(cover_path),
+        graph_path=str(graph_path.relative_to(base)),
+        cover_path=str(cover_path.relative_to(base)),
         mapping_strategy=strategy,
         remap=validation,
         source_kind="trusted_archive_pickle",
@@ -470,8 +776,8 @@ def _load_from_raw(spec: SnapDatasetSpec, base: Path, cover_variant: str) -> Sna
         spec=spec,
         cover_variant=cover_variant,
         graph=graph,
-        graph_path=str(edge_path),
-        cover_path=str(cover_path),
+        graph_path=str(edge_path.relative_to(base)),
+        cover_path=str(cover_path.relative_to(base)),
         mapping_strategy="raw_sorted_original_id_to_contiguous_index",
         remap=validation,
         source_kind="streamed_raw_gzip",
@@ -506,20 +812,43 @@ def load_snap_dataset(
             f"{spec.name} has no supplied {cover_variant!r} cover; "
             f"use 'all' (Wikipedia categories) instead"
         )
-    cache_root = Path(cache_dir).expanduser() if cache_dir else default_cache_dir()
-    normalized_path = _normalized_cache_path(cache_root, key, cover_variant)
+    root = Path(data_root).expanduser() if data_root is not None else DEFAULT_NETWORKS_DIR
+    root_digest = _source_root_sha256(root)
+    base = _dataset_dir(root, spec)
+    source_kind, source_artifacts = _source_artifact_identity(
+        spec, base, cover_variant
+    )
+    source_fingerprint = _source_fingerprint(source_kind, source_artifacts)
+    cache_root = expand_path(cache_dir) if cache_dir else default_cache_dir()
+    normalized_path = _normalized_cache_path(
+        cache_root, key, cover_variant, root_digest, source_fingerprint
+    )
     if use_normalized_cache and normalized_path.is_file():
-        cached = _load_normalized_cache(normalized_path)
+        cached = _load_normalized_cache(
+            normalized_path,
+            expected_dataset=key,
+            expected_cover_variant=cover_variant,
+            expected_source_root_sha256=root_digest,
+            expected_source_kind=source_kind,
+            expected_source_artifacts=source_artifacts,
+        )
         if cached is not None:
             return cached
 
-    root = Path(data_root).expanduser() if data_root is not None else DEFAULT_NETWORKS_DIR
-    base = _dataset_dir(root, spec)
     dataset = _load_from_pickles(spec, base, cover_variant)
     if dataset is None:
         dataset = _load_from_raw(spec, base, cover_variant)
-    dataset.report["normalized_cache_path"] = str(normalized_path)
-    _write_normalized_cache(normalized_path, dataset)
+    dataset.report["normalized_cache_path"] = normalized_path.name
+    dataset.report["normalized_cache_namespace"] = root_digest[:16]
+    dataset.report["source_artifacts"] = source_artifacts
+    dataset.report["source_artifact_fingerprint_sha256"] = source_fingerprint
+    _write_normalized_cache(
+        normalized_path,
+        dataset,
+        source_root_sha256=root_digest,
+        source_kind=source_kind,
+        source_artifacts=source_artifacts,
+    )
     return dataset
 
 
@@ -533,11 +862,43 @@ def bounded_induced_dataset(dataset: SnapDataset, max_nodes: int | None) -> Snap
     reported explicitly.
     """
     if max_nodes is None or max_nodes <= 0 or dataset.graph.vcount() <= max_nodes:
-        return dataset
-    frequency = Counter(member for community in dataset.cover for member in community)
+        canonical, validation = canonicalize_cover(
+            dataset.cover, n_vertices=dataset.graph.vcount(), minimum_size=2
+        )
+        report = dict(dataset.report)
+        stats = cover_statistics(canonical)
+        report.update(
+            {
+                "n": dataset.graph.vcount(),
+                "m": dataset.graph.ecount(),
+                "directed": dataset.graph.is_directed(),
+                "number_of_communities": stats["n_communities"],
+                "number_of_covered_nodes": stats["n_covered_nodes"],
+                "community_size_statistics": stats["community_size"],
+                "overlap_statistics": stats["overlap"],
+            }
+        )
+        report["bounded_subgraph"] = {
+            "applied": False,
+            "max_nodes": max_nodes,
+            "selected_nodes": dataset.graph.vcount(),
+            "strategy": "not_required",
+            "cover_canonicalization": validation,
+        }
+        report["bounded_content_identity"] = content_identity(
+            dataset.graph, canonical
+        )
+        report["content_identity"] = report["bounded_content_identity"]
+        return SnapDataset(
+            dataset.name, dataset.cover_variant, dataset.graph, canonical, report
+        )
+    selection_cover, source_canonicalization = canonicalize_cover(
+        dataset.cover, n_vertices=dataset.graph.vcount(), minimum_size=2
+    )
+    frequency = Counter(member for community in selection_cover for member in community)
     ranked = lambda members: sorted(members, key=lambda v: (-frequency[v], v))
     selected: set[int] = set()
-    for community in sorted(dataset.cover, key=lambda c: (-len(c), tuple(c))):
+    for community in sorted(selection_cover, key=lambda c: (-len(c), tuple(c))):
         for member in ranked(community)[:2]:
             if len(selected) >= max_nodes:
                 break
@@ -551,19 +912,28 @@ def bounded_induced_dataset(dataset: SnapDataset, max_nodes: int | None) -> Snap
     selected_indices = sorted(selected)
     old_to_new = {old: new for new, old in enumerate(selected_indices)}
     graph = dataset.graph.induced_subgraph(selected_indices)
-    cover, validation = _remap_cover(dataset.cover, old_to_new)
+    cover, validation = _remap_cover(
+        selection_cover, old_to_new, canonicalize_communities=True
+    )
     report = dict(dataset.report)
     report.update(
         {
             "n": graph.vcount(),
             "m": graph.ecount(),
             "bounded_subgraph": {
+                "applied": True,
                 "max_nodes": max_nodes,
                 "selected_nodes": len(selected_indices),
                 "strategy": "gt_membership_frequency_then_induced_subgraph",
+                "source_cover_canonicalization_before_selection": source_canonicalization,
                 "dropped_communities_lt_2_members": validation[
                     "dropped_communities_lt_2_members"
                 ],
+                "projected_cover_canonicalization": validation,
+                # Compatibility alias; the explicit source/projected fields
+                # above distinguish archive duplicates from induction
+                # collisions.
+                "cover_canonicalization": validation,
             },
             "id_mapping_strategy": report["id_mapping_strategy"]
             + "+bounded_induced_subgraph_remap",
@@ -574,6 +944,8 @@ def bounded_induced_dataset(dataset: SnapDataset, max_nodes: int | None) -> Snap
     report["number_of_covered_nodes"] = stats["n_covered_nodes"]
     report["community_size_statistics"] = stats["community_size"]
     report["overlap_statistics"] = stats["overlap"]
+    report["bounded_content_identity"] = content_identity(graph, cover)
+    report["content_identity"] = report["bounded_content_identity"]
     return SnapDataset(dataset.name, dataset.cover_variant, graph, cover, report)
 
 
@@ -594,6 +966,10 @@ def common_undirected_analysis_dataset(dataset: SnapDataset) -> SnapDataset:
         graph.to_undirected(mode="collapse")
     before_simplify_edges = graph.ecount()
     graph.simplify(multiple=True, loops=True, combine_edges=None)
+    canonical_cover, cover_validation = canonicalize_cover(
+        dataset.cover, n_vertices=graph.vcount(), minimum_size=2
+    )
+    stats = cover_statistics(canonical_cover)
     report = dict(dataset.report)
     source_graph = {
         "n": source.vcount(),
@@ -617,9 +993,17 @@ def common_undirected_analysis_dataset(dataset: SnapDataset) -> SnapDataset:
             "n": graph.vcount(),
             "m": graph.ecount(),
             "directed": graph.is_directed(),
+            "number_of_communities": stats["n_communities"],
+            "number_of_covered_nodes": stats["n_covered_nodes"],
+            "community_size_statistics": stats["community_size"],
+            "overlap_statistics": stats["overlap"],
+            "analysis_cover_canonicalization": cover_validation,
+            "content_identity": content_identity(graph, canonical_cover),
         }
     )
-    return SnapDataset(dataset.name, dataset.cover_variant, graph, dataset.cover, report)
+    return SnapDataset(
+        dataset.name, dataset.cover_variant, graph, canonical_cover, report
+    )
 
 
 def smoke_dataset(name: str, *, cover_variant: str = "top5000") -> SnapDataset:

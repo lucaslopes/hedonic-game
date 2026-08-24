@@ -11,7 +11,9 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import hashlib
 import json
+import math
 import multiprocessing as mp
 import os
 import pickle
@@ -26,11 +28,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from hedonic.experiments.config import OUTPUT_DIR
+import igraph as ig
+
+from hedonic.experiments.config import OVERLAPPING_ARTIFACTS_DIR, expand_path
 from hedonic.experiments.overlapping.methods import (
     METHODS,
     effective_resolution,
     method_availability,
+    method_dependency_identity,
     resolve_methods,
     run_method,
     seeded_initial_membership,
@@ -39,18 +44,26 @@ from hedonic.experiments.overlapping.metrics import (
     evaluate_cover,
     quality_overlapping_cpm,
 )
+from hedonic.experiments.overlapping.robustness import (
+    audit_cover,
+)
 from hedonic.experiments.overlapping.protocol import (
     current_experiment_identity,
     dataset_metadata_identity,
     identity_rejection_reasons,
 )
 from hedonic.experiments.overlapping.snap import (
+    ANALYSIS_GRAPH_POLICY,
     DEFAULT_NETWORKS_DIR,
     SnapDataset,
     SnapLoadError,
     UnsupportedCoverVariant,
     bounded_induced_dataset,
+    canonicalize_cover,
     common_undirected_analysis_dataset,
+    cover_statistics,
+    cover_sha256,
+    graph_sha256,
     load_snap_dataset,
     network_names,
     print_dataset_report,
@@ -58,11 +71,14 @@ from hedonic.experiments.overlapping.snap import (
 )
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 # Version 6 gives every hedonic method a shared seed-dependent disjoint warm
 # start. Singleton-start and warm-start records are different experimental
 # conditions and must never share a cache entry.
-RUN_PROTOCOL_VERSION = 6
+# Version 10 additionally binds persisted replayable graph/GT artifacts, exact
+# labeled final-state certificates, dependency source trees, and re-scored
+# metrics for both resume and publication admission.
+RUN_PROTOCOL_VERSION = 10
 RSS_POLL_SECONDS = 0.05
 RSS_RECORD_INTERVAL_SECONDS = 1.0
 RESUMABLE_CACHE_STATUSES = {
@@ -220,6 +236,242 @@ def _write_json(path: Path, data: Any) -> None:
     temporary.replace(path)
 
 
+def _raw_membership_digest(memberships: Any) -> str | None:
+    """Hash native membership rows without canonicalizing community labels."""
+    if not isinstance(memberships, list):
+        return None
+    try:
+        payload = [[int(label) for label in labels] for labels in memberships]
+    except (TypeError, ValueError):
+        return None
+    encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _metrics_digest(metrics: Any) -> str | None:
+    if not isinstance(metrics, dict):
+        return None
+    try:
+        encoded = json.dumps(
+            metrics,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode()
+    except (TypeError, ValueError):
+        return None
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _persist_compressed_json(
+    output_dir: Path, subdirectory: str, value: Any, *, content_sha256: str
+) -> dict[str, str]:
+    """Persist canonical JSON in deterministic gzip and return portable metadata."""
+    relative = Path(subdirectory) / f"{content_sha256}.json.gz"
+    path = output_dir / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    encoded = json.dumps(
+        value, separators=(",", ":"), ensure_ascii=True
+    ).encode()
+    with temporary.open("wb") as raw_stream:
+        with gzip.GzipFile(
+            filename="", mode="wb", fileobj=raw_stream, mtime=0
+        ) as stream:
+            stream.write(encoded)
+    temporary.replace(path)
+    return {
+        "artifact": relative.as_posix(),
+        "artifact_sha256": _file_sha256(path),
+        "content_sha256": content_sha256,
+    }
+
+
+def _persist_raw_memberships(
+    output_dir: Path, memberships: Any
+) -> dict[str, str] | None:
+    """Persist exact pre-cleanup native rows for Hedonic provenance."""
+    digest = _raw_membership_digest(memberships)
+    if digest is None:
+        return None
+    return _persist_compressed_json(
+        output_dir, "pre_cleanup_memberships", memberships, content_sha256=digest
+    )
+
+
+def _persist_final_memberships(
+    output_dir: Path, memberships: Any
+) -> dict[str, str] | None:
+    """Persist exact memberships returned by the cleanup/native final call."""
+    digest = _raw_membership_digest(memberships)
+    if digest is None:
+        return None
+    return _persist_compressed_json(
+        output_dir, "final_memberships", memberships, content_sha256=digest
+    )
+
+
+def _persist_final_cover(
+    output_dir: Path, cover: list[list[int]]
+) -> dict[str, str]:
+    digest = cover_sha256(cover)
+    return _persist_compressed_json(
+        output_dir, "final_covers", cover, content_sha256=digest
+    )
+
+
+def _persist_analysis_graph(output_dir: Path, graph) -> dict[str, str]:
+    """Persist the exact bounded analysis topology for independent replay."""
+    digest = graph_sha256(graph)
+    payload = {
+        "schema_version": 1,
+        "analysis_graph_policy": ANALYSIS_GRAPH_POLICY,
+        "n": int(graph.vcount()),
+        "m": int(graph.ecount()),
+        "directed": bool(graph.is_directed()),
+        "edges": [[int(source), int(target)] for source, target in graph.get_edgelist()],
+    }
+    return _persist_compressed_json(
+        output_dir, "analysis_graphs", payload, content_sha256=digest
+    )
+
+
+def _persist_ground_truth_cover(
+    output_dir: Path, cover: list[list[int]]
+) -> dict[str, str]:
+    """Persist the canonical supplied cover used for every score."""
+    digest = cover_sha256(cover)
+    return _persist_compressed_json(
+        output_dir, "ground_truth_covers", cover, content_sha256=digest
+    )
+
+
+def _initialization_metadata(
+    membership: list[int], *, requested_community_count: int, seed: int
+) -> dict[str, Any]:
+    encoded = json.dumps(
+        [int(label) for label in membership], separators=(",", ":")
+    ).encode()
+    return {
+        "kind": "seeded_random_disjoint",
+        "requested_community_count": int(requested_community_count),
+        "realized_community_count": len(set(membership)),
+        "n_vertices": len(membership),
+        "membership_sha256": hashlib.sha256(encoded).hexdigest(),
+        "seed": int(seed),
+        "shared_across_hedonic_methods": True,
+    }
+
+
+def _equilibrium_certificate(
+    method: str,
+    graph,
+    final_memberships: Any,
+    *,
+    final_membership_sha256: str | None,
+    canonical_scoring_cover_sha256: str | None,
+    max_memberships: int,
+    resolution: float,
+    allow_isolation: bool,
+) -> dict[str, Any]:
+    """Independently audit the serialized final cover at the run gamma."""
+    analysis_graph_sha256 = graph_sha256(graph)
+    auditor_source_sha256 = current_experiment_identity()["tracked_files"].get(
+        "src/hedonic/experiments/overlapping/robustness.py"
+    )
+    if not method.startswith("hedonic_"):
+        return {
+            "status": "not_applicable",
+            "auditor": "hedonic.experiments.overlapping.robustness.audit_cover",
+            "auditor_source_sha256": auditor_source_sha256,
+            "reason": "external baseline has no Hedonic equilibrium claim",
+        }
+    atol, rtol = 1e-10, 1e-9
+    started = time.monotonic()
+    try:
+        if not isinstance(final_memberships, list):
+            raise ValueError("exact final native memberships are unavailable")
+        memberships = [
+            [int(label) for label in labels] for labels in final_memberships
+        ]
+        if len(memberships) != graph.vcount():
+            raise ValueError("final native membership length differs from graph")
+        if any(not labels or len(labels) != len(set(labels)) for labels in memberships):
+            raise ValueError(
+                "final native memberships contain an empty or duplicate-label row"
+            )
+        audit = audit_cover(
+            graph,
+            memberships,
+            max_memberships=max_memberships,
+            allow_isolation=allow_isolation,
+            gamma=resolution,
+            atol=atol,
+            rtol=rtol,
+            compute_intervals=False,
+            dense=False,
+        )
+        verified = bool(audit["is_local_equilibrium_at_resolution"])
+        return {
+            "status": "verified" if verified else "not_verified",
+            "auditor": "hedonic.experiments.overlapping.robustness.audit_cover",
+            "independent_of_native_stop": True,
+            "is_local_equilibrium_at_resolution": verified,
+            "max_positive_regret": float(
+                audit["max_positive_regret_at_resolution"]
+            ),
+            "max_stability_tolerance": float(
+                audit["max_stability_tolerance_at_resolution"]
+            ),
+            "stable_fraction": float(audit["stable_fraction_at_resolution"]),
+            "tolerance": {"atol": atol, "rtol": rtol},
+            "audit_runtime_seconds": time.monotonic() - started,
+            "gamma": float(audit["gamma"]),
+            "max_memberships": int(audit["max_memberships"]),
+            "allow_isolation": bool(audit["allow_isolation"]),
+            "n_vertices_scored": int(audit["n_vertices_scored"]),
+            "final_membership_sha256": final_membership_sha256,
+            "canonical_scoring_cover_sha256": canonical_scoring_cover_sha256,
+            "certificate_target": "exact_labeled_final_memberships",
+            "canonical_scoring_projection_certified_as_equilibrium": False,
+            "analysis_graph_sha256": analysis_graph_sha256,
+            "analysis_graph_policy": ANALYSIS_GRAPH_POLICY,
+            "auditor_source_sha256": auditor_source_sha256,
+        }
+    except (TypeError, ValueError) as exc:
+        return {
+            "status": "not_verified",
+            "auditor": "hedonic.experiments.overlapping.robustness.audit_cover",
+            "independent_of_native_stop": True,
+            "is_local_equilibrium_at_resolution": False,
+            "max_positive_regret": None,
+            "stable_fraction": 0.0,
+            "tolerance": {"atol": atol, "rtol": rtol},
+            "audit_runtime_seconds": time.monotonic() - started,
+            "gamma": float(resolution),
+            "max_memberships": int(max_memberships),
+            "allow_isolation": bool(allow_isolation),
+            "n_vertices_scored": graph.vcount(),
+            "final_membership_sha256": final_membership_sha256,
+            "canonical_scoring_cover_sha256": canonical_scoring_cover_sha256,
+            "certificate_target": "exact_labeled_final_memberships",
+            "canonical_scoring_projection_certified_as_equilibrium": False,
+            "analysis_graph_sha256": analysis_graph_sha256,
+            "analysis_graph_policy": ANALYSIS_GRAPH_POLICY,
+            "auditor_source_sha256": auditor_source_sha256,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def _append_log(output_dir: Path, message: str) -> None:
     """Persist concise orchestration events alongside the printed progress."""
     logs = output_dir / "logs"
@@ -234,6 +486,180 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return loaded if isinstance(loaded, dict) else None
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _verified_artifact_value(
+    record: dict[str, Any], output_dir: Path, *, prefix: str
+) -> Any | None:
+    relative = record.get(f"{prefix}_artifact")
+    content_digest = record.get(f"{prefix}_sha256")
+    artifact_digest = record.get(f"{prefix}_artifact_sha256")
+    if not all(isinstance(value, str) and value for value in (
+        relative, content_digest, artifact_digest
+    )):
+        return None
+    relative_path = Path(str(relative))
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        return None
+    path = output_dir / relative_path
+    try:
+        encoded = path.read_bytes()
+        if hashlib.sha256(encoded).hexdigest() != artifact_digest:
+            return None
+        value = json.loads(gzip.decompress(encoded).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if prefix in {"final_cover", "ground_truth_cover"}:
+        if not isinstance(value, list):
+            return None
+        try:
+            canonical, _ = canonicalize_cover(value, minimum_size=1)
+        except (TypeError, ValueError):
+            return None
+        return (
+            canonical
+            if canonical == value and cover_sha256(canonical) == content_digest
+            else None
+        )
+    if prefix == "analysis_graph":
+        if not isinstance(value, dict):
+            return None
+        try:
+            if (
+                value.get("schema_version") != 1
+                or value.get("analysis_graph_policy") != ANALYSIS_GRAPH_POLICY
+                or isinstance(value.get("n"), bool)
+                or not isinstance(value.get("n"), int)
+                or isinstance(value.get("m"), bool)
+                or not isinstance(value.get("m"), int)
+                or not isinstance(value.get("directed"), bool)
+            ):
+                return None
+            n_vertices = value["n"]
+            directed = value["directed"]
+            edges = [tuple(map(int, edge)) for edge in value["edges"]]
+            reconstructed = ig.Graph(
+                n=n_vertices, edges=edges, directed=directed
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        return (
+            reconstructed
+            if value["m"] == reconstructed.ecount()
+            and reconstructed.is_simple()
+            and graph_sha256(reconstructed) == content_digest
+            else None
+        )
+    return value if _raw_membership_digest(value) == content_digest else None
+
+
+def _cover_projection_from_membership_rows(
+    memberships: Any, n_vertices: int
+) -> tuple[list[list[int]], dict[str, Any]] | None:
+    if not isinstance(memberships, list) or len(memberships) != n_vertices:
+        return None
+    communities: dict[int, list[int]] = defaultdict(list)
+    try:
+        for vertex, labels in enumerate(memberships):
+            row = [int(label) for label in labels]
+            if not row or len(row) != len(set(row)) or min(row) < 0:
+                return None
+            for label in row:
+                communities[label].append(vertex)
+        labeled_bodies = list(communities.values())
+        cover, validation = canonicalize_cover(
+            labeled_bodies,
+            n_vertices=n_vertices,
+            minimum_size=1,
+        )
+        duplicate_bodies = int(validation["duplicate_communities_removed"])
+        return cover, {
+            "strategy": "unique_community_body_projection_v1",
+            "exact_labeled_community_count": len(labeled_bodies),
+            "canonical_unique_body_count": len(cover),
+            "duplicate_community_bodies_removed": duplicate_bodies,
+            "projection_changed": duplicate_bodies > 0,
+            "equilibrium_target": "exact_labeled_final_memberships",
+            "canonical_scoring_projection_certified_as_equilibrium": False,
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def _cover_from_membership_rows(
+    memberships: Any, n_vertices: int
+) -> list[list[int]] | None:
+    projection = _cover_projection_from_membership_rows(
+        memberships, n_vertices
+    )
+    return projection[0] if projection is not None else None
+
+
+def _metric_value_matches(value: Any, expected: Any) -> bool:
+    if isinstance(expected, bool) or isinstance(value, bool):
+        return value is expected
+    if isinstance(expected, (int, float)):
+        if not isinstance(value, (int, float)):
+            return False
+        if not math.isfinite(float(value)) or not math.isfinite(float(expected)):
+            return False
+        return abs(float(value) - float(expected)) <= 1e-12 * max(
+            1.0, abs(float(expected))
+        )
+    return value == expected
+
+
+def _cached_metrics_match(
+    record: dict[str, Any], expected: dict[str, Any], final_cover: Any
+) -> bool:
+    """Re-score a cached cover against the current canonical GT before reuse."""
+    metrics = record.get("metrics")
+    if not isinstance(metrics, dict) or _metrics_digest(metrics) != record.get(
+        "metrics_sha256"
+    ):
+        return False
+    graph = expected.get("_analysis_graph_object")
+    ground_truth = expected.get("_ground_truth_cover")
+    content = expected.get("dataset_content_identity") or {}
+    options = expected.get("run_options") or {}
+    if graph is None or not isinstance(ground_truth, list) or not isinstance(final_cover, list):
+        return False
+    try:
+        recomputed = evaluate_cover(
+            final_cover,
+            ground_truth,
+            int(content["n"]),
+            compute_omega=bool(options.get("omega")),
+            omega_sample_size=int(options.get("omega_sample_size", 100_000)),
+            omega_seed=int(expected["seed"]),
+        )
+        if graph.vcount() <= 20_000:
+            recomputed["cpm_overlapping_quality"] = quality_overlapping_cpm(
+                graph, final_cover, float(expected["resolution"])
+            )
+            recomputed["cpm_overlapping_quality_status"] = "computed"
+        else:
+            recomputed["cpm_overlapping_quality"] = None
+            recomputed["cpm_overlapping_quality_status"] = "skipped_large_graph"
+    except (KeyError, TypeError, ValueError):
+        return False
+    runtime = metrics.get("runtime_seconds")
+    expected_metrics = {
+        **recomputed,
+        "runtime_seconds": record.get("runtime_seconds"),
+    }
+    return (
+        set(metrics) == set(expected_metrics)
+        and all(
+            _metric_value_matches(metrics.get(key), value)
+            for key, value in expected_metrics.items()
+        )
+        and isinstance(runtime, (int, float))
+        and not isinstance(runtime, bool)
+        and math.isfinite(float(runtime))
+        and float(runtime) >= 0.0
+        and _metric_value_matches(record.get("runtime_seconds"), runtime)
+    )
 
 
 def _parse_timeout_map(value: Any, field: str) -> dict[str, float]:
@@ -285,12 +711,16 @@ def _cache_parameters_compatible(existing: dict[str, Any], expected: dict[str, A
     if protocol_version != RUN_PROTOCOL_VERSION:
         return False
     for key in (
+        "profile",
         "dataset",
         "cover",
         "method",
         "seed",
         "max_memberships",
         "allow_isolation",
+        "ensure_equilibrium",
+        "n_iterations",
+        "local_move_only",
         "initialization",
     ):
         if existing.get(key) != expected.get(key):
@@ -303,9 +733,21 @@ def _cache_parameters_compatible(existing: dict[str, Any], expected: dict[str, A
             return False
     if existing.get("memory_limit_bytes") != expected.get("memory_limit_bytes"):
         return False
+    if (existing.get("method_metadata") or {}).get("parameters") != expected.get(
+        "method_parameters"
+    ):
+        return False
+    if (existing.get("method_metadata") or {}).get("dependency") != expected.get(
+        "method_dependency"
+    ):
+        return False
     if existing.get("dataset_metadata_identity") != expected.get("dataset_metadata_identity"):
         return False
     if existing.get("dataset_report", {}).get("analysis_graph") != expected.get("analysis_graph"):
+        return False
+    if existing.get("dataset_report", {}).get("content_identity") != expected.get(
+        "dataset_content_identity"
+    ):
         return False
     existing_options = existing.get("run_options")
     expected_options = expected.get("run_options")
@@ -325,6 +767,13 @@ def _cache_parameters_compatible(existing: dict[str, Any], expected: dict[str, A
     return True
 
 
+def _float_matches_for_cache(value: Any, expected: Any) -> bool:
+    try:
+        return abs(float(value) - float(expected)) <= 1e-12
+    except (TypeError, ValueError):
+        return False
+
+
 def _cache_compatible(existing: dict[str, Any], expected: dict[str, Any]) -> bool:
     """Only valid metrics (or an explicit unavailable dependency) can resume."""
     if not _cache_parameters_compatible(existing, expected):
@@ -333,10 +782,193 @@ def _cache_compatible(existing: dict[str, Any], expected: dict[str, Any]) -> boo
     if status not in RESUMABLE_CACHE_STATUSES:
         return False
     if status == "completed":
+        artifact_root = expected.get("_artifact_root")
+        if not isinstance(artifact_root, Path):
+            return False
+        content = expected.get("dataset_content_identity") or {}
+        if (
+            existing.get("analysis_graph_sha256") != content.get("graph_sha256")
+            or existing.get("ground_truth_cover_sha256")
+            != content.get("ground_truth_cover_sha256")
+        ):
+            return False
+        final_cover = _verified_artifact_value(
+            existing, artifact_root, prefix="final_cover"
+        )
+        if final_cover is None:
+            return False
+        artifact_graph = _verified_artifact_value(
+            existing, artifact_root, prefix="analysis_graph"
+        )
+        if not isinstance(artifact_graph, ig.Graph):
+            return False
+        artifact_ground_truth = _verified_artifact_value(
+            existing, artifact_root, prefix="ground_truth_cover"
+        )
+        if artifact_ground_truth is None:
+            return False
+        expected_graph = expected.get("_analysis_graph_object")
+        if (
+            expected_graph is None
+            or graph_sha256(artifact_graph) != graph_sha256(expected_graph)
+            or artifact_ground_truth != expected.get("_ground_truth_cover")
+        ):
+            return False
+        if not _cached_metrics_match(existing, expected, final_cover):
+            return False
+        if str(existing.get("method", "")).startswith("hedonic_"):
+            pre_cleanup_memberships = _verified_artifact_value(
+                existing, artifact_root, prefix="pre_cleanup_membership"
+            )
+            if pre_cleanup_memberships is None:
+                return False
+            final_memberships = _verified_artifact_value(
+                existing, artifact_root, prefix="final_membership"
+            )
+            if final_memberships is None:
+                return False
+            certificate = existing.get("equilibrium_certificate")
+            if not isinstance(certificate, dict):
+                return False
+            max_regret = certificate.get("max_positive_regret")
+            max_tolerance = certificate.get("max_stability_tolerance")
+            auditor_sha256 = expected.get("experiment_identity", {}).get(
+                "tracked_files", {}
+            ).get("src/hedonic/experiments/overlapping/robustness.py")
+            if (
+                certificate.get("status") != "verified"
+                or certificate.get("is_local_equilibrium_at_resolution") is not True
+                or certificate.get("final_membership_sha256")
+                != existing.get("final_membership_sha256")
+                or certificate.get("canonical_scoring_cover_sha256")
+                != existing.get("final_cover_sha256")
+                or certificate.get("certificate_target")
+                != "exact_labeled_final_memberships"
+                or certificate.get(
+                    "canonical_scoring_projection_certified_as_equilibrium"
+                )
+                is not False
+                or not _float_matches_for_cache(
+                    certificate.get("gamma"), expected.get("resolution")
+                )
+                or certificate.get("max_memberships")
+                != expected.get("max_memberships")
+                or certificate.get("allow_isolation")
+                != expected.get("allow_isolation")
+                or certificate.get("stable_fraction") != 1.0
+                or certificate.get("tolerance")
+                != {"atol": 1e-10, "rtol": 1e-9}
+                or certificate.get("auditor")
+                != "hedonic.experiments.overlapping.robustness.audit_cover"
+                or certificate.get("auditor_source_sha256") != auditor_sha256
+                or certificate.get("independent_of_native_stop") is not True
+                or certificate.get("analysis_graph_policy")
+                != ANALYSIS_GRAPH_POLICY
+                or certificate.get("analysis_graph_sha256")
+                != content.get("graph_sha256")
+                or certificate.get("n_vertices_scored") != content.get("n")
+                or isinstance(max_regret, bool)
+                or not isinstance(max_regret, (int, float))
+                or not math.isfinite(float(max_regret))
+                or float(max_regret) < 0.0
+                or isinstance(max_tolerance, bool)
+                or not isinstance(max_tolerance, (int, float))
+                or not math.isfinite(float(max_tolerance))
+                or float(max_tolerance) < 0.0
+                or float(max_regret) > float(max_tolerance) + 1e-15
+                or existing.get("equilibrium_status")
+                != "verified_independent_audit"
+            ):
+                return False
+            n_vertices = (
+                existing.get("dataset_report", {})
+                .get("content_identity", {})
+                .get("n")
+            )
+            projection = (
+                _cover_projection_from_membership_rows(
+                    final_memberships, n_vertices
+                )
+                if isinstance(n_vertices, int)
+                else None
+            )
+            if projection is None or projection[0] != final_cover:
+                return False
+            graph = expected.get("_analysis_graph_object")
+            if graph is None:
+                return False
+            try:
+                fresh_audit = audit_cover(
+                    graph,
+                    final_memberships,
+                    max_memberships=int(expected["max_memberships"]),
+                    allow_isolation=bool(expected["allow_isolation"]),
+                    gamma=float(expected["resolution"]),
+                    atol=1e-10,
+                    rtol=1e-9,
+                    compute_intervals=False,
+                    dense=False,
+                )
+            except (KeyError, TypeError, ValueError):
+                return False
+            if (
+                fresh_audit.get("is_local_equilibrium_at_resolution") is not True
+                or not _float_matches_for_cache(
+                    fresh_audit.get("stable_fraction_at_resolution"),
+                    certificate.get("stable_fraction"),
+                )
+                or not _float_matches_for_cache(
+                    fresh_audit.get("max_positive_regret_at_resolution"),
+                    certificate.get("max_positive_regret"),
+                )
+                or not _float_matches_for_cache(
+                    fresh_audit.get("max_stability_tolerance_at_resolution"),
+                    certificate.get("max_stability_tolerance"),
+                )
+                or fresh_audit.get("n_vertices_scored")
+                != certificate.get("n_vertices_scored")
+            ):
+                return False
+            expected_projection = {
+                **projection[1],
+                "exact_final_membership_sha256": existing.get(
+                    "final_membership_sha256"
+                ),
+                "canonical_scoring_cover_sha256": existing.get(
+                    "final_cover_sha256"
+                ),
+            }
+            if existing.get("final_membership_projection") != expected_projection:
+                return False
+            normalization = (existing.get("method_metadata") or {}).get(
+                "normalization"
+            ) or {}
+            if normalization.get("duplicate_communities_removed") != projection[
+                1
+            ]["duplicate_community_bodies_removed"]:
+                return False
+        else:
+            certificate = existing.get("equilibrium_certificate")
+            auditor_sha256 = expected.get("experiment_identity", {}).get(
+                "tracked_files", {}
+            ).get("src/hedonic/experiments/overlapping/robustness.py")
+            if (
+                existing.get("equilibrium_status") != "not_applicable"
+                or not isinstance(certificate, dict)
+                or certificate.get("status") != "not_applicable"
+                or certificate.get("auditor")
+                != "hedonic.experiments.overlapping.robustness.audit_cover"
+                or certificate.get("auditor_source_sha256") != auditor_sha256
+            ):
+                return False
         return True
     # This is a capability decision, not a numerical result.  It is safe to
     # retain it only if the record says why the adapter is unavailable.
-    return status == "skipped_unsupported" and bool(existing.get("failure_kind") == "unsupported")
+    return (
+        status == "skipped_unsupported"
+        and existing.get("failure_kind") == "unsupported"
+        and expected.get("_method_available") is False
+    )
 
 
 def _worker(
@@ -369,6 +1001,10 @@ def _worker(
             parameters=method_parameters,
             initial_membership=initial_membership,
         )
+        pre_cleanup_memberships = method_meta.pop(
+            "pre_cleanup_memberships", None
+        )
+        final_memberships = method_meta.pop("final_memberships", None)
         try:
             import resource
 
@@ -383,7 +1019,14 @@ def _worker(
             pass
         _write_worker_packet(
             result_path,
-            {"status": "ok", "cover": cover, "method_meta": method_meta, "memory": memory},
+            {
+                "status": "ok",
+                "cover": cover,
+                "pre_cleanup_memberships": pre_cleanup_memberships,
+                "final_memberships": final_memberships,
+                "method_meta": method_meta,
+                "memory": memory,
+            },
         )
     except BaseException as exc:  # child errors must reach a resumable run record
         _write_worker_packet(
@@ -683,6 +1326,33 @@ def _run_with_timeout(
             "result_transport": "temporary_pickle_file",
         }
     )
+    if packet.get("status") == "ok" and method_name.startswith("hedonic_"):
+        method_meta = packet.get("method_meta") or {}
+        pre_cleanup = packet.get(
+            "pre_cleanup_memberships",
+            method_meta.get("pre_cleanup_memberships"),
+        )
+        final_memberships = packet.get(
+            "final_memberships", method_meta.get("final_memberships")
+        )
+        try:
+            canonical_cover, _ = canonicalize_cover(
+                packet.get("cover") or [],
+                n_vertices=graph.vcount(),
+                minimum_size=1,
+            )
+        except (TypeError, ValueError):
+            canonical_cover = []
+        exact_cover = _cover_from_membership_rows(
+            final_memberships, graph.vcount()
+        )
+        if pre_cleanup is None or exact_cover is None or exact_cover != canonical_cover:
+            packet["status"] = "error"
+            packet["error"] = (
+                "Hedonic result failed exact pre-cleanup/final-membership "
+                "and canonical scoring-cover validation"
+            )
+            packet.pop("cover", None)
     return finish(packet)
 
 
@@ -710,6 +1380,25 @@ def _record(
     conflict = owned.intersection(extra)
     if conflict:
         raise ValueError(f"_record extra fields conflict with record fields: {sorted(conflict)}")
+    method_parameters = METHODS.get(method).parameters if method in METHODS else {}
+    extra.setdefault(
+        "ensure_equilibrium", bool(method_parameters.get("ensure_equilibrium", False))
+    )
+    extra.setdefault(
+        "n_iterations",
+        int(method_parameters.get("n_iterations", -1))
+        if method.startswith("hedonic_")
+        else None,
+    )
+    extra.setdefault(
+        "local_move_only", bool(method_parameters.get("local_move_only", False))
+    )
+    extra.setdefault(
+        "equilibrium_status",
+        "cleanup_requested"
+        if extra["ensure_equilibrium"]
+        else "native_stop_or_not_applicable",
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "protocol_version": RUN_PROTOCOL_VERSION,
@@ -736,7 +1425,7 @@ def _completed_records(output_dir: Path) -> list[dict[str, Any]]:
     for path in sorted(runs.rglob("*.json")):
         record = _read_json(path)
         if record is not None:
-            record["run_path"] = str(path)
+            record["run_path"] = path.relative_to(output_dir).as_posix()
             records.append(record)
     return records
 
@@ -749,7 +1438,14 @@ def _flatten_record(record: dict[str, Any]) -> dict[str, Any]:
     }
     metrics = record.get("metrics")
     if isinstance(metrics, dict):
-        row.update(metrics)
+        protected = {
+            "schema_version", "protocol_version", "created_at", "dataset",
+            "cover", "method", "seed", "resolution", "status", "profile",
+            "experiment_identity", "dataset_metadata_identity",
+        }
+        row.update(
+            {key: value for key, value in metrics.items() if key not in protected}
+        )
     method_metadata = record.get("method_metadata")
     if isinstance(method_metadata, dict):
         row["method_parameters"] = json.dumps(
@@ -940,7 +1636,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", choices=tuple(PROFILE_DEFAULTS), default="standard")
     parser.add_argument("--seeds", help="Comma/range syntax, e.g. 0-4")
     parser.add_argument("--resolutions", help="auto, comma floats, or start:stop:count")
-    parser.add_argument("--output_dir", help="Artifact root (default: ~/Databases/Hedonic/experiments/snap_benchmark)")
+    parser.add_argument(
+        "--output_dir",
+        help=(
+            "Artifact root (default: "
+            "artifacts/overlapping/snap_benchmark)"
+        ),
+    )
     parser.add_argument("--resume", action="store_true", help="Skip existing per-run records")
     parser.add_argument("--timeout_per_run", type=float, help="Hard wall-clock limit per detector run (seconds; <=0 disables)")
     parser.add_argument(
@@ -977,6 +1679,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list-methods", action="store_true", help="List adapters and availability then exit")
     parser.add_argument("--dry-run", action="store_true", help="Inspect/validate selected data and write no detector runs")
     parser.add_argument("--execution", choices=("fresh", "rerun", "retry"), default="fresh", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--expected_dataset_metadata_sha256",
+        help=argparse.SUPPRESS,
+    )
     return parser
 
 
@@ -987,7 +1693,7 @@ def _print_networks() -> None:
     print("  livejournal social-community cover: all, top5000")
     print("  youtube     channel cover: all, top5000")
     print("  wikipedia   wiki-topcats category cover: all (directed graph)")
-    print("Excluded: email-Eu-core, Cora, and PubMed have disjoint labels; DBLP_CLI is output only.")
+    print("Excluded: email-Eu-core, Cora, and PubMed have disjoint labels; prior resolution artifacts are output only.")
 
 
 def _print_methods() -> None:
@@ -1054,15 +1760,53 @@ def run_benchmark(args: argparse.Namespace) -> int:
     """Run the configured suite. Public for small-fixture tests and scripts."""
     options = _effective_options(args)
     experiment_identity = current_experiment_identity()
+    selected_methods = resolve_methods(options["methods"])
     if not experiment_identity["tracked_files_match_lock"]:
         raise ValueError("Protocol-locked code/config hashes do not match; refresh and review the lock")
     if not experiment_identity["lucas_igraph"]["package_identity_matches_lock"]:
         raise ValueError("installed lucas-igraph package does not match the protocol-locked release")
-    selected_methods = resolve_methods(options["methods"])
+    if not experiment_identity["scientific_dependencies_match_lock"]:
+        raise ValueError(
+            "installed numerical packages do not match the protocol-locked implementations"
+        )
+    selected_external_mismatches = [
+        adapter.name
+        for adapter in selected_methods
+        if adapter.name in NON_SCALABLE_BASELINES
+        and (
+            not isinstance(
+                experiment_identity["external_dependencies"].get(adapter.name),
+                dict,
+            )
+            or (
+                experiment_identity["external_dependencies"][adapter.name].get(
+                    "actual_version"
+                )
+                is not None
+                and not all(
+                    experiment_identity["external_dependencies"][adapter.name].get(
+                        field
+                    )
+                    is True
+                    for field in (
+                        "version_matches_lock",
+                        "package_lock_matches_lock",
+                        "distribution_tree_matches_lock",
+                        "implementation_matches_lock",
+                    )
+                )
+            )
+        )
+    ]
+    if selected_external_mismatches:
+        raise ValueError(
+            "installed external baseline packages do not match the protocol-locked "
+            "implementations: " + ", ".join(selected_external_mismatches)
+        )
     data_root = Path(args.data_root).expanduser() if args.data_root else DEFAULT_NETWORKS_DIR
-    default_output = Path(OUTPUT_DIR) / "snap_benchmark"
+    default_output = OVERLAPPING_ARTIFACTS_DIR / "snap_benchmark"
     output_dir = _safe_output_dir(
-        Path(args.output_dir).expanduser() if args.output_dir else default_output,
+        expand_path(args.output_dir) if args.output_dir else default_output,
         data_root,
     )
     availability = method_availability()
@@ -1098,6 +1842,17 @@ def run_benchmark(args: argparse.Namespace) -> int:
             )
             dataset = bounded_induced_dataset(dataset, options["max_nodes"])
             dataset = common_undirected_analysis_dataset(dataset)
+            if args.expected_dataset_metadata_sha256:
+                if len(options["datasets"]) != 1:
+                    raise ValueError(
+                        "--expected_dataset_metadata_sha256 requires exactly one dataset"
+                    )
+                actual_metadata = dataset_metadata_identity(dataset.report) or {}
+                if actual_metadata.get("sha256") != args.expected_dataset_metadata_sha256:
+                    raise ValueError(
+                        "loaded dataset graph/ground-truth content does not match "
+                        "the orchestration plan identity"
+                    )
             print_dataset_report(dataset.report)
             manifest["datasets"][dataset_name] = {"status": "loaded", "report": dataset.report}
         except UnsupportedCoverVariant as exc:
@@ -1138,13 +1893,16 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
         if args.dry_run:
             continue
+        analysis_graph_artifact = _persist_analysis_graph(
+            output_dir, dataset.graph
+        )
+        ground_truth_cover_artifact = _persist_ground_truth_cover(
+            output_dir, dataset.cover
+        )
+        dataset_content = dataset.report.get("content_identity") or {}
         ground_truth_membership_cap = max(
             1,
-            int(
-                dataset.report.get("overlap_statistics", {}).get(
-                    "max_memberships_per_node", 1
-                )
-            ),
+            int(dataset_content.get("ground_truth_max_memberships_per_node", 1)),
         )
         configured_membership_cap = options["max_memberships"]
         max_memberships = max(
@@ -1170,14 +1928,20 @@ def run_benchmark(args: argparse.Namespace) -> int:
             for adapter in selected_methods:
                 resolution = effective_resolution(adapter, dataset.graph, requested_value)
                 for seed in options["seeds"]:
-                    initialization = (
-                        {
-                            "kind": "seeded_random_disjoint",
-                            "requested_community_count": len(dataset.cover),
-                            "seed": int(seed),
-                            "shared_across_hedonic_methods": True,
-                        }
+                    initial_membership = (
+                        seeded_initial_membership(
+                            dataset.graph.vcount(), len(dataset.cover), seed
+                        )
                         if adapter.name.startswith("hedonic_")
+                        else None
+                    )
+                    initialization = (
+                        _initialization_metadata(
+                            initial_membership,
+                            requested_community_count=len(dataset.cover),
+                            seed=seed,
+                        )
+                        if initial_membership is not None
                         else None
                     )
                     path = _run_path(output_dir, dataset.name, options["cover"], adapter.name, seed, resolution)
@@ -1186,8 +1950,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     timeout_seconds = _timeout_for(options, dataset.name, adapter.name)
                     expected_cache = {
                         "experiment_identity": experiment_identity,
+                        "profile": args.profile,
                         "dataset_metadata_identity": dataset_metadata_identity(dataset.report),
                         "analysis_graph": dataset.report.get("analysis_graph"),
+                        "dataset_content_identity": dataset.report.get("content_identity"),
                         "dataset": dataset.name,
                         "cover": options["cover"],
                         "method": adapter.name,
@@ -1197,6 +1963,19 @@ def run_benchmark(args: argparse.Namespace) -> int:
                         "allow_isolation": bool(
                             adapter.parameters.get("allow_isolation", False)
                         ),
+                        "ensure_equilibrium": bool(
+                            adapter.parameters.get("ensure_equilibrium", False)
+                        ),
+                        "n_iterations": (
+                            int(adapter.parameters.get("n_iterations", -1))
+                            if adapter.name.startswith("hedonic_")
+                            else None
+                        ),
+                        "local_move_only": bool(
+                            adapter.parameters.get("local_move_only", False)
+                        ),
+                        "method_parameters": adapter.parameters,
+                        "method_dependency": method_dependency_identity(adapter.name),
                         "initialization": initialization,
                         "timeout_seconds": timeout_seconds,
                         "memory_limit_bytes": options["memory_limit_bytes"],
@@ -1205,6 +1984,12 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             "omega_sample_size": int(args.omega_sample_size),
                             "external_baseline_policy": adapter.name in options["skip_methods"],
                         },
+                        "_artifact_root": output_dir,
+                        "_analysis_graph_object": dataset.graph,
+                        "_ground_truth_cover": dataset.cover,
+                        "_method_available": bool(
+                            availability[adapter.name]["available"]
+                        ),
                     }
                     if adapter.name in options["skip_methods"]:
                         existing = _read_json(path) if path.is_file() else None
@@ -1214,7 +1999,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             and _cache_parameters_compatible(existing, expected_cache)
                             and str(existing.get("status")) == SKIPPED_EXTERNAL_STATUS
                         ):
-                            existing["run_path"] = str(path)
+                            existing["run_path"] = path.relative_to(output_dir).as_posix()
                             existing["execution"] = "cached"
                             records.append(existing)
                             manifest["execution_counts"]["cached"] += 1
@@ -1258,6 +2043,9 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 "family": adapter.family,
                                 "implementation": adapter.implementation,
                                 "parameters": adapter.parameters,
+                                "dependency": method_dependency_identity(
+                                    adapter.name
+                                ),
                                 "execution": "not_run_external_baseline",
                             },
                         )
@@ -1268,7 +2056,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             f"dataset={dataset.name} method={adapter.name} seed={seed} "
                             f"resolution={resolution:.12g} status={record['status']}",
                         )
-                        record["run_path"] = str(path)
+                        record["run_path"] = path.relative_to(output_dir).as_posix()
                         records.append(record)
                         manifest["execution_counts"]["external_baseline_policy"] = (
                             manifest["execution_counts"].get("external_baseline_policy", 0) + 1
@@ -1281,75 +2069,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     if args.resume and path.is_file():
                         existing = _read_json(path)
                         if existing is not None and _cache_compatible(existing, expected_cache):
-                            existing["run_path"] = str(path)
+                            existing["run_path"] = path.relative_to(output_dir).as_posix()
                             existing["execution"] = "cached"
                             records.append(existing)
                             manifest["execution_counts"]["cached"] += 1
                             print(f"[resume] {dataset.name}/{adapter.name}/seed={seed}/resolution={resolution:.6g}")
-                            continue
-                        # A compatible resource failure is a policy decision,
-                        # not a cached metric.  Do not print [resume] or
-                        # launch the same deterministic condition again.
-                        if (
-                            existing is not None
-                            and adapter.name not in NON_SCALABLE_BASELINES
-                            and _cache_parameters_compatible(existing, expected_cache)
-                            and str(existing.get("status")) in RESOURCE_FAILURE_STATUSES
-                        ):
-                            existing["run_path"] = str(path)
-                            existing["execution"] = "resource_failure_policy"
-                            _write_json(path, existing)
-                            records.append(existing)
-                            manifest["execution_counts"]["resource_failure_policy"] = (
-                                manifest["execution_counts"].get("resource_failure_policy", 0) + 1
-                            )
-                            print(f"[resource-failure] {dataset.name}/{adapter.name}/seed={seed}/resolution={resolution:.6g}")
-                            continue
-                        if (
-                            existing is not None
-                            and adapter.name in NON_SCALABLE_BASELINES
-                            and _cache_parameters_compatible(existing, expected_cache)
-                            and str(existing.get("status"))
-                            in RESOURCE_FAILURE_STATUSES | {"skipped_not_scalable"}
-                        ):
-                            if str(existing.get("status")) != "skipped_not_scalable":
-                                backup = path.with_name(
-                                    f"{path.name}.incompatible.{int(time.time() * 1000)}"
-                                )
-                                try:
-                                    path.replace(backup)
-                                except OSError:
-                                    pass
-                                existing = _record(
-                                    dataset=dataset.name,
-                                    cover=options["cover"],
-                                    method=adapter.name,
-                                    seed=seed,
-                                    resolution=resolution,
-                                    status="skipped_not_scalable",
-                                    profile=args.profile,
-                                    dataset_report=dataset.report,
-                                    max_memberships=max_memberships,
-                                    allow_isolation=expected_cache["allow_isolation"],
-                                    initialization=initialization,
-                                    timeout_seconds=timeout_seconds,
-                                    memory_limit_bytes=options["memory_limit_bytes"],
-                                    run_options=expected_cache["run_options"],
-                                    failure_kind="resource_exhausted",
-                                    resource_status=existing.get("status"),
-                                    reason="baseline previously exceeded its identical resource limit",
-                                    detector_memory=existing.get("detector_memory") or existing.get("memory"),
-                                    runtime_seconds=existing.get("runtime_seconds"),
-                                )
-                                _write_json(path, existing)
-                            existing["run_path"] = str(path)
-                            existing["execution"] = "not_scalable_policy"
-                            _write_json(path, existing)
-                            records.append(existing)
-                            manifest["execution_counts"]["not_scalable_policy"] = (
-                                manifest["execution_counts"].get("not_scalable_policy", 0) + 1
-                            )
-                            print(f"[not-scalable] {dataset.name}/{adapter.name}/seed={seed}/resolution={resolution:.6g}")
                             continue
                         if existing is not None:
                             incompatible_cache = True
@@ -1382,19 +2106,22 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             timeout_seconds=timeout_seconds,
                             memory_limit_bytes=options["memory_limit_bytes"],
                             run_options=expected_cache["run_options"],
+                            method_metadata={
+                                "name": adapter.name,
+                                "family": adapter.family,
+                                "implementation": adapter.implementation,
+                                "parameters": adapter.parameters,
+                                "dependency": method_dependency_identity(
+                                    adapter.name
+                                ),
+                                "execution": "dependency_unavailable",
+                            },
                         )
                     else:
                         print(
                             f"[run] {dataset.name}/{adapter.name} seed={seed} "
                             f"resolution={resolution:.6g}",
                             flush=True,
-                        )
-                        initial_membership = (
-                            seeded_initial_membership(
-                                dataset.graph.vcount(), len(dataset.cover), seed
-                            )
-                            if initialization is not None
-                            else None
                         )
                         outcome = _run_with_timeout(
                             adapter.name,
@@ -1406,10 +2133,61 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             memory_limit_bytes=options["memory_limit_bytes"],
                             initial_membership=initial_membership,
                         )
-                        del initial_membership
                         if outcome["status"] == "ok":
-                            cover = outcome.pop("cover")
+                            detector_cover = outcome.pop("cover")
+                            cover, final_cover_validation = canonicalize_cover(
+                                detector_cover,
+                                n_vertices=dataset.graph.vcount(),
+                                minimum_size=1,
+                            )
+                            if not cover:
+                                raise RuntimeError(
+                                    f"{adapter.name} produced no canonical communities"
+                            )
                             method_meta = outcome.pop("method_meta")
+                            pre_cleanup_memberships = outcome.pop(
+                                "pre_cleanup_memberships", None
+                            )
+                            final_memberships = outcome.pop(
+                                "final_memberships", None
+                            )
+                            if pre_cleanup_memberships is None:
+                                pre_cleanup_memberships = method_meta.pop(
+                                    "pre_cleanup_memberships", None
+                                )
+                            if final_memberships is None:
+                                final_memberships = method_meta.pop(
+                                    "final_memberships", None
+                                )
+                            pre_cleanup_artifact = _persist_raw_memberships(
+                                output_dir, pre_cleanup_memberships
+                            )
+                            final_membership_artifact = _persist_final_memberships(
+                                output_dir, final_memberships
+                            )
+                            final_cover_artifact = _persist_final_cover(
+                                output_dir, cover
+                            )
+                            final_membership_projection = None
+                            if adapter.name.startswith("hedonic_"):
+                                projected = _cover_projection_from_membership_rows(
+                                    final_memberships, dataset.graph.vcount()
+                                )
+                                if projected is None or projected[0] != cover:
+                                    raise RuntimeError(
+                                        "exact final memberships disagree with the canonical scoring projection"
+                                    )
+                                final_membership_projection = {
+                                    **projected[1],
+                                    "exact_final_membership_sha256": (
+                                        final_membership_artifact["content_sha256"]
+                                        if final_membership_artifact
+                                        else None
+                                    ),
+                                    "canonical_scoring_cover_sha256": final_cover_artifact[
+                                        "content_sha256"
+                                    ],
+                                }
                             detector_memory = outcome.pop("memory", None)
                             metrics = evaluate_cover(
                                 cover,
@@ -1430,13 +2208,46 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             metrics["runtime_seconds"] = outcome.get(
                                 "runtime_seconds", method_meta["runtime_seconds"]
                             )
+                            certificate = _equilibrium_certificate(
+                                adapter.name,
+                                dataset.graph,
+                                final_memberships,
+                                final_membership_sha256=(
+                                    final_membership_artifact["content_sha256"]
+                                    if final_membership_artifact
+                                    else None
+                                ),
+                                canonical_scoring_cover_sha256=final_cover_artifact[
+                                    "content_sha256"
+                                ],
+                                max_memberships=max_memberships,
+                                resolution=resolution,
+                                allow_isolation=bool(
+                                    adapter.parameters.get("allow_isolation", False)
+                                ),
+                            )
+                            certificate_verified = (
+                                not adapter.name.startswith("hedonic_")
+                                or certificate.get("status") == "verified"
+                            )
+                            certificate_failure = (
+                                {}
+                                if certificate_verified
+                                else {
+                                    "failure_kind": "independent_equilibrium_audit",
+                                    "reason": (
+                                        "exact labeled final memberships failed the "
+                                        "independent local-equilibrium audit"
+                                    ),
+                                }
+                            )
                             record = _record(
                                 dataset=dataset.name,
                                 cover=options["cover"],
                                 method=adapter.name,
                                 seed=seed,
                                 resolution=resolution,
-                                status="completed",
+                                status=("completed" if certificate_verified else "failed"),
                                 profile=args.profile,
                                 dataset_report=dataset.report,
                                 max_memberships=max_memberships,
@@ -1446,7 +2257,6 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 run_options=expected_cache["run_options"],
                                 detector_memory=detector_memory,
                                 runtime_seconds=metrics["runtime_seconds"],
-                                n_iterations=-1,
                                 local_move_only=bool(
                                     adapter.parameters.get("local_move_only", False)
                                 ),
@@ -1455,7 +2265,98 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 ),
                                 initialization=initialization,
                                 method_metadata=method_meta,
+                                final_cover_sha256=final_cover_artifact[
+                                    "content_sha256"
+                                ],
+                                final_cover_artifact=final_cover_artifact["artifact"],
+                                final_cover_artifact_sha256=final_cover_artifact[
+                                    "artifact_sha256"
+                                ],
+                                final_cover_canonicalization=final_cover_validation,
+                                final_cover_statistics=cover_statistics(cover),
+                                analysis_graph_sha256=analysis_graph_artifact[
+                                    "content_sha256"
+                                ],
+                                analysis_graph_artifact=analysis_graph_artifact[
+                                    "artifact"
+                                ],
+                                analysis_graph_artifact_sha256=analysis_graph_artifact[
+                                    "artifact_sha256"
+                                ],
+                                ground_truth_cover_sha256=ground_truth_cover_artifact[
+                                    "content_sha256"
+                                ],
+                                ground_truth_cover_artifact=ground_truth_cover_artifact[
+                                    "artifact"
+                                ],
+                                ground_truth_cover_artifact_sha256=ground_truth_cover_artifact[
+                                    "artifact_sha256"
+                                ],
+                                final_membership_projection=final_membership_projection,
+                                raw_membership_hash=(
+                                    pre_cleanup_artifact["content_sha256"]
+                                    if pre_cleanup_artifact
+                                    else None
+                                ),
+                                raw_membership_sha256=(
+                                    pre_cleanup_artifact["content_sha256"]
+                                    if pre_cleanup_artifact
+                                    else None
+                                ),
+                                raw_membership_artifact=(
+                                    pre_cleanup_artifact["artifact"]
+                                    if pre_cleanup_artifact
+                                    else None
+                                ),
+                                raw_membership_artifact_sha256=(
+                                    pre_cleanup_artifact["artifact_sha256"]
+                                    if pre_cleanup_artifact
+                                    else None
+                                ),
+                                pre_cleanup_membership_sha256=(
+                                    pre_cleanup_artifact["content_sha256"]
+                                    if pre_cleanup_artifact
+                                    else None
+                                ),
+                                pre_cleanup_membership_artifact=(
+                                    pre_cleanup_artifact["artifact"]
+                                    if pre_cleanup_artifact
+                                    else None
+                                ),
+                                pre_cleanup_membership_artifact_sha256=(
+                                    pre_cleanup_artifact["artifact_sha256"]
+                                    if pre_cleanup_artifact
+                                    else None
+                                ),
+                                final_membership_sha256=(
+                                    final_membership_artifact["content_sha256"]
+                                    if final_membership_artifact
+                                    else None
+                                ),
+                                final_membership_artifact=(
+                                    final_membership_artifact["artifact"]
+                                    if final_membership_artifact
+                                    else None
+                                ),
+                                final_membership_artifact_sha256=(
+                                    final_membership_artifact["artifact_sha256"]
+                                    if final_membership_artifact
+                                    else None
+                                ),
+                                ensure_equilibrium=bool(
+                                    method_meta.get("ensure_equilibrium", False)
+                                ),
+                                equilibrium_status=(
+                                    "verified_independent_audit"
+                                    if certificate.get("status") == "verified"
+                                    else "independent_audit_failed"
+                                    if adapter.name.startswith("hedonic_")
+                                    else "not_applicable"
+                                ),
+                                equilibrium_certificate=certificate,
                                 metrics=metrics,
+                                metrics_sha256=_metrics_digest(metrics),
+                                **certificate_failure,
                             )
                         else:
                             outcome_status = str(outcome.pop("status"))
@@ -1516,11 +2417,12 @@ def run_benchmark(args: argparse.Namespace) -> int:
                         f"dataset={dataset.name} method={adapter.name} seed={seed} "
                         f"resolution={resolution:.12g} status={record['status']}",
                     )
-                    record["run_path"] = str(path)
+                    record["run_path"] = path.relative_to(output_dir).as_posix()
                     records.append(record)
-    # Reading the run tree includes resumed and previously complete points even
-    # when a current invocation selected only a subset.
-    all_records = _completed_records(output_dir)
+    # Aggregate only the exact current selection.  The run tree may contain
+    # incompatible or unselected records from older invocations; those remain
+    # available for provenance but must not silently enter current summaries.
+    all_records = records
     rows = _write_results(output_dir, all_records)
     _write_summary(output_dir, rows)
     plot_paths = _write_plots(output_dir, rows) if options["plots"] else []
@@ -1528,15 +2430,20 @@ def run_benchmark(args: argparse.Namespace) -> int:
     manifest["run_status_counts"] = dict(status_counts)
     manifest["finished_at"] = _timestamp()
     manifest["artifacts"] = {
-        "manifest": str(output_dir / "manifest.json"),
-        "runs": str(output_dir / "runs"),
-        "results_jsonl": str(output_dir / "results.jsonl"),
-        "results_csv": str(output_dir / "results.csv.gz"),
-        "summary_json": str(output_dir / "summary.json"),
-        "summary_csv": str(output_dir / "summary.csv"),
-        "method_availability": str(output_dir / "method_availability.json"),
-        "logs": str(output_dir / "logs"),
-        "plots": plot_paths,
+        "manifest": "manifest.json",
+        "runs": "runs",
+        "results_jsonl": "results.jsonl",
+        "results_csv": "results.csv.gz",
+        "summary_json": "summary.json",
+        "summary_csv": "summary.csv",
+        "method_availability": "method_availability.json",
+        "logs": "logs",
+        "plots": [
+            Path(path).relative_to(output_dir).as_posix()
+            if Path(path).is_absolute() and output_dir in Path(path).parents
+            else str(path)
+            for path in plot_paths
+        ],
     }
     _write_json(output_dir / "manifest.json", manifest)
     _append_log(output_dir, f"finished status_counts={json.dumps(manifest['run_status_counts'], sort_keys=True)}")

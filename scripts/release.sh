@@ -1,128 +1,65 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Release script for hedonic package
-# Usage: ./scripts/release.sh [patch|minor|major]
+# Prepare a release from a clean public checkout.
+# Usage: ./scripts/release.sh [patch|minor|major] [--push]
 
-set -e
+set -euo pipefail
 
-DO_PUSH=false
-
-# Check if args are provided
-if [ $# -eq 0 ]; then
-    echo "Usage: $0 [patch|minor|major] [-p|--push]"
-    echo "  patch: 0.0.1 -> 0.0.2"
-    echo "  minor: 0.1.0 -> 0.2.0"
-    echo "  major: 1.0.0 -> 2.0.0"
-    echo ""
-    echo "Flags:"
-    echo "  -p, --push   Push branch and tag to origin after tagging"
-    echo ""
-    echo "Note: Currently only TestPyPI publishing is enabled"
-    echo "PyPI workflow is disabled and can be re-enabled later"
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $0 [patch|minor|major] [--push]" >&2
     exit 1
 fi
 
 VERSION_TYPE=""
+DO_PUSH=false
 for arg in "$@"; do
     case "$arg" in
-        -p|--push)
+        patch|minor|major)
+            if [[ -n "$VERSION_TYPE" ]]; then
+                echo "Error: specify only one version bump" >&2
+                exit 1
+            fi
+            VERSION_TYPE="$arg"
+            ;;
+        --push|-p)
             DO_PUSH=true
             ;;
-        patch|minor|major)
-            if [ -z "$VERSION_TYPE" ]; then
-                VERSION_TYPE="$arg"
-            fi
-            ;;
         *)
-            echo "Error: Unknown argument: $arg"
-            echo "Usage: $0 [patch|minor|major] [-p|--push]"
+            echo "Error: unknown argument: $arg" >&2
+            echo "Usage: $0 [patch|minor|major] [--push]" >&2
             exit 1
             ;;
     esac
 done
 
-# Validate version type
-if [[ ! "$VERSION_TYPE" =~ ^(patch|minor|major)$ ]]; then
-    echo "Error: Version type must be patch, minor, or major"
+if [[ -z "$VERSION_TYPE" ]]; then
+    echo "Error: version bump is required" >&2
     exit 1
 fi
 
-echo "Releasing $VERSION_TYPE version to TestPyPI..."
-
-# Get current version from pyproject.toml
-CURRENT_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
-echo "Current version: $CURRENT_VERSION"
-
-# Parse version components
-IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
-MAJOR=${VERSION_PARTS[0]}
-MINOR=${VERSION_PARTS[1]}
-PATCH=${VERSION_PARTS[2]}
-
-# Calculate new version
-case $VERSION_TYPE in
-    patch)
-        NEW_PATCH=$((PATCH + 1))
-        NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
-        ;;
-    minor)
-        NEW_MINOR=$((MINOR + 1))
-        NEW_VERSION="$MAJOR.$NEW_MINOR.0"
-        ;;
-    major)
-        NEW_MAJOR=$((MAJOR + 1))
-        NEW_VERSION="$NEW_MAJOR.0.0"
-        ;;
-esac
-
-echo "New version: $NEW_VERSION"
-
-# Update pyproject.toml
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
-else
-    # Linux
-    sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo "Error: release requires a clean worktree" >&2
+    exit 1
 fi
 
-echo "Updated pyproject.toml"
+CURRENT_VERSION=$(uv version --short)
+echo "Current version: $CURRENT_VERSION"
+uv version --bump "$VERSION_TYPE" --no-sync
+NEW_VERSION=$(uv version --short)
+echo "New version: $NEW_VERSION"
 
-# Build the package
-echo "Building package..."
-uv build
+uv build --no-sources
+git add pyproject.toml uv.lock
+git commit -m "release: prepare $NEW_VERSION"
 
-# Commit changes
-git add pyproject.toml
-git commit -m "Bump version to $NEW_VERSION"
-
-# Create standard version tag
 TAG="v$NEW_VERSION"
 git tag "$TAG"
-echo "Created tag: $TAG"
-if [ "$DO_PUSH" = true ]; then
-    # Push branch and tag automatically
-    echo "\nPushing branch 'main' and tag '$TAG' to origin..."
-    git push origin main && git push origin "$TAG"
-    echo "Pushed to origin."
-    echo ""
-    echo "Release $NEW_VERSION prepared for TestPyPI!"
+echo "Created local tag: $TAG"
+
+if [[ "$DO_PUSH" == true ]]; then
+    BRANCH=$(git branch --show-current)
+    git push origin "$BRANCH" "$TAG"
+    echo "Pushed $BRANCH and $TAG."
 else
-    echo ""
-    echo "Release $NEW_VERSION prepared for TestPyPI!"
-    echo ""
-    echo "Next steps:"
-    echo "1. Review changes: git log --oneline -5"
-    echo "2. Push changes: git push origin main"
-    echo "3. Push tag: git push origin $TAG"
-    echo "4. Check GitHub Actions for automated publishing to TestPyPI"
-    echo ""
-    echo "Or push everything at once:"
-    echo "git push origin main && git push origin $TAG"
-    echo ""
-    echo "Tag format: $TAG"
-    echo "This will trigger: TestPyPI workflow only"
-    echo ""
-    echo "Note: PyPI workflow is currently disabled"
-    echo "To enable PyPI publishing later, uncomment .github/workflows/publish-pypi.yml.disabled"
+    echo "Nothing was pushed. Review the artifacts, then push $TAG from the public branch when ready."
 fi

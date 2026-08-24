@@ -5,18 +5,19 @@ Install with experiments extra, then::
     hedonic-exp --help
     hedonic-exp list
     hedonic-exp smoke
-    hedonic-exp disjoint --smoke --output_root /tmp/hedonic-smoke
+    hedonic-exp disjoint --smoke --output_root artifacts/disjoint/smoke
     hedonic-exp overlapping-small
-    hedonic-exp overlapping-dnn --output /tmp/hedonic-dnn.json
-    hedonic-exp overlapping-controlled --smoke --output /tmp/controlled-overlap.json
+    hedonic-exp overlapping-dnn --output artifacts/overlapping/dnn_certificate/dnn_certificate.json
+    hedonic-exp overlapping-controlled --smoke --output artifacts/overlapping/controlled_overlap/controlled_overlap.json
     hedonic-exp overlapping-subgraph --levels 1 --n_communities 5
     hedonic-exp overlapping-full --n_iterations -1
-    hedonic-exp overlapping-scale --smoke --output_dir /tmp/scale
-    hedonic-exp overlapping-resolution --smoke --singleton-mode both --output_dir /tmp/res-f1
-    hedonic-exp overlapping-benchmark --profile smoke --output_dir /tmp/snap-benchmark
+    hedonic-exp overlapping-scale --smoke --output_dir artifacts/overlapping/complexity_scale/smoke
+    hedonic-exp overlapping-resolution --smoke --singleton-mode both --output_dir artifacts/overlapping/resolution_f1/smoke
+    hedonic-exp overlapping-benchmark --profile smoke --output_dir artifacts/overlapping/snap_benchmark/smoke
+    hedonic-exp overlapping-gt-robustness --smoke --output-dir artifacts/overlapping/ground_truth_robustness_v3/smoke
     hedonic-exp disjoint-load --results_folder /path/to/jsons
-    hedonic-exp plots --smoke --output_dir /tmp/figs
-    hedonic-exp reproduce-disjoint --preset v1020-smoke --output_root /tmp/V1020_CLI
+    hedonic-exp plots --smoke --output_dir artifacts/disjoint/figures_smoke
+    hedonic-exp reproduce-disjoint --preset v1020-smoke --output_root artifacts/disjoint/v1020
 
 **Agents:** when you add, remove, rename, or change the CLI of any experiment
 module under ``hedonic.experiments``, you **must** update this file (registry +
@@ -147,6 +148,16 @@ COMMANDS: dict[str, Command] = {
         ),
         needs_data="snap-networks",
     ),
+    "overlapping-gt-robustness": Command(
+        name="overlapping-gt-robustness",
+        module="hedonic.experiments.overlapping.ground_truth_robustness",
+        attr="main",
+        summary=(
+            "Ground-truth overlap robustness plus GT-seeded local/multi-phase "
+            "equilibrium search"
+        ),
+        needs_data="snap-networks",
+    ),
     "overlapping-audit": Command(
         name="overlapping-audit",
         module="hedonic.experiments.overlapping.protocol",
@@ -264,19 +275,19 @@ examples:
   # Isolated local check (no databases required)
   hedonic-exp smoke
   hedonic-exp overlapping-small
-  hedonic-exp overlapping-dnn --output /tmp/hedonic-dnn.json
+  hedonic-exp overlapping-dnn --output artifacts/overlapping/dnn_certificate/dnn_certificate.json
   hedonic-exp overlapping-dnn --list-instances
   hedonic-exp overlapping-controlled --smoke \
-      --output /tmp/controlled-overlap.json
-  hedonic-exp disjoint --smoke --output_root /tmp/hedonic-smoke
+      --output artifacts/overlapping/controlled_overlap/controlled_overlap.json
+  hedonic-exp disjoint --smoke --output_root artifacts/disjoint/smoke
 
   # Tiny V1020-compatible structural smoke (safe output root)
   hedonic-exp disjoint --preset v1020-smoke \\
-      --output_root ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI
+      --output_root artifacts/disjoint/v1020
 
   # Full PHYSA V1020 grid (very large — do not write into archived V1020)
   hedonic-exp disjoint --preset v1020 \\
-      --output_root ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI
+      --output_root artifacts/disjoint/v1020
 
   # Ad-hoc disjoint SBM sweep
   hedonic-exp disjoint --folder_name exp --max_n_nodes 60 \\
@@ -285,68 +296,72 @@ examples:
   # Load disjoint JSON results → CSV
   hedonic-exp disjoint-load --results_folder /path/to/resultados --simple
   hedonic-exp disjoint-load \\
-      --results_folder .../V1020_CLI/resultados \\
-      --output .../V1020_CLI/resultados.csv.gzip --simple
+      --results_folder artifacts/disjoint/v1020/resultados \\
+      --output artifacts/disjoint/v1020/resultados.csv.gzip --simple
 
   # Paper figures (same stems as archived V1020/figures/)
-  hedonic-exp plots --smoke --output_dir /tmp/hedonic-figs
-  hedonic-exp plots --data .../V1020/resultados_ari.csv.gzip \\
-      --output_dir .../V1020_CLI/figures --format pdf
+  hedonic-exp plots --smoke --output_dir artifacts/disjoint/figures_smoke
+  hedonic-exp plots --data ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020/resultados_ari.csv.gzip \\
+      --output_dir artifacts/disjoint/v1020/figures --format pdf
 
   # Complete disjoint pipeline (sweep → CSV → figures)
   hedonic-exp reproduce-disjoint --preset v1020-smoke \\
-      --output_root .../V1020_CLI
+      --output_root artifacts/disjoint/v1020
   hedonic-exp reproduce-disjoint --plots-only \\
-      --data .../V1020/resultados_ari.csv.gzip \\
-      --output_root .../V1020_CLI --max_rows 50000
+      --data ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020/resultados_ari.csv.gzip \\
+      --output_root artifacts/disjoint/v1020 --max_rows 50000
 
   # Overlapping on DBLP (set HEDONIC_DBLP_DIR if needed)
-  # Defaults: n_iterations=-1 (to equilibrium), max_memberships=n_GT
+  # Defaults: n_iterations=-1 (native no-change stop; not a certificate),
+  # max_memberships=max per-node GT memberships
   hedonic-exp overlapping-subgraph --levels 1 --n_communities 5 \\
-      --methods leiden,hedonic_v1 --output /tmp/subgraph_smoke.json
-  hedonic-exp overlapping-full --resolution 1e-4 --output /tmp/dblp_full.json
+      --methods leiden,hedonic_v1 --output artifacts/overlapping/dblp_subgraph/smoke.json
+  hedonic-exp overlapping-full --resolution 1e-4 --output artifacts/overlapping/dblp_full/results.json
 
   # Reproducible five-network SNAP benchmark (three multi-phase hedonic
   # density variants plus CPM/DEMON; no database required for smoke)
   hedonic-exp overlapping-benchmark --profile smoke \\
-      --output_dir /tmp/hedonic-snap-smoke
+      --output_dir artifacts/overlapping/snap_benchmark/smoke
   # Standard profile uses deterministic 3,000-node induced subgraphs; top5000
   # is unavailable for Wikipedia and is recorded as an intentional skip.
   hedonic-exp overlapping-benchmark --datasets amazon,dblp,livejournal,youtube,wikipedia \\
       --cover top5000 --profile standard \\
-      --output_dir ~/Databases/Hedonic/Networks/SNAP_BENCHMARK_CLI
+      --output_dir artifacts/overlapping/snap_benchmark
 
-  # Read-only reconciliation of the 125 locked paper conditions.
-  hedonic-exp overlapping-audit --output /tmp/overlapping-protocol-audit.json
+  # Robustness of supplied metadata covers and equilibria seeded from their
+  # complete memberships (separate from the locked paper benchmark).
+  hedonic-exp overlapping-gt-robustness --smoke \\
+      --output-dir artifacts/overlapping/ground_truth_robustness_v3/smoke
+  # Canonical v3: four eligible top5000 covers, target labeled-incidence
+  # distances 0/.5/2/5%, and 3,840 distinct cells.
+  hedonic-exp overlapping-gt-robustness \\
+      --config configs/overlapping-ground-truth.toml
 
-  # Full overlapping-paper protocol: preflights graph/cover/method memory,
-  # serializes LiveJournal, and writes a plan without launching detectors.
-  uv run hedonic-exp reproduce-overlapping-paper --dry-run
-  # main.tex compiles only after every expected full-protocol record completes.
-  uv run hedonic-exp reproduce-overlapping-paper
-  tmux attach -t hedonic-overlapping-paper
+  # Manuscript reconciliation and full-paper orchestration are maintained in
+  # the private research checkout; this public checkout contains the reusable
+  # detector and benchmark adapters.
 
   # Complexity scale: size vs wallclock (local-moving vs full multi-phase)
   # Stops each line when --timeout is hit; does not require full DBLP finish
-  hedonic-exp overlapping-scale --smoke --output_dir /tmp/hedonic-scale
+  hedonic-exp overlapping-scale --smoke --output_dir artifacts/overlapping/complexity_scale
   hedonic-exp overlapping-scale --timeout 30 --max-levels 6 \\
-      --output_dir /tmp/hedonic-scale-dblp
+      --output_dir artifacts/overlapping/complexity_scale-dblp
   # Full multi-phase only, 10 min budget per size point
   hedonic-exp overlapping-scale --variant full --timeout 600 --max-levels 6 \\
-      --community_idx 1004 --output_dir /tmp/hedonic-scale-dblp-full
+      --community_idx 1004 --output_dir artifacts/overlapping/complexity_scale-dblp-full
 
   # Full-DBLP overlap metrics vs resolution; --smoke skips DBLP
   # Caches covers under <output_dir>/runs/ (resume + detector-free re-score)
   # Default TOML: configs/hedonic.toml (paths use ~/…)
-  hedonic-exp overlapping-resolution --smoke --output_dir /tmp/hedonic-res-f1
+  hedonic-exp overlapping-resolution --smoke --output_dir artifacts/overlapping/resolution_f1/smoke
   hedonic-exp overlapping-resolution --config configs/hedonic.toml \\
       --resolutions 0:1:11 --seeds 0-4
   hedonic-exp overlapping-resolution --rescore-only --singleton-mode both \\
-      --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
+      --output_dir artifacts/overlapping/resolution_f1
   # Optional sampled Omega (memory-safe for full DBLP)
   hedonic-exp overlapping-resolution --rescore-only --omega \\
       --omega-sample-size 100000 \\
-      --output_dir ~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1
+      --output_dir artifacts/overlapping/resolution_f1
 """
 
 

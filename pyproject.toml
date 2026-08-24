@@ -1,6 +1,6 @@
 [project]
 name = "hedonic"
-version = "0.0.10"
+version = "0.1.0"
 description = "A Python library for hedonic games"
 readme = "README.md"
 authors = [
@@ -8,7 +8,8 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "lucas-igraph==1.0.0.2",
+    "city2graph>=1.0.0",
+    "lucas-igraph==1.0.0.3",
     "numpy",
 ]
 

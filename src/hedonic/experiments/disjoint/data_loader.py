@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-from hedonic.experiments.config import SYNTHETIC_DIR
+from hedonic.experiments.config import DISJOINT_ARTIFACTS_DIR, expand_path
 
 WORKERS = 16
 
@@ -93,14 +93,20 @@ def get_leaf_subdirs_parallel(root: str, subroot_depth: int = 4) -> list[str]:
     subroots = get_subroots(root, max_depth=subroot_depth)
     if not subroots:
         subroots = [root]
-    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
-        results = list(
-            tqdm(
-                executor.map(get_leaf_subdirs_from_subroot, subroots),
-                total=len(subroots),
-                desc="Get leaf subdirs from subroot paths",
+    try:
+        with ProcessPoolExecutor(max_workers=WORKERS) as executor:
+            results = list(
+                tqdm(
+                    executor.map(get_leaf_subdirs_from_subroot, subroots),
+                    total=len(subroots),
+                    desc="Get leaf subdirs from subroot paths",
+                )
             )
-        )
+    except (NotImplementedError, OSError, PermissionError):
+        # Some constrained runners (including macOS sandboxes) expose no
+        # POSIX semaphore namespace.  Directory discovery is I/O-bound and
+        # deterministic, so a sequential fallback preserves the CLI contract.
+        results = [get_leaf_subdirs_from_subroot(path) for path in subroots]
     return [leaf for sublist in results for leaf in sublist]
 
 
@@ -113,14 +119,17 @@ def get_paths_sorted(folder_path: str, extension: str = ".json") -> list[str]:
     """List files with extension under leaf dirs, sorted by experiment keys."""
     leaf_dirs = get_leaf_subdirs_parallel(folder_path)
     args_list = [(lf, extension) for lf in leaf_dirs]
-    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
-        results = list(
-            tqdm(
-                executor.map(collect_paths_helper, args_list),
-                total=len(leaf_dirs),
-                desc=f"Collecting {extension} paths",
+    try:
+        with ProcessPoolExecutor(max_workers=WORKERS) as executor:
+            results = list(
+                tqdm(
+                    executor.map(collect_paths_helper, args_list),
+                    total=len(leaf_dirs),
+                    desc=f"Collecting {extension} paths",
+                )
             )
-        )
+    except (NotImplementedError, OSError, PermissionError):
+        results = [collect_paths_helper(args) for args in args_list]
     file_paths = [file for sublist in results for file in sublist]
     print(f"Found {len(file_paths)} {extension} files to be sorted.")
     return sort_files(file_paths)
@@ -355,14 +364,20 @@ def main(argv=None):
     parser.add_argument(
         "--results_folder",
         type=str,
-        default=str(SYNTHETIC_DIR / "resultados_ari"),
-        help="Folder of raw JSON experiment results (e.g. .../resultados)",
+        default=str(DISJOINT_ARTIFACTS_DIR / "resultados"),
+        help=(
+            "Folder of raw JSON experiment results (default: "
+            "repository artifacts/disjoint/resultados)"
+        ),
     )
     parser.add_argument(
         "--output",
         type=str,
         default=None,
-        help="Output gzipped CSV path (default: results_folder.csv.gzip)",
+        help=(
+            "Output gzipped CSV path (default: "
+            "artifacts/disjoint/resultados.csv.gzip)"
+        ),
     )
     parser.add_argument(
         "--simple",
@@ -374,14 +389,12 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    results_folder = args.results_folder
+    results_folder = str(expand_path(args.results_folder))
     print("Loading experiment data from", results_folder)
     df = load_experiment_data(results_folder, simple=args.simple)
-    output_path = args.output
+    output_path = str(expand_path(args.output)) if args.output else None
     if output_path is None:
-        output_path = str(Path(results_folder.rstrip("/\\")).with_suffix("")) + ".csv.gzip"
-        if results_folder.endswith("/") or results_folder.endswith("\\"):
-            output_path = results_folder[:-1] + ".csv.gzip"
+        output_path = str(DISJOINT_ARTIFACTS_DIR / "resultados.csv.gzip")
     print("Saving data to", output_path)
     df.to_csv(output_path, index=False, compression="gzip")
     print(f"Done. rows={len(df)} cols={list(df.columns)}")

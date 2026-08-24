@@ -108,6 +108,7 @@ class Game(Graph):
         edge_weights=None,
         seed: int | None = None,
         beta: float = 0.01,
+        ensure_equilibrium: bool = False,
     ):
         """Community detection with the hedonic-game / Leiden local-moving model.
 
@@ -129,7 +130,12 @@ class Game(Graph):
             ``> 1`` → overlapping cover (``VertexCover``); each vertex may
             belong to at most this many communities.
         n_iterations :
-            Leiden outer iterations (``-1`` until stability).
+            Leiden outer iterations. A negative value asks the native binding
+            to repeat its outer cycle until it reports no changed clustering;
+            this is the binding's queue/candidate stopping condition, not an
+            independent proof that every admissible move has non-positive
+            regret. Experiments that require a game-theoretic equilibrium
+            should audit the returned partition/cover explicitly.
         resolution :
             CPM resolution γ. Defaults to graph density.
         allow_isolation :
@@ -137,6 +143,14 @@ class Game(Graph):
         local_move_only :
             If True (default), run only the local-moving phase — the hedonic
             best-response phase. If False, run full Leiden (refine + aggregate).
+        ensure_equilibrium :
+            If True, require the native binding to run until its no-change
+            stopping condition by forcing ``n_iterations=-1``. The released
+            lucas-igraph 1.0.0.3 native mover includes the best omitted
+            existing community when ``allow_isolation=False``, so no Python
+            full-Leiden → local-only cleanup pass is needed. The returned
+            state should still be independently audited when a mathematical
+            equilibrium certificate is required.
         edge_weights :
             Optional edge weights.
         seed :
@@ -184,9 +198,9 @@ class Game(Graph):
                     self.vcount(), max_communities - 1, seed
                 ).tolist()
 
-        return self.community_leiden(
+        result = self.community_leiden(
             initial_membership=membership_vector,
-            n_iterations=n_iterations,
+            n_iterations=-1 if ensure_equilibrium else n_iterations,
             resolution=res,
             allow_isolation=allow_isolation,
             local_move_only=local_move_only,
@@ -194,3 +208,19 @@ class Game(Graph):
             max_memberships=max_memberships,
             beta=beta,
         )
+
+        if ensure_equilibrium:
+            # Keep the native membership vectors available to experiment
+            # layers without changing the public return type.  This attribute
+            # is now provenance for the single native call, not a pre-cleanup
+            # snapshot from a Python two-pass protocol.
+            if max_memberships > 1:
+                native_memberships = [
+                    [int(label) for label in labels]
+                    for labels in result.membership
+                ]
+            else:
+                native_memberships = [[int(label)] for label in result.membership]
+            setattr(result, "_hedonic_raw_memberships", native_memberships)
+
+        return result

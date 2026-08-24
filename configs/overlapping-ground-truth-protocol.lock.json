@@ -1,0 +1,270 @@
+{
+  "schema_version": 3,
+  "protocol_name": "overlapping-ground-truth-robustness-v3",
+  "status": "reviewed-implementation-and-data-lock",
+  "purpose": "Bind the canonical GT-seeded robustness ledger to its complete scientific grid, prepared dataset content, implementation, reporting code, and installed numerical stack.",
+  "config_path": "configs/overlapping-ground-truth.toml",
+  "expected_conditions": 3840,
+  "analysis_graph_policy": "bounded_then_common_undirected_simple_then_covered_induced_v1",
+  "canonical_grid": {
+    "datasets": [
+      "amazon",
+      "dblp",
+      "livejournal",
+      "youtube"
+    ],
+    "cover": "top5000",
+    "completion_policy": "covered-induced",
+    "max_nodes": 3000,
+    "phases": [
+      "local",
+      "multiphase"
+    ],
+    "action_policies": [
+      "fixed_labels",
+      "open_labels"
+    ],
+    "detector_seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "perturbation_seeds": [
+      100,
+      101,
+      102,
+      103,
+      104
+    ],
+    "zero_distance_perturbation_seed_policy": "first_seed_only",
+    "perturbation_design": [
+      {
+        "target_incidence_distance": 0.0,
+        "swap_count_rule": "round_half_up(target_distance*incidences/2)",
+        "seeds": [
+          100
+        ]
+      },
+      {
+        "target_incidence_distance": 0.005,
+        "swap_count_rule": "round_half_up(target_distance*incidences/2)",
+        "seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ]
+      },
+      {
+        "target_incidence_distance": 0.02,
+        "swap_count_rule": "round_half_up(target_distance*incidences/2)",
+        "seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ]
+      },
+      {
+        "target_incidence_distance": 0.05,
+        "swap_count_rule": "round_half_up(target_distance*incidences/2)",
+        "seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ]
+      }
+    ],
+    "resolution_multipliers": [
+      1.0,
+      10.0,
+      100.0
+    ],
+    "perturbation_incidence_distances": [
+      0.0,
+      0.005,
+      0.02,
+      0.05
+    ],
+    "robustness_profile": [
+      0.0,
+      0.1,
+      0.2,
+      0.30000000000000004,
+      0.4,
+      0.5,
+      0.6000000000000001,
+      0.7000000000000001,
+      0.8,
+      0.9,
+      1.0
+    ],
+    "omega": false,
+    "omega_sample_size": 100000,
+    "timeout_seconds": 3600.0,
+    "robustness_atol": 1e-10,
+    "robustness_rtol": 1e-09,
+    "dense_oracle": false,
+    "analysis_graph_pipeline": "bounded_then_common_undirected_simple_then_covered_induced_v1",
+    "cap_rule": "max(2, supplied_cover_max_memberships_per_node)",
+    "initialization_rule": "complete_canonical_supplied_cover_with_degree_preserving_incidence_switches",
+    "detector_parameters": {
+      "n_iterations": -1,
+      "beta": 0.01,
+      "phase_mapping": {
+        "local": {
+          "local_move_only": true
+        },
+        "multiphase": {
+          "local_move_only": false
+        }
+      },
+      "policy_mapping": {
+        "fixed_labels": {
+          "allow_isolation": false,
+          "ensure_equilibrium": false
+        },
+        "open_labels": {
+          "allow_isolation": true,
+          "ensure_equilibrium": true
+        }
+      },
+      "exact_pre_and_final_memberships_required": true
+    },
+    "certificate_semantics": {
+      "independent_complete_action_audit": true,
+      "target": "exact_labeled_final_membership_state",
+      "canonical_unique_body_projection_is_scoring_only": true,
+      "successful_perturbation_swaps_must_equal_requested": true
+    },
+    "terminal_outcome_policy": {
+      "allowed_statuses": [
+        "unsupported_cleanup"
+      ],
+      "native_label_capacity_is_explicit": true,
+      "terminal_outcomes_are_not_scored_returns": true
+    },
+    "expected_detector_conditions": 3840
+  },
+  "dataset_content_identities": {
+    "amazon/top5000": {
+      "schema_version": 2,
+      "analysis_graph_policy": "bounded_then_common_undirected_simple_then_covered_induced_v1",
+      "completion_policy": "covered-induced",
+      "max_nodes": 3000,
+      "graph_sha256": "31347cc46a2a1f805e8a0172ab701938376653d73036d0e63aa2d0e9b1fba8d5",
+      "ground_truth_cover_sha256": "99150b37e302d931426e784d924fa1df79925739fd51075ad36a5e1f7eae0d3d",
+      "n": 3000,
+      "m": 2999,
+      "directed": false,
+      "ground_truth_community_count": 1221,
+      "ground_truth_max_memberships_per_node": 5
+    },
+    "dblp/top5000": {
+      "schema_version": 2,
+      "analysis_graph_policy": "bounded_then_common_undirected_simple_then_covered_induced_v1",
+      "completion_policy": "covered-induced",
+      "max_nodes": 3000,
+      "graph_sha256": "a0262fbe33b81832ab5e97b7c5a83200c70d5d13c3c0a0117627f0ded4afae30",
+      "ground_truth_cover_sha256": "5d25913fe337052df91f41506a28cde9346aa92330c5a5168b32f24b41dcc881",
+      "n": 3000,
+      "m": 2016,
+      "directed": false,
+      "ground_truth_community_count": 1765,
+      "ground_truth_max_memberships_per_node": 11
+    },
+    "livejournal/top5000": {
+      "schema_version": 2,
+      "analysis_graph_policy": "bounded_then_common_undirected_simple_then_covered_induced_v1",
+      "completion_policy": "covered-induced",
+      "max_nodes": 3000,
+      "graph_sha256": "98db953370b7a83388e46211755792646d3e81b73c5552eeb41b9cc534c66723",
+      "ground_truth_cover_sha256": "a255ebd705bf85aafa428c22e5cad178169b3af579bc7558e57f88697f1a3a37",
+      "n": 2999,
+      "m": 2089,
+      "directed": false,
+      "ground_truth_community_count": 1787,
+      "ground_truth_max_memberships_per_node": 9
+    },
+    "youtube/top5000": {
+      "schema_version": 2,
+      "analysis_graph_policy": "bounded_then_common_undirected_simple_then_covered_induced_v1",
+      "completion_policy": "covered-induced",
+      "max_nodes": 3000,
+      "graph_sha256": "8b295902fffe96a9e07ec01bdd4828be2698557565a993c95bf578dde8aaf20e",
+      "ground_truth_cover_sha256": "a730a1102a37d66076f21dd0b8a83b73145ffbe7001098f76797472764869e27",
+      "n": 3000,
+      "m": 10026,
+      "directed": false,
+      "ground_truth_community_count": 2518,
+      "ground_truth_max_memberships_per_node": 51
+    }
+  },
+  "runtime_environment": {
+    "python": "3.12.6",
+    "python_implementation": "CPython",
+    "platform": "macOS-26.5.2-arm64-arm-64bit"
+  },
+  "lucas_igraph": {
+    "distribution": "lucas-igraph",
+    "version": "1.0.0.3",
+    "igraph_version": "1.0.0.3",
+    "uv_lock_path": "uv.lock",
+    "uv_lock_sha256": "ae2ae1f2b038be045d3aca9d474f1e4da18d167c6233a87fe2d7d5c2cbc73fd0",
+    "package_lock_sha256": "52d416ffcb15119c3abdc123c722a5fb86b0781780a3a1dd25a52d876cd8a890",
+    "distribution_tree_sha256": "a00cbf4603946d677b13a436f1a90616d578322c2bfc9605ab6f198b08cf8db6",
+    "module": "igraph._igraph",
+    "module_path": "igraph/_igraph.abi3.so",
+    "module_sha256": "6da6cc1ea9b23525b75901385e5224ffbe3b0300f72594e52540107a3b2cd933",
+    "released_native_sha": "e441a21c3663062d9ebe6b98451c826325f886ad",
+    "source_path": "../python-igraph",
+    "source_revision_is_optional": true
+  },
+  "external_dependencies": {},
+  "scientific_dependencies": {
+    "numpy": {
+      "distribution": "numpy",
+      "version": "2.3.3",
+      "package_lock_sha256": "8fae8cf57b15ab1b21ecfc85ecf8a61e365bccdc94ae5722a56d6a519623aef8",
+      "distribution_tree_sha256": "fbc57d96b96f11096549d8d1eb7924cfb899d880279b7300c2c4cb86623857c9",
+      "module": "numpy",
+      "module_path": "numpy/__init__.py",
+      "module_sha256": "8236a753805db34c29ef9cd03694e0af883b6325eb4fd246cc83d2be0b847e89"
+    },
+    "scipy": {
+      "distribution": "scipy",
+      "version": "1.18.0",
+      "package_lock_sha256": "c9d3fb261faa499aa9729613b001b4b291cfd3bf62eb29f37c64e4bd5e9c9e29",
+      "distribution_tree_sha256": "e8cc5eea699618a8a79c684808e790e3da1341deb3eca1927c0643b4b55a7476",
+      "module": "scipy.optimize._lsap",
+      "module_path": "scipy/optimize/_lsap.cpython-312-darwin.so",
+      "module_sha256": "a338bae8b94becb4f8d48b9bb9ec0a3f188fcdba63f8b2be47232c80436e14ca"
+    }
+  },
+  "tracked_files": {
+    "configs/overlapping-ground-truth.toml": "1a50e9268d098a4d93091ffea415905c87d6aeadc84c5b91b85cbd997c4d5cfa",
+    "pyproject.toml": "cb2f4efe56af8c90314dd25b03437519b01eeb3b49286a991cf9943fb63152cb",
+    "src/hedonic/Game.py": "99d627dd3b6c8a7ffaa09db73df0e2bbd1d33f08a601a347aab73f73d34be13a",
+    "src/hedonic/__init__.py": "e6d51e54d5b1cabb1f5ad75f9924467e4c965c7173d1a4f043d3b1985165cd25",
+    "src/hedonic/experiments/CLI.py": "f8864da6572a13ea576746e1faee5fd79323e018692f27710b001ddef4f34d4c",
+    "src/hedonic/experiments/__init__.py": "a67a28e5f68fc0fc02be8640aab5f43436f8fdcde87e1ed17cac8cfc34cc0210",
+    "src/hedonic/experiments/config.py": "c328d827c63babd5b94c68fc068f43fd634e9ea50c5dc8317c356d989264d4cb",
+    "src/hedonic/experiments/overlapping/__init__.py": "bfb6e2bea1f80be7abb8d843a4c8ab23f57907941eb947accca6f8439d904132",
+    "src/hedonic/experiments/overlapping/execution.py": "8c433a9e37051f82f1be3256908ead5ba290aa63e2781300138726a25fc3d36b",
+    "src/hedonic/experiments/overlapping/ground_truth_data.py": "3e3e622099c5592641a5638dc6bc326d7e2ee15e49ad9afd70b9009a764a0d25",
+    "src/hedonic/experiments/overlapping/ground_truth_robustness.py": "5f5c1b4c635145e218d33360b782b5d4c84f50651da2f7acf0766c1abb53ffdc",
+    "src/hedonic/experiments/overlapping/methods.py": "8d1ac5c93cf5dc49d8f8ee3384b62ad024c5b9ddafb5dd870260fd97e7001465",
+    "src/hedonic/experiments/overlapping/metrics.py": "761c98e403f4e666df72147be71d125b9849de4ae63ca372709d9a14c8b83eff",
+    "src/hedonic/experiments/overlapping/protocol.py": "5e0d77b38ff608fa0893004f639af433296995180f0badf91498af63c1ae8d10",
+    "src/hedonic/experiments/overlapping/robustness.py": "23950bdfab4a55949fb98e7ab1cc86fc2426dd0e03887eebb6197f149b7a54a4",
+    "src/hedonic/experiments/overlapping/snap.py": "ea314998156ac5f7a8f9c5500cc22e3bcaa13d1f5d7e33d8c203179115e60093",
+    "src/hedonic/utils.py": "95994a0144deee7754015205bd30ad870a494e1f4c81ee350c6fbff89dec150d",
+    "uv.lock": "ae2ae1f2b038be045d3aca9d474f1e4da18d167c6233a87fe2d7d5c2cbc73fd0"
+  }
+}

@@ -26,11 +26,18 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from hedonic.experiments.config import OVERLAPPING_ARTIFACTS_DIR, expand_path
+
 
 PROTOCOL_VERSION = "dnn-certificate-v1"
 DEFAULT_SEEDS = (0, 1, 2)
 DEFAULT_EPS = 1e-8
 DEFAULT_MAX_ITERS = 200_000
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+IMPLEMENTATION_SOURCE_PATHS = (
+    "src/hedonic/experiments/overlapping/dnn_certificate.py",
+    "src/hedonic/Game.py",
+)
 
 
 @dataclass(frozen=True)
@@ -107,6 +114,54 @@ def implementation_sha256() -> str:
     """Bind an output manifest to the exact experiment module bytes."""
 
     return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _environment_versions(*, exact_only: bool) -> dict[str, str | None]:
+    """Return the complete runtime/version block recorded in a manifest."""
+
+    return {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "numpy": np.__version__,
+        "hedonic": _package_version("hedonic"),
+        "lucas_igraph_distribution": _package_version("lucas-igraph"),
+        "igraph_python": _module_version("igraph"),
+        "cvxpy": None if exact_only else _package_version("cvxpy"),
+        "scs": None if exact_only else _package_version("scs"),
+    }
+
+
+def implementation_identity(
+    *,
+    exact_only: bool,
+    environment: dict[str, str | None] | None = None,
+) -> dict[str, Any]:
+    """Bind the diagnostic's Python sources and recorded runtime versions.
+
+    Paths are repository-relative so the identity does not depend on the
+    checkout location.  The returned object is embedded in the hashed protocol;
+    consequently both the native detector wrapper and solver/runtime versions
+    are part of the protocol identity rather than unbound descriptive metadata.
+    """
+
+    runtime_versions = (
+        _environment_versions(exact_only=exact_only)
+        if environment is None
+        else dict(environment)
+    )
+    source_sha256 = {
+        relative_path: _sha256_file(REPOSITORY_ROOT / relative_path)
+        for relative_path in IMPLEMENTATION_SOURCE_PATHS
+    }
+    return {
+        "schema_version": 1,
+        "source_sha256": source_sha256,
+        "runtime_versions": runtime_versions,
+    }
 
 
 def adjacency_matrix(instance: LockedInstance) -> np.ndarray:
@@ -258,6 +313,7 @@ def run_hedonic(instance: LockedInstance, seed: int) -> dict[str, Any]:
         n_iterations=-1,
         edge_weights="weight",
         seed=seed,
+        ensure_equilibrium=True,
     )
     memberships = [list(map(int, labels)) for labels in result.membership]
     value, factor, gram = cover_objective(instance, memberships)
@@ -272,6 +328,7 @@ def run_hedonic(instance: LockedInstance, seed: int) -> dict[str, Any]:
             "allow_isolation": True,
             "n_iterations": -1,
             "edge_weights": "weight",
+            "ensure_equilibrium": True,
         },
         "memberships_by_vertex": memberships,
         "cover_by_label": [list(map(int, community)) for community in result],
@@ -470,9 +527,14 @@ def build_manifest(
     exact_only: bool = False,
 ) -> dict[str, Any]:
     selected = [LOCKED_INSTANCES[name] for name in names]
+    environment = _environment_versions(exact_only=exact_only)
     protocol = {
         "protocol_version": PROTOCOL_VERSION,
         "implementation_sha256": implementation_sha256(),
+        "implementation_identity": implementation_identity(
+            exact_only=exact_only,
+            environment=environment,
+        ),
         "instance_names": [instance.name for instance in selected],
         "instance_sha256": {
             instance.name: instance_sha256(instance) for instance in selected
@@ -491,16 +553,7 @@ def build_manifest(
         ),
         "protocol": protocol,
         "protocol_sha256": sha256_json(protocol),
-        "environment": {
-            "python": platform.python_version(),
-            "platform": platform.platform(),
-            "numpy": np.__version__,
-            "hedonic": _package_version("hedonic"),
-            "lucas_igraph_distribution": _package_version("lucas-igraph"),
-            "igraph_python": _module_version("igraph"),
-            "cvxpy": None if exact_only else _package_version("cvxpy"),
-            "scs": None if exact_only else _package_version("scs"),
-        },
+        "environment": environment,
         "results": [
             run_instance(
                 instance,
@@ -565,7 +618,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-iters", type=int, default=DEFAULT_MAX_ITERS)
     parser.add_argument("--exact-only", action="store_true", help="skip CVXPY/SCS")
     parser.add_argument("--list-instances", action="store_true")
-    parser.add_argument("--output", type=Path, help="strict JSON result path")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=OVERLAPPING_ARTIFACTS_DIR
+        / "dnn_certificate"
+        / "dnn_certificate.json",
+        help=(
+            "strict JSON result path (default: "
+            "artifacts/overlapping/dnn_certificate/dnn_certificate.json)"
+        ),
+    )
     return parser
 
 
@@ -578,6 +641,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"max_memberships={instance.max_memberships}\tsha256={instance_sha256(instance)}"
             )
         return 0
+    args.output = expand_path(args.output)
     if args.eps <= 0 or args.max_iters < 1:
         raise ValueError("--eps and --max-iters must be positive")
     manifest = build_manifest(

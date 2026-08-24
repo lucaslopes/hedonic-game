@@ -86,6 +86,10 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
                 plan, plan["jobs"][0], root / "shard", execution="fresh"
             )
             self.assertEqual(argv[argv.index("--skip-methods") + 1], "cpm")
+            self.assertEqual(
+                argv[argv.index("--expected_dataset_metadata_sha256") + 1],
+                plan["jobs"][0]["dataset_metadata_identity"]["sha256"],
+            )
 
     def test_memory_plan_uses_per_node_membership_capacity_and_budgeted_waves(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -158,30 +162,75 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
 
     def test_exit_minus_nine_is_oom_and_cache_parameters_are_strict(self):
         self.assertEqual(benchmark._classify_exit(-9)[0], "oom")
-        expected = {
-            "experiment_identity": benchmark.current_experiment_identity(),
-            "dataset": "amazon", "cover": "all", "method": "cpm", "seed": 0,
-            "resolution": 0.1, "max_memberships": 2, "timeout_seconds": 10.0,
-            "memory_limit_bytes": 100, "run_options": {"omega": True, "omega_sample_size": 10},
-        }
-        existing = {**expected, "protocol_version": benchmark.RUN_PROTOCOL_VERSION, "status": "timeout"}
-        self.assertFalse(benchmark._cache_compatible(existing, expected))
-        completed = {**existing, "status": "completed"}
-        self.assertTrue(benchmark._cache_compatible(completed, expected))
-        skipped = {**existing, "status": "skipped_unsupported", "failure_kind": "unsupported"}
-        self.assertTrue(benchmark._cache_compatible(skipped, expected))
-        self.assertFalse(benchmark._cache_compatible(existing, {**expected, "timeout_seconds": 11.0}))
-        self.assertFalse(benchmark._cache_compatible({**existing, "protocol_version": 2}, expected))
-        self.assertFalse(
-            benchmark._cache_compatible(
-                {
-                    **existing,
-                    "status": "failed",
-                    "error": "TypeError: _record() got multiple values for keyword argument 'timeout_seconds'",
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_root = Path(directory)
+            artifact = benchmark._persist_final_cover(artifact_root, [[0, 1]])
+            expected = {
+                "experiment_identity": benchmark.current_experiment_identity(),
+                "dataset": "amazon", "cover": "all", "method": "cpm", "seed": 0,
+                "resolution": 0.1, "max_memberships": 2, "timeout_seconds": 10.0,
+                "memory_limit_bytes": 100,
+                "method_parameters": benchmark.METHODS["cpm"].parameters,
+                "method_dependency": benchmark.method_dependency_identity("cpm"),
+                "run_options": {"omega": True, "omega_sample_size": 10},
+                "_artifact_root": artifact_root,
+                "_method_available": False,
+            }
+            existing = {
+                **expected,
+                "protocol_version": benchmark.RUN_PROTOCOL_VERSION,
+                "status": "timeout",
+                "method_metadata": {
+                    "parameters": benchmark.METHODS["cpm"].parameters,
+                    "dependency": benchmark.method_dependency_identity("cpm"),
                 },
-                expected,
+            }
+            existing.pop("_artifact_root")
+            self.assertFalse(benchmark._cache_compatible(existing, expected))
+            completed = {
+                **existing,
+                "status": "completed",
+                "final_cover_artifact": artifact["artifact"],
+                "final_cover_sha256": artifact["content_sha256"],
+                "final_cover_artifact_sha256": artifact["artifact_sha256"],
+            }
+            # A cover artifact without bound/recomputed metrics is not a
+            # resumable completed result.
+            self.assertFalse(benchmark._cache_compatible(completed, expected))
+            skipped = {**existing, "status": "skipped_unsupported", "failure_kind": "unsupported"}
+            self.assertTrue(benchmark._cache_compatible(skipped, expected))
+            self.assertFalse(
+                benchmark._cache_compatible(
+                    {
+                        **skipped,
+                        "method_metadata": {
+                            "parameters": benchmark.METHODS["cpm"].parameters,
+                            "dependency": {
+                                "distribution": "networkx",
+                                "version": "0.0.invalid",
+                            },
+                        },
+                    },
+                    expected,
+                )
             )
-        )
+            self.assertFalse(
+                benchmark._cache_compatible(
+                    skipped, {**expected, "_method_available": True}
+                )
+            )
+            self.assertFalse(benchmark._cache_compatible(existing, {**expected, "timeout_seconds": 11.0}))
+            self.assertFalse(benchmark._cache_compatible({**existing, "protocol_version": 2}, expected))
+            self.assertFalse(
+                benchmark._cache_compatible(
+                    {
+                        **existing,
+                        "status": "failed",
+                        "error": "TypeError: _record() got multiple values for keyword argument 'timeout_seconds'",
+                    },
+                    expected,
+                )
+            )
 
     def test_paper_summary_excludes_failed_numeric_values_and_reports_coverage(self):
         records = [
@@ -189,6 +238,9 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
              "resolution": 0.1, "status": "completed", "metrics": {"symmetric_best_match_f1": 0.8}},
             {"dataset": "amazon", "cover": "all", "method": "hedonic_multiphase", "seed": 1,
              "resolution": 0.1, "status": "timeout", "runtime_seconds": 12.0},
+            {"dataset": "amazon", "cover": "all", "method": "hedonic_multiphase", "seed": 2,
+             "resolution": 0.1, "status": "skipped_not_scalable",
+             "resource_status": "timeout", "runtime_seconds": 12.0},
         ]
         summary = reproduce_paper._paper_summary(records)
         self.assertEqual(summary[0]["n_completed"], 1)
@@ -196,13 +248,13 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
         self.assertNotIn("mean_runtime_seconds", summary[0])
         plan = {
             "profile": "full", "jobs": [{"dataset": "amazon", "cover": "all"}],
-            "methods": ["hedonic_multiphase"], "seeds": "0-1", "resolutions": "auto",
+            "methods": ["hedonic_multiphase"], "seeds": "0-2", "resolutions": "auto",
         }
         coverage = reproduce_paper._coverage_report(
             plan, records, reproduce_paper._audit_records(plan, records)
         )
         self.assertEqual(coverage["completed"], 1)
-        self.assertEqual(coverage["timeout"], 1)
+        self.assertEqual(coverage["timeout"], 2)
 
     def test_partial_compile_status_defines_a_visible_tex_warning(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -303,6 +355,36 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
             self.assertIn("--worker-index", command_text)
             self.assertIn("--coordinator", command_text)
 
+    def test_worker_liveness_repair_terminalizes_unstarted_waves(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            plan = {
+                "plan_id": "liveness-test",
+                "output_dir": str(output),
+                "worker_startup_timeout_seconds": 0,
+            }
+            state = {
+                "plan_id": "liveness-test",
+                "status": "pending",
+                "worker_pid": None,
+                "waves": [
+                    {"index": 0, "status": "pending"},
+                    {"index": 1, "status": "pending"},
+                ],
+            }
+            repaired = reproduce_paper._repair_worker_liveness(
+                plan, [state], started=0.0
+            )[0]
+            self.assertEqual(repaired["status"], "error")
+            self.assertEqual(
+                [wave["status"] for wave in repaired["waves"]],
+                ["error", "error"],
+            )
+            persisted = json.loads(
+                reproduce_paper._state_path(output, 0).read_text()
+            )
+            self.assertEqual(persisted["status"], "error")
+
     def test_full_paper_switch_requires_every_condition_to_complete(self):
         plan = {
             "profile": "full",
@@ -345,19 +427,77 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
         self.assertEqual(audit["status_counts"]["skipped_unsupported"], 1)
         self.assertEqual(len(audit["failure_records"]), 2)
 
-    @unittest.skipUnless(shutil.which("latexmk"), "latexmk is required for manuscript render test")
-    def test_complete_full_records_generate_and_compile_the_paper_branch(self):
-        source_paper = Path(__file__).resolve().parents[1] / "docs" / "papers" / "overlapping_communities"
+    def test_paper_summary_uses_only_digest_bound_nested_metrics(self):
+        records = [{
+            "dataset": "amazon",
+            "cover": "all",
+            "method": "cpm",
+            "seed": 0,
+            "resolution": 0.1,
+            "status": "completed",
+            "symmetric_best_match_f1": 0.999,
+            "metrics": {"symmetric_best_match_f1": 0.25},
+        }]
+        summary = reproduce_paper._paper_summary(records)
+        self.assertEqual(summary[0]["mean_symmetric_best_match_f1"], 0.25)
+
+    def test_finalize_fails_closed_when_supplied_plan_differs_from_disk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "artifacts" / "full"
+            paper = root / "paper"
+            paper.mkdir()
+            (paper / "main.tex").write_text(
+                "\\documentclass{article}\\begin{document}x\\end{document}\n"
+            )
+            disk_plan = {
+                "plan_id": "bound-plan",
+                "experiment_identity": {},
+                "config_path": str(root / "missing.toml"),
+                "profile": "full",
+                "output_dir": str(output),
+                "paper_dir": str(paper),
+                "methods": ["cpm"],
+                "jobs": [{
+                    "name": "amazon-all", "dataset": "amazon", "cover": "all"
+                }],
+                "seeds": "0",
+                "resolutions": "auto",
+                "compile_paper": False,
+                "assignments": [],
+            }
+            plan_path = reproduce_paper._plan_path(output)
+            reproduce_paper._write_json(plan_path, disk_plan)
+            supplied = reproduce_paper._load_plan(plan_path)
+            supplied["paper_dir"] = str(root / "unbound-paper")
+            supplied["compile_paper"] = True
+            with patch.object(
+                reproduce_paper.shutil,
+                "which",
+                side_effect=AssertionError("an unbound plan must never compile"),
+            ):
+                self.assertEqual(reproduce_paper.finalize(supplied), 0)
+            manifest = json.loads((output / "paper_manifest.json").read_text())
+            reconciliation = manifest["audit"]["protocol_reconciliation"]
+            self.assertFalse(manifest["audit"]["ready_for_paper"])
+            self.assertIn(
+                "finalize_plan_binding:supplied_plan_content_mismatch",
+                reconciliation["global_rejection_reasons"],
+            )
+            self.assertFalse((root / "unbound-paper").exists())
+
+    def test_skeletal_full_records_cannot_enable_or_compile_the_paper_branch(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             paper = root / "paper"
             paper.mkdir()
-            shutil.copy2(source_paper / "main.tex", paper / "main.tex")
-            shutil.copy2(source_paper / "reference.bib", paper / "reference.bib")
+            (paper / "main.tex").write_text(
+                "\\documentclass{article}\\begin{document}x\\end{document}\n"
+            )
             output = paper / "artifacts" / "full"
             plan = {
                 "plan_id": "render-test",
-                "experiment_identity": benchmark.current_experiment_identity(),
+                "experiment_identity": {},
                 "config_path": "test.toml",
                 "profile": "full",
                 "output_dir": str(output),
@@ -398,9 +538,20 @@ class TestOverlappingPaperReproduction(unittest.TestCase):
                     },
                 },
             )
-            self.assertEqual(reproduce_paper.finalize(plan), 0)
-            self.assertIn("\\smokeresultsfalse", (output / "paper_status.tex").read_text())
-            self.assertTrue((paper / "main.pdf").is_file())
+            with patch.object(
+                reproduce_paper.shutil,
+                "which",
+                side_effect=AssertionError("latexmk must not be queried"),
+            ):
+                self.assertEqual(reproduce_paper.finalize(plan), 0)
+            self.assertIn("\\smokeresultstrue", (output / "paper_status.tex").read_text())
+            manifest = json.loads((output / "paper_manifest.json").read_text())
+            self.assertFalse(manifest["audit"]["ready_for_paper"])
+            self.assertEqual(
+                manifest["audit"]["protocol_reconciliation"]["admissible_records"],
+                0,
+            )
+            self.assertFalse((output.parent / "build" / "main.pdf").is_file())
 
 
 if __name__ == "__main__":

@@ -8,20 +8,111 @@ availability and installation requirements can be recorded rather than hidden.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import importlib
+import importlib.metadata
+import inspect
 import io
 import random
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import igraph as ig
 from hedonic import Game
 from hedonic.experiments.overlapping.metrics import partition_to_cover_lists
+from hedonic.experiments.overlapping.snap import canonicalize_cover
 from hedonic.utils import sample_uniform_ints
 
 
 class MethodUnavailable(RuntimeError):
     """A method's optional implementation is not installed."""
+
+
+EXTERNAL_DISTRIBUTIONS = {"cpm": "networkx", "demon": "demon"}
+EXTERNAL_IMPLEMENTATIONS = {
+    "cpm": (
+        "networkx.algorithms.community.kclique",
+        "k_clique_communities",
+    ),
+    "demon": ("demon.alg.Demon", "Demon"),
+}
+
+
+def method_dependency_identity(name: str) -> dict[str, Any] | None:
+    distribution = EXTERNAL_DISTRIBUTIONS.get(name)
+    if distribution is None:
+        return None
+    try:
+        installed = importlib.metadata.distribution(distribution)
+        version = installed.version
+    except importlib.metadata.PackageNotFoundError:
+        return {
+            "schema_version": 1,
+            "distribution": distribution,
+            "version": None,
+            "implementation_module": EXTERNAL_IMPLEMENTATIONS[name][0],
+            "implementation_attribute": EXTERNAL_IMPLEMENTATIONS[name][1],
+            "implementation_path": None,
+            "implementation_sha256": None,
+            "implementation_belongs_to_distribution": False,
+        }
+    try:
+        module_name, attribute = EXTERNAL_IMPLEMENTATIONS[name]
+        module = importlib.import_module(module_name)
+        getattr(module, attribute)
+        source_name = inspect.getsourcefile(module)
+        if source_name is None:
+            raise OSError("implementation source file is unavailable")
+        source_path = Path(source_name).resolve()
+        distribution_root = Path(installed.locate_file("")).resolve()
+        try:
+            relative_path = source_path.relative_to(distribution_root).as_posix()
+        except ValueError:
+            relative_path = None
+        installed_files = installed.files or []
+        belongs_to_distribution = any(
+            Path(installed.locate_file(item)).resolve() == source_path
+            for item in installed_files
+        )
+        source_sha256 = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    except (ImportError, AttributeError, OSError):
+        return {
+            "schema_version": 1,
+            "distribution": distribution,
+            "version": version,
+            "implementation_module": EXTERNAL_IMPLEMENTATIONS[name][0],
+            "implementation_attribute": EXTERNAL_IMPLEMENTATIONS[name][1],
+            "implementation_path": None,
+            "implementation_sha256": None,
+            "implementation_belongs_to_distribution": False,
+        }
+    return {
+        "schema_version": 1,
+        "distribution": distribution,
+        "version": version,
+        "implementation_module": module_name,
+        "implementation_attribute": attribute,
+        "implementation_path": relative_path,
+        "implementation_sha256": source_sha256,
+        "implementation_belongs_to_distribution": belongs_to_distribution,
+    }
+
+
+@dataclass(frozen=True)
+class DetectorOutput:
+    """Detector cover plus optional raw per-vertex memberships.
+
+    Native overlapping Leiden returns a nested membership vector.  Keeping it
+    beside the normalized cover lets the benchmark record exactly what the
+    native call returned, without changing the public cover adapter contract
+    used by external baselines.
+    """
+
+    cover: list[list[int]]
+    pre_cleanup_memberships: list[list[int]] | None = None
+    final_memberships: list[list[int]] | None = None
 
 
 def seeded_initial_membership(
@@ -50,7 +141,7 @@ class MethodAdapter:
     scalability: str
     output_kind: str
     install_requirement: str | None
-    runner: Callable[[ig.Graph, int, float, int, dict[str, Any]], list[list[int]]]
+    runner: Callable[[ig.Graph, int, float, int, dict[str, Any]], DetectorOutput | list[list[int]]]
     density_resolution_multiplier: float | None = None
 
 
@@ -88,16 +179,24 @@ def normalize_cover(
             normalized.append(members)
         else:
             empty_communities += 1
-    return normalized, {
+    canonical, canonicalization = canonicalize_cover(
+        normalized, n_vertices=n_vertices, minimum_size=1
+    )
+    return canonical, {
         "invalid_members_dropped": invalid_members,
-        "duplicate_members_removed": duplicate_members,
+        "duplicate_members_removed": duplicate_members
+        + canonicalization["duplicate_members_removed"],
+        "duplicate_communities_removed": canonicalization[
+            "duplicate_communities_removed"
+        ],
         "empty_communities_dropped": empty_communities,
+        "canonical_community_count": len(canonical),
     }
 
 
 def _hedonic_local(
     graph: ig.Graph, k: int, resolution: float, seed: int, parameters: dict[str, Any]
-) -> list[list[int]]:
+) -> DetectorOutput:
     # lucas-igraph's community_leiden binding does not expose a ``seed``
     # argument.  Set igraph's Python RNG explicitly so a benchmark seed is a
     # real reproducibility control rather than metadata only. Benchmark calls
@@ -108,15 +207,21 @@ def _hedonic_local(
         max_memberships=max(2, k),
         local_move_only=True,
         n_iterations=-1,
+        allow_isolation=bool(parameters.get("allow_isolation", True)),
         initial_membership=parameters.get("_initial_membership"),
         seed=seed,
+        ensure_equilibrium=bool(parameters.get("ensure_equilibrium", True)),
     )
-    return partition_to_cover_lists(result)
+    return DetectorOutput(
+        cover=partition_to_cover_lists(result),
+        pre_cleanup_memberships=_pre_cleanup_memberships(result),
+        final_memberships=_final_memberships(result),
+    )
 
 
 def _hedonic_multiphase(
     graph: ig.Graph, k: int, resolution: float, seed: int, parameters: dict[str, Any]
-) -> list[list[int]]:
+) -> DetectorOutput:
     ig.set_random_number_generator(random.Random(seed))
     result = Game(graph).community_hedonic(
         resolution=resolution,
@@ -126,8 +231,54 @@ def _hedonic_multiphase(
         allow_isolation=bool(parameters.get("allow_isolation", True)),
         initial_membership=parameters.get("_initial_membership"),
         seed=seed,
+        ensure_equilibrium=bool(parameters.get("ensure_equilibrium", True)),
     )
-    return partition_to_cover_lists(result)
+    return DetectorOutput(
+        cover=partition_to_cover_lists(result),
+        pre_cleanup_memberships=_pre_cleanup_memberships(result),
+        final_memberships=_final_memberships(result),
+    )
+
+
+def _pre_cleanup_memberships(result) -> list[list[int]] | None:
+    """Extract the preserved first native call before equilibrium cleanup."""
+    preserved = getattr(result, "_hedonic_raw_memberships", None)
+    if preserved is None:
+        return None
+    return [list(map(int, labels)) for labels in preserved]
+
+
+def _final_memberships(result) -> list[list[int]]:
+    """Extract the exact per-vertex rows returned by the final native call."""
+    membership = getattr(result, "membership", None)
+    if membership is None:
+        return []
+    if membership and isinstance(membership[0], (list, tuple)):
+        return [list(map(int, labels)) for labels in membership]
+    return [[int(label)] for label in membership]
+
+
+def _cover_from_memberships(
+    memberships: Any, n_vertices: int
+) -> list[list[int]] | None:
+    if not isinstance(memberships, list) or len(memberships) != n_vertices:
+        return None
+    communities: dict[int, list[int]] = {}
+    try:
+        for vertex, labels in enumerate(memberships):
+            row = [int(label) for label in labels]
+            if not row or len(row) != len(set(row)) or min(row) < 0:
+                return None
+            for label in row:
+                communities.setdefault(label, []).append(vertex)
+        cover, _ = canonicalize_cover(
+            list(communities.values()),
+            n_vertices=n_vertices,
+            minimum_size=1,
+        )
+        return cover
+    except (TypeError, ValueError):
+        return None
 
 
 def _networkx_graph(graph: ig.Graph):
@@ -148,7 +299,7 @@ def _cpm(
 ) -> list[list[int]]:
     """NetworkX clique-percolation baseline (an overlapping node cover)."""
     try:
-        from networkx.algorithms.community import k_clique_communities
+        from networkx.algorithms.community.kclique import k_clique_communities
     except ImportError as exc:  # pragma: no cover - availability handles this
         raise MethodUnavailable("networkx is not installed") from exc
     clique_size = int(parameters.get("clique_size", 3))
@@ -165,7 +316,7 @@ def _demon(
     graph: ig.Graph, _k: int, _resolution: float, seed: int, parameters: dict[str, Any]
 ) -> list[list[int]]:
     try:
-        from demon import Demon
+        from demon.alg.Demon import Demon
     except ImportError as exc:  # pragma: no cover - availability handles this
         raise MethodUnavailable("demon is not installed") from exc
     random.seed(seed)
@@ -189,6 +340,8 @@ METHODS: dict[str, MethodAdapter] = {
         parameters={
             "local_move_only": True,
             "n_iterations": -1,
+            "allow_isolation": True,
+            "ensure_equilibrium": True,
             "igraph_rng": "random.Random(seed)",
         },
         scalability="Native igraph binding; standard profile bounds graph size.",
@@ -204,6 +357,7 @@ METHODS: dict[str, MethodAdapter] = {
             "local_move_only": False,
             "n_iterations": -1,
             "allow_isolation": True,
+            "ensure_equilibrium": True,
             "igraph_rng": "random.Random(seed)",
             "resolution_rule": "min(graph.density() * 1, 1)",
         },
@@ -221,6 +375,7 @@ METHODS: dict[str, MethodAdapter] = {
             "local_move_only": False,
             "n_iterations": -1,
             "allow_isolation": True,
+            "ensure_equilibrium": True,
             "igraph_rng": "random.Random(seed)",
             "resolution_rule": "min(graph.density() * 10, 1)",
         },
@@ -238,6 +393,7 @@ METHODS: dict[str, MethodAdapter] = {
             "local_move_only": False,
             "n_iterations": -1,
             "allow_isolation": True,
+            "ensure_equilibrium": True,
             "igraph_rng": "random.Random(seed)",
             "resolution_rule": "min(graph.density() * 100, 1)",
         },
@@ -294,16 +450,17 @@ def method_availability() -> dict[str, dict[str, Any]]:
     for name, adapter in METHODS.items():
         available = True
         reason = None
-        if name == "cpm":
-            try:
-                import networkx  # noqa: F401
-            except ImportError:
-                available, reason = False, "networkx is not installed"
-        elif name == "demon":
-            try:
-                import demon  # noqa: F401
-            except ImportError:
-                available, reason = False, "demon is not installed"
+        dependency = method_dependency_identity(name)
+        if name in EXTERNAL_DISTRIBUTIONS and (
+            not isinstance(dependency, dict)
+            or dependency.get("version") is None
+            or dependency.get("implementation_belongs_to_distribution") is not True
+            or not dependency.get("implementation_sha256")
+        ):
+            available = False
+            reason = (
+                f"{EXTERNAL_DISTRIBUTIONS[name]} exact implementation is unavailable"
+            )
         result[name] = {
             "available": available,
             "reason": reason,
@@ -313,6 +470,7 @@ def method_availability() -> dict[str, dict[str, Any]]:
             "scalability": adapter.scalability,
             "output_kind": adapter.output_kind,
             "install_requirement": adapter.install_requirement,
+            "dependency": dependency,
         }
     return result
 
@@ -348,15 +506,39 @@ def run_method(
     """Run an adapter and return a valid normalized cover with provenance."""
     params = {**adapter.parameters, **(parameters or {})}
     started = time.monotonic()
-    runner_params = params
+    runner_params = {**params}
     if initial_membership is not None:
-        runner_params = {**params, "_initial_membership": initial_membership}
-    raw_cover = adapter.runner(
+        runner_params["_initial_membership"] = initial_membership
+    detector_output = adapter.runner(
         graph, max_memberships, resolution, seed, runner_params
     )
+    if isinstance(detector_output, DetectorOutput):
+        raw_cover = detector_output.cover
+        pre_cleanup_memberships = detector_output.pre_cleanup_memberships
+        final_memberships = detector_output.final_memberships
+    else:
+        raw_cover = detector_output
+        pre_cleanup_memberships = None
+        final_memberships = None
     cover, normalization = normalize_cover(raw_cover, graph.vcount())
     if not cover:
         raise RuntimeError(f"{adapter.name} produced no valid communities")
+    if adapter.name.startswith("hedonic_"):
+        if pre_cleanup_memberships is None:
+            raise RuntimeError(
+                f"{adapter.name} did not preserve exact pre-cleanup memberships"
+            )
+        exact_final_cover = _cover_from_memberships(
+            final_memberships, graph.vcount()
+        )
+        if exact_final_cover is None:
+            raise RuntimeError(
+                f"{adapter.name} did not expose valid exact final memberships"
+            )
+        if exact_final_cover != cover:
+            raise RuntimeError(
+                f"{adapter.name} final memberships disagree with its scoring cover"
+            )
     return cover, {
         "runtime_seconds": time.monotonic() - started,
         "method": adapter.name,
@@ -365,7 +547,11 @@ def run_method(
         "parameters": params,
         "seed": seed,
         "initial_membership_supplied": initial_membership is not None,
+        "pre_cleanup_memberships": pre_cleanup_memberships,
+        "final_memberships": final_memberships,
+        "ensure_equilibrium": bool(params.get("ensure_equilibrium", False)),
         "normalization": normalization,
+        "dependency": method_dependency_identity(adapter.name),
         "directed_input_converted_to_undirected": (
             graph.is_directed() and adapter.name in {"cpm", "demon"}
         ),

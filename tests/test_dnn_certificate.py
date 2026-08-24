@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -21,6 +22,29 @@ EXPECTED_INSTANCE_HASHES = {
     "bow_tie5": "71f9eeb2eccc24d0df1837c2a3ca3aa3361ab68831ca552d2b2085a4967c0308",
     "weighted_bridge5": "27ddec51fde8aec34c033dfe4d0b81216b16b9c89d1dd998e663de7b8e5bef3d",
 }
+
+REPOSITORY_ROOT = Path(__file__).parents[1]
+EXPECTED_IMPLEMENTATION_SOURCES = {
+    "src/hedonic/experiments/overlapping/dnn_certificate.py",
+    "src/hedonic/Game.py",
+}
+
+
+def assert_implementation_identity(test_case, payload):
+    identity = payload["protocol"]["implementation_identity"]
+    test_case.assertEqual(identity["schema_version"], 1)
+    test_case.assertEqual(
+        set(identity["source_sha256"]), EXPECTED_IMPLEMENTATION_SOURCES
+    )
+    for relative_path, expected_digest in identity["source_sha256"].items():
+        source_path = REPOSITORY_ROOT / relative_path
+        test_case.assertTrue(source_path.is_file(), relative_path)
+        test_case.assertEqual(
+            expected_digest,
+            hashlib.sha256(source_path.read_bytes()).hexdigest(),
+            relative_path,
+        )
+    test_case.assertEqual(identity["runtime_versions"], payload["environment"])
 
 
 class TestDnnCertificate(unittest.TestCase):
@@ -80,6 +104,13 @@ class TestDnnCertificate(unittest.TestCase):
         manifest = dnn.build_manifest(["path4"], seeds=[0], exact_only=True)
         encoded = json.dumps(manifest, allow_nan=False)
         self.assertEqual(json.loads(encoded)["protocol"]["protocol_version"], dnn.PROTOCOL_VERSION)
+        assert_implementation_identity(self, manifest)
+        self.assertEqual(
+            manifest["protocol"]["implementation_sha256"],
+            manifest["protocol"]["implementation_identity"]["source_sha256"][
+                "src/hedonic/experiments/overlapping/dnn_certificate.py"
+            ],
+        )
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -90,15 +121,21 @@ class TestDnnCertificate(unittest.TestCase):
     def test_tracked_reference_artifact_is_bound_to_current_protocol(self):
         artifact_path = (
             Path(__file__).parents[1]
-            / "docs"
-            / "papers"
-            / "overlapping_communities"
+            / "artifacts"
             / "evidence"
-            / "dnn_certificate_v1.json"
+            / "overlapping_communities"
+            / "dnn_certificate_v2.json"
         )
         if not artifact_path.is_file():
             self.skipTest("private paper reference artifact is not present in this checkout")
         artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        if artifact["environment"] != dnn._environment_versions(exact_only=False):
+            self.skipTest(
+                "dnn_certificate_v2 is historical evidence recorded under the "
+                "previous native dependency; regenerate it before asserting "
+                "current implementation identity"
+            )
+        assert_implementation_identity(self, artifact)
         self.assertEqual(
             artifact["protocol"]["implementation_sha256"],
             dnn.implementation_sha256(),

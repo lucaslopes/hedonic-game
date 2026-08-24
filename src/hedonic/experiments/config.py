@@ -14,10 +14,10 @@ TOML layout (all keys optional)::
     [paths]
     dblp_dir = "~/Databases/Hedonic/Networks/DBLP"
     synthetic_dir = "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
-    output_dir = "~/Databases/Hedonic/experiments"
+    output_dir = "artifacts"
 
     [overlapping_resolution]
-    output_dir = "~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1"
+    output_dir = "artifacts/overlapping/resolution_f1"
     resolutions = "0:1:11"
     seeds = "0-4"
 """
@@ -41,8 +41,29 @@ else:  # pragma: no cover
 
 
 def expand_path(value: str | Path) -> Path:
-    """Expand ``~`` and user vars; do not require the path to exist."""
-    return Path(os.path.expanduser(str(value).strip())).expanduser()
+    """Expand user vars and anchor repository artifact paths.
+
+    Dataset paths remain portable user-relative or explicitly supplied paths.
+    A relative path beginning with ``artifacts`` is always anchored at the
+    repository root, so the default TOML config behaves the same regardless
+    of the caller's working directory.
+    """
+    path = Path(os.path.expanduser(str(value).strip())).expanduser()
+    if not path.is_absolute() and path.parts and path.parts[0] == "artifacts":
+        path = PROJECT_ROOT / path
+    return path
+
+
+# This module lives at ``<repo>/src/hedonic/experiments/config.py``.  Keeping
+# the repository root here gives every experiment one stable, source-controlled
+# place for generated outputs while leaving external datasets configurable.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+DISJOINT_ARTIFACTS_DIR = ARTIFACTS_DIR / "disjoint"
+OVERLAPPING_ARTIFACTS_DIR = ARTIFACTS_DIR / "overlapping"
+PAPER_ARTIFACTS_DIR = ARTIFACTS_DIR / "papers" / "overlapping_communities"
+EVIDENCE_DIR = ARTIFACTS_DIR / "evidence"
+SNAP_CACHE_DIR = ARTIFACTS_DIR / "cache" / "snap"
 
 
 # Portable defaults (no hard-coded /Users/<name>).
@@ -51,7 +72,10 @@ DEFAULT_NETWORKS_DIR = expand_path("~/Databases/Hedonic/Networks")
 DEFAULT_SYNTHETIC_DIR = expand_path(
     "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
 )
-DEFAULT_OUTPUT_DIR = expand_path("~/Databases/Hedonic/experiments")
+# ``OUTPUT_DIR`` is the canonical artifact root.  Individual experiments add
+# their own subdirectory below it; no generated output defaults to a data tree
+# or to the process working directory.
+DEFAULT_OUTPUT_DIR = ARTIFACTS_DIR
 
 # Default TOML search order (relative to cwd). Prefer repo ``configs/``.
 DEFAULT_TOML_NAMES: tuple[str, ...] = (

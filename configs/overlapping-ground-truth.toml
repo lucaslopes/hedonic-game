@@ -1,0 +1,36 @@
+# Dedicated configuration for the GT-seeded overlapping robustness study.
+# This file is intentionally separate from configs/hedonic.toml: the latter is
+# tracked by the locked five-network paper protocol and must remain unchanged.
+
+[paths]
+networks_dir = "~/Databases/Hedonic/Networks"
+output_dir = "artifacts/overlapping/ground_truth_robustness_v3"
+
+[overlapping_ground_truth_robustness]
+output_dir = "artifacts/overlapping/ground_truth_robustness_v3"
+cover = "top5000"
+uncovered_policy = "covered-induced"
+phases = ["local", "multiphase"]
+isolation_policies = ["fixed_labels", "open_labels"]
+seeds = "0-4"
+perturbation_seeds = "100-104"
+resolution_multipliers = [1, 10, 100]
+# Target labeled-incidence distances.  For a cover with I incidences, the
+# runner requests round(distance * I / 2) degree-preserving switches, because
+# every successful switch changes exactly two labeled incidences.
+perturbation_incidence_distances = [0, 0.005, 0.02, 0.05]
+robustness_profile = "0:1:11"
+timeout_per_run = 3600
+max_nodes = 3000
+
+# The locked substantive grid contains the four SNAP collections that expose a
+# top5000 metadata cover. Wikipedia exposes only the distinct `all` cover and
+# is therefore outside this factorial rather than a permanently unavailable
+# detector job. Scientific CLI overrides create a non-canonical grid identity
+# and must use a separate output directory.
+jobs = [
+  { dataset = "amazon" },
+  { dataset = "dblp" },
+  { dataset = "livejournal" },
+  { dataset = "youtube" },
+]

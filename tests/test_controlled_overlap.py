@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import tempfile
@@ -14,6 +15,33 @@ from hedonic.experiments.overlapping import controlled_overlap
 
 
 class TestControlledOverlap(unittest.TestCase):
+    def assert_implementation_identity_current(self, identity):
+        self.assertEqual(identity["algorithm"], "sha256")
+        self.assertEqual(identity["path_scope"], "repository-relative")
+        repository_root = Path(__file__).resolve().parents[1]
+        self.assertEqual(
+            set(identity["source_files"]),
+            set(controlled_overlap.IMPLEMENTATION_SOURCE_FILES),
+        )
+        for relative, recorded_digest in identity["source_files"].items():
+            self.assertEqual(
+                recorded_digest,
+                hashlib.sha256((repository_root / relative).read_bytes()).hexdigest(),
+                relative,
+            )
+        descriptor = {
+            key: value
+            for key, value in identity.items()
+            if key != "identity_sha256"
+        }
+        self.assertEqual(
+            identity["identity_sha256"],
+            controlled_overlap._sha256_json(descriptor),
+        )
+        self.assertEqual(
+            identity["environment"], controlled_overlap._environment_identity()
+        )
+
     def _instance(self):
         return controlled_overlap.generate_controlled_cover(
             n=80,
@@ -66,7 +94,7 @@ class TestControlledOverlap(unittest.TestCase):
         self.assertEqual(row["max_memberships"], 2)
         self.assertEqual(row["initialization_supervision"], "ground-truth primary labels")
         self.assertEqual(row["local_move_only"], True)
-        self.assertEqual(row["allow_isolation"], False)
+        self.assertEqual(row["allow_isolation"], True)
         self.assertIn("matching_f1", row)
         self.assertEqual(row["omega"], None)
         summary = controlled_overlap._summary(rows)
@@ -117,7 +145,7 @@ class TestControlledOverlap(unittest.TestCase):
             seed=7,
         )
         self.assertEqual({row["seed"] for row in rows}, {7})
-        self.assertEqual({row["allow_isolation"] for row in rows}, {False})
+        self.assertEqual({row["allow_isolation"] for row in rows}, {True})
 
     def test_cli_registration_help_and_csv_output(self):
         command = CLI.COMMANDS["overlapping-controlled"]
@@ -168,11 +196,23 @@ class TestControlledOverlap(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertTrue(output.is_file())
             self.assertTrue(output.with_suffix(".csv").is_file())
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assert_implementation_identity_current(
+                payload["implementation_identity"]
+            )
+            self.assertEqual(
+                payload["environment"],
+                payload["implementation_identity"]["environment"],
+            )
+            self.assertEqual(
+                payload["implementation_identity"],
+                payload["protocol"]["implementation_identity"],
+            )
 
-    def test_tracked_v1_is_strict_and_bound_to_code_and_protocol(self):
+    def test_tracked_v2_is_strict_and_bound_to_code_and_protocol(self):
         artifact = (
             Path(__file__).resolve().parents[1]
-            / "docs/papers/overlapping_communities/evidence/controlled_overlap_v1.json"
+            / "artifacts/evidence/overlapping_communities/controlled_overlap_v2.json"
         )
         if not artifact.is_file():
             self.skipTest("private paper reference artifact is not present in this checkout")
@@ -187,6 +227,19 @@ class TestControlledOverlap(unittest.TestCase):
             payload["implementation_sha256"],
             controlled_overlap._implementation_sha256(),
         )
+        if payload["implementation_identity"]["environment"] != controlled_overlap._environment_identity():
+            self.skipTest(
+                "controlled_overlap_v2 is historical evidence recorded under "
+                "lucas-igraph 1.0.0.2; rerun the ledger before asserting current "
+                "implementation identity"
+            )
+        self.assert_implementation_identity_current(
+            payload["implementation_identity"]
+        )
+        self.assertEqual(
+            payload["implementation_identity"],
+            payload["protocol"]["implementation_identity"],
+        )
         self.assertEqual(
             payload["protocol_sha256"],
             controlled_overlap._sha256_json(payload["protocol"]),
@@ -199,7 +252,7 @@ class TestControlledOverlap(unittest.TestCase):
         self.assertTrue(
             all(row["n_expected"] == 3 for row in payload["condition_summary"])
         )
-        self.assertEqual(payload["protocol"]["detector"]["allow_isolation"], False)
+        self.assertEqual(payload["protocol"]["detector"]["allow_isolation"], True)
         self.assertEqual(payload["protocol"]["construction"]["n"], 80)
         self.assertEqual(
             payload["protocol"]["detector"]["paired_detector_seed_rule"],

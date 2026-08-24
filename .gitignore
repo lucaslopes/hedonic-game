@@ -14,6 +14,11 @@ wheels/
 
 # Project files
 artifacts/
+# Manuscripts, private evidence, and manuscript-only protocol configs live in
+# the separate research checkout and must never enter the public branch.
+docs/papers/
+artifacts/evidence/
+configs/hedonic-equilibrium-v2.toml
 *.log
 *.out
 *.fls

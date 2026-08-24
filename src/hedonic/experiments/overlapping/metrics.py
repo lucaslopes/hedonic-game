@@ -72,7 +72,14 @@ def _cover_sets(
     if singleton_mode not in ("all", "size_ge_2"):
         raise ValueError("singleton_mode must be 'all' or 'size_ge_2'")
     minimum_size = 1 if singleton_mode == "all" else 2
-    return [members for c in cover if len(members := set(c)) >= minimum_size]
+    # Treat a cover as a set of vertex sets.  Duplicate detector labels and
+    # repeated members are serialization artifacts, not additional evidence;
+    # retaining them would inflate community-weighted metric denominators.
+    canonical = {
+        tuple(sorted({int(member) for member in community}))
+        for community in cover
+    }
+    return [set(members) for members in sorted(canonical) if len(members) >= minimum_size]
 
 
 def _pair_scores(

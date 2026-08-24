@@ -26,6 +26,7 @@ from typing import Iterable, Sequence
 import igraph as ig
 
 from hedonic import Game
+from hedonic.experiments.config import OVERLAPPING_ARTIFACTS_DIR, expand_path
 from hedonic.experiments.overlapping.metrics import (
     evaluate_cover,
     partition_to_cover_lists,
@@ -38,9 +39,16 @@ CONSTRUCTION_CAVEAT = (
     "reinforcing edges are added by this experiment; this is not canonical "
     "overlapping LFR."
 )
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+ENSURE_EQUILIBRIUM = True
+ALLOW_ISOLATION = True
 NEUTRAL_START_SEED_OFFSET = 91_001
 _LFR_BASE_CACHE: dict[tuple, tuple[object, int, int]] = {}
+IMPLEMENTATION_SOURCE_FILES = (
+    "src/hedonic/experiments/overlapping/controlled_overlap.py",
+    "src/hedonic/Game.py",
+    "src/hedonic/experiments/overlapping/metrics.py",
+)
 
 
 @dataclass(frozen=True)
@@ -279,6 +287,8 @@ def _neutral_disjoint_start(graph: ig.Graph, resolution: float, seed: int) -> li
         local_move_only=False,
         n_iterations=-1,
         seed=seed,
+        allow_isolation=ALLOW_ISOLATION,
+        ensure_equilibrium=ENSURE_EQUILIBRIUM,
     )
     return [int(label) for label in partition.membership]
 
@@ -302,9 +312,10 @@ def _detector_worker(
             max_memberships=cap,
             local_move_only=local,
             n_iterations=-1,
-            allow_isolation=False,
+            allow_isolation=ALLOW_ISOLATION,
             initial_membership=initial_membership,
             seed=seed,
+            ensure_equilibrium=ENSURE_EQUILIBRIUM,
         )
         queue.put(
             {
@@ -459,7 +470,8 @@ def run_ablations(
                             "error": detector.get("error"),
                             "phase": phase,
                             "local_move_only": phase == "local",
-                            "allow_isolation": False,
+                            "allow_isolation": ALLOW_ISOLATION,
+                            "ensure_equilibrium": ENSURE_EQUILIBRIUM,
                             "max_memberships_spec": cap_label,
                             "max_memberships": cap,
                             "initialization": start,
@@ -578,6 +590,48 @@ def _distribution_version(name: str) -> str | None:
         return None
 
 
+def _environment_identity() -> dict[str, str | None]:
+    """Return the implementation-relevant runtime distribution versions."""
+    lucas_igraph = _distribution_version("lucas-igraph")
+    return {
+        "python": platform.python_version(),
+        "networkx": _distribution_version("networkx"),
+        "lucas_igraph_distribution": lucas_igraph,
+        # The released wheel is named lucas-igraph but exposes the ``igraph``
+        # import package. Preserve both names to make migrations auditable.
+        "igraph_distribution": _distribution_version("igraph") or lucas_igraph,
+        "hedonic": _distribution_version("hedonic"),
+    }
+
+
+def _implementation_identity(
+    *, environment: dict[str, str | None] | None = None
+) -> dict:
+    """Bind experiment output to every local source file it directly depends on.
+
+    Paths are repository-relative so the identity is independent of the
+    checkout location. The aggregate digest covers both the source map and the
+    implementation-relevant package versions.
+    """
+    repository_root = Path(__file__).resolve().parents[4]
+    source_files = {
+        relative: hashlib.sha256((repository_root / relative).read_bytes()).hexdigest()
+        for relative in IMPLEMENTATION_SOURCE_FILES
+    }
+    descriptor = {
+        "algorithm": "sha256",
+        "path_scope": "repository-relative",
+        "source_files": source_files,
+        "environment": dict(
+            _environment_identity() if environment is None else environment
+        ),
+    }
+    return {
+        **descriptor,
+        "identity_sha256": _sha256_json(descriptor),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -585,7 +639,17 @@ def build_parser() -> argparse.ArgumentParser:
             "cap, initialization, phase, and resolution ablations"
         )
     )
-    parser.add_argument("--output", type=Path, default=Path("controlled_overlap.json"))
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=OVERLAPPING_ARTIFACTS_DIR
+        / "controlled_overlap"
+        / "controlled_overlap.json",
+        help=(
+            "JSON output path (default: "
+            "artifacts/overlapping/controlled_overlap/controlled_overlap.json)"
+        ),
+    )
     parser.add_argument("--smoke", action="store_true", help="tiny deterministic grid")
     parser.add_argument("--n", type=int, default=80)
     parser.add_argument("--mus", default="0.2,0.4")
@@ -633,7 +697,10 @@ def main(argv=None) -> int:
     starts = _csv_numbers(args.starts, str)
     multipliers = _csv_numbers(args.resolution_multipliers, float)
 
+    environment = _environment_identity()
+    implementation_identity = _implementation_identity(environment=environment)
     protocol = {
+        "implementation_identity": implementation_identity,
         "construction": {
             "label": CONSTRUCTION_LABEL,
             "n": int(args.n),
@@ -658,7 +725,8 @@ def main(argv=None) -> int:
             "initializations": starts,
             "resolution_multipliers": multipliers,
             "n_iterations": -1,
-            "allow_isolation": False,
+            "allow_isolation": ALLOW_ISOLATION,
+            "ensure_equilibrium": ENSURE_EQUILIBRIUM,
             "paired_detector_seed_rule": "detector_seed = graph_seed",
             "neutral_disjoint_seed_offset": NEUTRAL_START_SEED_OFFSET,
             "hard_timeout_seconds_per_cell": float(args.timeout_per_run),
@@ -730,22 +798,12 @@ def main(argv=None) -> int:
         "schema_version": SCHEMA_VERSION,
         "construction_label": CONSTRUCTION_LABEL,
         "construction_caveat": CONSTRUCTION_CAVEAT,
+        # Compatibility digest retained for readers of schema-v2 artifacts.
         "implementation_sha256": _implementation_sha256(),
+        "implementation_identity": implementation_identity,
         "protocol_sha256": _sha256_json(protocol),
         "protocol": protocol,
-        "environment": {
-            "python": platform.python_version(),
-            "networkx": _distribution_version("networkx"),
-            "lucas_igraph_distribution": _distribution_version("lucas-igraph"),
-            # The released wheel is named lucas-igraph but exposes the
-            # ``igraph`` import package; fall back to its distribution name
-            # so the environment record remains populated after migration.
-            "igraph_distribution": (
-                _distribution_version("igraph")
-                or _distribution_version("lucas-igraph")
-            ),
-            "hedonic": _distribution_version("hedonic"),
-        },
+        "environment": environment,
         "experiment_design": {
             "detector_api": "Game.community_hedonic",
             "n_iterations": -1,
@@ -758,7 +816,8 @@ def main(argv=None) -> int:
             "gt_informed_controls": ["gt-primary", "max_memberships=gt"],
             "paired_detector_seed_rule": "detector_seed = graph_seed",
             "neutral_disjoint_seed_offset": NEUTRAL_START_SEED_OFFSET,
-            "allow_isolation": False,
+            "allow_isolation": ALLOW_ISOLATION,
+            "ensure_equilibrium": ENSURE_EQUILIBRIUM,
             "summary_uncertainty": (
                 "sample standard deviation and two-sided normal-approximation "
                 "95% CI (mean +/- 1.96 * sd / sqrt(n)) across generated instances"
@@ -779,6 +838,7 @@ def main(argv=None) -> int:
             ),
         ),
     }
+    args.output = expand_path(args.output)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",

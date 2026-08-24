@@ -1,84 +1,19 @@
-# Example hedonic experiment config.
-# Copy or edit configs/hedonic.toml (loaded by default from repo cwd),
-# or pass --config path.toml / set HEDONIC_CONFIG.
-#
-# Priority for paths: CLI flags > environment variables > TOML > defaults.
-#   HEDONIC_DBLP_DIR, HEDONIC_SYNTHETIC_DIR, HEDONIC_NETWORKS_DIR,
-#   HEDONIC_OUTPUT_DIR, HEDONIC_CONFIG
-#
-# Prefer ~/… (home-relative) paths so configs are portable.
+# Example hedonic experiment configuration.
+# Copy or edit configs/hedonic.toml, or pass --config path.toml / set
+# HEDONIC_CONFIG. CLI flags take precedence over environment variables and
+# TOML values. Prefer home-relative paths so configs remain portable.
 
 [paths]
 dblp_dir = "~/Databases/Hedonic/Networks/DBLP"
 networks_dir = "~/Databases/Hedonic/Networks"
 synthetic_dir = "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
-output_dir = "~/Databases/Hedonic/experiments"
+output_dir = "artifacts"
 
 [overlapping_resolution]
-output_dir = "~/Databases/Hedonic/Networks/DBLP_CLI/resolution_f1"
+output_dir = "artifacts/overlapping/resolution_f1"
 # data_dir = "~/Databases/Hedonic/Networks/DBLP"
 resolutions = "0:1:11"
 seeds = "0-4"
-# confidence = 0.95
 
-# Full paper reproduction (docs/papers/overlapping_communities/main.tex).
-# Launch with: uv run hedonic-exp reproduce-overlapping-paper
-[overlapping_paper]
-profile = "full"
-data_root = "~/Databases/Hedonic/Networks"
-output_dir = "docs/papers/overlapping_communities/artifacts/full"
-paper_dir = "docs/papers/overlapping_communities"
-tmux_session = "hedonic-overlapping-paper"
-methods = ["hedonic_multiphase", "hedonic_multiphase_x10", "hedonic_multiphase_x100", "cpm", "demon"]
-seeds = "0-4"
-resolutions = "auto"
-max_nodes = 0
-timeout_per_run = 3600
-omega = true
-omega_sample_size = 100000
-resume = true
-retry_attempts = 0
-timeout_by_method = { cpm = 1800, demon = 1800, hedonic_multiphase = 3600, hedonic_multiphase_x10 = 3600, hedonic_multiphase_x100 = 3600 }
-timeout_by_dataset = { livejournal = 1800, youtube = 1800, wikipedia = 1800 }
-# When both maps apply, the conservative (smaller) timeout is used. CPM/DEMON
-# resource exhaustion becomes skipped_not_scalable and is not repeated.
-
-# The runner measures graph/cover sizes and packs only jobs whose conservative
-# estimated peaks fit this budget. `auto` means physical RAM minus the reserve.
-memory_budget_gb = "auto"
-memory_reserve_gb = 24
-memory_safety_factor = 1.5
-max_parallel_workers = "auto"
-max_parallel_cap = 2
-poll_seconds = 10
-compile_paper = true
-
-[[overlapping_paper.jobs]]
-name = "amazon-top5000"
-dataset = "amazon"
-cover = "top5000"
-weight = 2
-
-[[overlapping_paper.jobs]]
-name = "dblp-top5000"
-dataset = "dblp"
-cover = "top5000"
-weight = 1
-
-[[overlapping_paper.jobs]]
-name = "livejournal-top5000"
-dataset = "livejournal"
-cover = "top5000"
-weight = 5
-
-[[overlapping_paper.jobs]]
-name = "youtube-top5000"
-dataset = "youtube"
-cover = "top5000"
-weight = 3
-
-[[overlapping_paper.jobs]]
-name = "wikipedia-all"
-dataset = "wikipedia"
-cover = "all"
-weight = 5
+# Manuscript and full-paper protocol settings are intentionally omitted from
+# the public example. Supply a private TOML file for manuscript reproduction.
