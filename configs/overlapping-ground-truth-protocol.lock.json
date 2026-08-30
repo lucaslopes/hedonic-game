@@ -218,11 +218,11 @@
     "uv_lock_path": "uv.lock",
     "uv_lock_sha256": "ae2ae1f2b038be045d3aca9d474f1e4da18d167c6233a87fe2d7d5c2cbc73fd0",
     "package_lock_sha256": "52d416ffcb15119c3abdc123c722a5fb86b0781780a3a1dd25a52d876cd8a890",
-    "distribution_tree_sha256": "a00cbf4603946d677b13a436f1a90616d578322c2bfc9605ab6f198b08cf8db6",
+    "distribution_tree_sha256": "5c432671d6cc5e43ae8b7ef36d4ca1c750851e999a22713dc7a6a17daa94ba10",
     "module": "igraph._igraph",
     "module_path": "igraph/_igraph.abi3.so",
     "module_sha256": "6da6cc1ea9b23525b75901385e5224ffbe3b0300f72594e52540107a3b2cd933",
-    "released_native_sha": "e441a21c3663062d9ebe6b98451c826325f886ad",
+    "released_native_sha": "66db4a6932adca38bad7fc319a9a20a0ced46a91",
     "source_path": "../python-igraph",
     "source_revision_is_optional": true
   },
@@ -232,7 +232,7 @@
       "distribution": "numpy",
       "version": "2.3.3",
       "package_lock_sha256": "8fae8cf57b15ab1b21ecfc85ecf8a61e365bccdc94ae5722a56d6a519623aef8",
-      "distribution_tree_sha256": "fbc57d96b96f11096549d8d1eb7924cfb899d880279b7300c2c4cb86623857c9",
+      "distribution_tree_sha256": "6890f9e6affb06817fb4e92c7e1b1c2361be4cee6d4dc35fbe85a67c900ddd13",
       "module": "numpy",
       "module_path": "numpy/__init__.py",
       "module_sha256": "8236a753805db34c29ef9cd03694e0af883b6325eb4fd246cc83d2be0b847e89"
