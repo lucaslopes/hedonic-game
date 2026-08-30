@@ -41,7 +41,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from scipy.stats import gaussian_kde  # noqa: E402
+from scipy.stats import gaussian_kde, t  # noqa: E402
 
 from hedonic.experiments.config import SYNTHETIC_DIR
 
@@ -188,13 +188,91 @@ def _score_key(use_ari: bool) -> str:
     return "adjusted_rand" if use_ari else "accuracy"
 
 
+LOGICAL_CELL_COLUMNS = (
+    "method",
+    "number_of_communities",
+    "p_in",
+    "multiplier",
+    "network_seed",
+    "noise",
+    "partition_seed",
+)
+KDE_SAMPLE_PER_METHOD = 2_000
+KDE_SAMPLE_SEED = 20_260_830
+
+
+def collapse_logical_cells(df: pd.DataFrame) -> pd.DataFrame:
+    """Give every experimental condition equal weight in summaries.
+
+    Stochastic Leiden methods can emit several unique partitions for one
+    condition, whereas deterministic baselines emit one. Averaging within the
+    logical condition prevents the number of unique stochastic outcomes from
+    changing the estimand.
+    """
+    if df.attrs.get("logical_cells_collapsed"):
+        return df
+    group_cols = [column for column in LOGICAL_CELL_COLUMNS if column in df.columns]
+    value_cols = [
+        column
+        for column in ("duration", "robustness", "accuracy", "adjusted_rand")
+        if column in df.columns
+    ]
+    if not group_cols or not value_cols:
+        out = df.copy()
+    else:
+        out = (
+            df.groupby(group_cols, as_index=False, sort=False, dropna=False)[value_cols]
+            .mean()
+        )
+    out.attrs["logical_cells_collapsed"] = True
+    return out
+
+
+def _mean_and_seed_ci(sub: pd.DataFrame, metric: str) -> tuple[float, float]:
+    """Return the balanced mean and a two-sided 95% CI across network seeds."""
+    if sub.empty or metric not in sub.columns:
+        return np.nan, 0.0
+    values = (
+        sub.groupby("network_seed", sort=False)[metric].mean().to_numpy(dtype=float)
+        if "network_seed" in sub.columns
+        else sub[metric].to_numpy(dtype=float)
+    )
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return np.nan, 0.0
+    mean_val = float(values.mean())
+    if values.size == 1:
+        return mean_val, 0.0
+    standard_error = float(values.std(ddof=1) / np.sqrt(values.size))
+    ci = float(t.ppf(0.975, values.size - 1) * standard_error)
+    return mean_val, ci
+
+
+def _sample_for_kde(
+    df: pd.DataFrame,
+    *,
+    per_method: int = KDE_SAMPLE_PER_METHOD,
+    seed: int = KDE_SAMPLE_SEED,
+) -> pd.DataFrame:
+    """Deterministically sample equal numbers of logical cells per method."""
+    sampled = []
+    for offset, method in enumerate(METHODS_MAPPING):
+        subset = df[df["method"] == method]
+        if len(subset) > per_method:
+            subset = subset.sample(n=per_method, random_state=seed + offset)
+        sampled.append(subset)
+    out = pd.concat(sampled, ignore_index=True) if sampled else df.iloc[0:0].copy()
+    out.attrs["logical_cells_collapsed"] = True
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Figure 1 — ground-truth robustness
 # ---------------------------------------------------------------------------
 
 
 def compute_figure1_data(df: pd.DataFrame, cmap: str = "BuPu") -> dict:
-    gt_df = df[df["method"] == "GroundTruth"].drop_duplicates()
+    gt_df = df[df["method"] == "GroundTruth"]
     if gt_df.empty:
         # Fallback: empty structure so smoke still writes a figure shell.
         return {
@@ -204,14 +282,32 @@ def compute_figure1_data(df: pd.DataFrame, cmap: str = "BuPu") -> dict:
             "heatmaps": {},
             "cmap": cmap,
         }
+    graph_columns = [
+        column
+        for column in (
+            "number_of_communities",
+            "p_in",
+            "multiplier",
+            "network_seed",
+        )
+        if column in gt_df.columns
+    ]
+    if graph_columns:
+        gt_df = (
+            gt_df.groupby(graph_columns, as_index=False, sort=False)["robustness"]
+            .mean()
+        )
+    else:
+        gt_df = gt_df.drop_duplicates(subset=["robustness"])
     communities = sorted(gt_df["number_of_communities"].unique())
     global_max = 0
     hist_data = []
     for nc in communities:
         subset = gt_df[gt_df["number_of_communities"] == nc]["robustness"]
         counts, _ = np.histogram(subset, bins=100, range=(0, 1))
-        global_max = max(global_max, int(counts.max()) if len(counts) else 0)
-        hist_data.append((nc, subset, counts))
+        percentages = 100.0 * counts / max(len(subset), 1)
+        global_max = max(global_max, float(percentages.max()) if len(counts) else 0.0)
+        hist_data.append((nc, subset, percentages))
     heatmaps = {}
     for nc in communities:
         sub = gt_df[gt_df["number_of_communities"] == nc]
@@ -243,19 +339,25 @@ def plot_figure1(
     global_max = data["global_max"]
     hist_data = data["hist_data"]
     heatmaps = data["heatmaps"]
-    cmap = "Purples"
+    # Match the manuscript's blue-purple heatmap palette: higher robustness
+    # is dark purple and lower robustness is pale blue.
+    cmap = data.get("cmap", "BuPu")
 
     fig, axs = plt.subplots(2, len(communities), figsize=(16, 5), squeeze=False)
     fig.patch.set_facecolor("black" if dark_mode else "white")
-    hist_color = "white" if dark_mode else plt.get_cmap(cmap + "_r")(0)
+    # Use 0.999 rather than the integer endpoint 1.0; ListedColormap treats
+    # the latter as an index and wraps to its first color.
+    hist_color = "white" if dark_mode else plt.get_cmap(cmap)(0.999)
     for i, (nc, subset, _counts) in enumerate(hist_data):
         ax = axs[0, i]
-        ax.hist(subset, bins=100, range=(0, 1), color=hist_color)
+        weights = np.full(len(subset), 100.0 / max(len(subset), 1))
+        ax.hist(subset, bins=100, range=(0, 1), weights=weights, color=hist_color)
         ax.set_title(f"{nc} Communities")
         ax.set_xlabel("Fraction of robust nodes")
         ax.set_ylim(0, global_max)
-        ax.set_ylabel("Ground Truth Count" if i == 0 else "")
+        ax.set_ylabel("Ground-truth graphs (%)" if i == 0 else "")
         set_plot_style(ax, dark_mode)
+        ax.grid(False)
 
     im = None
     for i, nc in enumerate(communities):
@@ -269,6 +371,7 @@ def plot_figure1(
         ax.set_yticks(np.arange(len(pivot.index)))
         ax.set_yticklabels([f"{val:.2f}" for val in pivot.index], fontsize=8)
         set_plot_style(ax, dark_mode)
+        ax.grid(False)
 
     if im is not None:
         cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
@@ -292,6 +395,7 @@ def plot_figure1(
 
 
 def compute_figure2_data(df: pd.DataFrame, use_ari: bool = True) -> dict:
+    df = collapse_logical_cells(df)
     noise_levels = sorted(df["noise"].unique())
     metrics = ["duration", "robustness", _score_key(use_ari)]
     results: dict[str, dict] = {metric: {} for metric in metrics}
@@ -300,12 +404,7 @@ def compute_figure2_data(df: pd.DataFrame, use_ari: bool = True) -> dict:
             rows = []
             for nl in noise_levels:
                 sub = df[(df["noise"] == nl) & (df["method"] == meth)]
-                if sub.empty or metric not in sub.columns:
-                    mean_val, ci = np.nan, 0.0
-                else:
-                    mean_val = float(sub[metric].mean())
-                    std = float(sub[metric].std()) if len(sub) > 1 else 0.0
-                    ci = 1.96 * std / np.sqrt(len(sub))
+                mean_val, ci = _mean_and_seed_ci(sub, metric)
                 rows.append((nl, mean_val, ci))
             results[metric][meth] = rows
     return {
@@ -342,7 +441,7 @@ def plot_figure2(
         acc_key: "Accuracy",
     }
     metric_names = {
-        "duration": "Time",
+        "duration": "Time (s)",
         "robustness": "Robustness",
         acc_key: "Adjusted Rand Index" if use_ari else "Rand Index",
     }
@@ -404,6 +503,8 @@ def precompute_subsets(
         df_methods_noisy = df_methods_all[
             np.isclose(df_methods_all["noise"].astype(float), noisy_level)
         ]
+    if df_methods_all.attrs.get("logical_cells_collapsed"):
+        df_methods_noisy.attrs["logical_cells_collapsed"] = True
     return df_methods_all, df_methods_noisy
 
 
@@ -416,6 +517,8 @@ def compute_figure3_data(
     df_methods_all, df_methods_noisy = precompute_subsets(
         df, precomputed_all, precomputed_noisy
     )
+    df_methods_all = collapse_logical_cells(df_methods_all)
+    df_methods_noisy = collapse_logical_cells(df_methods_noisy)
     communities = sorted(df_methods_all["number_of_communities"].unique())
     metrics = ["duration", "robustness", _score_key(use_ari)]
     results = {0: {m: {} for m in metrics}, 1: {m: {} for m in metrics}}
@@ -428,12 +531,7 @@ def compute_figure3_data(
                     sub = subset[
                         (subset["number_of_communities"] == nc) & (subset["method"] == meth)
                     ]
-                    if sub.empty or metric not in sub.columns:
-                        mean_val, ci = np.nan, 0.0
-                    else:
-                        mean_val = float(sub[metric].mean())
-                        std = float(sub[metric].std()) if len(sub) > 1 else 0.0
-                        ci = 1.96 * std / np.sqrt(len(sub))
+                    mean_val, ci = _mean_and_seed_ci(sub, metric)
                     rows.append((nc, mean_val, ci))
                 results[noise_val][metric][meth] = rows
     return {
@@ -470,7 +568,7 @@ def plot_figure3(
         acc_key: "Accuracy",
     }
     metric_names = {
-        "duration": "Time",
+        "duration": "Time (s)",
         "robustness": "Robustness",
         acc_key: "Adjusted Rand Index" if use_ari else "Rand Index",
     }
@@ -604,7 +702,7 @@ def compute_figure4a_robustness_data(
         x_col="robustness",
         y_col=y_col,
         x_range=(-0.1, 1.2),
-        y_range=(-1 if use_ari else 0, 1.2),
+        y_range=(-0.1 if use_ari else 0, 1.1),
         precomputed_all=precomputed_all,
         precomputed_noisy=precomputed_noisy,
         n_jobs=n_jobs,
@@ -616,17 +714,38 @@ def compute_figure4b_efficiency_data(
     df=None, precomputed_all=None, precomputed_noisy=None, use_ari: bool = True, n_jobs: int = 1
 ):
     y_col = _score_key(use_ari)
+    if precomputed_all is not None:
+        precomputed_all = precomputed_all.copy()
+        precomputed_all["log10_duration"] = np.log10(
+            precomputed_all["duration"].clip(lower=np.finfo(float).tiny)
+        )
+    if precomputed_noisy is not None:
+        precomputed_noisy = precomputed_noisy.copy()
+        precomputed_noisy["log10_duration"] = np.log10(
+            precomputed_noisy["duration"].clip(lower=np.finfo(float).tiny)
+        )
+    if df is not None:
+        df = df.copy()
+        df["log10_duration"] = np.log10(
+            df["duration"].clip(lower=np.finfo(float).tiny)
+        )
     X, Y, kde_results = compute_figure4_data_common(
         df,
-        x_col="duration",
+        x_col="log10_duration",
         y_col=y_col,
-        x_range=(-0.05, 0.3),
-        y_range=(-1 if use_ari else 0, 1.2),
+        x_range=(-5.2, 0.0),
+        y_range=(-0.1 if use_ari else 0, 1.1),
         precomputed_all=precomputed_all,
         precomputed_noisy=precomputed_noisy,
         n_jobs=n_jobs,
     )
-    return {"X": X, "Y": Y, "kde_results": kde_results, "use_ari": use_ari}
+    return {
+        "X": X,
+        "Y": Y,
+        "kde_results": kde_results,
+        "use_ari": use_ari,
+        "log_runtime": True,
+    }
 
 
 def plot_figure4(
@@ -657,6 +776,11 @@ def plot_figure4(
             ax2.contourf(X, Y, Z, levels=14, cmap=COLORMAP_DICT[m_key])
         ax2.set_xlabel(xlabel)
         ax2.set_ylabel(y_label if j == 0 else "")
+        if fig4_data.get("log_runtime"):
+            ticks = np.arange(-5, 1)
+            tick_labels = [rf"$10^{{{tick}}}$" for tick in ticks]
+            ax.set_xticks(ticks, tick_labels)
+            ax2.set_xticks(ticks, tick_labels)
 
     fig.tight_layout()
     fname = (
@@ -749,7 +873,9 @@ def generate_all_figures(
     del fig1
     gc.collect()
 
-    df_methods_all, df_methods_noisy = precompute_subsets(include_spectral(df))
+    df_methods_all, df_methods_noisy = precompute_subsets(
+        collapse_logical_cells(include_spectral(df))
+    )
     # Drop full df reference for memory on large archives.
     del df
     gc.collect()
@@ -786,13 +912,18 @@ def generate_all_figures(
     del fig3
     gc.collect()
 
+    kde_all = _sample_for_kde(df_methods_all)
+    kde_noisy = _sample_for_kde(df_methods_noisy)
+    del df_methods_all, df_methods_noisy
+    gc.collect()
+
     print("Plotting figure 4a (acc_robustness)...")
     fig4a = load_or_compute(
         _pp("fig4a_robustness_data.pkl"),
         compute_figure4a_robustness_data,
         None,
-        precomputed_all=df_methods_all,
-        precomputed_noisy=df_methods_noisy,
+        precomputed_all=kde_all,
+        precomputed_noisy=kde_noisy,
         use_ari=use_ari,
         n_jobs=n_jobs,
         persist=persist,
@@ -808,14 +939,19 @@ def generate_all_figures(
         _pp("fig4b_efficiency_data.pkl"),
         compute_figure4b_efficiency_data,
         None,
-        precomputed_all=df_methods_all,
-        precomputed_noisy=df_methods_noisy,
+        precomputed_all=kde_all,
+        precomputed_noisy=kde_noisy,
         use_ari=use_ari,
         n_jobs=n_jobs,
         persist=persist,
     )
     written.append(
-        plot_figure4(fig4b, xlabel="Time", fig_dir=fig_dir, file_format=file_format)
+        plot_figure4(
+            fig4b,
+            xlabel="Runtime (s; log scale)",
+            fig_dir=fig_dir,
+            file_format=file_format,
+        )
     )
     del fig4b
     gc.collect()
