@@ -568,14 +568,27 @@ PYVERIFY
     fi
 
     local after_file="$work_dir/index-after.tsv"
-    index_manifest "$index_version_url" > "$after_file" || \
-        die "upload may have succeeded, but post-upload index verification failed"
-
-    for file in "${new_files[@]}"; do
-        base="$(basename "$file")"
-        index_has_file "$base" "$after_file" || \
-            die "post-upload verification did not find $base"
-        verify_index_hash "$file" "$after_file"
+    local attempt missing_file delay
+    for attempt in 1 2 3 4 5; do
+        index_manifest "$index_version_url" > "$after_file" 2>/dev/null || true
+        missing_file=""
+        for file in "${new_files[@]}"; do
+            base="$(basename "$file")"
+            if ! index_has_file "$base" "$after_file"; then
+                missing_file="$base"
+                break
+            fi
+            verify_index_hash "$file" "$after_file"
+        done
+        if [[ -z "$missing_file" ]]; then
+            break
+        fi
+        if (( attempt == 5 )); then
+            die "upload may have succeeded, but post-upload index verification did not find $missing_file"
+        fi
+        delay=$((2 ** attempt))
+        warn "index is not yet consistent for $missing_file; retrying verification in ${delay}s (upload will not be repeated)"
+        sleep "$delay"
     done
 
     printf 'Published files and SHA-256 digests:\n'
