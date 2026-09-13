@@ -476,7 +476,7 @@ wheels = [
 
 [[package]]
 name = "hedonic"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "city2graph" },
@@ -502,7 +502,7 @@ requires-dist = [
     { name = "city2graph", specifier = ">=1.0.0" },
     { name = "cvxpy", marker = "extra == 'experiments'", specifier = ">=1.7,<2" },
     { name = "demon", marker = "extra == 'experiments'", specifier = ">=2.0.6" },
-    { name = "lucas-igraph", specifier = "==1.0.0.3" },
+    { name = "lucas-igraph", specifier = "==1.0.0.4" },
     { name = "matplotlib", marker = "extra == 'experiments'", specifier = ">=3.7" },
     { name = "networkx", marker = "extra == 'experiments'", specifier = ">=3.2" },
     { name = "numpy" },
@@ -695,22 +695,22 @@ wheels = [
 
 [[package]]
 name = "lucas-igraph"
-version = "1.0.0.3"
+version = "1.0.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "texttable" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/99/2c/f5b0f1530e73a68d03b4bb09339ff21b8e6026e2e667ef87d47a35f7a11b/lucas_igraph-1.0.0.3.tar.gz", hash = "sha256:c39fab99459caeb85f10fdae92ab88fd0e9cbff9c4c1f6277e9ea0aac8630d16", size = 5103565, upload-time = "2026-08-24T07:28:22.641Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/c8/f80a2f2ab19049a37456e308a063dafb93122b4fe4419a975d8e27224ba6/lucas_igraph-1.0.0.4.tar.gz", hash = "sha256:56b38e065e09e75749a601ffc34aab629ee2ca92a862afef92471b85bba7719f", size = 5118969, upload-time = "2026-09-13T02:28:51.85Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/32/1461988bbfe549510e2d67596b70e3cf510c31853e33b35d2bdfdaa20d46/lucas_igraph-1.0.0.3-cp39-abi3-macosx_10_15_x86_64.whl", hash = "sha256:c4dba4486373e845a7e44236f6c1e109f4ceca9b4105c9b2922bcc320e9bccd7", size = 2268269, upload-time = "2026-08-24T07:27:52.649Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/24/727cc0cb9c4cb1600024733bcc18a1f4891aff3eb8b1e18db1f2cf37a002/lucas_igraph-1.0.0.3-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:aeb75cea7bed2efba6b6c1b1240ceba881edbf287d385b6a3f43422441ee2cf7", size = 2092674, upload-time = "2026-08-24T07:27:54.751Z" },
-    { url = "https://files.pythonhosted.org/packages/6b/eb/f3ecdc52e4a4460d4aef5aa25067305b2a5bc3be343834bf934eabf7eeb9/lucas_igraph-1.0.0.3-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:ff43b9415598e3ffaa9dcba70a50bbd7f66b875fe4a7d1140cf8bf4f415d027c", size = 5344665, upload-time = "2026-08-24T07:27:57.348Z" },
-    { url = "https://files.pythonhosted.org/packages/1c/ab/05a235526bd6149ea8e4058c5d6c8624b6de5209996263d40a130793357c/lucas_igraph-1.0.0.3-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:abdafdf339bd8ddf8345d8fb29bb7e2983497e26533e1e6cd509a10aef8694bb", size = 5711041, upload-time = "2026-08-24T07:27:59.96Z" },
-    { url = "https://files.pythonhosted.org/packages/1c/c7/298d445d02fbdd7f04329e6f1e6c9c041a49d7090b4d99e15d585ddf1d9a/lucas_igraph-1.0.0.3-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:e8300806aa18c57942231937e03671b023208845d86f3c8b3ac4e0b4d4a313f6", size = 6240285, upload-time = "2026-08-24T07:28:02.476Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/b0/fc674cd6233879485ba71cf7a465448ea420d93dcce4d5508fa4e17aed46/lucas_igraph-1.0.0.3-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:d17bcf9af749321563a21550312e194d96042160fa7c00c2396dd301670b7958", size = 6625642, upload-time = "2026-08-24T07:28:05.204Z" },
-    { url = "https://files.pythonhosted.org/packages/45/de/fc4b22afe2f68967d87e977cd975bb437ad743c7df0d58f97bb471e7e4a4/lucas_igraph-1.0.0.3-cp39-abi3-win32.whl", hash = "sha256:0a1e14c1a3c55352078e6ddf1bae68dd25b67b3f0b2e0d559b6130c1aba662fd", size = 2740187, upload-time = "2026-08-24T07:28:10.954Z" },
-    { url = "https://files.pythonhosted.org/packages/f5/0e/f04f4f7feab8cda1740450d6cf0dd0327140b5f83f9fee05b9e4a0c707a3/lucas_igraph-1.0.0.3-cp39-abi3-win_amd64.whl", hash = "sha256:2172ba0b00a9e335dadc60a393838d57b3517034141bcdd3b8a3b74cdd9e3a67", size = 3240193, upload-time = "2026-08-24T07:28:07.299Z" },
-    { url = "https://files.pythonhosted.org/packages/af/cb/dfed1977484db80d0e310e567377b7aff2ccb20e82ab4384c33e03b18d28/lucas_igraph-1.0.0.3-cp39-abi3-win_arm64.whl", hash = "sha256:026d57f792136a085da9a7964a5c4a9617b8f99671f626da897b149d21735b75", size = 2825159, upload-time = "2026-08-24T07:28:09.114Z" },
+    { url = "https://files.pythonhosted.org/packages/79/51/3f8cb8eedac357e08298e914270fb7623f7bcc2895d66f24e36f6b745f17/lucas_igraph-1.0.0.4-cp39-abi3-macosx_10_15_x86_64.whl", hash = "sha256:187a41688038fbda679778d52953a098bb4c9b0da3657ac31338da743b5f9a55", size = 2274265, upload-time = "2026-09-13T02:20:11.585Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/b4/8a17303fe9a01a1b990f64a8c81e0a94f8c618c4c2999cbbca06e71dbeb1/lucas_igraph-1.0.0.4-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:68472abd91f3568f7366a12ac68a28f377d552e6c9a9f0ed1ecaec31e0f0d47c", size = 2097559, upload-time = "2026-09-13T02:20:15.427Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/0e/f876d8a7909ded5a20b3f42f48f07b26dd95769cc5eec1256a0af93b0537/lucas_igraph-1.0.0.4-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:54b6a5b75c438b175c17bf71a3abede421a3f875179882fbf9c7e7b9c6695036", size = 5356692, upload-time = "2026-09-13T02:20:20.289Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/e4/032f674c41b21ef1fca6eac9beb97fbe59a50752f3807e0e35d6d9a854ea/lucas_igraph-1.0.0.4-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:2fac0b1a00f6070b7734a02750f602d5930a2b4205b909f194cf01691bd2954c", size = 5721797, upload-time = "2026-09-13T02:20:27.64Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/37/dcafcff324ba67b1ca8f288bd11a49859a17a06619b19f8bcde623c76251/lucas_igraph-1.0.0.4-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:6d7d28735fa8bbdfce2ddd953cf5800b1d7b7b58a846114307ed2b4e94377d9b", size = 6251313, upload-time = "2026-09-13T02:20:33.609Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/e0/bf2073d8ec6abe1190fcece1ac1e2cbf8f15180fabdbeabec6d615baa8e5/lucas_igraph-1.0.0.4-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:3bd567654df888fc735048328c5a7c83a677915e6f7146a6abb58c1f13e3cf8a", size = 6637698, upload-time = "2026-09-13T02:20:37.296Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/d0/5df10959d0463fb8f0247491d3fea8696ef06836990c43b5019f4b6017bb/lucas_igraph-1.0.0.4-cp39-abi3-win32.whl", hash = "sha256:a6b387620d466f8fe3e0450f404a4935ae6d9a124efccc5a2aeedef59bd6833e", size = 2746209, upload-time = "2026-09-13T02:23:18.39Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/6d/f406c71fd988c98f291d6ad06605877917d65691f240cf2ae3ff72cc22f2/lucas_igraph-1.0.0.4-cp39-abi3-win_amd64.whl", hash = "sha256:58758cc28219f1f8a5917370cdc9e1e3e0c8ec443afed37c440929d562d04b69", size = 3246227, upload-time = "2026-09-13T02:23:20.518Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/6c/141275eaf07a078cbfa3f7dbbd3583d4263e1143ecbf6692f8ed1096c9fa/lucas_igraph-1.0.0.4-cp39-abi3-win_arm64.whl", hash = "sha256:9afe7f92c503e3e2c2f4e94c5e733e3040d580aa2f2a676cfd6ca680050a2c4c", size = 2829529, upload-time = "2026-09-13T02:23:22.62Z" },
 ]
 
 [[package]]

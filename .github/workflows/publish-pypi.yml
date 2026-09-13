@@ -1,42 +1,65 @@
-# PyPI workflow is currently disabled
-# To re-enable: uncomment this file and add PYPI_API_TOKEN secret
-#
 name: Publish to PyPI
 
 on:
   push:
-    tags:
-      - 'v*'          # Trigger on production version tags like v0.0.1, v1.0.0, etc.
-  workflow_dispatch:  # Allow manual triggering
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
-  id-token: write  # Required for OIDC authentication
-  contents: read    # Required to read repository contents
+  contents: read
+  actions: read
 
 jobs:
-  publish:
+  build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v2
+      - uses: astral-sh/setup-uv@v6
+      - name: Install locked dependencies
+        run: uv sync --locked --extra experiments
+      - name: Test public API and release gates
+        run: >-
+          uv run --with pytest pytest -q
+          tests/test_release_helper.py
+          tests/test_overlapping_and_experiments.py::TestCommunityHedonic
+      - name: Compile package sources
+        run: python -m compileall -q src
+      - name: Build distributions
+        run: uv build --no-sources
+      - name: Validate package metadata
+        run: uvx twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
         with:
-          version: 'latest'
+          name: hedonic-distributions
+          path: dist/*
+          if-no-files-found: error
 
-      - name: Build package
-        run: uv build
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-# PyPI workflow is currently disabled
-# To re-enable: uncomment this file and add PYPI_API_TOKEN secret
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - name: Verify tag version
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          with open('pyproject.toml', 'rb') as stream:
+              version = tomllib.load(stream)['project']['version']
+          assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'tag/version mismatch'
+          PY
+      - name: Publish exact successful main artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: ./scripts/release.sh publish-pypi --commit "$GITHUB_SHA" --workflow 'Publish to PyPI' --publish

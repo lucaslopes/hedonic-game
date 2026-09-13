@@ -67,3 +67,12 @@ are staged:
 git diff --cached --name-only
 git grep -nE 'docs/papers|artifacts/evidence|/Users/' -- ':!docs/papers/**'
 ```
+
+## Releases
+
+Hedonic 0.1.1 pins `lucas-igraph==1.0.0.4`; its package version is independent
+from the native dependency's four-component release identity. Keep historical
+protocol locks at their recorded versions. Follow `docs/releasing.md`: push
+reviewed public `main`, wait for the exact commit's successful artifact build,
+then create a new immutable version tag. The tag workflow publishes those
+same artifacts with the configured secret via `scripts/release.sh`.
