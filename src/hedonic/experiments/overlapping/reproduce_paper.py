@@ -8,14 +8,14 @@ records free of concurrent-writer races.  A coordinator then merges the run
 records, regenerates paper plots and tables, and (when the full protocol has
 no retryable records) compiles the manuscript.
 
-All normal experiment parameters live in ``[overlapping_paper]`` in an
-externally supplied TOML file.  The optional one-command entry point is::
+All normal experiment parameters live in ``[overlapping_paper]`` in the TOML
+file.  The public one-command entry point is::
 
     hedonic-exp reproduce-overlapping-paper
 
-The public checkout does not ship a manuscript configuration.  A private
-research checkout can supply the full protocol and manuscript directory when
-that workflow is required.
+The default repository config is deliberately conservative: it chooses at
+most the configured memory-safe number of concurrent dataset workers.  See
+``configs/hedonic.toml`` for the full protocol and all fields.
 """
 
 from __future__ import annotations
@@ -622,45 +622,47 @@ def _load_options(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
     poll_seconds = float(raw.get("poll_seconds", 10))
     if poll_seconds <= 0:
         raise ValueError("overlapping_paper.poll_seconds must be positive")
-    if not experiment_identity["tracked_files_match_lock"]:
-        raise ValueError("Protocol-locked code/config hashes do not match; refresh and review the lock")
-    if not experiment_identity["lucas_igraph"]["package_identity_matches_lock"]:
-        raise ValueError("installed lucas-igraph package does not match the protocol-locked release")
-    if not experiment_identity["scientific_dependencies_match_lock"]:
-        raise ValueError(
-            "installed numerical packages do not match the protocol-locked implementations"
-        )
-    selected_external_mismatches = [
-        method
-        for method in methods
-        if method in benchmark.NON_SCALABLE_BASELINES
-        and (
-            not isinstance(
-                experiment_identity["external_dependencies"].get(method), dict
+    # Smoke records identity but is not the frozen 125-condition producer.
+    if profile != "smoke":
+        if not experiment_identity["tracked_files_match_lock"]:
+            raise ValueError("Protocol-locked code/config hashes do not match; refresh and review the lock")
+        if not experiment_identity["lucas_igraph"]["package_identity_matches_lock"]:
+            raise ValueError("installed lucas-igraph package does not match the protocol-locked release")
+        if not experiment_identity["scientific_dependencies_match_lock"]:
+            raise ValueError(
+                "installed numerical packages do not match the protocol-locked implementations"
             )
-            or (
-                experiment_identity["external_dependencies"][method].get(
-                    "actual_version"
+        selected_external_mismatches = [
+            method
+            for method in methods
+            if method in benchmark.NON_SCALABLE_BASELINES
+            and (
+                not isinstance(
+                    experiment_identity["external_dependencies"].get(method), dict
                 )
-                is not None
-                and not all(
-                    experiment_identity["external_dependencies"][method].get(field)
-                    is True
-                    for field in (
-                        "version_matches_lock",
-                        "package_lock_matches_lock",
-                        "distribution_tree_matches_lock",
-                        "implementation_matches_lock",
+                or (
+                    experiment_identity["external_dependencies"][method].get(
+                        "actual_version"
+                    )
+                    is not None
+                    and not all(
+                        experiment_identity["external_dependencies"][method].get(field)
+                        is True
+                        for field in (
+                            "version_matches_lock",
+                            "package_lock_matches_lock",
+                            "distribution_tree_matches_lock",
+                            "implementation_matches_lock",
+                        )
                     )
                 )
             )
-        )
-    ]
-    if selected_external_mismatches:
-        raise ValueError(
-            "installed external baseline packages do not match the protocol-locked "
-            "implementations: " + ", ".join(selected_external_mismatches)
-        )
+        ]
+        if selected_external_mismatches:
+            raise ValueError(
+                "installed external baseline packages do not match the protocol-locked "
+                "implementations: " + ", ".join(selected_external_mismatches)
+            )
     options = {
         "schema_version": PAPER_SCHEMA_VERSION,
         "created_at": _timestamp(),
@@ -1979,9 +1981,8 @@ def run_foreground(plan: dict[str, Any]) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Reproduce a full overlapping-paper protocol from an externally "
-            "supplied [overlapping_paper] TOML configuration and manuscript directory. "
-            "Launches RAM-bounded tmux workers, "
+            "Reproduce docs/papers/overlapping_communities/main.tex from the "
+            "[overlapping_paper] TOML protocol. Launches RAM-bounded tmux workers, "
             "merges their caches, regenerates figures/tables, and compiles only a complete full run."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

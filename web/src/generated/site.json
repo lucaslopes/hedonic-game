@@ -1,0 +1,7 @@
+{
+  "repositoryUrl": "https://github.com/lucaslopes/hedonic-game",
+  "sourceRef": "main",
+  "packageVersion": "1.5.0",
+  "nativeDependency": "lucas-igraph==1.0.0.5",
+  "requiresPython": ">=3.12"
+}

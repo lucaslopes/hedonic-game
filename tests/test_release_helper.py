@@ -12,6 +12,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'scripts' / 'release.sh'
 SHA = '1' * 40
+RELEASE_VERSION = '0.1.1'
 
 
 class TestReleaseHelper(unittest.TestCase):
@@ -55,19 +56,24 @@ else:
                               env=self.env, text=True, capture_output=True)
 
     def wheel(self, metadata):
-        path = self.root / 'hedonic-0.1.1-py3-none-any.whl'
+        path = self.root / f'hedonic-{RELEASE_VERSION}-py3-none-any.whl'
         with zipfile.ZipFile(path, 'w') as archive:
-            archive.writestr('hedonic-0.1.1.dist-info/METADATA', metadata)
+            archive.writestr(f'hedonic-{RELEASE_VERSION}.dist-info/METADATA', metadata)
         return path
 
     def test_metadata_uses_headers_not_readme_body(self):
-        wheel = self.wheel('Name: hedonic\nVersion: 0.1.1\n\nName: other\nVersion: 9\n')
+        wheel = self.wheel(
+            f'Name: hedonic\nVersion: {RELEASE_VERSION}\n\n'
+            'Name: other\nVersion: 9\n'
+        )
         result = self.function('distribution_metadata "$1"', wheel)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), 'hedonic\t0.1.1')
+        self.assertEqual(result.stdout.strip(), f'hedonic\t{RELEASE_VERSION}')
 
     def test_duplicate_metadata_headers_are_rejected(self):
-        wheel = self.wheel('Name: hedonic\nName: other\nVersion: 0.1.1\n')
+        wheel = self.wheel(
+            f'Name: hedonic\nName: other\nVersion: {RELEASE_VERSION}\n'
+        )
         self.assertNotEqual(self.function('distribution_metadata "$1"', wheel).returncode, 0)
 
     def test_existing_index_file_requires_matching_bytes(self):
@@ -92,7 +98,6 @@ else:
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('does not match expected', result.stderr)
         self.assertNotIn('UPLOAD MUST NOT RUN', result.stderr)
-
     def test_failed_run_stops_before_download_and_upload(self):
         self.env['MOCK_CONCLUSION'] = 'failure'
         result = self.cli('--repo', 'owner/repo', '--run-id', '42', '--commit', SHA, '--publish')
@@ -104,7 +109,7 @@ else:
         self.mock('gh', self.bin.joinpath('gh').read_text().replace(
             "else:\n    raise SystemExit('unexpected network operation')",
             "elif sys.argv[1:3] == ['run', 'download']:\n    pass\nelse:\n    raise SystemExit('unexpected network operation')"))
-        self.wheel('Name: hedonic\nVersion: 0.1.1\n')
+        self.wheel(f'Name: hedonic\nVersion: {RELEASE_VERSION}\n')
         result = self.cli('--repo', 'owner/repo', '--run-id', '42', '--commit', SHA,
                           '--artifacts-dir', str(self.root), '--publish')
         self.assertNotEqual(result.returncode, 0)

@@ -1,0 +1,37 @@
+name: Validate released wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Immutable Hedonic version already available on PyPI (for example, 1.0.5)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  installed-wheel:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-13]
+        # Exercise both supported CPython minors on every uploaded platform.
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install exact PyPI release and binary dependencies
+        run: >-
+          python -m pip install --upgrade pip
+          && python -m pip install --only-binary=:all:
+          "hedonic==${{ inputs.version }}"
+      - name: Verify installed wheel behavior
+        env:
+          HEDONIC_EXPECTED_VERSION: ${{ inputs.version }}
+        run: python scripts/verify_installed_wheel.py

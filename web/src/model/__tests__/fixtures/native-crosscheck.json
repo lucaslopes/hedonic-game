@@ -1,0 +1,294 @@
+{
+  "graph": {
+    "n": 4,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        0,
+        3
+      ],
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  "versions": {
+    "hedonic": "1.5.0",
+    "lucas-igraph": "1.0.0.5"
+  },
+  "call": "Game.community_hedonic(initial_membership=start, resolution=gamma, max_memberships=1, n_iterations=-1, allow_isolation=..., local_move_only=True, seed=0)",
+  "runs": [
+    {
+      "gamma": 0.0,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.0,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.0,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.0,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.1,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.1,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.1,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.1,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.2,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.2,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.2,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.2,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.3,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.3,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.3,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.3,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.4,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.4,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.4,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.4,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.5,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.5,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.5,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.5,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.6,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.6,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.6,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.6,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.7,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.7,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.7,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.7,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.8,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.8,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.8,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.8,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.9,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.9,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 0.9,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0001"
+    },
+    {
+      "gamma": 0.9,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0001"
+    },
+    {
+      "gamma": 1.0,
+      "allowIsolation": false,
+      "start": "singletons",
+      "partition": "0123"
+    },
+    {
+      "gamma": 1.0,
+      "allowIsolation": false,
+      "start": "grand",
+      "partition": "0000"
+    },
+    {
+      "gamma": 1.0,
+      "allowIsolation": true,
+      "start": "singletons",
+      "partition": "0123"
+    },
+    {
+      "gamma": 1.0,
+      "allowIsolation": true,
+      "start": "grand",
+      "partition": "0120"
+    }
+  ]
+}

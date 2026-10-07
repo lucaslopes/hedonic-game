@@ -1,0 +1,40 @@
+.trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  vertical-align: middle;
+}
+
+.trigger:hover,
+.trigger[aria-expanded='true'] {
+  color: var(--ink);
+  background: var(--paper-2);
+}
+
+.popover {
+  position: fixed;
+  z-index: 60;
+  max-width: min(340px, calc(100vw - 24px));
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  box-shadow: var(--shadow-strong);
+}
+
+.popover[hidden] {
+  display: none;
+}
+
+.popover :global(.katex) {
+  color: inherit;
+}

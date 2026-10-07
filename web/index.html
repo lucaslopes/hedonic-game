@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="An interactive explainer of community detection as a hedonic game: friends, strangers, the resolution parameter, the Familiarity Index, the metagraph of partitions and better-response dynamics."
+    />
+    <meta name="theme-color" content="#f6f2ea" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e1522" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Community detection as a hedonic game</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a flash of the wrong colours.
+      try {
+        var theme = localStorage.getItem('hedonic:theme');
+        var dark = theme === 'dark' || ((!theme || theme === 'system') && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        var motion = localStorage.getItem('hedonic:motion');
+        if (motion === 'reduce' || motion === 'allow') document.documentElement.dataset.motion = motion;
+      } catch (error) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>This interactive explainer needs JavaScript. The documentation lives at docs/.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

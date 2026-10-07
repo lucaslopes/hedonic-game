@@ -1,0 +1,314 @@
+{
+  "schemaVersion": 1,
+  "source": "web/content/references.bib",
+  "references": [
+    {
+      "key": "felipe2025hedonic",
+      "type": "article",
+      "title": "From Leiden to Pleasure Island: The Constant Potts Model for Community Detection as a Hedonic Game",
+      "authors": [
+        "Lucas Lopes Felipe",
+        "Konstantin Avrachenkov",
+        "Daniel Sadoc Menasche"
+      ],
+      "year": "2025",
+      "venue": "ArXiv preprint 2509.03834",
+      "volume": null,
+      "number": null,
+      "pages": null,
+      "publisher": null,
+      "note": null,
+      "keywords": [
+        "project"
+      ],
+      "links": [
+        {
+          "kind": "arxiv",
+          "label": "arXiv:2509.03834",
+          "href": "https://arxiv.org/abs/2509.03834"
+        }
+      ]
+    },
+    {
+      "key": "felipe2025src",
+      "type": "misc",
+      "title": "Community Detection as a Hedonic Game",
+      "authors": [
+        "Lucas Lopes Felipe"
+      ],
+      "year": "2025",
+      "venue": "Student Research Competition extended abstract",
+      "volume": null,
+      "number": null,
+      "pages": null,
+      "publisher": null,
+      "note": "Primary source of this explainer. Venue and publication details are not recorded in the project bibliography; the abstract points to a project page for further details.",
+      "keywords": [
+        "project"
+      ],
+      "links": [
+        {
+          "kind": "url",
+          "label": "lucaslopes.me/sigmetrics2025",
+          "href": "https://lucaslopes.me/sigmetrics2025"
+        }
+      ]
+    },
+    {
+      "key": "lopes2025robustness",
+      "type": "article",
+      "title": "Robustness against Frustration in Community Detection",
+      "authors": [
+        "Lucas Lopes Felipe",
+        "Konstantin Avrachenkov",
+        "Daniel Sadoc Menasche"
+      ],
+      "year": "2025",
+      "venue": "ACM SIGMETRICS Performance Evaluation Review",
+      "volume": "53",
+      "number": "2",
+      "pages": "128–130",
+      "publisher": "ACM New York, NY, USA",
+      "note": null,
+      "keywords": [
+        "project",
+        "frustration"
+      ],
+      "links": []
+    },
+    {
+      "key": "traag2019leiden",
+      "type": "article",
+      "title": "From Louvain to Leiden: guaranteeing well-connected communities",
+      "authors": [
+        "Vincent A. Traag",
+        "Ludo Waltman",
+        "Nees Jan van Eck"
+      ],
+      "year": "2019",
+      "venue": "Scientific reports",
+      "volume": "9",
+      "number": "1",
+      "pages": "1–12",
+      "publisher": "Nature Publishing Group",
+      "note": null,
+      "keywords": [
+        "leiden"
+      ],
+      "links": []
+    },
+    {
+      "key": "avrachenkov2017cooperative",
+      "type": "article",
+      "title": "Network partitioning algorithms as cooperative games",
+      "authors": [
+        "K. Avrachenkov",
+        "Aleksei Kondratev",
+        "Vladimir Mazalov",
+        "Dmytro Rubanov"
+      ],
+      "year": "2018",
+      "venue": "Comp. Social Networks",
+      "volume": "5",
+      "number": null,
+      "pages": null,
+      "publisher": null,
+      "note": null,
+      "keywords": [
+        "hedonic-games"
+      ],
+      "links": [
+        {
+          "kind": "doi",
+          "label": "doi:10.1186/s40649-018-0059-5",
+          "href": "https://doi.org/10.1186/s40649-018-0059-5"
+        }
+      ]
+    },
+    {
+      "key": "shen2013community",
+      "type": "incollection",
+      "title": "Community structure: An introduction",
+      "authors": [
+        "Hua-Wei Shen"
+      ],
+      "year": "2013",
+      "venue": "Community Structure of Complex Networks",
+      "volume": null,
+      "number": null,
+      "pages": "1–17",
+      "publisher": "Springer",
+      "note": null,
+      "keywords": [
+        "community-detection"
+      ],
+      "links": []
+    },
+    {
+      "key": "traag2011cpm",
+      "type": "article",
+      "title": "Narrow scope for resolution-limit-free community detection",
+      "authors": [
+        "Vincent A. Traag",
+        "Paul Van Dooren",
+        "Yurii Nesterov"
+      ],
+      "year": "2011",
+      "venue": "Physical Review E",
+      "volume": "84",
+      "number": "1",
+      "pages": "016114",
+      "publisher": "APS",
+      "note": null,
+      "keywords": [
+        "cpm"
+      ],
+      "links": []
+    },
+    {
+      "key": "blondel2008fast",
+      "type": "article",
+      "title": "Fast unfolding of communities in large networks",
+      "authors": [
+        "Vincent D. Blondel",
+        "Jean-Loup Guillaume",
+        "Renaud Lambiotte",
+        "Etienne Lefebvre"
+      ],
+      "year": "2008",
+      "venue": "Journal of statistical mechanics: theory and experiment",
+      "volume": "2008",
+      "number": "10",
+      "pages": "P10008",
+      "publisher": "IOP Publishing",
+      "note": null,
+      "keywords": [
+        "leiden"
+      ],
+      "links": []
+    },
+    {
+      "key": "boccaletti2006complex",
+      "type": "article",
+      "title": "Complex networks: Structure and dynamics",
+      "authors": [
+        "Stefano Boccaletti",
+        "Vito Latora",
+        "Yamir Moreno",
+        "Martin Chavez",
+        "D-U Hwang"
+      ],
+      "year": "2006",
+      "venue": "Physics reports",
+      "volume": "424",
+      "number": "4-5",
+      "pages": "175–308",
+      "publisher": "Elsevier",
+      "note": null,
+      "keywords": [
+        "community-detection"
+      ],
+      "links": []
+    },
+    {
+      "key": "reichardt2006statistical",
+      "type": "article",
+      "title": "Statistical mechanics of community detection",
+      "authors": [
+        "Jörg Reichardt",
+        "Stefan Bornholdt"
+      ],
+      "year": "2006",
+      "venue": "Physical Review E—Statistical, Nonlinear, and Soft Matter Physics",
+      "volume": "74",
+      "number": "1",
+      "pages": "016110",
+      "publisher": null,
+      "note": null,
+      "keywords": [
+        "community-detection",
+        "frustration"
+      ],
+      "links": []
+    },
+    {
+      "key": "bogomolnaia2002stability",
+      "type": "article",
+      "title": "The stability of hedonic coalition structures",
+      "authors": [
+        "Anna Bogomolnaia",
+        "Matthew O. Jackson"
+      ],
+      "year": "2002",
+      "venue": "Games and Economic Behavior",
+      "volume": "38",
+      "number": "2",
+      "pages": "201–230",
+      "publisher": "Elsevier",
+      "note": null,
+      "keywords": [
+        "hedonic-games"
+      ],
+      "links": []
+    },
+    {
+      "key": "monderer1996potential",
+      "type": "article",
+      "title": "Potential games",
+      "authors": [
+        "Dov Monderer",
+        "Lloyd S. Shapley"
+      ],
+      "year": "1996",
+      "venue": "Games and economic behavior",
+      "volume": "14",
+      "number": "1",
+      "pages": "124–143",
+      "publisher": "Elsevier",
+      "note": null,
+      "keywords": [
+        "hedonic-games"
+      ],
+      "links": []
+    },
+    {
+      "key": "dreze1980hedonic",
+      "type": "article",
+      "title": "Hedonic coalitions: Optimality and stability",
+      "authors": [
+        "Jacques H. Dreze",
+        "Joseph Greenberg"
+      ],
+      "year": "1980",
+      "venue": "Econometrica: Journal of the Econometric Society",
+      "volume": null,
+      "number": null,
+      "pages": "987–1003",
+      "publisher": "JSTOR",
+      "note": null,
+      "keywords": [
+        "hedonic-games"
+      ],
+      "links": []
+    },
+    {
+      "key": "brush1967ising",
+      "type": "article",
+      "title": "History of the Lenz-Ising model",
+      "authors": [
+        "Stephen G. Brush"
+      ],
+      "year": "1967",
+      "venue": "Reviews of modern physics",
+      "volume": "39",
+      "number": "4",
+      "pages": "883",
+      "publisher": "APS",
+      "note": null,
+      "keywords": [
+        "frustration"
+      ],
+      "links": []
+    }
+  ]
+}

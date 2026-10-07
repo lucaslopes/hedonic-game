@@ -29,3 +29,10 @@ configs/hedonic-equilibrium-v2.toml
 *.pdf
 *.gz
 img/
+
+# Web explainer (web/): dependencies and build output are reproducible from
+# package-lock.json; web/dist/ is also covered by the dist/ rule above.
+node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo

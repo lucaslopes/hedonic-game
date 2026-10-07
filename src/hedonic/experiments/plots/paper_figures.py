@@ -2,7 +2,7 @@
 
 Ported from ``tmp/hedonic/scripts/plot/paper_plots/plot_figures.py``.
 
-Archived V1020 figures (under ``.../V1020/figures/``)::
+Archived V1020 figures (under the read-only configured synthetic input)::
 
     gt_robustness.pdf   — ground-truth robustness hist + heatmaps
     noise.pdf           — metrics vs noise (bars + CI)
@@ -10,16 +10,16 @@ Archived V1020 figures (under ``.../V1020/figures/``)::
     acc_robustness.pdf  — KDE accuracy/ARI vs robustness
     acc_efficiency.pdf  — KDE accuracy/ARI vs duration
 
-Reproduce via CLI (writes to a *new* root, e.g. V1020_CLI)::
+Reproduce via CLI (writes below the repository artifact root)::
 
     hedonic-exp plots \\
         --data /path/to/resultados.csv.gzip \\
-        --output_dir /path/to/V1020_CLI/figures \\
+        --output_dir artifacts/disjoint/v1020/figures \\
         --format pdf
 
 Or smoke (synthetic mini-dataframe, no full archive required)::
 
-    hedonic-exp plots --smoke --output_dir /tmp/hedonic-figs
+    hedonic-exp plots --smoke --output_dir artifacts/disjoint/figures_smoke
 """
 
 from __future__ import annotations
@@ -43,7 +43,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from scipy.stats import gaussian_kde, t  # noqa: E402
 
-from hedonic.experiments.config import SYNTHETIC_DIR
+from hedonic.experiments.config import (
+    DISJOINT_ARTIFACTS_DIR,
+    SYNTHETIC_DIR,
+    ensure_not_archived_v1020,
+    expand_path,
+)
 
 # ---------------------------------------------------------------------------
 # Style constants (match archived paper figures)
@@ -975,17 +980,17 @@ def main(argv=None) -> int:
         epilog=(
             "examples:\n"
             "  # Smoke (synthetic mini table, no archive required)\n"
-            "  hedonic-exp plots --smoke --output_dir /tmp/hedonic-figs\n"
+            "  hedonic-exp plots --smoke --output_dir artifacts/disjoint/figures_smoke\n"
             "\n"
             "  # From archived V1020 results (read-only data) → new figures root\n"
             "  hedonic-exp plots \\\n"
-            "      --data .../V1020/resultados_ari.csv.gzip \\\n"
-            "      --output_dir .../V1020_CLI/figures --format pdf\n"
+            "      --data ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020/resultados_ari.csv.gzip \\\n"
+            "      --output_dir artifacts/disjoint/v1020/figures --format pdf\n"
             "\n"
             "  # From CLI smoke CSV\n"
             "  hedonic-exp plots \\\n"
-            "      --data .../V1020_CLI/resultados.csv.gzip \\\n"
-            "      --output_dir .../V1020_CLI/figures --no-persist\n"
+            "      --data artifacts/disjoint/v1020/resultados.csv.gzip \\\n"
+            "      --output_dir artifacts/disjoint/v1020/figures --no-persist\n"
         ),
     )
     parser.add_argument(
@@ -1001,7 +1006,10 @@ def main(argv=None) -> int:
         "--output_dir",
         type=str,
         default=None,
-        help="Directory for figures (default: <data_parent>/figures or ./figures for smoke)",
+        help=(
+            "Directory for figures (default: repository "
+            "artifacts/disjoint/figures)"
+        ),
     )
     parser.add_argument(
         "--persist_dir",
@@ -1050,20 +1058,14 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
 
-    archived_figures = (
-        Path("~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020/figures")
-        .expanduser()
-        .resolve()
-    )
-
     if args.smoke:
         print("[plots smoke] building synthetic mini results table")
         df = make_smoke_dataframe()
-        fig_dir = Path(args.output_dir or "figures_smoke")
+        fig_dir = expand_path(args.output_dir or DISJOINT_ARTIFACTS_DIR / "figures_smoke")
         persist = not args.no_persist
-        persist_dir = args.persist_dir
+        persist_dir = expand_path(args.persist_dir) if args.persist_dir else None
     else:
-        data_path = args.data
+        data_path = expand_path(args.data) if args.data else None
         if data_path is None:
             # Prefer ARI table if present, else plain resultados.
             candidates = [
@@ -1080,20 +1082,16 @@ def main(argv=None) -> int:
             df = df.sample(n=args.max_rows, random_state=0)
             print(f"Sampled to {len(df)} rows (--max_rows)")
         print(f"Data loaded. Rows = {len(df)}")
-        fig_dir = Path(
-            args.output_dir
-            if args.output_dir
-            else Path(data_path).resolve().parent / "figures"
-        )
+        fig_dir = expand_path(args.output_dir or DISJOINT_ARTIFACTS_DIR / "figures")
         persist = not args.no_persist
-        persist_dir = args.persist_dir
+        persist_dir = expand_path(args.persist_dir) if args.persist_dir else None
 
     fig_dir = fig_dir.resolve()
-    if fig_dir == archived_figures:
+    try:
+        ensure_not_archived_v1020(fig_dir, label="figure output")
+    except ValueError as exc:
         print(
-            "Refusing to write figures into the archived V1020/figures folder.\n"
-            "Pass a different --output_dir, e.g.\n"
-            "  --output_dir ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020_CLI/figures",
+            str(exc),
             flush=True,
         )
         return 1

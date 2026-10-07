@@ -1,6 +1,6 @@
 [project]
 name = "hedonic"
-version = "0.1.1"
+version = "1.5.0"
 description = "A Python library for hedonic games"
 readme = "README.md"
 authors = [
@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "city2graph>=1.0.0",
-    "lucas-igraph==1.0.0.4",
+    "lucas-igraph==1.0.0.5",
     "numpy",
 ]
 
@@ -25,9 +25,25 @@ experiments = [
     "demon>=2.0.6",
     "cvxpy>=1.7,<2",
 ]
+# Everything needed by the reproducible SNAP/CoDeSEG orchestration layer.  The
+# SNAP downloader is implemented in the experiment loader, while external
+# detector implementations remain isolated checkouts or executables;
+# installing this extra must not replace hedonic's pinned igraph runtime with
+# CDlib's competing igraph dependency.
+reproduce = [
+    "pandas>=2.0.0",
+    "scipy>=1.10.0",
+    "tqdm>=4.65.0",
+    "stopwatch-py>=1.0.0",
+    "matplotlib>=3.7",
+    "seaborn>=0.13",
+    "networkx>=3.2",
+    "demon>=2.0.6",
+]
 
 [project.scripts]
 hedonic-exp = "hedonic.experiments.CLI:main"
+hedonic = "hedonic.experiments.CLI:hedonic_main"
 
 [build-system]
 requires = ["uv_build>=0.8.11,<0.9.0"]

@@ -1,0 +1,30 @@
+# SNAP ground-truth robustness spectrum (hedonic-exp overlapping-gt-spectrum / hedonic run spectrum).
+# Dedicated file: it is bound by configs/overlapping-gt-spectrum-protocol.lock.json and is independent of
+# configs/hedonic.toml and configs/overlapping-ground-truth.toml (the locked v1 and v3 protocols).
+# Priority: CLI flag > environment (HEDONIC_NETWORKS_DIR for the data folder) > this file > defaults.
+
+[overlapping_gt_spectrum]
+output_dir = "artifacts/overlapping/gt_spectrum_v1"
+
+# "auto" = every (dataset, cover variant) whose graph AND cover exist in the local SNAP cache.
+# The cover variants stay distinct (top5000 vs all); Wikipedia has only `all`.
+# Nothing is downloaded unless the run is started with --provision.
+datasets = "auto"
+covers = "auto"
+# pairs = ["amazon/top5000", "dblp/all"]      # explicit selection, overrides the two lines above
+
+uncovered_policy = "covered-induced"           # never invent labels for uncovered vertices
+max_nodes = 3000                               # bounded -> common undirected simple -> covered-induced; 0 = full graph
+isolation_policies = ["fixed_labels", "open_labels"]
+
+# Detector runs: local moving from the exact canonical ground-truth cover, n_iterations = -1.
+seeds = "0-4"
+detector_resolutions = "0+geom:1e-4:1:9"       # gamma = 0 and a half-decade grid 1e-4 ... 1
+# Audit of the supplied covers (no detector): a fine linear grid plus a log grid resolving the density scale.
+audit_resolutions = "0:1:101+geom:1e-4:1:33"
+
+robustness_atol = 1e-10
+robustness_rtol = 1e-9
+omega = true
+omega_sample_size = 100000
+timeout_per_run = 3600

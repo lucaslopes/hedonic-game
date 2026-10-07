@@ -1,0 +1,872 @@
+{
+  "schemaVersion": 1,
+  "generator": "web/scripts/extract_api.py",
+  "repository": {
+    "url": "https://github.com/lucaslopes/hedonic-game",
+    "ref": "main"
+  },
+  "package": {
+    "name": "hedonic",
+    "version": "1.5.0",
+    "requiresPython": ">=3.12",
+    "dependencies": [
+      "city2graph>=1.0.0",
+      "lucas-igraph==1.0.0.5",
+      "numpy"
+    ],
+    "nativeDependency": "lucas-igraph==1.0.0.5",
+    "scripts": {
+      "hedonic-exp": "hedonic.experiments.CLI:main",
+      "hedonic": "hedonic.experiments.CLI:hedonic_main"
+    }
+  },
+  "exports": [
+    "Game"
+  ],
+  "classes": [
+    {
+      "name": "Game",
+      "qualname": "hedonic.Game",
+      "bases": [
+        "Graph"
+      ],
+      "doc": {
+        "summary": "A hedonic game represented as an `igraph.Graph`.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/Game.py",
+      "line": 52,
+      "endLine": 406,
+      "members": [
+        {
+          "name": "__init__",
+          "qualname": "Game.__init__",
+          "signature": "__init__(graph: Graph | None = None, *args, **kwargs) -> None",
+          "parameters": [
+            {
+              "name": "graph",
+              "kind": "positional-or-keyword",
+              "annotation": "Graph | None",
+              "default": "None"
+            },
+            {
+              "name": "args",
+              "kind": "var-positional",
+              "annotation": null,
+              "default": null
+            },
+            {
+              "name": "kwargs",
+              "kind": "var-keyword",
+              "annotation": null,
+              "default": null
+            }
+          ],
+          "returns": "None",
+          "decorators": [],
+          "doc": null,
+          "path": "src/hedonic/Game.py",
+          "line": 60,
+          "endLine": 84,
+          "kind": "method"
+        },
+        {
+          "name": "memberships",
+          "qualname": "Game.memberships",
+          "signature": "memberships() -> list[list[int]] | None",
+          "parameters": [],
+          "returns": "list[list[int]] | None",
+          "decorators": [
+            "property"
+          ],
+          "doc": {
+            "summary": "Canonical per-vertex community memberships.",
+            "description": "The state is always represented as one (non-empty) list of integer\ncommunity labels per vertex.  A ``None`` value means that no state has\nbeen configured yet.  The setter accepts the flat partition form as a\nconvenience, but stores the normalized list-of-lists representation.\nValidation against a membership cap is performed by\n:meth:`community_hedonic`, where the cap is known.",
+            "sections": {}
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 87,
+          "endLine": 97,
+          "kind": "property",
+          "settable": true
+        },
+        {
+          "name": "evaluate_against",
+          "qualname": "Game.evaluate_against",
+          "signature": "evaluate_against(ground_truth, method: str = 'f1', *, singleton_mode: str = 'all', matching_weight: str = 'f1', omega_sample_size: int = 100000, omega_seed: int = 0) -> float",
+          "parameters": [
+            {
+              "name": "ground_truth",
+              "kind": "positional-or-keyword",
+              "annotation": null,
+              "default": null,
+              "description": "Community lists, or an igraph ``VertexClustering``/``VertexCover``.\nA flat per-vertex partition vector is also accepted."
+            },
+            {
+              "name": "method",
+              "kind": "positional-or-keyword",
+              "annotation": "str",
+              "default": "'f1'",
+              "description": "``f1`` (symmetric best-match), ``one_to_one_f1``, ``jaccard``,\n``omega``, ``node_micro_f1``, or ``size_weighted_community_f1``.\nA few explicit aliases are accepted for compatibility."
+            },
+            {
+              "name": "singleton_mode",
+              "kind": "keyword-only",
+              "annotation": "str",
+              "default": "'all'",
+              "description": "Options forwarded to :func:`hedonic.experiments.overlapping.metrics.evaluate_cover`."
+            },
+            {
+              "name": "matching_weight",
+              "kind": "keyword-only",
+              "annotation": "str",
+              "default": "'f1'",
+              "description": "Options forwarded to :func:`hedonic.experiments.overlapping.metrics.evaluate_cover`."
+            },
+            {
+              "name": "omega_sample_size",
+              "kind": "keyword-only",
+              "annotation": "int",
+              "default": "100000",
+              "description": "Options forwarded to :func:`hedonic.experiments.overlapping.metrics.evaluate_cover`."
+            },
+            {
+              "name": "omega_seed",
+              "kind": "keyword-only",
+              "annotation": "int",
+              "default": "0",
+              "description": "Options forwarded to :func:`hedonic.experiments.overlapping.metrics.evaluate_cover`."
+            }
+          ],
+          "returns": "float",
+          "decorators": [],
+          "doc": {
+            "summary": "Score the stored partition/cover against an explicit ground truth.",
+            "description": "``community_hedonic`` persists its return value in ``memberships`` as\none list of community labels per vertex.  This convenience facade\nconverts that state to the community-list representation used by the\nexperimental evaluator and returns the selected scalar score.",
+            "sections": {
+              "Parameters": "ground_truth:\n    Community lists, or an igraph ``VertexClustering``/``VertexCover``.\n    A flat per-vertex partition vector is also accepted.\nmethod:\n    ``f1`` (symmetric best-match), ``one_to_one_f1``, ``jaccard``,\n    ``omega``, ``node_micro_f1``, or ``size_weighted_community_f1``.\n    A few explicit aliases are accepted for compatibility.\nsingleton_mode, matching_weight, omega_sample_size, omega_seed:\n    Options forwarded to :func:`hedonic.experiments.overlapping.metrics.evaluate_cover`.",
+              "Returns": "float\n    The selected metric value.",
+              "Notes": "The metrics module is imported only when this method is called, so\nimporting the core ``hedonic.Game`` does not require SciPy."
+            },
+            "parameters": [
+              {
+                "names": "ground_truth",
+                "type": "",
+                "description": "Community lists, or an igraph ``VertexClustering``/``VertexCover``.\nA flat per-vertex partition vector is also accepted."
+              },
+              {
+                "names": "method",
+                "type": "",
+                "description": "``f1`` (symmetric best-match), ``one_to_one_f1``, ``jaccard``,\n``omega``, ``node_micro_f1``, or ``size_weighted_community_f1``.\nA few explicit aliases are accepted for compatibility."
+              },
+              {
+                "names": "singleton_mode, matching_weight, omega_sample_size, omega_seed",
+                "type": "",
+                "description": "Options forwarded to :func:`hedonic.experiments.overlapping.metrics.evaluate_cover`."
+              }
+            ]
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 117,
+          "endLine": 164,
+          "kind": "method"
+        },
+        {
+          "kind": "alias",
+          "name": "evaluate_accuracy",
+          "qualname": "Game.evaluate_accuracy",
+          "aliasOf": "evaluate_against",
+          "path": "src/hedonic/Game.py",
+          "line": 168,
+          "endLine": 168
+        },
+        {
+          "name": "to_igraph",
+          "qualname": "Game.to_igraph",
+          "signature": "to_igraph() -> Graph",
+          "parameters": [],
+          "returns": "Graph",
+          "decorators": [],
+          "doc": {
+            "summary": "Convert the `Game` object to a standalone `igraph.Graph` instance.",
+            "description": "",
+            "sections": {}
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 170,
+          "endLine": 181,
+          "kind": "method"
+        },
+        {
+          "name": "validate_membership",
+          "qualname": "Game.validate_membership",
+          "signature": "validate_membership(membership: list[int] | list[list[int]], *, overlapping: bool = False, max_memberships: int | None = None) -> bool",
+          "parameters": [
+            {
+              "name": "membership",
+              "kind": "positional-or-keyword",
+              "annotation": "list[int] | list[list[int]]",
+              "default": null
+            },
+            {
+              "name": "overlapping",
+              "kind": "keyword-only",
+              "annotation": "bool",
+              "default": "False"
+            },
+            {
+              "name": "max_memberships",
+              "kind": "keyword-only",
+              "annotation": "int | None",
+              "default": "None"
+            }
+          ],
+          "returns": "bool",
+          "decorators": [],
+          "doc": {
+            "summary": "Validate a community membership vector or overlapping cover init.",
+            "description": "Disjoint (``overlapping=False``):\n  - length == n (flat labels, or nested singleton rows)\n  - non-negative integer labels\n  - labels contiguous from 0\n\nOverlapping (``overlapping=True``):\n  - length == n\n  - each entry is a non-empty list of non-negative community ids\n    (one membership list per vertex), **or** a flat disjoint vector\n    (accepted and later expanded to singleton lists). Duplicate labels\n    in one row are rejected.",
+            "sections": {}
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 182,
+          "endLine": 208,
+          "kind": "method"
+        },
+        {
+          "name": "community_hedonic",
+          "qualname": "Game.community_hedonic",
+          "signature": "community_hedonic(initial_membership: list[int] | list[list[int]] | None | _UnsetType = _UNSET, max_communities: int | None = None, max_memberships: int = 1, n_iterations: int = -1, resolution: float | None = None, allow_isolation: bool = False, local_move_only: bool = True, edge_weights=None, seed: int | None = None, beta: float = 0.01, *, node_weights=None, max_total_communities: int | None = None, n_communities: int | None = None, debug_trace: bool | str = False, phase_policy: str = 'direct')",
+          "parameters": [
+            {
+              "name": "initial_membership",
+              "kind": "positional-or-keyword",
+              "annotation": "list[int] | list[list[int]] | None | _UnsetType",
+              "default": "_UNSET",
+              "description": "Disjoint: flat list of community ids (length n).\nOverlapping (``max_memberships > 1``): flat list or list-of-lists\n(one community-id list per vertex). ``None`` builds a default init.\nWhen omitted, a valid ``self.memberships`` state is reused;\nexplicit ``None`` requests the default singleton init, or a\nfeasible round-robin init when a community-count limit is set.\nFlat and nested overlapping inits with the same labels are\nequivalent after normalization."
+            },
+            {
+              "name": "max_communities",
+              "kind": "positional-or-keyword",
+              "annotation": "int | None",
+              "default": "None",
+              "description": "Initialization only: when ``initial_membership`` is ``None`` and\n``max_memberships == 1``, random init over ``[0, max_communities)``.\nIt has no effect with a supplied start, with overlapping defaults,\nor when community-count limits select a feasible default start;\n``_hedonic_provenance[\"max_communities_effect\"]`` records which\ncase applied. It is *not* an output constraint; see\n``max_total_communities``/``n_communities``."
+            },
+            {
+              "name": "max_memberships",
+              "kind": "positional-or-keyword",
+              "annotation": "int",
+              "default": "1",
+              "description": "Per-vertex cap. ``1`` (default) → disjoint clustering\n(``VertexClustering``); ``> 1`` → overlapping cover\n(``VertexCover``) in which each vertex belongs to at most this\nmany communities. ``-1`` removes the practical per-vertex cap: the\neffective cap is the vertex count, the largest cap the native\nlayer accepts, inside its finite label bank of ``n * n`` labels.\nThe effective value is recorded in ``_hedonic_provenance``."
+            },
+            {
+              "name": "n_iterations",
+              "kind": "positional-or-keyword",
+              "annotation": "int",
+              "default": "-1",
+              "description": "Leiden outer iterations. A negative value continues until the\nnative no-change stopping condition and final Nash certificate\nsweep complete. Positive values are finite budgets and may stop\nbefore equilibrium."
+            },
+            {
+              "name": "resolution",
+              "kind": "positional-or-keyword",
+              "annotation": "float | None",
+              "default": "None",
+              "description": "CPM resolution γ. Defaults to graph density. Must be a finite\nreal. Zero total edge weight is rejected: the published\nnormalization ``Φ_γ = Φ̃_γ / W`` is undefined when ``W=0``."
+            },
+            {
+              "name": "allow_isolation",
+              "kind": "positional-or-keyword",
+              "annotation": "bool",
+              "default": "False",
+              "description": "Allow moves into empty communities (new clusters)."
+            },
+            {
+              "name": "local_move_only",
+              "kind": "positional-or-keyword",
+              "annotation": "bool",
+              "default": "True",
+              "description": "If True (default), run only the local-moving phase — the hedonic\nbest-response phase, with no token graph. If False, run full\nLeiden (refine + aggregate) on the frozen-multiplicity token\ngraph, then a quality guard in original-graph units for every\nprojected iteration, including positive iteration budgets."
+            },
+            {
+              "name": "edge_weights",
+              "kind": "positional-or-keyword",
+              "annotation": null,
+              "default": "None",
+              "description": "Optional edge weights (sequence or edge-attribute name); finite\nand non-negative in the overlapping domain."
+            },
+            {
+              "name": "seed",
+              "kind": "positional-or-keyword",
+              "annotation": "int | None",
+              "default": "None",
+              "description": "When given, the whole call runs with ``random.Random(seed)`` as\nigraph's random generator (restored afterwards), and the same\nseed drives the random disjoint initialization. On a given build\nthe returned labels are then a function of the graph, weights,\nparameters, start state and seed. ``None`` keeps the caller's\nigraph generator (historical behavior)."
+            },
+            {
+              "name": "beta",
+              "kind": "positional-or-keyword",
+              "annotation": "float",
+              "default": "0.01",
+              "description": "Leiden refinement randomness (used when ``local_move_only`` is False)."
+            },
+            {
+              "name": "node_weights",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "None",
+              "description": "Optional vertex weights ``w_v`` (sequence or vertex-attribute\nname), finite and non-negative. They enter the crowding term\n``γ w_u w_v``; unit weights are the default."
+            },
+            {
+              "name": "max_total_communities",
+              "kind": "keyword-only",
+              "annotation": "int | None",
+              "default": "None",
+              "description": "Optional upper bound on the number of occupied communities of the\nresult and of every state visited by local moving (all aggregate\nand token levels included)."
+            },
+            {
+              "name": "n_communities",
+              "kind": "keyword-only",
+              "annotation": "int | None",
+              "default": "None",
+              "description": "Optional exact number of occupied communities. Without a start\nstate, a deterministic round-robin cover occupies all ``K`` labels\n(one label per vertex when ``K <= n``, with extra memberships when\n``K > n``). A start state that violates either count constraint is\nrejected."
+            },
+            {
+              "name": "debug_trace",
+              "kind": "keyword-only",
+              "annotation": "bool | str",
+              "default": "False",
+              "description": "Native diagnostics in ``result._params[\"debug_trace\"]``, for\npartitions and covers, with or without count limits. ``True`` or\n``\"full\"`` records every accepted local move with a direct\nrecomputation of its potential change (expensive; for bounded\nfixtures), every overlapping multilevel proposal, and the\ncounters; ``\"counters\"`` records only the counters (visits split\ninto accepted moves and rejected visits, iterations, certificate\nsweeps, guard decisions). The envelope states the schema version,\nruntime versions, count policy, what is recorded and what is\nomitted, and ``seed_context`` (this call's ``seed``). Rejected\ncandidates are never recorded individually."
+            },
+            {
+              "name": "phase_policy",
+              "kind": "keyword-only",
+              "annotation": "str",
+              "default": "'direct'",
+              "description": "How an overlapping cover (``max_memberships > 1``) is reached.\n``\"direct\"`` (default) runs overlapping detection from its own\nstart. ``\"disjoint_then_overlap\"`` is an opt-in warm start: it\nfirst runs the disjoint game (``max_memberships=1``) with the same\nresolution, weights, phase, isolation, iteration budget, seed and\ncount limits, then passes that partition as\n``initial_membership`` to the overlapping run. The first stage\nimposes a partition structure that the overlap can only extend;\non complete DBLP it was faster but less accurate (symmetric F1\n0.380 versus 0.425 direct), so keep it for ablations, warm starts\nand very large graphs rather than as a default. It requires\n``max_memberships > 1`` and rejects an explicit\n``initial_membership``. The disjoint result is attached as\n``_hedonic_disjoint_stage`` and summarized in\n``_hedonic_provenance[\"phase_policy\"]`` /\n``[\"initialization\"]``."
+            }
+          ],
+          "returns": null,
+          "decorators": [],
+          "doc": {
+            "summary": "Community detection with the hedonic-game / Leiden local-moving model.",
+            "description": "This is the primary exploratory method for both disjoint and overlapping\nexperiments. It delegates to ``community_leiden`` from lucas-igraph.\n\nTagged ``v0.1.0`` exposed ``ensure_equilibrium``. That keyword is\nrejected here: a negative ``n_iterations`` (the default ``-1``) is the\nnative no-change stop plus the final overlapping local-moving Nash\nsweep. A positive budget may return before that certificate. Do not\ncall ordinary ``Graph.community_leiden`` for overlapping work; this\nwrapper is the supported combination.",
+            "sections": {
+              "Parameters": "initial_membership :\n    Disjoint: flat list of community ids (length n).\n    Overlapping (``max_memberships > 1``): flat list or list-of-lists\n    (one community-id list per vertex). ``None`` builds a default init.\n    When omitted, a valid ``self.memberships`` state is reused;\n    explicit ``None`` requests the default singleton init, or a\n    feasible round-robin init when a community-count limit is set.\n    Flat and nested overlapping inits with the same labels are\n    equivalent after normalization.\nmax_communities :\n    Initialization only: when ``initial_membership`` is ``None`` and\n    ``max_memberships == 1``, random init over ``[0, max_communities)``.\n    It has no effect with a supplied start, with overlapping defaults,\n    or when community-count limits select a feasible default start;\n    ``_hedonic_provenance[\"max_communities_effect\"]`` records which\n    case applied. It is *not* an output constraint; see\n    ``max_total_communities``/``n_communities``.\nmax_memberships :\n    Per-vertex cap. ``1`` (default) → disjoint clustering\n    (``VertexClustering``); ``> 1`` → overlapping cover\n    (``VertexCover``) in which each vertex belongs to at most this\n    many communities. ``-1`` removes the practical per-vertex cap: the\n    effective cap is the vertex count, the largest cap the native\n    layer accepts, inside its finite label bank of ``n * n`` labels.\n    The effective value is recorded in ``_hedonic_provenance``.\nn_iterations :\n    Leiden outer iterations. A negative value continues until the\n    native no-change stopping condition and final Nash certificate\n    sweep complete. Positive values are finite budgets and may stop\n    before equilibrium.\nresolution :\n    CPM resolution γ. Defaults to graph density. Must be a finite\n    real. Zero total edge weight is rejected: the published\n    normalization ``Φ_γ = Φ̃_γ / W`` is undefined when ``W=0``.\nallow_isolation :\n    Allow moves into empty communities (new clusters).\nlocal_move_only :\n    If True (default), run only the local-moving phase — the hedonic\n    best-response phase, with no token graph. If False, run full\n    Leiden (refine + aggregate) on the frozen-multiplicity token\n    graph, then a quality guard in original-graph units for every\n    projected iteration, including positive iteration budgets.\nedge_weights :\n    Optional edge weights (sequence or edge-attribute name); finite\n    and non-negative in the overlapping domain.\nseed :\n    When given, the whole call runs with ``random.Random(seed)`` as\n    igraph's random generator (restored afterwards), and the same\n    seed drives the random disjoint initialization. On a given build\n    the returned labels are then a function of the graph, weights,\n    parameters, start state and seed. ``None`` keeps the caller's\n    igraph generator (historical behavior).\nbeta :\n    Leiden refinement randomness (used when ``local_move_only`` is False).\nnode_weights :\n    Optional vertex weights ``w_v`` (sequence or vertex-attribute\n    name), finite and non-negative. They enter the crowding term\n    ``γ w_u w_v``; unit weights are the default.\nmax_total_communities :\n    Optional upper bound on the number of occupied communities of the\n    result and of every state visited by local moving (all aggregate\n    and token levels included).\nn_communities :\n    Optional exact number of occupied communities. Without a start\n    state, a deterministic round-robin cover occupies all ``K`` labels\n    (one label per vertex when ``K <= n``, with extra memberships when\n    ``K > n``). A start state that violates either count constraint is\n    rejected.\ndebug_trace :\n    Native diagnostics in ``result._params[\"debug_trace\"]``, for\n    partitions and covers, with or without count limits. ``True`` or\n    ``\"full\"`` records every accepted local move with a direct\n    recomputation of its potential change (expensive; for bounded\n    fixtures), every overlapping multilevel proposal, and the\n    counters; ``\"counters\"`` records only the counters (visits split\n    into accepted moves and rejected visits, iterations, certificate\n    sweeps, guard decisions). The envelope states the schema version,\n    runtime versions, count policy, what is recorded and what is\n    omitted, and ``seed_context`` (this call's ``seed``). Rejected\n    candidates are never recorded individually.\nphase_policy :\n    How an overlapping cover (``max_memberships > 1``) is reached.\n    ``\"direct\"`` (default) runs overlapping detection from its own\n    start. ``\"disjoint_then_overlap\"`` is an opt-in warm start: it\n    first runs the disjoint game (``max_memberships=1``) with the same\n    resolution, weights, phase, isolation, iteration budget, seed and\n    count limits, then passes that partition as\n    ``initial_membership`` to the overlapping run. The first stage\n    imposes a partition structure that the overlap can only extend;\n    on complete DBLP it was faster but less accurate (symmetric F1\n    0.380 versus 0.425 direct), so keep it for ablations, warm starts\n    and very large graphs rather than as a default. It requires\n    ``max_memberships > 1`` and rejects an explicit\n    ``initial_membership``. The disjoint result is attached as\n    ``_hedonic_disjoint_stage`` and summarized in\n    ``_hedonic_provenance[\"phase_policy\"]`` /\n    ``[\"initialization\"]``.",
+              "Returns": "VertexClustering if ``max_memberships == 1``, else VertexCover.\n\nThe return object carries ``_hedonic_provenance`` (algorithm identity,\nruntime versions, effective parameters, count mode, and the stopping\nrule), and may carry ``_hedonic_raw_memberships`` (negative\niterations), ``_hedonic_token_preflight`` (always),\n``_hedonic_original_edge_weight`` (always), overlapping start/returned\nincidence traces with collision lists, ``_hedonic_multiplicity_drops``,\nand ``_hedonic_native_quality`` when the binding stores original-graph\n``Φ``.\n\nInterruption (for example ``KeyboardInterrupt``) is propagated by the\nnative layer through igraph's error path, which releases its\ntemporaries; the call then raises and returns no partial state."
+            },
+            "parameters": [
+              {
+                "names": "initial_membership",
+                "type": "",
+                "description": "Disjoint: flat list of community ids (length n).\nOverlapping (``max_memberships > 1``): flat list or list-of-lists\n(one community-id list per vertex). ``None`` builds a default init.\nWhen omitted, a valid ``self.memberships`` state is reused;\nexplicit ``None`` requests the default singleton init, or a\nfeasible round-robin init when a community-count limit is set.\nFlat and nested overlapping inits with the same labels are\nequivalent after normalization."
+              },
+              {
+                "names": "max_communities",
+                "type": "",
+                "description": "Initialization only: when ``initial_membership`` is ``None`` and\n``max_memberships == 1``, random init over ``[0, max_communities)``.\nIt has no effect with a supplied start, with overlapping defaults,\nor when community-count limits select a feasible default start;\n``_hedonic_provenance[\"max_communities_effect\"]`` records which\ncase applied. It is *not* an output constraint; see\n``max_total_communities``/``n_communities``."
+              },
+              {
+                "names": "max_memberships",
+                "type": "",
+                "description": "Per-vertex cap. ``1`` (default) → disjoint clustering\n(``VertexClustering``); ``> 1`` → overlapping cover\n(``VertexCover``) in which each vertex belongs to at most this\nmany communities. ``-1`` removes the practical per-vertex cap: the\neffective cap is the vertex count, the largest cap the native\nlayer accepts, inside its finite label bank of ``n * n`` labels.\nThe effective value is recorded in ``_hedonic_provenance``."
+              },
+              {
+                "names": "n_iterations",
+                "type": "",
+                "description": "Leiden outer iterations. A negative value continues until the\nnative no-change stopping condition and final Nash certificate\nsweep complete. Positive values are finite budgets and may stop\nbefore equilibrium."
+              },
+              {
+                "names": "resolution",
+                "type": "",
+                "description": "CPM resolution γ. Defaults to graph density. Must be a finite\nreal. Zero total edge weight is rejected: the published\nnormalization ``Φ_γ = Φ̃_γ / W`` is undefined when ``W=0``."
+              },
+              {
+                "names": "allow_isolation",
+                "type": "",
+                "description": "Allow moves into empty communities (new clusters)."
+              },
+              {
+                "names": "local_move_only",
+                "type": "",
+                "description": "If True (default), run only the local-moving phase — the hedonic\nbest-response phase, with no token graph. If False, run full\nLeiden (refine + aggregate) on the frozen-multiplicity token\ngraph, then a quality guard in original-graph units for every\nprojected iteration, including positive iteration budgets."
+              },
+              {
+                "names": "edge_weights",
+                "type": "",
+                "description": "Optional edge weights (sequence or edge-attribute name); finite\nand non-negative in the overlapping domain."
+              },
+              {
+                "names": "seed",
+                "type": "",
+                "description": "When given, the whole call runs with ``random.Random(seed)`` as\nigraph's random generator (restored afterwards), and the same\nseed drives the random disjoint initialization. On a given build\nthe returned labels are then a function of the graph, weights,\nparameters, start state and seed. ``None`` keeps the caller's\nigraph generator (historical behavior)."
+              },
+              {
+                "names": "beta",
+                "type": "",
+                "description": "Leiden refinement randomness (used when ``local_move_only`` is False)."
+              },
+              {
+                "names": "node_weights",
+                "type": "",
+                "description": "Optional vertex weights ``w_v`` (sequence or vertex-attribute\nname), finite and non-negative. They enter the crowding term\n``γ w_u w_v``; unit weights are the default."
+              },
+              {
+                "names": "max_total_communities",
+                "type": "",
+                "description": "Optional upper bound on the number of occupied communities of the\nresult and of every state visited by local moving (all aggregate\nand token levels included)."
+              },
+              {
+                "names": "n_communities",
+                "type": "",
+                "description": "Optional exact number of occupied communities. Without a start\nstate, a deterministic round-robin cover occupies all ``K`` labels\n(one label per vertex when ``K <= n``, with extra memberships when\n``K > n``). A start state that violates either count constraint is\nrejected."
+              },
+              {
+                "names": "debug_trace",
+                "type": "",
+                "description": "Native diagnostics in ``result._params[\"debug_trace\"]``, for\npartitions and covers, with or without count limits. ``True`` or\n``\"full\"`` records every accepted local move with a direct\nrecomputation of its potential change (expensive; for bounded\nfixtures), every overlapping multilevel proposal, and the\ncounters; ``\"counters\"`` records only the counters (visits split\ninto accepted moves and rejected visits, iterations, certificate\nsweeps, guard decisions). The envelope states the schema version,\nruntime versions, count policy, what is recorded and what is\nomitted, and ``seed_context`` (this call's ``seed``). Rejected\ncandidates are never recorded individually."
+              },
+              {
+                "names": "phase_policy",
+                "type": "",
+                "description": "How an overlapping cover (``max_memberships > 1``) is reached.\n``\"direct\"`` (default) runs overlapping detection from its own\nstart. ``\"disjoint_then_overlap\"`` is an opt-in warm start: it\nfirst runs the disjoint game (``max_memberships=1``) with the same\nresolution, weights, phase, isolation, iteration budget, seed and\ncount limits, then passes that partition as\n``initial_membership`` to the overlapping run. The first stage\nimposes a partition structure that the overlap can only extend;\non complete DBLP it was faster but less accurate (symmetric F1\n0.380 versus 0.425 direct), so keep it for ablations, warm starts\nand very large graphs rather than as a default. It requires\n``max_memberships > 1`` and rejects an explicit\n``initial_membership``. The disjoint result is attached as\n``_hedonic_disjoint_stage`` and summarized in\n``_hedonic_provenance[\"phase_policy\"]`` /\n``[\"initialization\"]``."
+              }
+            ]
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 240,
+          "endLine": 406,
+          "kind": "method"
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "sample_uniform_ints",
+      "qualname": "sample_uniform_ints",
+      "signature": "sample_uniform_ints(N: int, K: int, seed: int)",
+      "parameters": [
+        {
+          "name": "N",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        },
+        {
+          "name": "K",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        },
+        {
+          "name": "seed",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        }
+      ],
+      "returns": null,
+      "decorators": [],
+      "doc": {
+        "summary": "Sample N uniform integers from [0, K] using a seeded NumPy RNG.",
+        "description": "Uses NumPy's Generator (PCG64) for reproducible, vectorized sampling.",
+        "sections": {}
+      },
+      "path": "src/hedonic/utils.py",
+      "line": 3,
+      "endLine": 9,
+      "module": "hedonic.utils"
+    }
+  ],
+  "constants": [
+    {
+      "name": "HEDONIC_ALGORITHM_IDENTITY",
+      "value": "community_hedonic/lucas-igraph-1.0.0.5",
+      "path": "src/hedonic/Game.py",
+      "line": 40
+    },
+    {
+      "name": "HISTORICAL_ALGORITHM_IDENTITIES",
+      "value": {
+        "lucas-igraph-1.0.0.3": "community_hedonic/lucas-igraph-1.0.0.3/interrupt-unsupported"
+      },
+      "path": "src/hedonic/Game.py",
+      "line": 45
+    }
+  ],
+  "cli": {
+    "path": "src/hedonic/experiments/CLI.py",
+    "doc": {
+      "summary": "CLI entrypoint for hedonic experiments.",
+      "description": "Install with experiments extra, then::\n\nhedonic-exp --help\n    hedonic-exp list\n    hedonic-exp smoke\n    hedonic-exp disjoint --smoke --output_root artifacts/disjoint/smoke\n    hedonic-exp disjoint --preset v1020 --preflight --output_root artifacts/disjoint/v1020\n    hedonic-exp overlapping-small\n    hedonic-exp overlapping-dnn --output artifacts/overlapping/dnn_certificate/dnn_certificate.json\n    hedonic-exp overlapping-dnn-rational --exact-only\n    hedonic-exp overlapping-oracle --list-examples\n    hedonic-exp overlapping-oracle --proof-check\n    hedonic-exp overlapping-oracle --fee-check\n    hedonic-exp overlapping-oracle --optimization-check\n    hedonic-exp overlapping-oracle --random-cases 300 --token-cases 100\n    hedonic-exp overlapping-oracle --native-differential\n    hedonic-exp overlapping-integrity --profile smoke\n    hedonic-exp overlapping-certificate-reconcile\n    hedonic-exp overlapping-controlled --smoke --output artifacts/overlapping/controlled_overlap/controlled_overlap.json\n    hedonic-exp overlapping-lfr --profile smoke --output-dir artifacts/overlapping/overlap_lfr/smoke\n    hedonic-exp overlapping-lfr --profile pilot --dry-run --output-dir artifacts/overlapping/overlap_lfr/pilot\n    hedonic-exp overlapping-tracking --profile smoke --output-dir artifacts/overlapping/tracking_triangle/smoke\n    hedonic-exp overlapping-tracking --profile standard --preflight --graph-ledger artifacts/overlapping/overlap_lfr/standard/graphs.json --output-dir artifacts/overlapping/tracking_triangle/standard\n    hedonic-exp overlapping-baselines --profile smoke --output artifacts/overlapping/baselines/smoke.json\n    hedonic-exp overlapping-resource-envelope --profile smoke --output-dir artifacts/overlapping/resource_envelope/smoke\n    hedonic-exp overlapping-subgraph --levels 1 --n_communities 5\n    hedonic-exp overlapping-full --n_iterations -1\n    hedonic-exp overlapping-scale --smoke --output_dir artifacts/overlapping/complexity_scale/smoke\n    hedonic-exp overlapping-resolution --smoke --singleton-mode both --output_dir artifacts/overlapping/resolution_f1/smoke\n    hedonic-exp overlapping-full-snap --preflight --output-dir artifacts/overlapping/full-snap-v1/preflight\n    hedonic-exp overlapping-benchmark --profile smoke --output_dir artifacts/overlapping/snap_benchmark/smoke\n    hedonic-exp overlapping-benchmark --list-methods\n    hedonic-exp overlapping-codeseg --datasets dblp --max-nodes 5000 --output-dir artifacts/overlapping/codeseg/dblp-local\n    hedonic-exp overlapping-reproduce --profile smoke\n    hedonic-exp overlapping-reproduce --profile full --datasets dblp\n    hedonic-exp codeseg-setup --all --build-native\n    hedonic-exp codeseg-doctor --require-all\n    hedonic-exp overlapping-gt-robustness --smoke --output-dir artifacts/overlapping/ground_truth_robustness_v3/smoke\n    hedonic-exp disjoint-load --results_folder /path/to/jsons\n    hedonic-exp plots --smoke --output_dir artifacts/disjoint/figures_smoke\n    hedonic-exp reproduce-disjoint --preset v1020-smoke --output_root artifacts/disjoint/v1020\n\n**Agents:** when you add, remove, rename, or change the CLI of any experiment\nmodule under ``hedonic.experiments``, you **must** update this file (registry +\nhelp text) and the CLI section in ``AGENTS.md`` in the same change.",
+      "sections": {}
+    },
+    "commands": [
+      {
+        "name": "smoke",
+        "module": null,
+        "summary": "Isolated local check (no DBLP): small graphs + tiny SBM sweep",
+        "needsData": null
+      },
+      {
+        "name": "disjoint",
+        "module": "hedonic.experiments.disjoint.sbm_sweep",
+        "summary": "SBM parameter sweep for disjoint community detection (presets: v1020, v1020-smoke)",
+        "needsData": "synthetic"
+      },
+      {
+        "name": "disjoint-load",
+        "module": "hedonic.experiments.disjoint.data_loader",
+        "summary": "Combine disjoint JSON results into a gzipped CSV",
+        "needsData": "synthetic"
+      },
+      {
+        "name": "overlapping-small",
+        "module": "hedonic.experiments.overlapping.small_graphs",
+        "summary": "Quick overlapping smoke tests on small graphs (no data dirs)",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-controlled",
+        "module": "hedonic.experiments.overlapping.controlled_overlap",
+        "summary": "LFR-derived controlled overlap: cap, initialization, phase, and resolution ablations (not canonical overlapping LFR)",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-lfr",
+        "module": "hedonic.experiments.overlapping.overlap_lfr",
+        "summary": "Planted-overlap study: smoke compatibility fixture; official LFR binary required for pilot/standard",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-tracking",
+        "module": "hedonic.experiments.overlapping.tracking",
+        "summary": "Mirror/one-sweep/local/multiphase noisy-cover tracking and graph-level robustness/recovery triangle",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-baselines",
+        "module": "hedonic.experiments.overlapping.baselines",
+        "summary": "Bounded SLPA/DEMON/KCP adapters, scoped Chen replica, and trivial controls (external SLPA/DEMON required for standard)",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-resource-envelope",
+        "module": "hedonic.experiments.overlapping.resource_envelope",
+        "summary": "Original/token/audit resource envelope with RSS, timings, projection and capacity outcomes",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-dnn",
+        "module": "hedonic.experiments.overlapping.dnn_certificate",
+        "summary": "Locked tiny-graph exact-cover enumeration + DNN SDP certificate diagnostic",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-dnn-rational",
+        "module": "hedonic.experiments.overlapping.dnn_rational_certificate",
+        "summary": "Versioned exact rational diagonally-dominant DNN certificates + optional numerical calibration; candidate trace audits label-reducing ties",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-oracle",
+        "module": "hedonic.experiments.overlapping.unit_l2_oracle",
+        "summary": "Independent unit-ℓ₂ prefix oracle, CE1–CE7, CE5 token normalization, collision lists, --proof-check for numbered propositions, --fee-check for the separate fee-v1 objective, and --optimization-check for cached/reference equivalence; optional native differential",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-integrity",
+        "module": "hedonic.experiments.overlapping.integrity_grid",
+        "summary": "Checkpointed exhaustive tiny-graph native/oracle integrity grid (--profile smoke|standard; resumable shards, native-library fingerprints and versioned diagnostic trace)",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-subgraph",
+        "module": "hedonic.experiments.overlapping.dblp_subgraph",
+        "summary": "DBLP L-hop subgraph overlapping experiment",
+        "needsData": "dblp"
+      },
+      {
+        "name": "overlapping-full",
+        "module": "hedonic.experiments.overlapping.dblp_full",
+        "summary": "Full DBLP overlapping experiment (+ optional resolution sweep)",
+        "needsData": "dblp"
+      },
+      {
+        "name": "overlapping-scale",
+        "module": "hedonic.experiments.overlapping.complexity_scale",
+        "summary": "Wallclock scaling of overlapping hedonic as subnetworks grow (local_move_only T/F vs size; timeout stop + plot)",
+        "needsData": "dblp"
+      },
+      {
+        "name": "overlapping-resolution",
+        "module": "hedonic.experiments.overlapping.resolution_f1",
+        "summary": "Full-DBLP overlap metrics vs resolution for multi-phase hedonic; cache-only rescoring, singleton modes, optional sampled Omega",
+        "needsData": "dblp"
+      },
+      {
+        "name": "overlapping-full-snap",
+        "module": "hedonic.experiments.overlapping.full_snap",
+        "summary": "Separate full-snap-v1: complete raw graphs, unsupervised variants, resource/provenance records",
+        "needsData": "snap-networks"
+      },
+      {
+        "name": "overlapping-benchmark",
+        "module": "hedonic.experiments.overlapping.benchmark",
+        "summary": "Resumable Amazon/DBLP/LiveJournal/YouTube/Wikipedia overlap benchmark (hedonic + CPM/DEMON; optional AGMfit/Link/MMSB/Infomap)",
+        "needsData": "snap-networks"
+      },
+      {
+        "name": "overlapping-codeseg",
+        "module": "hedonic.experiments.overlapping.codeseg_reproduction",
+        "summary": "CoDeSEG WWW'25 nine-method SNAP overlap reproduction plus community_hedonic comparator (shared cover metrics + LFK-ONMI)",
+        "needsData": "snap-networks"
+      },
+      {
+        "name": "overlapping-reproduce",
+        "module": "hedonic.experiments.overlapping.turnkey",
+        "summary": "One-command SNAP setup plus the complete registered method, accuracy, runtime, and resource benchmark",
+        "needsData": "snap-networks"
+      },
+      {
+        "name": "codeseg-setup",
+        "module": "hedonic.experiments.overlapping.codeseg_setup",
+        "summary": "Lazy-download/cache SNAP data and prepare the nine CoDeSEG method runtimes",
+        "needsData": "snap-networks"
+      },
+      {
+        "name": "codeseg-doctor",
+        "module": "hedonic.experiments.overlapping.codeseg_setup",
+        "summary": "Read-only readiness audit for CoDeSEG data and method runtimes",
+        "needsData": "snap-networks"
+      },
+      {
+        "name": "overlapping-gt-robustness",
+        "module": "hedonic.experiments.overlapping.ground_truth_robustness",
+        "summary": "Ground-truth overlap robustness plus GT-seeded local/multi-phase equilibrium search",
+        "needsData": "snap-networks"
+      },
+      {
+        "name": "overlapping-gt-spectrum",
+        "module": "hedonic.experiments.overlapping.gt_spectrum",
+        "summary": "SNAP ground-truth robustness spectrum: stable-vertex fraction vs resolution for every locally available overlapping cover, plus seeded GT-started local moving",
+        "needsData": "snap-networks"
+      },
+      {
+        "name": "overlapping-audit",
+        "module": "hedonic.experiments.overlapping.protocol",
+        "summary": "Read-only reconciliation of the 125 locked paper conditions",
+        "needsData": null
+      },
+      {
+        "name": "overlapping-certificate-reconcile",
+        "module": "hedonic.experiments.overlapping.certificate_reconcile",
+        "summary": "Detector-free 3840/864/125/tiny ledger classification (status_coverage.csv, certificate_manifest.json, displayed TeX fragments; optional --replay-dnn / --replay-gt / --replay-paper; --gate-h-check verifies frozen locks, numerical/rational dual witnesses, proofs, wrapper/metric contracts, and TeX/PDF hashes)",
+        "needsData": null
+      },
+      {
+        "name": "reproduce-overlapping-paper",
+        "module": "hedonic.experiments.overlapping.reproduce_paper",
+        "summary": "TOML + tmux full SNAP paper reproduction: safe parallel shards → merged caches/plots/tables → manuscript PDF",
+        "needsData": "snap-networks"
+      },
+      {
+        "name": "plots",
+        "module": "hedonic.experiments.plots.paper_figures",
+        "summary": "PHYSA V1020 paper figures from disjoint CSV (gt_robustness, noise, n_communities, acc_*)",
+        "needsData": "synthetic"
+      },
+      {
+        "name": "reproduce-disjoint",
+        "module": "hedonic.experiments.disjoint.reproduce",
+        "summary": "End-to-end disjoint reproduction: sweep → CSV → paper figures (presets: v1020, v1020-smoke)",
+        "needsData": "synthetic"
+      },
+      {
+        "name": "info",
+        "module": "hedonic.experiments.overlapping.info",
+        "summary": "Show the screened methods (ready / installable / missing tools), the SNAP networks (size, on-disk copy, download size), and the accuracy metrics (also `hedonic show`)",
+        "needsData": null
+      },
+      {
+        "name": "quickstart",
+        "module": "hedonic.experiments.overlapping.quickstart",
+        "summary": "Tiny SNAP com-DBLP benchmark (one seed): HOC-local vs CoDeSEG, all accuracy metrics; fetches data and builds CoDeSEG on first use (also `hedonic run exp`)",
+        "needsData": "snap-networks"
+      }
+    ]
+  },
+  "experiments": {
+    "disjoint": {
+      "sbmSweep": {
+        "path": "src/hedonic/experiments/disjoint/sbm_sweep.py",
+        "doc": {
+          "summary": "SBM parameter sweep for disjoint hedonic community detection.",
+          "description": "Migrated from tmp/hedonic/scripts/experiment.py, exp.py, config.py, and\nsave_exp_data.py so the CLI can reproduce the PHYSA V1020 synthetic grid.\n\nV1020 (original pipeline)\n  - max_n_nodes=1020, communities ∈ {2,3,4,5,6}\n  - p_in ∈ {0.01…0.10}, difficulty ∈ {0.10…0.75}\n  - noises ∈ {0.10,0.25,0.50,0.75,1.00}, 5 network seeds, 10 partition seeds\n  - methods: GroundTruth, Mirror, OnePass, Spectral, Leiden, Hedonic\n  - Leiden/Hedonic: 10 stochastic runs / cell (unique partitions kept)\n  - layout: resultados/{n}C_{size}N/.../Network (NNN)/partition_MMM.json\n\nUse ``--preset v1020`` for the full grid (very large) or ``--preset v1020-smoke``\nfor a tiny structural check. Prefer writing under a *new* root such as\n``artifacts/disjoint/v1020`` rather than overwriting the archived V1020 folder.",
+          "sections": {}
+        },
+        "methods": {
+          "GroundTruth": {
+            "method_call_name": "community_groundtruth",
+            "parameters": {
+              "groundtruth": null
+            }
+          },
+          "Mirror": {
+            "method_call_name": "community_mirror",
+            "parameters": {
+              "initial_membership": null
+            }
+          },
+          "OnePass": {
+            "method_call_name": "community_onepass_improvement",
+            "parameters": {
+              "initial_membership": null
+            }
+          },
+          "Spectral": {
+            "method_call_name": "community_leading_eigenvector",
+            "parameters": {
+              "clusters": null,
+              "weights": null,
+              "arpack_options": null
+            }
+          },
+          "Leiden": {
+            "method_call_name": "community_hedonic",
+            "parameters": {
+              "resolution": 1,
+              "beta": 0.01,
+              "initial_membership": null,
+              "n_iterations": -1,
+              "local_move_only": false,
+              "allow_isolation": false,
+              "max_memberships": 1
+            }
+          },
+          "Hedonic": {
+            "method_call_name": "community_hedonic",
+            "parameters": {
+              "resolution": 1,
+              "beta": 0.01,
+              "initial_membership": null,
+              "n_iterations": -1,
+              "local_move_only": true,
+              "allow_isolation": false,
+              "max_memberships": 1
+            }
+          }
+        },
+        "presets": {
+          "v1020": {
+            "folder_name": "resultados",
+            "max_n_nodes": 1020,
+            "n_communities": [
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "seeds": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "p_in": [
+              0.01,
+              0.02,
+              0.03,
+              0.04,
+              0.05,
+              0.06,
+              0.07,
+              0.08,
+              0.09,
+              0.1
+            ],
+            "difficulty": [
+              0.1,
+              0.2,
+              0.3,
+              0.4,
+              0.5,
+              0.55,
+              0.6,
+              0.65,
+              0.7,
+              0.75
+            ],
+            "noises": [
+              0.1,
+              0.25,
+              0.5,
+              0.75,
+              1.0
+            ],
+            "partition_seeds": 10,
+            "methods": {
+              "$expr": "list(METHODS.keys())"
+            },
+            "n_runs": 10,
+            "layout": "v1020"
+          },
+          "v1020-smoke": {
+            "folder_name": "resultados",
+            "max_n_nodes": 40,
+            "n_communities": [
+              2
+            ],
+            "seeds": [
+              0
+            ],
+            "p_in": [
+              0.1
+            ],
+            "difficulty": [
+              0.3
+            ],
+            "noises": [
+              0.1,
+              1.0
+            ],
+            "partition_seeds": 2,
+            "methods": {
+              "$expr": "list(METHODS.keys())"
+            },
+            "n_runs": 2,
+            "layout": "v1020"
+          }
+        }
+      },
+      "reproduce": {
+        "path": "src/hedonic/experiments/disjoint/reproduce.py",
+        "doc": {
+          "summary": "End-to-end disjoint synthetic reproduction: sweep → CSV → paper figures.",
+          "description": "Chains the CLI pieces needed to reproduce the PHYSA V1020 pipeline without\ntouching the archived synthetic input tree (writes below the repository\nartifact root by default).\n\n::\n\nhedonic-exp reproduce-disjoint --preset v1020-smoke \\\n        --output_root artifacts/disjoint/v1020\n\n# Full grid (very large) + figures when CSV is ready:\n    hedonic-exp reproduce-disjoint --preset v1020 \\\n        --output_root artifacts/disjoint/v1020\n\n# Figures only from an existing archive CSV (read-only data):\n    hedonic-exp reproduce-disjoint --plots-only \\\n        --data ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020/resultados_ari.csv.gzip \\\n        --output_root artifacts/disjoint/v1020",
+          "sections": {}
+        }
+      },
+      "dataLoader": {
+        "path": "src/hedonic/experiments/disjoint/data_loader.py",
+        "doc": {
+          "summary": "CSV/JSON indexing and combination pipeline for disjoint SBM results.",
+          "description": "Migrated from tmp/hedonic/scripts/data_reader.py.",
+          "sections": {}
+        }
+      }
+    }
+  },
+  "sources": [
+    "pyproject.toml",
+    "src/hedonic/Game.py",
+    "src/hedonic/__init__.py",
+    "src/hedonic/experiments/CLI.py",
+    "src/hedonic/experiments/disjoint/data_loader.py",
+    "src/hedonic/experiments/disjoint/reproduce.py",
+    "src/hedonic/experiments/disjoint/sbm_sweep.py",
+    "src/hedonic/utils.py"
+  ]
+}

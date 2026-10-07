@@ -12,6 +12,12 @@ from unittest.mock import patch
 
 import igraph as ig
 
+from tests._version_contract import (
+    assert_live_stack_reported_against_frozen_lock,
+    live_lucas_igraph_lock_section,
+    locked_lucas_igraph_version,
+)
+
 from hedonic.experiments import CLI
 from hedonic.experiments.overlapping import benchmark, reproduce_paper, snap
 from hedonic.experiments.overlapping.methods import (
@@ -25,10 +31,12 @@ from hedonic.experiments.overlapping.metrics import structural_overlap_metrics
 from hedonic.experiments.overlapping.robustness import audit_cover
 from hedonic.experiments.overlapping.snap import (
     ANALYSIS_GRAPH_POLICY,
+    agmfit_induced_dataset,
     bounded_induced_dataset,
     common_undirected_analysis_dataset,
     load_snap_dataset,
     smoke_dataset,
+    sample_agmfit_subgraphs,
 )
 
 
@@ -261,6 +269,98 @@ class TestSnapLoader(unittest.TestCase):
         self.assertEqual(bounded.graph.vcount(), 4)
         self.assertTrue(all(0 <= v < 4 for community in bounded.cover for v in community))
         self.assertIn("bounded_subgraph", bounded.report)
+
+    def test_agmfit_window_uses_overlap_anchor_union_and_induced_edges(self):
+        graph = ig.Graph(n=7, edges=[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6)])
+        dataset = snap.SnapDataset(
+            "toy", "all", graph, [[0, 1, 2], [2, 3, 4], [4, 5, 6]], {}
+        )
+        window = agmfit_induced_dataset(dataset, seed=4)
+        anchor = window.report["agmfit_subgraph"]["anchor_vertex_original_index"]
+        self.assertGreaterEqual(len([c for c in dataset.cover if anchor in c]), 2)
+        selected_old = {
+            v for c in dataset.cover if anchor in c for v in c
+        }
+        self.assertEqual(window.graph.vcount(), len(selected_old))
+        # Every retained edge is an edge of the source induced subgraph.
+        remap = {old: new for new, old in enumerate(sorted(selected_old))}
+        expected_edges = {
+            tuple(sorted((remap[source], remap[target])))
+            for source, target in graph.get_edgelist()
+            if source in remap and target in remap
+        }
+        self.assertEqual(set(window.graph.get_edgelist()), expected_edges)
+        self.assertTrue(window.report["agmfit_subgraph"]["strategy"].startswith("random_overlap_anchor"))
+
+    def test_agmfit_sampling_is_seed_deterministic_and_replicated(self):
+        dataset = smoke_dataset("amazon", cover_variant="all")
+        left = sample_agmfit_subgraphs(dataset, n_subgraphs=4, seed=19)
+        right = sample_agmfit_subgraphs(dataset, n_subgraphs=4, seed=19)
+        self.assertEqual(
+            [item.report["agmfit_subgraph"]["anchor_vertex_original_index"] for item in left],
+            [item.report["agmfit_subgraph"]["anchor_vertex_original_index"] for item in right],
+        )
+        self.assertEqual(
+            [item.graph.get_edgelist() for item in left],
+            [item.graph.get_edgelist() for item in right],
+        )
+        self.assertEqual(len(left), 4)
+        self.assertTrue(all(item.report["agmfit_subgraph"]["anchor_membership_count"] >= 2 for item in left))
+
+    def test_agmfit_sampling_supports_article_replication_count(self):
+        dataset = smoke_dataset("amazon", cover_variant="all")
+        windows = sample_agmfit_subgraphs(dataset, n_subgraphs=500, seed=7)
+        self.assertEqual(len(windows), 500)
+        self.assertTrue(
+            all(
+                item.report["agmfit_subgraph"]["anchor_membership_count"] >= 2
+                for item in windows
+            )
+        )
+
+    def test_agmfit_window_can_feed_one_detector_on_smoke_graph(self):
+        dataset = smoke_dataset("amazon", cover_variant="all")
+        window = agmfit_induced_dataset(dataset, seed=3)
+        try:
+            cover, metadata = run_method(
+                METHODS["hedonic_multiphase"],
+                window.graph,
+                max_memberships=2,
+                resolution=window.graph.density(),
+                seed=0,
+            )
+        except TypeError as exc:
+            if "unexpected keyword argument" not in str(exc):
+                raise
+            self.skipTest("installed igraph lacks the overlapping Leiden extension")
+        self.assertTrue(cover)
+        self.assertEqual(metadata["method"], "hedonic_multiphase")
+
+    def test_agmfit_replication_profile_writes_window_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "networks"
+            amazon = root / "Amazon"
+            _write_gzip(amazon / "com-amazon.ungraph.txt.gz", "1 2\n2 3\n3 1\n")
+            _write_gzip(amazon / "com-amazon.all.cmty.txt.gz", "1 2\n2 3\n")
+            output = Path(directory) / "output"
+            args = benchmark.build_parser().parse_args(
+                [
+                    "--profile",
+                    "agmfit-replication",
+                    "--datasets",
+                    "amazon",
+                    "--subgraph_replicates",
+                    "3",
+                    "--data_root",
+                    str(root),
+                    "--output_dir",
+                    str(output),
+                ]
+            )
+            self.assertEqual(benchmark.run_benchmark(args), 0)
+            ledger = json.loads((output / "agmfit_subgraphs.json").read_text())
+            self.assertEqual(ledger["article"]["subgraphs_per_dataset"], 3)
+            self.assertEqual(len(ledger["datasets"]["amazon"]["windows"]), 3)
 
 
 class TestBenchmarkHelpers(unittest.TestCase):
@@ -587,6 +687,42 @@ class TestBenchmarkHelpers(unittest.TestCase):
         self.assertIn("available", availability["demon"])
         self.assertIn("install_requirement", availability["cpm"])
 
+    def test_agmfit_baseline_smoke_is_explicitly_unavailable_when_optional_packages_absent(self):
+        """AGMfit/LC/MMSB/Infomap never masquerade as another detector.
+
+        The AGMfit paper's baselines are optional external implementations and
+        are intentionally not bundled.  A smoke invocation must therefore
+        produce a diagnostic ``skipped_unsupported`` record when a provider is
+        absent; if a provider is installed, it may run through its adapter and
+        produce a normal completed record.
+        """
+        optional = ["agmfit", "link_clustering", "mmsb", "infomap"]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "optional-baselines"
+            argv = [
+                "overlapping-benchmark",
+                "--profile", "smoke",
+                "--datasets", "amazon",
+                "--methods", ",".join(optional),
+                "--output_dir", str(output),
+                "--no-plots",
+            ]
+            self.assertEqual(CLI.main(argv), 0)
+            records = {
+                json.loads(path.read_text())["method"]: json.loads(path.read_text())
+                for path in (output / "runs").rglob("*.json")
+            }
+            self.assertEqual(set(records), set(optional))
+            availability = method_availability()
+            for name in optional:
+                if availability[name]["available"]:
+                    self.assertEqual(records[name]["status"], "completed")
+                else:
+                    self.assertEqual(records[name]["status"], "skipped_unsupported")
+                    self.assertEqual(records[name]["failure_kind"], "unsupported")
+                    self.assertIn(availability[name]["reason"], records[name]["reason"])
+                    self.assertEqual(records[name]["execution"], "dependency_unavailable")
+
     def test_multiphase_density_variants_fix_resolution_and_enable_isolation(self):
         dataset = smoke_dataset("amazon", cover_variant="all")
         density = dataset.graph.density()
@@ -655,9 +791,8 @@ class TestBenchmarkHelpers(unittest.TestCase):
             manifest = json.loads((output / "manifest.json").read_text())
             self.assertEqual(manifest["schema_version"], 4)
             self.assertEqual(manifest["run_status_counts"].get("completed"), 6)
-            self.assertTrue(manifest["experiment_identity"]["tracked_files_match_lock"])
-            self.assertTrue(
-                manifest["experiment_identity"]["lucas_igraph"]["package_identity_matches_lock"]
+            assert_live_stack_reported_against_frozen_lock(
+                self, manifest["experiment_identity"]["lucas_igraph"]
             )
             self.assertTrue((output / "results.jsonl").is_file())
             self.assertTrue((output / "results.csv.gz").is_file())

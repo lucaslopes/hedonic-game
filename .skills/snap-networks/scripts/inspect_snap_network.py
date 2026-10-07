@@ -22,6 +22,11 @@ from typing import Any
 HEADER_RE = re.compile(r"\b(Nodes|Edges):\s*([\d,]+)", re.I)
 
 
+def _is_legacy_output(path: Path) -> bool:
+    """Ignore legacy result directories when scanning an external archive."""
+    return any(part.endswith("_CLI") for part in path.parts)
+
+
 def _open_text(path: Path):
     if path.name.endswith(".gz"):
         return gzip.open(path, "rt", errors="replace")
@@ -105,13 +110,13 @@ def inspect(root: Path, dataset: str | None, read_pickles: bool) -> dict[str, An
         raw_files = [
             p for p in files
             if p.name.endswith((".txt.gz", ".tab", ".txt", ".cites", ".content"))
-            and "DBLP_CLI" not in p.parts
+            and not _is_legacy_output(p)
         ]
         item["raw_preview"] = [_raw_summary(p) for p in raw_files[:12]]
         if read_pickles:
             pickle_files = [
                 p for p in files
-                if p.suffix == ".pkl" and "DBLP_CLI" not in p.parts
+                if p.suffix == ".pkl" and not _is_legacy_output(p)
             ]
             item["pickles"] = [_pickle_summary(p) for p in pickle_files[:20]]
         output["datasets"].append(item)

@@ -25,7 +25,7 @@ jobs:
       - name: Test public API and release gates
         run: >-
           uv run --with pytest pytest -q
-          tests/test_release_helper.py
+          tests/test_game_memberships.py
           tests/test_overlapping_and_experiments.py::TestCommunityHedonic
       - name: Compile package sources
         run: python -m compileall -q src

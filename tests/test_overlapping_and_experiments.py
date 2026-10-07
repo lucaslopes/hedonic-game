@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import gzip
 import json
-import hashlib
 import inspect
 import os
 import random
@@ -18,6 +17,14 @@ import igraph as ig
 import numpy as np
 
 from hedonic import Game
+from tests._version_contract import (
+    PUBLIC_CHECKOUT_REASON,
+    lock_tracked_files_present,
+    assert_live_stack_reported_against_frozen_lock,
+    live_lucas_igraph_lock_section,
+    locked_lucas_igraph_version,
+)
+
 from hedonic.experiments import CLI
 from hedonic.experiments.config import (
     DEFAULT_DBLP_DIR,
@@ -86,8 +93,20 @@ class TestCommunityHedonic(unittest.TestCase):
     def test_local_move_only_is_the_public_parameter(self):
         parameter_names = inspect.signature(Game.community_hedonic).parameters
         self.assertIn("local_move_only", parameter_names)
+        self.assertNotIn("ensure_equilibrium", parameter_names)
         deprecated_keyword = "only" + "_local_moving"
         self.assertNotIn(deprecated_keyword, parameter_names)
+        doc = Game.community_hedonic.__doc__ or ""
+        # lucas-igraph 1.0.0.4+ propagates interruption through the native
+        # error path; the frozen 1.0.0.3 producer identity stays published.
+        self.assertIn("Interruption", doc)
+        self.assertIn("error path", doc)
+        from hedonic.Game import HISTORICAL_ALGORITHM_IDENTITIES
+
+        self.assertEqual(
+            HISTORICAL_ALGORITHM_IDENTITIES["lucas-igraph-1.0.0.3"],
+            "community_hedonic/lucas-igraph-1.0.0.3/interrupt-unsupported",
+        )
         graph = Game(ig.Graph.Famous("Petersen"))
         cover = graph.community_hedonic(
             resolution=graph.density(),
@@ -96,10 +115,142 @@ class TestCommunityHedonic(unittest.TestCase):
             n_iterations=-1,
         )
         self.assertEqual(len(cover.membership), graph.vcount())
+        from hedonic.Game import HEDONIC_ALGORITHM_IDENTITY
+
+        self.assertEqual(
+            cover._hedonic_algorithm_identity, HEDONIC_ALGORITHM_IDENTITY
+        )
         with self.assertRaises(TypeError):
             graph.community_hedonic(**{deprecated_keyword: True})
+        with self.assertRaises(TypeError):
+            graph.community_hedonic(ensure_equilibrium=True)
 
-    def test_ensure_equilibrium_native_full_result_is_audited(self):
+    def test_rejects_zero_total_edge_weight(self):
+        empty = Game(ig.Graph(n=3))
+        with self.assertRaises(ValueError):
+            empty.community_hedonic(max_memberships=1, resolution=0.5)
+
+    def test_negative_iterations_attach_raw_memberships_and_preflight(self):
+        graph = Game(ig.Graph.Famous("Petersen"))
+        cover = graph.community_hedonic(
+            resolution=graph.density(),
+            max_memberships=2,
+            n_iterations=-1,
+            local_move_only=True,
+        )
+        self.assertTrue(hasattr(cover, "_hedonic_raw_memberships"))
+        self.assertEqual(len(cover._hedonic_raw_memberships), graph.vcount())
+        preflight = cover._hedonic_token_preflight
+        self.assertEqual(preflight["max_memberships"], 2)
+        self.assertFalse(preflight["integer_overflow"])
+
+    def test_flat_and_nested_overlapping_init_are_equivalent(self):
+        graph = Game(ig.Graph.Ring(6))
+        nested = [[0], [0], [1], [1], [2], [2]]
+        flat = [0, 0, 1, 1, 2, 2]
+        self.assertEqual(graph._as_overlapping_init(flat), nested)
+        ig.set_random_number_generator(random.Random(7))
+        from_nested = graph.community_hedonic(
+            initial_membership=nested,
+            max_memberships=2,
+            n_iterations=1,
+            local_move_only=True,
+            resolution=0.5,
+            seed=7,
+        )
+        ig.set_random_number_generator(random.Random(7))
+        from_flat = graph.community_hedonic(
+            initial_membership=flat,
+            max_memberships=2,
+            n_iterations=1,
+            local_move_only=True,
+            resolution=0.5,
+            seed=7,
+        )
+        self.assertEqual(
+            [[int(x) for x in row] for row in from_nested.membership],
+            [[int(x) for x in row] for row in from_flat.membership],
+        )
+
+    def test_rejects_directed_and_nonfinite_resolution(self):
+        directed = Game(ig.Graph([(0, 1)], directed=True))
+        self.assertTrue(directed.is_directed())
+        with self.assertRaises(ValueError):
+            directed.community_hedonic(max_memberships=1, resolution=0.5)
+        isolated = Game(ig.Graph(n=1))
+        with self.assertRaises(ValueError):
+            isolated.community_hedonic(max_memberships=1)
+        with self.assertRaises(ValueError):
+            isolated.community_hedonic(max_memberships=1, resolution=0.5)
+        graph = Game(ig.Graph.Famous("Petersen"))
+        with self.assertRaises(ValueError):
+            graph.community_hedonic(resolution=float("nan"))
+        empty = Game(ig.Graph(n=0))
+        with self.assertRaises(ValueError):
+            empty.community_hedonic(max_memberships=1, resolution=0.0)
+        edgeless = Game(ig.Graph(n=2))
+        with self.assertRaises(ValueError):
+            edgeless.community_hedonic(max_memberships=1, resolution=0.5)
+        zero_weight = Game(ig.Graph([(0, 1)]))
+        with self.assertRaises(ValueError):
+            zero_weight.community_hedonic(
+                max_memberships=1, resolution=0.5, edge_weights=[0.0]
+            )
+
+    def test_token_preflight_overflow_blocks_full_mode(self):
+        from hedonic.Game import token_graph_preflight
+
+        huge = token_graph_preflight(2, 3, 2**32)
+        self.assertTrue(huge["integer_overflow"])
+        graph = Game(ig.Graph([(0, 1), (0, 2)]))
+        with self.assertRaises(OverflowError):
+            graph.community_hedonic(
+                max_memberships=2**32,
+                local_move_only=False,
+                n_iterations=1,
+                resolution=0.5,
+            )
+        local = graph.community_hedonic(
+            max_memberships=2,
+            local_move_only=True,
+            n_iterations=1,
+            resolution=0.5,
+        )
+        self.assertFalse(local._hedonic_token_preflight["integer_overflow"])
+
+    def test_start_duplicate_labels_are_traced_and_collapsed(self):
+        from hedonic.Game import membership_incidence_trace
+
+        graph = Game(ig.Graph.Ring(4))
+        initial = [[0, 0], [1], [2], [3]]
+        self.assertTrue(membership_incidence_trace(initial)["duplicate_labels"])
+        cover = graph.community_hedonic(
+            initial_membership=initial,
+            max_memberships=2,
+            n_iterations=1,
+            local_move_only=True,
+            resolution=0.5,
+        )
+        start = cover._hedonic_start_membership_trace
+        returned = cover._hedonic_returned_membership_trace
+        self.assertTrue(start["duplicate_labels"])
+        self.assertEqual(start["incidence_count"], 5)
+        self.assertEqual(start["unique_incidence_count"], 4)
+        self.assertEqual(
+            start["collisions"],
+            [{"vertex": 0, "label": 0, "token_count": 2}],
+        )
+        self.assertFalse(returned["duplicate_labels"])
+        self.assertEqual(returned["collisions"], [])
+        self.assertEqual(cover._hedonic_multiplicity_drops, [])
+        for row in cover.membership:
+            labels = [int(label) for label in row]
+            self.assertEqual(len(labels), len(set(labels)))
+            self.assertGreaterEqual(len(labels), 1)
+        self.assertEqual(cover._hedonic_original_edge_weight, 4.0)
+        self.assertTrue(hasattr(cover, "_hedonic_native_quality"))
+
+    def test_negative_iterations_native_full_result_is_audited(self):
         edges = [
             (0, 1),
             (0, 9),
@@ -139,7 +290,6 @@ class TestCommunityHedonic(unittest.TestCase):
             local_move_only=False,
             allow_isolation=True,
             n_iterations=-1,
-            ensure_equilibrium=True,
         )
         audit = audit_cover(
             graph,
@@ -160,7 +310,7 @@ class TestCommunityHedonic(unittest.TestCase):
             resolution=0.1,
             local_move_only=True,
             allow_isolation=False,
-            ensure_equilibrium=True,
+            n_iterations=-1,
         )
         self.assertEqual(result.membership[5], [0])
         audit = audit_cover(
@@ -174,7 +324,7 @@ class TestCommunityHedonic(unittest.TestCase):
         self.assertTrue(audit["is_local_equilibrium_at_resolution"])
         self.assertEqual(audit["profitable_vertex_count_at_resolution"], 0)
 
-    def test_ensure_equilibrium_uses_one_native_call(self):
+    def test_negative_iterations_use_one_native_call_and_preserve_labels(self):
         graph = Game(ig.Graph(n=3, edges=[(0, 1), (1, 2)]))
         calls = []
 
@@ -193,7 +343,6 @@ class TestCommunityHedonic(unittest.TestCase):
                 local_move_only=False,
                 allow_isolation=True,
                 n_iterations=-1,
-                ensure_equilibrium=True,
             )
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["initial_membership"], [[0], [0, 1], [1]])
@@ -204,26 +353,28 @@ class TestCommunityHedonic(unittest.TestCase):
             [[100], [100, 300], [300]],
         )
 
-    def test_ensure_equilibrium_does_not_reencode_native_labels(self):
+    def test_positive_iterations_are_forwarded_without_equilibrium_snapshot(self):
         graph = Game(ig.Graph(n=3, edges=[(0, 1), (1, 2)]))
+        calls = []
 
         class Result:
             membership = [[100, 400], [200], [300]]
 
-        with patch.object(graph, "community_leiden", return_value=Result()):
+        def fake_leiden(**kwargs):
+            calls.append(kwargs)
+            return Result()
+
+        with patch.object(graph, "community_leiden", side_effect=fake_leiden):
             result = graph.community_hedonic(
                 initial_membership=[[0], [0, 1], [1]],
                 max_memberships=2,
                 local_move_only=False,
                 allow_isolation=False,
                 n_iterations=2,
-                ensure_equilibrium=True,
             )
         self.assertEqual(result.membership, [[100, 400], [200], [300]])
-        self.assertEqual(
-            result._hedonic_raw_memberships,
-            [[100, 400], [200], [300]],
-        )
+        self.assertEqual(calls[0]["n_iterations"], 2)
+        self.assertFalse(hasattr(result, "_hedonic_raw_memberships"))
 
     def test_max_memberships_returns_cover(self):
         g = Game(ig.Graph.Famous("Petersen"))
@@ -261,6 +412,10 @@ class TestCommunityHedonic(unittest.TestCase):
         self.assertAlmostEqual(metrics["f1"], 1.0)
         self.assertAlmostEqual(metrics["jaccard"], 1.0)
         self.assertAlmostEqual(metrics["omega"], 1.0)
+        self.assertEqual(
+            metrics["score_definition_version"],
+            "canonical_unique_vertex_set_cover_v1",
+        )
 
     def test_one_to_one_matching_uses_canonical_unique_set_cover(self):
         metrics = one_to_one_community_metrics(
@@ -533,6 +688,10 @@ class TestExperimentsConfig(unittest.TestCase):
         finally:
             os.chdir(old)
 
+    @unittest.skipUnless(
+        lock_tracked_files_present(Path("configs/overlapping-ground-truth-protocol.lock.json")),
+        PUBLIC_CHECKOUT_REASON,
+    )
     def test_ground_truth_protocol_config_and_lock_ship(self):
         root = Path(__file__).resolve().parents[1]
         config_path = root / "configs" / "overlapping-ground-truth.toml"
@@ -571,8 +730,15 @@ class TestExperimentsConfig(unittest.TestCase):
         )
         for relative, expected in lock["tracked_files"].items():
             self.assertRegex(expected, r"^[0-9a-f]{64}$", relative)
-            actual = hashlib.sha256((root / relative).read_bytes()).hexdigest()
-            self.assertEqual(actual, expected, relative)
+        from hedonic.experiments.overlapping.certificate_reconcile import (
+            classify_frozen_protocol_lock,
+        )
+
+        lock_report = classify_frozen_protocol_lock(lock_path)
+        self.assertTrue(lock_report["lock_bytes_match_freeze"])
+        self.assertEqual(lock_report["unexpected_drift"], [])
+        self.assertEqual(lock_report["missing"], [])
+        self.assertTrue(lock_report["ok"])
         for dataset, content in lock["dataset_content_identities"].items():
             for field in ("graph_sha256", "ground_truth_cover_sha256"):
                 self.assertRegex(
@@ -584,14 +750,10 @@ class TestExperimentsConfig(unittest.TestCase):
         )
 
         identity = current_experiment_identity(lock_path)
-        self.assertTrue(identity["tracked_files_match_lock"])
-        self.assertTrue(
-            identity["lucas_igraph"]["package_identity_matches_lock"]
-        )
+        assert_live_stack_reported_against_frozen_lock(self, identity["lucas_igraph"])
         self.assertTrue(identity["external_dependency_lock_complete"])
         self.assertTrue(identity["external_dependencies_match_lock"])
         self.assertTrue(identity["scientific_dependency_lock_complete"])
-        self.assertTrue(identity["scientific_dependencies_match_lock"])
 
 
 class TestDataLoaderHelpers(unittest.TestCase):
@@ -623,6 +785,149 @@ class TestSbmSweep(unittest.TestCase):
         self.assertEqual(g.vcount(), 24)
         gt = sbm_sweep.get_ground_truth(2, 12, g)
         self.assertAlmostEqual(sbm_sweep.accuracy(g, gt, gt), 1.0)
+
+    def test_generate_graph_preserves_isolated_vertices(self):
+        # p_in=0 makes every vertex isolated; the size contract must still be
+        # preserved instead of dropping trailing isolated vertices.
+        g = sbm_sweep.generate_graph(3, 4, 0.0, 0.0, seed=9)
+        self.assertEqual(g.vcount(), 12)
+        self.assertEqual(g.ecount(), 0)
+
+    def test_preflight_is_no_write_and_validates_selected_grid(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            code = sbm_sweep.main(
+                [
+                    "--preset",
+                    "v1020",
+                    "--max_n_nodes",
+                    "1020",
+                    "--n_communities",
+                    "5",
+                    "--seeds",
+                    "3",
+                    "--p_in",
+                    "0.01",
+                    "--difficulty",
+                    "0.30",
+                    "--noises",
+                    "0.10",
+                    "0.25",
+                    "0.50",
+                    "0.75",
+                    "1.00",
+                    "--partition_seeds",
+                    "10",
+                    "--output_root",
+                    str(root),
+                    "--preflight",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_preflight_rejects_truncated_community_size(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(SystemExit):
+                sbm_sweep.main(
+                    [
+                        "--smoke",
+                        "--max_n_nodes",
+                        "25",
+                        "--output_root",
+                        d,
+                        "--preflight",
+                    ]
+                )
+
+    def test_resume_skips_complete_v1020_cell(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            methods = {"Mirror": sbm_sweep.METHODS["Mirror"]}
+            self.assertTrue(
+                sbm_sweep.run_experiment(
+                    "resultados",
+                    2,
+                    4,
+                    0.25,
+                    0.2,
+                    methods=methods,
+                    noises=[0.1],
+                    partition_seeds=[0],
+                    seed=5,
+                    output_root=root,
+                    layout="v1020",
+                )
+            )
+            with patch.object(
+                sbm_sweep, "generate_graph", side_effect=AssertionError("reran")
+            ):
+                self.assertTrue(
+                    sbm_sweep.run_experiment(
+                        "resultados",
+                        2,
+                        4,
+                        0.25,
+                        0.2,
+                        methods=methods,
+                        noises=[0.1],
+                        partition_seeds=[0],
+                        seed=5,
+                        output_root=root,
+                        layout="v1020",
+                        resume=True,
+                    )
+                )
+
+    def test_resume_reruns_corrupt_v1020_cell(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            target = (
+                root
+                / "resultados"
+                / "2C_4N"
+                / "Noise = 0.10"
+                / "P_in = 0.25"
+                / "Difficulty = 0.20"
+                / "Network (005)"
+                / "partition_000.json"
+            )
+            target.parent.mkdir(parents=True)
+            target.write_text("{not-json", encoding="utf-8")
+            self.assertTrue(
+                sbm_sweep.run_experiment(
+                    "resultados",
+                    2,
+                    4,
+                    0.25,
+                    0.2,
+                    methods={"Mirror": sbm_sweep.METHODS["Mirror"]},
+                    noises=[0.1],
+                    partition_seeds=[0],
+                    seed=5,
+                    output_root=root,
+                    layout="v1020",
+                    resume=True,
+                )
+            )
+            with target.open(encoding="utf-8") as file:
+                records = json.load(file)
+            self.assertEqual(records[0]["method"], "Mirror")
+
+    def test_archive_descendants_are_rejected(self):
+        archive = Path(
+            "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
+        ).expanduser()
+        with self.assertRaises(SystemExit):
+            sbm_sweep.main(
+                [
+                    "--preset",
+                    "v1020-smoke",
+                    "--output_root",
+                    str(archive / "recovery"),
+                    "--preflight",
+                ]
+            )
 
     def test_mini_run_experiment_writes_json(self):
         with tempfile.TemporaryDirectory() as d:
@@ -813,17 +1118,257 @@ class TestCLI(unittest.TestCase):
             "reproduce-disjoint",
             "overlapping-small",
             "overlapping-dnn",
+            "overlapping-dnn-rational",
+            "overlapping-oracle",
+            "overlapping-integrity",
+            "overlapping-certificate-reconcile",
             "overlapping-controlled",
+            "overlapping-lfr",
+            "overlapping-tracking",
+            "overlapping-baselines",
+            "overlapping-resource-envelope",
             "overlapping-subgraph",
             "overlapping-full",
             "overlapping-scale",
             "overlapping-resolution",
             "overlapping-benchmark",
+            "overlapping-codeseg",
+            "overlapping-reproduce",
+            "codeseg-setup",
+            "codeseg-doctor",
+            "overlapping-full-snap",
             "overlapping-gt-robustness",
+            "overlapping-gt-spectrum",
             "overlapping-audit",
             "reproduce-overlapping-paper",
+            "quickstart",
+            "info",
         }
         self.assertEqual(set(CLI.COMMANDS), expected)
+
+    def test_hedonic_front_door(self):
+        self.assertEqual(CLI.hedonic_main(["--help"]), 0)
+        self.assertEqual(CLI.hedonic_main(["run", "exp", "--help"]), 0)
+        self.assertEqual(CLI.hedonic_main(["run", "nope"]), 2)
+        self.assertEqual(CLI.main(["quickstart", "--help"]), 0)
+
+    def test_quickstart_parsing_and_catalogue(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        self.assertEqual(qs.parse_seeds("0-2,7"), [0, 1, 2, 7])
+        self.assertEqual(len(qs.NETWORKS), 7)
+        self.assertEqual(len(qs.METHODS), 10)
+        self.assertEqual(qs.parse_choice("all", list(qs.BY_KEY), qs.ALIASES, "method"), list(qs.BY_KEY))
+        self.assertEqual(qs.parse_choice("hoc,lazyfox", list(qs.BY_KEY), qs.ALIASES, "method"), ["hoc_local", "fox"])
+        with self.assertRaises(ValueError):
+            qs.parse_choice("nope", list(qs.NETWORKS), {}, "network")
+        cfg = qs.config_from_args(qs.build_parser().parse_args(["--networks", "dblp", "--nodes", "1000", "--threads", "4"]))
+        # community counts tuned on full DBLP are scaled to the subgraph; threads reach threaded methods
+        self.assertLess(qs.method_params(qs.BY_KEY["bigclam"], cfg, "dblp")["communities"], 25000)
+        self.assertEqual(qs.method_params(qs.BY_KEY["codeseg"], cfg, "dblp")["threads"], 4)
+        self.assertEqual(qs.method_params(qs.BY_KEY["hoc_local"], cfg, "dblp")["max_memberships"], 64)
+        self.assertIn("--nodes 1000", cfg.command())
+
+    def test_quickstart_table_lists_every_accuracy_metric(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        cfg = qs.Config(methods=["hoc_local", "codeseg"], seeds=[0, 1])
+        metrics = {key: 0.5 for key, _ in qs.COLUMNS}
+        records = [{"network": "dblp", "method_key": "hoc_local", "seed": s, "status": "completed",
+                    "metrics": metrics, "detection_seconds": 1.0} for s in (0, 1)]
+        records.append({"network": "dblp", "method_key": "codeseg", "status": "unavailable",
+                        "reason": "no C++ compiler found"})
+        table = qs.render(qs.summarise(records, cfg), cfg)
+        for _, label in qs.COLUMNS:
+            self.assertIn(label, table)
+        self.assertIn("no C++ compiler found", table)
+        self.assertIn("mean ± sd over 2 seeds", table)
+
+    def test_paper_config_plan_order(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        cfg = qs.load_config("paper")
+        plan = qs.build_plan(cfg, {})
+        self.assertEqual(len(plan), 2 * 10 * 10)
+        # seed -> method -> network: seed 0, method 1 on DBLP then Amazon, then method 2 ...
+        self.assertEqual([(n, s, m.key) for n, s, m in plan[:3]],
+                         [("dblp", 0, "hoc_local"), ("amazon", 0, "hoc_local"), ("dblp", 0, "hoc_multilevel")])
+        self.assertEqual(plan[20][1], 1)
+        self.assertEqual(cfg.nodes, 0)
+        self.assertEqual(cfg.command(), "hedonic run exp --config paper")
+        # flags override a named config; a saved file round-trips
+        args = qs.build_parser().parse_args(["--config", "paper", "--seeds", "0-1"])
+        self.assertEqual(qs.config_from_args(args).seeds, [0, 1])
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "c.json")
+            self.assertEqual(qs.main(["--config", "paper", "--save-config", path]), 0)
+            self.assertEqual(len(qs.build_plan(qs.load_config(path), {})), 200)
+            toml_path = os.path.join(d, "c.toml")  # the extension decides the format, so it must load back
+            self.assertEqual(qs.main(["--config", "paper", "--seeds", "0-2", "--save-config", toml_path]), 0)
+            self.assertEqual(qs.load_config(toml_path).seeds, [0, 1, 2])
+            self.assertEqual(qs.load_config(toml_path).networks, ["dblp", "amazon"])
+        self.assertEqual(CLI.hedonic_main(["run", "paper", "--dry-run"]), 0)
+
+    def test_user_config_defaults_and_profiles(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "config.toml")
+            with patch.dict(os.environ, {"HEDONIC_CONFIG": path}):
+                self.assertEqual(CLI.hedonic_main(["config", "set", "output_dir", d]), 0)
+                self.assertEqual(CLI.hedonic_main(["config", "set", "run", '"paper"']), 0)
+                self.assertEqual(CLI.hedonic_main(["config", "set", "profiles.mine.seeds", '"0-2"']), 0)
+                self.assertEqual(CLI.hedonic_main(["config", "set", "profiles.mine.config", '"paper"']), 0)
+                cfg = qs.config_from_args(qs.build_parser().parse_args(["--config", "paper"]))
+                self.assertEqual(cfg.output_dir, d)  # machine default applies to named configs
+                cfg = qs.config_from_args(qs.build_parser().parse_args(["--config", "mine"]))
+                self.assertEqual((cfg.seeds, cfg.networks), ([0, 1, 2], ["dblp", "amazon"]))
+                cfg = qs.config_from_args(qs.build_parser().parse_args(["--config", "paper", "--output-dir", "x"]))
+                self.assertEqual(cfg.output_dir, "x")  # flags win
+                self.assertEqual(CLI.hedonic_main(["run"]), 0)  # no TTY: shows the plan, does not start
+
+    def test_hedonic_show(self):
+        from hedonic.experiments.overlapping import info
+
+        with tempfile.TemporaryDirectory() as d:
+            rows = info.method_status(Path(d))
+            self.assertEqual(len(rows), 10)
+            self.assertEqual({r["key"]: r["status"] for r in rows}["hoc_local"], "ready")
+            nets = info.network_status(Path(d), d, remote=False)
+            self.assertEqual(len(nets), 7)
+            self.assertTrue(all(n["status"] == "not downloaded" for n in nets))
+            for what in ("methods", "networks", "metrics"):
+                self.assertEqual(CLI.hedonic_main(["show", what, "--cache-dir", d, "--json"] +
+                                                  (["--network-root", d] if what == "networks" else [])), 0)
+
+    def test_hedonic_run_verbs_without_runs(self):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_RUNS_DIR": d}):
+            self.assertEqual(CLI.hedonic_main(["run", "list"]), 0)
+            with self.assertRaises(SystemExit):
+                CLI.hedonic_main(["run", "status"])
+
+    def test_run_manager_never_trusts_a_recycled_pid_or_idle_tmux_pane(self):
+        from hedonic.experiments.overlapping import runmanager as rm
+
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_RUNS_DIR": d}):
+            out = os.path.join(d, "out")
+            os.makedirs(out)
+            entry = {"name": "r1", "config": {}, "output_dir": out, "created": 0, "session": "",
+                     "backend": "process", "log": os.path.join(out, "worker.log"), "pid": os.getpid()}
+            # this test process is alive but is not a hedonic worker: the run is interrupted, not "running"
+            rm.write_json(rm.progress_path(entry), {"status": "running", "pid": os.getpid(), "plan": []})
+            self.assertFalse(rm.is_worker(os.getpid(), "r1"))
+            self.assertEqual(rm.effective_status(entry, rm.read_progress(entry)), "interrupted")
+            self.assertFalse(rm.tmux_session_exists(""))  # an empty target must never match some other session
+            rm.write_json(rm.entry_path("r1"), entry)
+            self.assertEqual(rm.cmd_stop("r1"), 0)  # must not signal this process
+            self.assertEqual(rm.effective_status(entry, rm.read_progress(entry)), "interrupted")
+
+    def test_run_lookup_is_exact_then_unique_fragment(self):
+        from hedonic.experiments.overlapping import runmanager as rm
+
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_RUNS_DIR": d}):
+            for name in ("paper-20260101-000000", "paper-20260202-000000", "exp-1"):
+                rm.write_json(rm.entry_path(name), {"name": name, "output_dir": d, "created": 0})
+            self.assertEqual(rm.load_entry("exp-1")["name"], "exp-1")
+            self.assertEqual(rm.load_entry("20260202")["name"], "paper-20260202-000000")
+            with self.assertRaises(SystemExit):
+                rm.load_entry("paper")  # ambiguous: refuse rather than stop the wrong run
+            with self.assertRaises(SystemExit):
+                rm.load_entry("missing")
+
+    def test_worker_error_is_recorded_as_failed_and_resumable(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+        from hedonic.experiments.overlapping import runmanager as rm
+
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_RUNS_DIR": d}):
+            cfg = qs.Config(methods=["hoc_local"], output_dir=d, cache_dir=d)
+            cfg.methods = ["not-a-method"]  # fails inside the worker, after it has started
+            entry = {"name": "bad", "config": cfg.__dict__, "output_dir": d, "created": 0, "session": "",
+                     "backend": "process", "log": os.path.join(d, "worker.log")}
+            rm.write_json(rm.entry_path("bad"), entry)
+            with patch("sys.stderr"), patch("sys.stdout"):
+                self.assertEqual(rm.worker("bad"), 1)
+            progress = rm.read_progress(entry)
+            self.assertEqual(progress["status"], "failed")
+            self.assertIn("not-a-method", progress["reason"])
+            self.assertEqual(rm.effective_status(entry, progress), "failed")
+            self.assertIn("hedonic run resume bad", rm.snapshot(entry))
+
+    def test_run_launch_records_absolute_paths_and_resets_progress(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+        from hedonic.experiments.overlapping import runmanager as rm
+
+        class Proc:
+            pid = 999_999_999
+
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_RUNS_DIR": d}):
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                stale = Path(d) / "rel" / "job" / "progress.json"
+                stale.parent.mkdir(parents=True)
+                stale.write_text('{"status": "completed"}')
+                with patch.object(rm.shutil, "which", return_value=None), \
+                        patch.object(rm.subprocess, "Popen", return_value=Proc()):
+                    entry = rm.launch(qs.Config(output_dir="rel", cache_dir=os.path.join(d, "c")), "job")
+                    self.assertTrue(os.path.isabs(entry["output_dir"]))  # `hedonic run list` works from any directory
+                    self.assertFalse(stale.exists())  # a resumed run must not look finished
+                    with self.assertRaises(ValueError):
+                        rm.launch(qs.Config(output_dir="rel"), "bad name")
+            finally:
+                os.chdir(cwd)
+
+    def test_run_option_validation_and_friendly_errors(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+        from hedonic.experiments.overlapping import userconfig
+
+        for bad in ("3-1", "x", "-2", ""):
+            with self.assertRaises(ValueError):
+                qs.parse_seeds(bad)
+        self.assertEqual(qs.parse_name("paper-1_a"), "paper-1_a")
+        for bad in ("a b", "a.b", "../x", ""):
+            with self.assertRaises(ValueError):
+                qs.parse_name(bad)
+        for flags in (["--threads", "0"], ["--timeout", "0"], ["--nodes", "-1"]):
+            with self.assertRaises(ValueError):
+                qs.config_from_args(qs.build_parser().parse_args(flags))
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_CONFIG": os.path.join(d, "c.toml")}):
+            for argv in (["set", "threads", "abc"], ["set", "threads", "0"], ["set", "output_dir", "true"],
+                         ["set", "profiles.q.bogus", "1"]):
+                with self.assertRaises(SystemExit):
+                    userconfig.main(argv)
+            self.assertFalse(os.path.exists(userconfig.path()))  # nothing invalid was written
+            self.assertEqual(userconfig.main(["set", "threads", "4"]), 0)
+            self.assertEqual(userconfig.defaults()["threads"], 4)
+
+    def test_run_exp_list_uses_the_configured_cache_dir(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_CONFIG": os.path.join(d, "c.toml")}):
+            self.assertEqual(CLI.hedonic_main(["config", "set", "cache_dir", d]), 0)
+            with patch("hedonic.experiments.overlapping.info.method_status") as method_status, \
+                    patch("hedonic.experiments.overlapping.info.network_status", return_value=[]), \
+                    patch("hedonic.experiments.overlapping.info.render_networks", return_value=""), \
+                    patch("hedonic.experiments.overlapping.info.render_methods", return_value=""):
+                self.assertEqual(qs.main(["--list"]), 0)
+                self.assertEqual(method_status.call_args.args[0], Path(d))  # not the literal path "None"
+
+    def test_tui_fallback_reasks_on_garbage_and_fit_truncates_by_visible_width(self):
+        from hedonic.experiments.overlapping import tui
+
+        with patch.object(tui, "interactive", return_value=False), patch("sys.stdout"):
+            with patch("builtins.input", side_effect=["x", "9", "2"]):
+                self.assertEqual(tui.select("t", ["a", "b"]), 1)
+            with patch("builtins.input", side_effect=["0", "1,3"]):
+                self.assertEqual(tui.multiselect("t", ["a", "b", "c"]), [0, 2])
+            with patch("builtins.input", side_effect=EOFError), self.assertRaises(tui.Cancelled):
+                tui.select("t", ["a", "b"])
+        colored = "\033[1m" + "x" * 50 + "\033[0m"
+        fitted = tui.fit(colored, 20)
+        self.assertEqual(tui.visible_len(fitted), 20)
+        self.assertTrue(fitted.endswith("\033[0m"))
+        self.assertEqual(tui.fit("short", 20), "short")
 
     def test_overlapping_resolution_help(self):
         code = CLI.main(["overlapping-resolution", "--help"])
@@ -864,9 +1409,15 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(data["meta"]["n_iterations"], -1)
             self.assertFalse(data["meta"]["local_move_only"])
             self.assertTrue(data["meta"]["allow_isolation"])
-            self.assertTrue(
+            self.assertEqual(
+                data["meta"]["experiment_identity"]["lucas_igraph"]["actual_version"],
+                locked_lucas_igraph_version(),
+            )
+            # The paper protocol lock is frozen at 1.0.0.3 for historical
+            # evidence; the active package lock/runtime is 1.0.0.5.
+            self.assertFalse(
                 data["meta"]["experiment_identity"]["lucas_igraph"][
-                    "package_identity_matches_lock"
+                    "version_matches_lock"
                 ]
             )
             self.assertTrue(data["meta"]["smoke"])
@@ -914,9 +1465,15 @@ class TestCLI(unittest.TestCase):
             self.assertIn("meta", data)
             self.assertEqual(data["meta"]["n_iterations"], -1)
             self.assertTrue(data["meta"]["allow_isolation"])
-            self.assertTrue(
+            self.assertEqual(
+                data["meta"]["experiment_identity"]["lucas_igraph"]["actual_version"],
+                locked_lucas_igraph_version(),
+            )
+            # The paper protocol lock is frozen at 1.0.0.3 for historical
+            # evidence; the active package lock/runtime is 1.0.0.5.
+            self.assertFalse(
                 data["meta"]["experiment_identity"]["lucas_igraph"][
-                    "package_identity_matches_lock"
+                    "version_matches_lock"
                 ]
             )
             self.assertGreaterEqual(len(data["points"]), 2)

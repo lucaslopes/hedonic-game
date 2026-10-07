@@ -1,6 +1,6 @@
 # Observed SNAP archive
 
-The inspected root was `~/Databases/Hedonic/Networks` (about 2.5 GB at inspection time). Use that home-relative path or an explicit user path in reusable code; do not hard-code a developer’s home directory.
+The inspected root is `/Users/lucas/Databases/Hedonic/Networks` (about 2.5 GB at inspection time). Use `~/Databases/Hedonic/Networks` or an explicit user path in reusable code; do not hard-code the user’s home directory.
 
 ## Ground-truth classification
 
@@ -14,9 +14,9 @@ The inspected root was `~/Databases/Hedonic/Networks` (about 2.5 GB at inspectio
 | email-Eu-core | **Disjoint** department labels, one pair per node | `email-Eu-core-department-labels.txt.gz/.pkl` |
 | Cora | **Disjoint** paper class labels (seven classes) | `cora.content` |
 | PubMed Diabetes | **Disjoint** paper class labels (three classes) | `Pubmed-Diabetes.NODE.paper.tab` |
-| DBLP_CLI | **Absent**; contains prior experiment outputs only | `runs/*.json`, summaries, plots, logs |
+| `artifacts/overlapping/resolution_f1` | **Absent**; contains prior experiment outputs only | `runs/*.json`, summaries, plots, logs |
 
-The first five datasets can be evaluated directly as node covers. The next three are single-label classification metadata and should be evaluated as partitions only if the task explicitly treats those labels as ground truth. `DBLP_CLI` is never a source of ground truth.
+The first five datasets can be evaluated directly as node covers. The next three are single-label classification metadata and should be evaluated as partitions only if the task explicitly treats those labels as ground truth. `artifacts/overlapping/resolution_f1` is never a source of ground truth.
 
 ## Overlapping or category-cover datasets
 
@@ -44,4 +44,4 @@ Several graph pickles were serialized with a legacy class path (`hedonic.game.He
 
 The DBLP graph pickle has no graph-level attributes but has `g.vs["label"]`; its vertex indices are not the SNAP IDs in the community pickle. Build `id_to_index = {int(label): i for i, label in enumerate(g.vs["label"])}` and remap all communities before calling `Game` or metrics. Check this invariant for every cache rather than copying the DBLP assumption to other datasets.
 
-`DBLP_CLI/` contains prior resolution runs: per-resolution/seed JSON under `runs/`, summary JSON, PNGs, and logs. These are outputs for offline re-scoring and reproducibility checks, not graph input.
+`artifacts/overlapping/resolution_f1/` contains prior resolution runs: per-resolution/seed JSON under `runs/`, summary JSON, PNGs, and logs. These are outputs for offline re-scoring and reproducibility checks, not graph input.

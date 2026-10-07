@@ -1,0 +1,7 @@
+interface:
+  display_name: "Sibling Release Pipeline"
+  short_description: "Prepare coordinated sibling releases safely"
+  default_prompt: "Use $sibling-release-pipeline to prepare the next sibling release across igraph, python-igraph, and hedonic-game."
+
+policy:
+  allow_implicit_invocation: false

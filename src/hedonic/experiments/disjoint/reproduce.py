@@ -1,22 +1,22 @@
 """End-to-end disjoint synthetic reproduction: sweep → CSV → paper figures.
 
 Chains the CLI pieces needed to reproduce the PHYSA V1020 pipeline without
-touching the archived ``.../V1020`` tree (writes under a caller-provided root
-such as ``V1020_CLI``).
+touching the archived synthetic input tree (writes below the repository
+artifact root by default).
 
 ::
 
     hedonic-exp reproduce-disjoint --preset v1020-smoke \\
-        --output_root .../V1020_CLI
+        --output_root artifacts/disjoint/v1020
 
     # Full grid (very large) + figures when CSV is ready:
     hedonic-exp reproduce-disjoint --preset v1020 \\
-        --output_root .../V1020_CLI
+        --output_root artifacts/disjoint/v1020
 
     # Figures only from an existing archive CSV (read-only data):
     hedonic-exp reproduce-disjoint --plots-only \\
-        --data .../V1020/resultados_ari.csv.gzip \\
-        --output_root .../V1020_CLI
+        --data ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020/resultados_ari.csv.gzip \\
+        --output_root artifacts/disjoint/v1020
 """
 
 from __future__ import annotations
@@ -25,13 +25,19 @@ import argparse
 import sys
 from pathlib import Path
 
-from hedonic.experiments.config import SYNTHETIC_DIR
+from hedonic.experiments.config import (
+    ARCHIVED_V1020_DIR,
+    DISJOINT_ARTIFACTS_DIR,
+    SYNTHETIC_DIR,
+    ensure_not_archived_v1020,
+    expand_path,
+)
 from hedonic.experiments.disjoint import data_loader, sbm_sweep
 from hedonic.experiments.plots import paper_figures
 
-ARCHIVED_V1020 = Path(
-    "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
-).expanduser().resolve()
+# Backwards-compatible module alias used by callers/tests and help examples.
+# The shared guard also rejects descendants of this path.
+ARCHIVED_V1020 = ARCHIVED_V1020_DIR
 
 
 def _ok(result) -> bool:
@@ -59,10 +65,13 @@ def main(argv=None) -> int:
             "\n"
             "examples:\n"
             "  hedonic-exp reproduce-disjoint --preset v1020-smoke \\\n"
-            "      --output_root .../V1020_CLI\n"
+            "      --output_root artifacts/disjoint/v1020\n"
+            "  # No-write check before a long run\n"
+            "  hedonic-exp reproduce-disjoint --preset v1020 \\\n"
+            "      --output_root artifacts/disjoint/v1020 --preflight\n"
             "  hedonic-exp reproduce-disjoint --plots-only \\\n"
-            "      --data .../V1020/resultados_ari.csv.gzip \\\n"
-            "      --output_root .../V1020_CLI --max_rows 50000\n"
+            "      --data ~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020/resultados_ari.csv.gzip \\\n"
+            "      --output_root artifacts/disjoint/v1020 --max_rows 50000\n"
         ),
     )
     parser.add_argument(
@@ -75,10 +84,11 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--output_root",
         type=str,
-        required=True,
+        default=str(DISJOINT_ARTIFACTS_DIR / "v1020"),
         help=(
             "Root for resultados/, figures/, persist/ "
-            "(must NOT be the archived V1020 folder)"
+            "(default: repository artifacts/disjoint/v1020; "
+            "must NOT be the archived V1020 folder)"
         ),
     )
     parser.add_argument(
@@ -121,16 +131,41 @@ def main(argv=None) -> int:
         action="store_true",
         help="Run sweep + CSV only (no figures)",
     )
+    parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Resume schema-valid sweep cells when possible (default: true; "
+            "use --no-resume to force recomputation)."
+        ),
+    )
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help=(
+            "Validate the selected sweep and generated graph sizes, then exit "
+            "without detectors, aggregation, or figures."
+        ),
+    )
     args = parser.parse_args(argv)
 
-    root = Path(args.output_root).resolve()
-    if root == ARCHIVED_V1020:
-        print(
-            "Refusing to use the archived V1020 folder as --output_root.\n"
-            "Use e.g. .../Synthetic_Networks/V1020_CLI",
-            file=sys.stderr,
-        )
+    root = expand_path(args.output_root).resolve()
+    try:
+        ensure_not_archived_v1020(root, label="output root")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
         return 1
+
+    if args.preflight:
+        preflight_argv = [
+            "--preset",
+            args.preset,
+            "--output_root",
+            str(root),
+            "--preflight",
+        ]
+        return 0 if _ok(sbm_sweep.main(preflight_argv)) else 1
 
     root.mkdir(parents=True, exist_ok=True)
     resultados_dir = root / "resultados"
@@ -141,16 +176,15 @@ def main(argv=None) -> int:
         print("=" * 60)
         print(f"  [1/3] disjoint sweep  preset={args.preset}")
         print("=" * 60)
-        ok = _ok(
-            sbm_sweep.main(
-                [
-                    "--preset",
-                    args.preset,
-                    "--output_root",
-                    str(root),
-                ]
-            )
-        )
+        sweep_argv = [
+            "--preset",
+            args.preset,
+            "--output_root",
+            str(root),
+        ]
+        if args.resume:
+            sweep_argv.append("--resume")
+        ok = _ok(sbm_sweep.main(sweep_argv))
         if not ok:
             print("Sweep failed.", file=sys.stderr)
             return 1
@@ -174,7 +208,7 @@ def main(argv=None) -> int:
             return 1
         data_for_plots = str(csv_path)
     else:
-        data_for_plots = args.data
+        data_for_plots = str(expand_path(args.data)) if args.data else None
         if not data_for_plots:
             # Default: archived ARI table (read-only) if present.
             for cand in (

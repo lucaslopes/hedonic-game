@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from hedonic.experiments.config import DBLP_DIR
+from hedonic.experiments.config import DBLP_DIR, OVERLAPPING_ARTIFACTS_DIR, expand_path
 from hedonic.experiments.overlapping.dblp_full import load_dblp
 
 ALL_METHODS = [
@@ -26,6 +26,10 @@ ALL_METHODS = [
     "total_overlap",
 ]
 METHODS = list(ALL_METHODS)
+ALLOW_ISOLATION = True
+# Legacy result-schema marker.  Execution is controlled solely by the
+# negative n_iterations value passed to community_hedonic.
+ENSURE_EQUILIBRIUM = True
 
 
 def log(msg, t0=None):
@@ -66,9 +70,9 @@ def resolve_max_memberships(max_memberships, n_gt_communities: int) -> int:
 def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_memberships):
     """Generate reference covers via Game.community_hedonic(max_memberships=...).
 
-    Always run community_hedonic with n_iterations negative (e.g. -1) so local
-    moving continues until equilibrium. When max_memberships is None, K is set
-    to the number of ground-truth communities present in the subgraph.
+    Use native negative-iteration stopping for every canonical hedonic
+    detector call. When max_memberships is None, K is set to the number of
+    ground-truth communities present in the subgraph.
     """
     from hedonic import Game
     from hedonic.experiments.overlapping.metrics import (
@@ -93,6 +97,7 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
         n_iterations=-1,
         max_memberships=1,
         local_move_only=False,
+        allow_isolation=ALLOW_ISOLATION,
     )
     t_leiden = time.time() - t
     if "leiden" in METHODS:
@@ -104,10 +109,11 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
         t = time.time()
         cover_obj = game.community_hedonic(
             resolution=resolution,
-            n_iterations=n_iterations,
+            n_iterations=-1 if ENSURE_EQUILIBRIUM else n_iterations,
             max_memberships=k,
             local_move_only=True,
             initial_membership=list(part.membership),
+            allow_isolation=ALLOW_ISOLATION,
         )
         covers["hedonic_v1"] = partition_to_cover_lists(cover_obj)
         timings["hedonic_v1"] = time.time() - t
@@ -118,8 +124,9 @@ def build_covers(subg, n_gt_in_subgraph, resolution, n_iterations, max_membershi
         cover_obj_v2 = game.community_hedonic(
             resolution=resolution,
             max_memberships=k,
-            n_iterations=n_iterations,
+            n_iterations=-1 if ENSURE_EQUILIBRIUM else n_iterations,
             local_move_only=False,
+            allow_isolation=ALLOW_ISOLATION,
         )
         covers["hedonic_v2"] = partition_to_cover_lists(cover_obj_v2)
         timings["hedonic_v2"] = time.time() - t
@@ -203,6 +210,8 @@ def run_one(
         "n_iterations": n_iterations,
         "n_gt_in_subgraph": n_gt_in_subgraph,
         "max_memberships": k,
+        "allow_isolation": ALLOW_ISOLATION,
+        "ensure_equilibrium": ENSURE_EQUILIBRIUM,
         **{
             name: {
                 **metrics[name],
@@ -224,6 +233,8 @@ def run_one(
         "n_iterations": n_iterations,
         "n_gt_in_subgraph": n_gt_in_subgraph,
         "max_memberships": k,
+        "allow_isolation": ALLOW_ISOLATION,
+        "ensure_equilibrium": ENSURE_EQUILIBRIUM,
         "covers": covers,
         "ground_truth": gt_target,
     }
@@ -326,6 +337,8 @@ def run_one_overlapping(
         "n_iterations": n_iterations,
         "n_gt_in_subgraph": n_gt_in_subgraph,
         "max_memberships": k,
+        "allow_isolation": ALLOW_ISOLATION,
+        "ensure_equilibrium": ENSURE_EQUILIBRIUM,
         **{
             name: {
                 **metrics[name],
@@ -349,6 +362,8 @@ def run_one_overlapping(
         "n_iterations": n_iterations,
         "n_gt_in_subgraph": n_gt_in_subgraph,
         "max_memberships": k,
+        "allow_isolation": ALLOW_ISOLATION,
+        "ensure_equilibrium": ENSURE_EQUILIBRIUM,
         "covers": covers,
         "ground_truth": gt_target,
     }
@@ -418,7 +433,16 @@ def main(argv=None):
         default=0.0,
         help="Min overlap coefficient: intersection/min(|i|,|j|)",
     )
-    parser.add_argument("--output", default="results/subgraph_experiment.json")
+    parser.add_argument(
+        "--output",
+        default=str(
+            OVERLAPPING_ARTIFACTS_DIR / "dblp_subgraph" / "subgraph_experiment.json"
+        ),
+        help=(
+            "JSON result path (default: "
+            "artifacts/overlapping/dblp_subgraph/subgraph_experiment.json)"
+        ),
+    )
     parser.add_argument(
         "--covers_cache",
         default=None,
@@ -426,6 +450,9 @@ def main(argv=None):
         "(default: same stem as --output with _covers.pkl)",
     )
     args = parser.parse_args(argv)
+    args.output = str(expand_path(args.output))
+    if args.covers_cache:
+        args.covers_cache = str(expand_path(args.covers_cache))
     resolution = None if args.density_resolution else args.resolution
 
     selected = [m.strip() for m in args.methods.split(",") if m.strip()]

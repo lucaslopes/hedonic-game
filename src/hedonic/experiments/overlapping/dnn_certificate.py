@@ -313,7 +313,6 @@ def run_hedonic(instance: LockedInstance, seed: int) -> dict[str, Any]:
         n_iterations=-1,
         edge_weights="weight",
         seed=seed,
-        ensure_equilibrium=True,
     )
     memberships = [list(map(int, labels)) for labels in result.membership]
     value, factor, gram = cover_objective(instance, memberships)

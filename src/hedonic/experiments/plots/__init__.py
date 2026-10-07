@@ -7,7 +7,7 @@ Public entrypoint for the PHYSA V1020 disjoint synthetic figures::
 CLI::
 
     hedonic-exp plots --help
-    hedonic-exp plots --smoke --output_dir /tmp/figs
+    hedonic-exp plots --smoke --output_dir artifacts/disjoint/figures_smoke
     hedonic-exp plots --data .../resultados.csv.gzip --output_dir .../figures
 """
 

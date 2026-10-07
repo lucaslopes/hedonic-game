@@ -42,10 +42,14 @@ verify_index_hash() {
 import hashlib
 import pathlib
 import sys
+
 artifact = pathlib.Path(sys.argv[1])
-manifest = dict(line.rstrip('\n').split('\t') for line in pathlib.Path(sys.argv[2]).read_text().splitlines())
+manifest = dict(
+    line.rstrip("\n").split("\t")
+    for line in pathlib.Path(sys.argv[2]).read_text().splitlines()
+)
 if hashlib.sha256(artifact.read_bytes()).hexdigest() != manifest.get(artifact.name):
-    raise SystemExit('index SHA-256 mismatch: ' + artifact.name)
+    raise SystemExit("index SHA-256 mismatch: " + artifact.name)
 PYHASH
 }
 
@@ -543,6 +547,7 @@ PYVERIFY
         git merge-base --is-ancestor "$expected_sha" origin/main || die "release commit is not on public origin/main"
     fi
     printf 'All gates passed. The next step uploads permanently to %s.\n' "$publish_url"
+
     if (
         # Actions supplies its configured secret only to this final upload step.
         # Interactive users are prompted only when no token is already supplied.

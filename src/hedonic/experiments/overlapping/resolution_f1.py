@@ -27,7 +27,7 @@ re-running detection.
 
 CLI::
 
-    hedonic-exp overlapping-resolution --smoke --output_dir /tmp/res-f1
+    hedonic-exp overlapping-resolution --smoke --output_dir artifacts/overlapping/resolution_f1/smoke
     hedonic-exp overlapping-resolution --config configs/hedonic.toml \\
         --resolutions 0:1:11 --seeds 0-4
 """
@@ -47,7 +47,11 @@ import numpy as np
 
 from hedonic import Game
 from hedonic.experiments import config as exp_config
-from hedonic.experiments.config import DBLP_DIR, OUTPUT_DIR
+from hedonic.experiments.config import (
+    DBLP_DIR,
+    OVERLAPPING_ARTIFACTS_DIR,
+    OUTPUT_DIR,
+)
 from hedonic.experiments.overlapping.dblp_full import load_dblp
 from hedonic.experiments.overlapping.metrics import (
     cover_quality,
@@ -63,8 +67,12 @@ from hedonic.experiments.overlapping.methods import seeded_initial_membership
 N_ITERATIONS = -1
 LOCAL_MOVE_ONLY = False
 ALLOW_ISOLATION = True
+# Legacy result-schema marker.  Execution is controlled solely by the
+# negative n_iterations value passed to community_hedonic.
+ENSURE_EQUILIBRIUM = True
 
-DEFAULT_OUTPUT_DIR = Path("overlapping_resolution_f1_results")
+DEFAULT_OUTPUT_DIR = OVERLAPPING_ARTIFACTS_DIR / "resolution_f1"
+DEFAULT_SMOKE_OUTPUT_DIR = DEFAULT_OUTPUT_DIR / "smoke"
 DEFAULT_RESOLUTIONS = "0:1:11"  # linspace 0..1 inclusive, 11 points
 DEFAULT_SEEDS = "0-4"  # five seeds for CI
 DEFAULT_CI_LEVEL = 0.95
@@ -441,7 +449,7 @@ def run_one(
     t0 = time.perf_counter()
     cover_obj = game.community_hedonic(
         resolution=float(resolution),
-        n_iterations=int(n_iterations),
+        n_iterations=-1 if ENSURE_EQUILIBRIUM else int(n_iterations),
         local_move_only=bool(local_move_only),
         allow_isolation=bool(allow_isolation),
         max_memberships=k,
@@ -458,9 +466,10 @@ def run_one(
         "resolution": float(resolution),
         "seed": int(seed),
         "max_memberships": k,
-        "n_iterations": int(n_iterations),
+        "n_iterations": -1 if ENSURE_EQUILIBRIUM else int(n_iterations),
         "local_move_only": bool(local_move_only),
         "allow_isolation": bool(allow_isolation),
+        "ensure_equilibrium": ENSURE_EQUILIBRIUM,
         "wallclock_s": float(elapsed),
         "quality": float(q) if q is not None else None,
         "n_vertices": n,
@@ -648,7 +657,8 @@ def run_resolution_f1_experiment(
     runs_dir: Path | None = None
     cached: dict[tuple[float, int], dict[str, Any]] = {}
     if cache_dir is not None:
-        runs_dir = Path(cache_dir) / RUNS_SUBDIR
+        cache_dir = exp_config.expand_path(cache_dir)
+        runs_dir = cache_dir / RUNS_SUBDIR
         runs_dir.mkdir(parents=True, exist_ok=True)
         if resume or rescore_only:
             cached = load_completed_runs(runs_dir)
@@ -762,6 +772,7 @@ def run_resolution_f1_experiment(
         "n_iterations": N_ITERATIONS,
         "local_move_only": LOCAL_MOVE_ONLY,
         "allow_isolation": ALLOW_ISOLATION,
+        "ensure_equilibrium": ENSURE_EQUILIBRIUM,
         "max_memberships": k,
         "max_memberships_rule": "n_gt_communities_size_gt_1",
         "n_gt_communities_raw": len(gt),
@@ -1111,11 +1122,11 @@ def main(argv: list[str] | None = None) -> int:
     # to the shared experiments root, fall back to local default folder name
     # unless the section explicitly set output_dir.
     if args.output_dir is not None:
-        out_dir = Path(args.output_dir)
+        out_dir = exp_config.expand_path(args.output_dir)
     elif section.get("output_dir"):
-        out_dir = Path(str(section["output_dir"])).expanduser()
+        out_dir = exp_config.expand_path(str(section["output_dir"]))
     elif args.smoke:
-        out_dir = DEFAULT_OUTPUT_DIR
+        out_dir = DEFAULT_SMOKE_OUTPUT_DIR
     else:
         # Prefer HEDONIC_OUTPUT_DIR / [paths].output_dir / default folder
         out_dir = Path(resolved["output_dir"])
@@ -1123,7 +1134,7 @@ def main(argv: list[str] | None = None) -> int:
             exp_config.DEFAULT_OUTPUT_DIR
         ):
             # Keep a dedicated subfolder under the global artifacts root
-            out_dir = OUTPUT_DIR / "overlapping_resolution_f1"
+            out_dir = OVERLAPPING_ARTIFACTS_DIR / "resolution_f1"
         elif out_dir == exp_config.DEFAULT_OUTPUT_DIR:
             out_dir = DEFAULT_OUTPUT_DIR
 

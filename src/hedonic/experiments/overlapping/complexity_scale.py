@@ -19,7 +19,7 @@ are written for hardware-limit inspection.
 
 CLI::
 
-    hedonic-exp overlapping-scale --smoke --output_dir /tmp/scale
+    hedonic-exp overlapping-scale --smoke --output_dir artifacts/overlapping/complexity_scale/smoke
     hedonic-exp overlapping-scale --timeout 30 --max-levels 6 --output_dir ...
 """
 
@@ -38,7 +38,7 @@ import igraph as ig
 import numpy as np
 
 from hedonic import Game
-from hedonic.experiments.config import DBLP_DIR
+from hedonic.experiments.config import DBLP_DIR, OVERLAPPING_ARTIFACTS_DIR, expand_path
 from hedonic.experiments.overlapping.dblp_full import load_dblp
 from hedonic.experiments.overlapping.dblp_subgraph import extract_subgraph
 from hedonic.experiments.overlapping.protocol import current_experiment_identity
@@ -58,7 +58,7 @@ VARIANT_TO_FLAGS: dict[str, tuple[bool, ...]] = {
 
 DEFAULT_TIMEOUT_S = 60.0
 DEFAULT_MAX_LEVELS = 8
-DEFAULT_OUTPUT_DIR = Path("overlapping_scale_results")
+DEFAULT_OUTPUT_DIR = OVERLAPPING_ARTIFACTS_DIR / "complexity_scale"
 
 
 def parse_variants(name: str) -> tuple[bool, ...]:
@@ -238,6 +238,9 @@ def time_community_hedonic(
         "n_gt_in_subgraph": point.n_gt_in_subgraph,
         "local_move_only": local_move_only,
         "allow_isolation": ALLOW_ISOLATION,
+        # Retained as a result-schema field for compatibility with prior
+        # ledgers; a negative n_iterations is now the sole API switch.
+        "ensure_equilibrium": N_ITERATIONS < 0,
         "n_iterations": N_ITERATIONS,
         "levels": point.levels,
         "seed_community_idx": point.seed_community_idx,
@@ -732,7 +735,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    out_dir = Path(args.output_dir)
+    out_dir = expand_path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     use_process = not args.no_process
 

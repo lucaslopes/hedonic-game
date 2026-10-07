@@ -17,7 +17,10 @@ import hashlib
 import json
 import os
 import pickle
+import random
 import statistics
+import urllib.error
+import urllib.request
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +36,61 @@ DEFAULT_NETWORKS_DIR = NETWORKS_DIR
 CACHE_SCHEMA_VERSION = 5
 ANALYSIS_GRAPH_POLICY = "common_undirected_simple_v1"
 CONTENT_IDENTITY_SCHEMA_VERSION = 2
+
+# ``mapequation-networks`` is an optional, lazy data catalogue.  It is not
+# imported at module import time and is never installed as a core dependency.
+# The catalogue uses the official SNAP names below and caches downloads outside
+# the hedonic wheel.  Local archives still take precedence over this fallback.
+MAPEQUATION_SNAP_NAMES: dict[str, str] = {
+    "amazon": "com-Amazon",
+    "youtube": "com-Youtube",
+    "dblp": "com-DBLP",
+    "livejournal": "com-LiveJournal",
+    "orkut": "com-Orkut",
+    "friendster": "com-Friendster",
+    "wikipedia": "wiki-topcats",
+}
+
+# Official SNAP file endpoints.  The optional ``mapequation-networks`` package
+# can provide the same catalogue, but the direct HTTP fallback keeps the
+# reproduction extra self-contained and available even when that package is
+# not published on the active Python index.
+SNAP_DOWNLOAD_URLS: dict[str, dict[str, str]] = {
+    "amazon": {
+        "graph": "https://snap.stanford.edu/data/bigdata/communities/com-amazon.ungraph.txt.gz",
+        "all": "https://snap.stanford.edu/data/bigdata/communities/com-amazon.all.dedup.cmty.txt.gz",
+        "top5000": "https://snap.stanford.edu/data/bigdata/communities/com-amazon.top5000.cmty.txt.gz",
+    },
+    "youtube": {
+        "graph": "https://snap.stanford.edu/data/bigdata/communities/com-youtube.ungraph.txt.gz",
+        "all": "https://snap.stanford.edu/data/bigdata/communities/com-youtube.all.cmty.txt.gz",
+        "top5000": "https://snap.stanford.edu/data/bigdata/communities/com-youtube.top5000.cmty.txt.gz",
+    },
+    "dblp": {
+        "graph": "https://snap.stanford.edu/data/bigdata/communities/com-dblp.ungraph.txt.gz",
+        "all": "https://snap.stanford.edu/data/bigdata/communities/com-dblp.all.cmty.txt.gz",
+        "top5000": "https://snap.stanford.edu/data/bigdata/communities/com-dblp.top5000.cmty.txt.gz",
+    },
+    "livejournal": {
+        "graph": "https://snap.stanford.edu/data/bigdata/communities/com-lj.ungraph.txt.gz",
+        "all": "https://snap.stanford.edu/data/bigdata/communities/com-lj.all.cmty.txt.gz",
+        "top5000": "https://snap.stanford.edu/data/bigdata/communities/com-lj.top5000.cmty.txt.gz",
+    },
+    "orkut": {
+        "graph": "https://snap.stanford.edu/data/bigdata/communities/com-orkut.ungraph.txt.gz",
+        "all": "https://snap.stanford.edu/data/bigdata/communities/com-orkut.all.cmty.txt.gz",
+        "top5000": "https://snap.stanford.edu/data/bigdata/communities/com-orkut.top5000.cmty.txt.gz",
+    },
+    "friendster": {
+        "graph": "https://snap.stanford.edu/data/bigdata/communities/com-friendster.ungraph.txt.gz",
+        "all": "https://snap.stanford.edu/data/bigdata/communities/com-friendster.all.cmty.txt.gz",
+        "top5000": "https://snap.stanford.edu/data/bigdata/communities/com-friendster.top5000.cmty.txt.gz",
+    },
+    "wikipedia": {
+        "graph": "https://snap.stanford.edu/data/bigdata/communities/wiki-topcats.txt.gz",
+        "all": "https://snap.stanford.edu/data/bigdata/communities/wiki-topcats-categories.txt.gz",
+    },
+}
 
 
 class SnapLoadError(RuntimeError):
@@ -138,6 +196,38 @@ SPECS: dict[str, SnapDatasetSpec] = {
             "top5000": ("com-youtube.top5000.cmty.txt.gz", "top5000.cmty.txt.gz"),
         },
     ),
+    "friendster": SnapDatasetSpec(
+        name="friendster",
+        directory="Friendster",
+        directed=False,
+        ground_truth_type="overlapping_social_community_cover",
+        graph_files=("com-friendster.ungraph.pkl",),
+        raw_edge_files=("com-friendster.ungraph.txt.gz",),
+        cover_files={
+            "all": ("com-friendster.all.cmty.pkl",),
+            "top5000": ("com-friendster.top5000.cmty.pkl", "top5000.cmty.pkl"),
+        },
+        raw_cover_files={
+            "all": ("com-friendster.all.cmty.txt.gz",),
+            "top5000": ("com-friendster.top5000.cmty.txt.gz", "top5000.cmty.txt.gz"),
+        },
+    ),
+    "orkut": SnapDatasetSpec(
+        name="orkut",
+        directory="Orkut",
+        directed=False,
+        ground_truth_type="overlapping_social_community_cover",
+        graph_files=("com-orkut.ungraph.pkl",),
+        raw_edge_files=("com-orkut.ungraph.txt.gz",),
+        cover_files={
+            "all": ("com-orkut.all.cmty.pkl",),
+            "top5000": ("com-orkut.top5000.cmty.pkl", "top5000.cmty.pkl"),
+        },
+        raw_cover_files={
+            "all": ("com-orkut.all.cmty.txt.gz",),
+            "top5000": ("com-orkut.top5000.cmty.txt.gz", "top5000.cmty.txt.gz"),
+        },
+    ),
     "wikipedia": SnapDatasetSpec(
         name="wikipedia",
         directory="Wikipedia",
@@ -163,8 +253,8 @@ class SnapDataset:
 
 
 def network_names() -> tuple[str, ...]:
-    """Names accepted by the benchmark CLI, in stable display order."""
-    return tuple(SPECS)
+    """Names in the historical five-dataset benchmark, stable display order."""
+    return ("amazon", "dblp", "livejournal", "youtube", "wikipedia")
 
 
 def default_cache_dir() -> Path:
@@ -785,6 +875,362 @@ def _load_from_raw(spec: SnapDatasetSpec, base: Path, cover_variant: str) -> Sna
     return SnapDataset(spec.name, cover_variant, graph, cover, report)
 
 
+def _mapequation_artifact_identity(
+    name: str, cover_variant: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """Return a stable cache identity for a catalogue-backed dataset.
+
+    The catalogue owns the actual archive paths and may change its local cache
+    layout between releases.  Cache identity therefore uses the official
+    dataset name and requested cover variant rather than guessing paths inside
+    a third-party package.
+    """
+    catalog_name = MAPEQUATION_SNAP_NAMES[name]
+    return "snap_catalog", [
+        {
+            "role": "graph",
+            "relative_path": SPECS[name].raw_edge_files[0],
+            "url": SNAP_DOWNLOAD_URLS[name]["graph"],
+            "sha256": None,
+            "size_bytes": None,
+        },
+        {
+            "role": "ground_truth",
+            "relative_path": SPECS[name].raw_cover_files[cover_variant][0],
+            "url": SNAP_DOWNLOAD_URLS[name][cover_variant],
+            "sha256": None,
+            "size_bytes": None,
+        },
+    ]
+
+
+def _catalog_source_identity(name: str, cover_variant: str) -> tuple[str, list[dict[str, Any]]]:
+    """Return one cache identity for either catalogue backend."""
+    return _mapequation_artifact_identity(name, cover_variant)
+
+
+def _download_catalog_file(
+    url: str,
+    destination: Path,
+    *,
+    max_download_bytes: int | None = None,
+) -> None:
+    """Atomically download one official SNAP file with an optional size cap."""
+    if destination.is_file() and destination.stat().st_size > 0:
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + ".part")
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            content_length = response.headers.get("Content-Length")
+            if (
+                max_download_bytes is not None
+                and content_length
+                and int(content_length) > max_download_bytes
+            ):
+                raise SnapLoadError(
+                    f"SNAP download {url} is {content_length} bytes, above "
+                    f"the configured --max-download-bytes={max_download_bytes}"
+                )
+            written = 0
+            with temporary.open("wb") as stream:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if max_download_bytes is not None and written > max_download_bytes:
+                        raise SnapLoadError(
+                            f"SNAP download {url} exceeded --max-download-bytes="
+                            f"{max_download_bytes}"
+                        )
+                    stream.write(chunk)
+        temporary.replace(destination)
+    except SnapLoadError:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
+    except (OSError, urllib.error.URLError, ValueError) as exc:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise SnapLoadError(f"could not download SNAP file {url}: {exc}") from exc
+
+
+def _load_from_official_snap(
+    spec: SnapDatasetSpec,
+    cover_variant: str,
+    *,
+    cache_dir: Path,
+    max_download_bytes: int | None = None,
+) -> SnapDataset:
+    """Download raw official SNAP files into the user cache and parse them."""
+    urls = SNAP_DOWNLOAD_URLS[spec.name]
+    base = cache_dir / "raw" / spec.name
+    graph_path = base / spec.raw_edge_files[0]
+    cover_path = base / spec.raw_cover_files[cover_variant][0]
+    _download_catalog_file(
+        urls["graph"], graph_path, max_download_bytes=max_download_bytes
+    )
+    _download_catalog_file(
+        urls[cover_variant], cover_path, max_download_bytes=max_download_bytes
+    )
+    dataset = _load_from_raw(spec, base, cover_variant)
+    dataset.report["source_kind"] = "snap_catalog"
+    dataset.report["catalog_backend"] = "official_snap_http"
+    dataset.report["catalog_urls"] = {
+        "graph": urls["graph"],
+        "ground_truth": urls[cover_variant],
+    }
+    dataset.report["catalog_cache_root"] = str(base)
+    return dataset
+
+
+def prepare_snap_dataset(
+    name: str,
+    *,
+    cover_variant: str = "top5000",
+    data_root: str | Path | None = None,
+    cache_dir: str | Path | None = None,
+    allow_catalog: bool = True,
+    max_download_bytes: int | None = None,
+) -> dict[str, Any]:
+    """Ensure graph/cover source files exist without parsing a huge graph.
+
+    This is the setup/doctor boundary.  Unlike :func:`load_snap_dataset`, it
+    never constructs an igraph object, so preparing Friendster or LiveJournal
+    does not allocate their full adjacency structure just to verify a URL.
+    """
+    key = name.strip().lower()
+    if key not in SPECS:
+        raise SnapLoadError(f"Unknown SNAP overlap dataset {name!r}")
+    spec = SPECS[key]
+    if cover_variant not in spec.raw_cover_files:
+        raise UnsupportedCoverVariant(
+            f"{spec.name} has no supplied {cover_variant!r} cover"
+        )
+    root = Path(data_root).expanduser() if data_root is not None else DEFAULT_NETWORKS_DIR
+    base = _dataset_dir(root, spec)
+    source_kind, artifacts = _source_artifact_identity(spec, base, cover_variant)
+    if artifacts:
+        return {
+            "status": "ready",
+            "dataset": key,
+            "cover_variant": cover_variant,
+            "source_kind": source_kind,
+            "source_artifacts": artifacts,
+            "root": str(base),
+        }
+    if not allow_catalog:
+        return {
+            "status": "unavailable",
+            "dataset": key,
+            "cover_variant": cover_variant,
+            "reason": f"local graph/cover files are absent under {base}",
+        }
+    cache_root = expand_path(cache_dir) if cache_dir else default_cache_dir()
+    try:
+        from networks import snap as catalog  # type: ignore[import-not-found]
+
+        catalog_name = MAPEQUATION_SNAP_NAMES[key]
+        if max_download_bytes is None:
+            network = catalog.load(catalog_name)
+        else:
+            try:
+                network = catalog.load(catalog_name, max_bytes=int(max_download_bytes))
+            except TypeError:
+                network = catalog.load(catalog_name)
+        truth = catalog.load_ground_truth(catalog_name, variant=cover_variant)
+        return {
+            "status": "ready",
+            "dataset": key,
+            "cover_variant": cover_variant,
+            "source_kind": "snap_catalog",
+            "catalog_backend": "mapequation_networks",
+            "catalog_dataset": catalog_name,
+            "network_locator": _catalog_object_path(network),
+            "ground_truth_locator": _catalog_object_path(truth),
+        }
+    except Exception as catalog_error:
+        # The direct downloader below is the supported fallback when the
+        # catalogue package is absent or unavailable on the active index.
+        try:
+            urls = SNAP_DOWNLOAD_URLS[key]
+            raw_base = cache_root / "raw" / key
+            graph_path = raw_base / spec.raw_edge_files[0]
+            cover_path = raw_base / spec.raw_cover_files[cover_variant][0]
+            _download_catalog_file(
+                urls["graph"], graph_path, max_download_bytes=max_download_bytes
+            )
+            _download_catalog_file(
+                urls[cover_variant], cover_path, max_download_bytes=max_download_bytes
+            )
+        except SnapLoadError as download_error:
+            raise SnapLoadError(
+                f"catalogue setup failed for {key}: {catalog_error}; "
+                f"official SNAP download failed: {download_error}"
+            ) from download_error
+        return {
+            "status": "ready",
+            "dataset": key,
+            "cover_variant": cover_variant,
+            "source_kind": "snap_catalog",
+            "catalog_backend": "official_snap_http",
+            "catalog_urls": {
+                "graph": urls["graph"],
+                "ground_truth": urls[cover_variant],
+            },
+            "cache_root": str(raw_base),
+        }
+
+
+def _catalog_object_path(value: Any) -> str | None:
+    """Best-effort path extraction for catalogue provenance reports."""
+    for attribute in ("path", "filename", "file", "source", "url"):
+        candidate = getattr(value, attribute, None)
+        if candidate is not None and not callable(candidate):
+            return str(candidate)
+    return None
+
+
+def _catalog_edges(network: Any) -> tuple[list[tuple[int, int]], set[int]]:
+    """Normalize the small API variants exposed by networks releases."""
+    edge_reader = getattr(network, "edges", None)
+    if callable(edge_reader):
+        try:
+            values = edge_reader(cast=int)
+        except TypeError:
+            values = edge_reader()
+    else:
+        values = edge_reader or ()
+    if isinstance(values, (int, float, str, bytes)):
+        values = ()
+    edges: list[tuple[int, int]] = []
+    node_ids: set[int] = set()
+    for edge in values:
+        if len(edge) < 2:
+            continue
+        source, target = int(edge[0]), int(edge[1])
+        edges.append((source, target))
+        node_ids.update((source, target))
+    node_reader = getattr(network, "nodes", None)
+    if callable(node_reader):
+        try:
+            node_values = node_reader()
+        except TypeError:
+            node_values = node_reader
+    else:
+        node_values = node_reader or ()
+    if isinstance(node_values, (int, float, str, bytes)):
+        node_values = ()
+    for node in node_values:
+        try:
+            node_ids.add(int(node))
+        except (TypeError, ValueError):
+            continue
+    return edges, node_ids
+
+
+def _catalog_communities(ground_truth: Any) -> list[list[int]]:
+    reader = getattr(ground_truth, "communities", None)
+    values = reader() if callable(reader) else ground_truth
+    communities: list[list[int]] = []
+    for community in values or ():
+        members: list[int] = []
+        for member in community:
+            try:
+                members.append(int(member))
+            except (TypeError, ValueError):
+                continue
+        communities.append(members)
+    return communities
+
+
+def _load_from_mapequation(
+    spec: SnapDatasetSpec,
+    cover_variant: str,
+    *,
+    max_download_bytes: int | None = None,
+) -> SnapDataset:
+    """Load one dataset through the optional MapEquation SNAP catalogue.
+
+    This function is deliberately called only after local archive precedence
+    has failed.  Importing ``networks`` here keeps ``pip install hedonic``
+    lightweight while ``pip install 'hedonic[reproduce]'`` enables a fresh
+    machine to fetch the official graph and supplied cover on first use.
+    """
+    try:
+        from networks import snap as catalog  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise SnapLoadError(
+            "no local SNAP archive was found and the optional MapEquation "
+            "catalogue is not installed; install `hedonic[reproduce]` or "
+            "set HEDONIC_NETWORKS_DIR to the downloaded archives"
+        ) from exc
+    catalog_name = MAPEQUATION_SNAP_NAMES[spec.name]
+    try:
+        if max_download_bytes is None:
+            network = catalog.load(catalog_name)
+        else:
+            network = catalog.load(catalog_name, max_bytes=int(max_download_bytes))
+    except TypeError:
+        # Older catalogue releases do not expose ``max_bytes``.  Retrying
+        # without it keeps the adapter compatible while the setup command
+        # records the requested bound in its provenance manifest.
+        network = catalog.load(catalog_name)
+    except Exception as exc:
+        raise SnapLoadError(
+            f"MapEquation catalogue could not load {catalog_name}: {exc}"
+        ) from exc
+    try:
+        ground_truth = catalog.load_ground_truth(catalog_name, variant=cover_variant)
+    except TypeError:
+        ground_truth = catalog.load_ground_truth(catalog_name, cover_variant)
+    except Exception as exc:
+        raise UnsupportedCoverVariant(
+            f"MapEquation catalogue has no {cover_variant!r} cover for {catalog_name}: {exc}"
+        ) from exc
+
+    edges, node_ids = _catalog_edges(network)
+    raw_cover = _catalog_communities(ground_truth)
+    node_ids.update(member for community in raw_cover for member in community)
+    ordered_ids = sorted(node_ids)
+    id_to_index = {old: index for index, old in enumerate(ordered_ids)}
+    graph = ig.Graph(
+        n=len(ordered_ids),
+        edges=[(id_to_index[src], id_to_index[tgt]) for src, tgt in edges],
+        directed=spec.directed,
+    )
+    cover, validation = _remap_cover(raw_cover, id_to_index)
+    validation["cover"] = cover
+    source_graph_locator = _catalog_object_path(network)
+    source_cover_locator = _catalog_object_path(ground_truth)
+    # The cache validator expects the report paths to match the stable
+    # artifact identity.  Keep volatile package-local locators as separate
+    # provenance fields instead of embedding them in the cache key.
+    source_graph = spec.raw_edge_files[0]
+    source_cover = spec.raw_cover_files[cover_variant][0]
+    report = _make_report(
+        spec=spec,
+        cover_variant=cover_variant,
+        graph=graph,
+        graph_path=source_graph,
+        cover_path=source_cover,
+        mapping_strategy="catalog_original_id_to_contiguous_index",
+        remap=validation,
+        source_kind="snap_catalog",
+    )
+    report["catalog_dataset"] = catalog_name
+    report["catalog_package"] = "mapequation-networks"
+    report["catalog_backend"] = "mapequation_networks"
+    report["catalog_graph_locator"] = source_graph_locator
+    report["catalog_ground_truth_locator"] = source_cover_locator
+    return SnapDataset(spec.name, cover_variant, graph, cover, report)
+
+
 def load_snap_dataset(
     name: str,
     *,
@@ -792,6 +1238,8 @@ def load_snap_dataset(
     data_root: str | Path | None = None,
     cache_dir: str | Path | None = None,
     use_normalized_cache: bool = True,
+    allow_catalog: bool = True,
+    max_download_bytes: int | None = None,
 ) -> SnapDataset:
     """Load, remap, validate and report one supported overlapping SNAP dataset.
 
@@ -818,6 +1266,9 @@ def load_snap_dataset(
     source_kind, source_artifacts = _source_artifact_identity(
         spec, base, cover_variant
     )
+    local_source_available = bool(source_artifacts)
+    if not local_source_available and allow_catalog:
+        source_kind, source_artifacts = _catalog_source_identity(key, cover_variant)
     source_fingerprint = _source_fingerprint(source_kind, source_artifacts)
     cache_root = expand_path(cache_dir) if cache_dir else default_cache_dir()
     normalized_path = _normalized_cache_path(
@@ -836,8 +1287,32 @@ def load_snap_dataset(
             return cached
 
     dataset = _load_from_pickles(spec, base, cover_variant)
-    if dataset is None:
+    if dataset is None and local_source_available:
         dataset = _load_from_raw(spec, base, cover_variant)
+    if dataset is None:
+        if not allow_catalog:
+            dataset = _load_from_raw(spec, base, cover_variant)
+        else:
+            try:
+                dataset = _load_from_mapequation(
+                    spec,
+                    cover_variant,
+                    max_download_bytes=max_download_bytes,
+                )
+            except SnapLoadError as catalog_error:
+                try:
+                    dataset = _load_from_official_snap(
+                        spec,
+                        cover_variant,
+                        cache_dir=cache_root,
+                        max_download_bytes=max_download_bytes,
+                    )
+                except SnapLoadError as download_error:
+                    raise SnapLoadError(
+                        f"no local SNAP archive and catalogue backends failed for "
+                        f"{key}: optional package: {catalog_error}; official "
+                        f"SNAP download: {download_error}"
+                    ) from download_error
     dataset.report["normalized_cache_path"] = normalized_path.name
     dataset.report["normalized_cache_namespace"] = root_digest[:16]
     dataset.report["source_artifacts"] = source_artifacts
@@ -935,7 +1410,7 @@ def bounded_induced_dataset(dataset: SnapDataset, max_nodes: int | None) -> Snap
                 # collisions.
                 "cover_canonicalization": validation,
             },
-            "id_mapping_strategy": report["id_mapping_strategy"]
+            "id_mapping_strategy": report.get("id_mapping_strategy", "identity")
             + "+bounded_induced_subgraph_remap",
         }
     )
@@ -947,6 +1422,147 @@ def bounded_induced_dataset(dataset: SnapDataset, max_nodes: int | None) -> Snap
     report["bounded_content_identity"] = content_identity(graph, cover)
     report["content_identity"] = report["bounded_content_identity"]
     return SnapDataset(dataset.name, dataset.cover_variant, graph, cover, report)
+
+
+def _agmfit_induced_dataset_for_anchor(
+    dataset: SnapDataset,
+    *,
+    anchor: int,
+    seed: int,
+    canonical: list[list[int]],
+    incident: list[list[int]],
+    source_canonicalization: dict[str, int],
+) -> SnapDataset:
+    """Build one AGMfit window after its anchor has been selected."""
+    # Yang & Leskovec, “Community-Affiliation Graph Model for Overlapping
+    # Network Community Detection,” ICDM 2012, §VI “Experimental setup,”
+    # PDF p. 7, Fig. 8: choose a random node in at least two communities and
+    # induce the subnetwork on the union of its incident communities.
+    selected = {
+        vertex
+        for community_id in incident[anchor]
+        for vertex in canonical[community_id]
+    }
+    selected_indices = sorted(selected)
+    old_to_new = {old: new for new, old in enumerate(selected_indices)}
+    graph = dataset.graph.induced_subgraph(selected_indices)
+    projected = [
+        [old_to_new[vertex] for vertex in community if vertex in old_to_new]
+        for community in canonical
+    ]
+    cover, projection_canonicalization = canonicalize_cover(
+        projected, n_vertices=graph.vcount(), minimum_size=2
+    )
+    report = dict(dataset.report)
+    report.update(
+        {
+            "n": graph.vcount(),
+            "m": graph.ecount(),
+            "agmfit_subgraph": {
+                "applied": True,
+                "seed": int(seed),
+                "anchor_vertex_original_index": int(anchor),
+                "anchor_membership_count": len(incident[anchor]),
+                "selected_nodes": len(selected_indices),
+                "incident_community_count": len(incident[anchor]),
+                "strategy": "random_overlap_anchor_union_induced_subgraph",
+                "source_cover_canonicalization": source_canonicalization,
+                "projected_cover_canonicalization": projection_canonicalization,
+            },
+            "id_mapping_strategy": report.get("id_mapping_strategy", "identity")
+            + "+agmfit_induced_subgraph_remap",
+        }
+    )
+    stats = cover_statistics(cover)
+    report["number_of_communities"] = stats["n_communities"]
+    report["number_of_covered_nodes"] = stats["n_covered_nodes"]
+    report["community_size_statistics"] = stats["community_size"]
+    report["overlap_statistics"] = stats["overlap"]
+    report["bounded_content_identity"] = content_identity(graph, cover)
+    report["content_identity"] = report["bounded_content_identity"]
+    return SnapDataset(dataset.name, dataset.cover_variant, graph, cover, report)
+
+
+def agmfit_induced_dataset(dataset: SnapDataset, *, seed: int = 0) -> SnapDataset:
+    """Construct one AGMfit-style overlap-centered induced subgraph.
+
+    The selected anchor is sampled from vertices belonging to at least two
+    ground-truth communities.  The vertex set is the union of those incident
+    communities, and the returned graph is the induced subgraph on that set.
+    This is intentionally independent of the bounded deterministic selector
+    above, which remains available for protocols with a fixed node budget.
+    """
+    canonical, source_canonicalization = canonicalize_cover(
+        dataset.cover, n_vertices=dataset.graph.vcount(), minimum_size=2
+    )
+    incident: list[list[int]] = [[] for _ in range(dataset.graph.vcount())]
+    for community_id, community in enumerate(canonical):
+        for vertex in community:
+            incident[vertex].append(community_id)
+    eligible = [vertex for vertex, labels in enumerate(incident) if len(labels) >= 2]
+    if not eligible:
+        raise ValueError(
+            "AGMfit sampling requires at least one vertex in two ground-truth communities"
+        )
+    anchor = random.Random(int(seed)).choice(eligible)
+    return _agmfit_induced_dataset_for_anchor(
+        dataset,
+        anchor=anchor,
+        seed=seed,
+        canonical=canonical,
+        incident=incident,
+        source_canonicalization=source_canonicalization,
+    )
+
+
+def sample_agmfit_subgraphs(
+    dataset: SnapDataset,
+    *,
+    n_subgraphs: int = 500,
+    seed: int = 0,
+) -> list[SnapDataset]:
+    """Return reproducible AGMfit-style overlap-centered subgraphs.
+
+    Each replicate uses a deterministic child seed.  Anchors are sampled
+    without replacement while possible, so the common case yields distinct
+    windows just as the AGMfit evaluation describes; if fewer eligible
+    vertices exist than requested replicates, deterministic re-use is allowed.
+    """
+    if n_subgraphs <= 0:
+        raise ValueError("n_subgraphs must be positive")
+    canonical, source_canonicalization = canonicalize_cover(
+        dataset.cover, n_vertices=dataset.graph.vcount(), minimum_size=2
+    )
+    incident: list[list[int]] = [[] for _ in range(dataset.graph.vcount())]
+    for community_id, community in enumerate(canonical):
+        for vertex in community:
+            incident[vertex].append(community_id)
+    eligible = [vertex for vertex, labels in enumerate(incident) if len(labels) >= 2]
+    if not eligible:
+        raise ValueError(
+            "AGMfit sampling requires at least one vertex in two ground-truth communities"
+        )
+    rng = random.Random(int(seed))
+    anchors = rng.sample(eligible, k=min(n_subgraphs, len(eligible)))
+    while len(anchors) < n_subgraphs:
+        anchors.append(eligible[rng.randrange(len(eligible))])
+    # Child seeds preserve deterministic sampling while keeping each returned
+    # report independently replayable.
+    return [
+        _agmfit_induced_dataset_for_anchor(
+            dataset,
+            anchor=anchor,
+            seed=seed,
+            canonical=canonical,
+            incident=incident,
+            source_canonicalization=source_canonicalization,
+        )
+        for anchor, seed in zip(anchors, (rng.randrange(2**63) for _ in anchors))
+    ]
+
+
+# Descriptive alias for callers that prefer the noun used in the paper.
+agmfit_induced_datasets = sample_agmfit_subgraphs
 
 
 def common_undirected_analysis_dataset(dataset: SnapDataset) -> SnapDataset:
@@ -1035,6 +1651,107 @@ def smoke_dataset(name: str, *, cover_variant: str = "top5000") -> SnapDataset:
         source_kind="built_in_smoke_fixture",
     )
     return SnapDataset(name, cover_variant, graph, cover, report)
+
+
+def synthetic_agmfit_dataset(
+    *,
+    n_nodes: int = 1_000,
+    seed: int = 0,
+    n_communities: int = 24,
+    overlap_probability: float = 0.18,
+    second_overlap_probability: float = 0.04,
+    intra_community_probability: float = 0.20,
+) -> SnapDataset:
+    """Build a deterministic, AGMfit-like overlapping smoke fixture.
+
+    This is intentionally not presented as a SNAP result.  It is an archive-
+    free affiliation graph used to validate the complete benchmark plumbing
+    (method dispatch, cover scoring, resource accounting, resumable ledgers)
+    on roughly the scale of a small AGMfit-centered induced window.  Every
+    vertex has a ground-truth membership and a controlled fraction has two or
+    three memberships.  Community edges are sampled from shared affiliations,
+    with a ring backbone so the fixture remains connected for every seed.
+    """
+    if n_nodes < 8:
+        raise ValueError("n_nodes must be at least 8")
+    if n_communities < 2:
+        raise ValueError("n_communities must be at least 2")
+    if not 0.0 <= overlap_probability <= 1.0:
+        raise ValueError("overlap_probability must be in [0, 1]")
+    if not 0.0 <= second_overlap_probability <= 1.0:
+        raise ValueError("second_overlap_probability must be in [0, 1]")
+    if not 0.0 <= intra_community_probability <= 1.0:
+        raise ValueError("intra_community_probability must be in [0, 1]")
+
+    rng = random.Random(int(seed))
+    n_communities = min(int(n_communities), n_nodes)
+    memberships: list[list[int]] = [[] for _ in range(n_nodes)]
+    for vertex in range(n_nodes):
+        primary = vertex % n_communities
+        memberships[vertex].append(primary)
+        if rng.random() < overlap_probability:
+            offset = 1 + rng.randrange(n_communities - 1)
+            memberships[vertex].append((primary + offset) % n_communities)
+        if rng.random() < second_overlap_probability:
+            offset = 1 + rng.randrange(n_communities - 1)
+            candidate = (primary + offset) % n_communities
+            if candidate not in memberships[vertex]:
+                memberships[vertex].append(candidate)
+
+    communities = [
+        sorted(vertex for vertex, labels in enumerate(memberships) if community in labels)
+        for community in range(n_communities)
+    ]
+    communities = [community for community in communities if len(community) >= 2]
+    if len(communities) < 2:
+        raise RuntimeError("synthetic AGMfit fixture generated too few communities")
+
+    edge_set: set[tuple[int, int]] = set()
+    for community in communities:
+        for left_index, left in enumerate(community):
+            for right in community[left_index + 1 :]:
+                if rng.random() < intra_community_probability:
+                    edge_set.add((left, right))
+    # The backbone is deterministic and keeps isolated affiliation samples
+    # from making method failures look like dependency failures.
+    edge_set.update(
+        (vertex, (vertex + 1) % n_nodes) for vertex in range(n_nodes)
+    )
+    graph = ig.Graph(n=n_nodes, edges=sorted(edge_set), directed=False)
+    stats = cover_statistics(communities)
+    report = {
+        "dataset": "synthetic_agmfit",
+        "graph_path": "<generated:synthetic-agmfit-like>",
+        "ground_truth_path": "<generated:affiliation-cover>",
+        "ground_truth_type": "synthetic_agmfit_like_overlapping_affiliation_cover",
+        "cover_variant": "all",
+        "n": graph.vcount(),
+        "m": graph.ecount(),
+        "directed": False,
+        "number_of_communities": stats["n_communities"],
+        "number_of_covered_nodes": stats["n_covered_nodes"],
+        "community_size_statistics": stats["community_size"],
+        "overlap_statistics": stats["overlap"],
+        "id_mapping_strategy": "generated_contiguous_indices",
+        "source_kind": "synthetic_agmfit_smoke_fixture",
+        "validation": {
+            "raw_community_count": len(communities),
+            "dropped_communities_lt_2_members": 0,
+            "missing_member_count": 0,
+            "duplicate_members_removed": 0,
+        },
+        "generator": {
+            "seed": int(seed),
+            "n_nodes": int(n_nodes),
+            "n_communities_requested": int(n_communities),
+            "overlap_probability": float(overlap_probability),
+            "second_overlap_probability": float(second_overlap_probability),
+            "intra_community_probability": float(intra_community_probability),
+            "backbone": "cycle",
+        },
+    }
+    report["content_identity"] = content_identity(graph, communities)
+    return SnapDataset("synthetic_agmfit", "all", graph, communities, report)
 
 
 def print_dataset_report(report: dict[str, Any]) -> None:

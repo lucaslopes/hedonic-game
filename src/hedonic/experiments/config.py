@@ -72,6 +72,11 @@ DEFAULT_NETWORKS_DIR = expand_path("~/Databases/Hedonic/Networks")
 DEFAULT_SYNTHETIC_DIR = expand_path(
     "~/Databases/Hedonic/PHYSA/Synthetic_Networks/V1020"
 )
+# The historical V1020 tree is an input archive.  Experiment writers should
+# never place generated output in it (including in a descendant directory).
+# Keep this in the shared config module so every disjoint entry point applies
+# the same guard instead of comparing one exact path string.
+ARCHIVED_V1020_DIR = DEFAULT_SYNTHETIC_DIR.resolve()
 # ``OUTPUT_DIR`` is the canonical artifact root.  Individual experiments add
 # their own subdirectory below it; no generated output defaults to a data tree
 # or to the process working directory.
@@ -94,6 +99,30 @@ OUTPUT_DIR = expand_path(os.getenv("HEDONIC_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)
 NETWORKS_DIR = expand_path(
     os.getenv("HEDONIC_NETWORKS_DIR", str(DEFAULT_NETWORKS_DIR))
 )
+
+
+def ensure_not_archived_v1020(
+    path: str | Path,
+    *,
+    label: str = "output",
+) -> Path:
+    """Return a resolved path unless it would write inside archived V1020.
+
+    The archive is intentionally read-only.  Checking ancestry (rather than
+    only equality) prevents an easy-to-miss ``archive/recovery`` write from
+    mutating the source data while still allowing the archive to be used as a
+    read-only input path.
+    """
+    resolved = expand_path(path).resolve()
+    try:
+        resolved.relative_to(ARCHIVED_V1020_DIR)
+    except ValueError:
+        return resolved
+    raise ValueError(
+        f"Refusing to use archived V1020 as {label}: {resolved}. "
+        "Choose a separate output root (for example "
+        "artifacts/disjoint/v1020)."
+    )
 
 # Last successfully loaded TOML (full table) and its path; for experiments.
 _LOADED_TOML: dict[str, Any] = {}

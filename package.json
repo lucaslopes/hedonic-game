@@ -1,0 +1,23 @@
+{
+  "name": "hedonic-game-site",
+  "private": true,
+  "description": "Interactive explainer and documentation site for the hedonic Python package. The frontend lives in web/.",
+  "license": "GPL-3.0-or-later",
+  "workspaces": [
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace web",
+    "build": "npm run build --workspace web",
+    "preview": "npm run preview --workspace web",
+    "preview:pages": "npm run preview:pages --workspace web",
+    "test": "npm run test --workspace web",
+    "typecheck": "npm run typecheck --workspace web",
+    "lint": "npm run lint --workspace web",
+    "docs:generate": "npm run docs:generate --workspace web",
+    "check": "npm run check --workspace web"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

@@ -1,0 +1,290 @@
+.section {
+  padding: clamp(64px, 10vw, 120px) 0 24px;
+}
+
+.header {
+  max-width: 46rem;
+  margin-bottom: 24px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
+  gap: 20px;
+  align-items: start;
+}
+
+.main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.graphCard,
+.controlsCard,
+.side {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+}
+
+.graphCard {
+  display: grid;
+  gap: 10px;
+}
+
+.graphArea {
+  height: clamp(420px, 62vh, 700px);
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--rule) 70%, transparent) 1px, transparent 0) 0 0 / 22px 22px,
+    var(--card-2);
+  overflow: hidden;
+}
+
+.controlsCard {
+  display: grid;
+  gap: 14px;
+}
+
+.switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+}
+
+.side {
+  display: grid;
+  gap: 12px;
+  position: sticky;
+  top: calc(var(--header-h) + 16px);
+  max-height: calc(100vh - var(--header-h) - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sideTitle {
+  margin: 4px 0 0;
+  font-size: 1.1rem;
+}
+
+.inspector {
+  display: grid;
+  gap: 10px;
+}
+
+.empty {
+  margin: 0;
+  color: var(--ink-3);
+}
+
+.inspectorHead {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.nodeTitle {
+  margin: 0 0 6px;
+  font-size: 1.15rem;
+}
+
+.nodeTitle code {
+  font-size: 1rem !important;
+  font-weight: 650;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.sinkChip {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.facts div {
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--card-2);
+  border: 1px solid var(--rule);
+}
+
+.facts dt {
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+  line-height: 1.3;
+}
+
+.facts dd {
+  margin: 2px 0 0;
+  font-weight: 650;
+}
+
+.factNote {
+  margin: -4px 0 0;
+  font-size: 0.74rem;
+  color: var(--ink-3);
+}
+
+.movesTitle {
+  margin: 6px 0 0;
+  font-size: 0.95rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.table th,
+.table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table thead th {
+  font-size: 0.68rem;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+}
+
+.numeric {
+  text-align: right !important;
+}
+
+.improving {
+  background: color-mix(in srgb, var(--threshold-soft) 60%, transparent);
+}
+
+.tie td:last-child {
+  color: var(--threshold-ink);
+  font-weight: 650;
+}
+
+.worse {
+  color: var(--ink-3);
+}
+
+.verdict {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.linkButton {
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--threshold-ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  cursor: pointer;
+}
+
+.edgePanel {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1.5px solid var(--threshold);
+  background: var(--threshold-soft);
+  font-size: 0.86rem;
+}
+
+.edgePanel h4 {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+}
+
+.edgePanel p {
+  margin: 4px 0;
+}
+
+.edgeEnds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.walkBox {
+  display: grid;
+  gap: 12px;
+}
+
+.disclaimer {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
+.tableToggle {
+  margin: 20px 0 12px;
+}
+
+.fullTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.fullTable caption {
+  text-align: left;
+  font-weight: 650;
+  padding: 0 0 8px;
+}
+
+.fullTable th,
+.fullTable td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+@media (max-width: 1080px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .graphArea {
+    height: clamp(380px, 70vh, 560px);
+  }
+
+  .facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

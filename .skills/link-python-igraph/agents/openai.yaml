@@ -1,0 +1,4 @@
+interface:
+  display_name: "Link Python igraph"
+  short_description: "Local igraph + python-igraph + Hedonic development stack"
+  default_prompt: "Use $link-python-igraph to set up isolated igraph, python-igraph and hedonic-game worktrees, link them, and verify a native Leiden change with the equivalence and differential harnesses, without pushing or publishing anything."

@@ -15,7 +15,11 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-from hedonic.experiments.config import DISJOINT_ARTIFACTS_DIR, expand_path
+from hedonic.experiments.config import (
+    DISJOINT_ARTIFACTS_DIR,
+    ensure_not_archived_v1020,
+    expand_path,
+)
 
 WORKERS = 16
 
@@ -335,6 +339,15 @@ def load_experiment_data(
         Path segment to rewrite when placing json_paths/csv_results siblings
         (default: basename of ``results_folder``, usually ``resultados``).
     """
+    if not simple:
+        # The non-simple pipeline writes json_paths/ and csv_results/ beside
+        # the input tree.  Refuse an archived V1020 input rather than silently
+        # mutating the read-only source; callers can use ``simple=True`` and
+        # choose an explicit external CSV output instead.
+        ensure_not_archived_v1020(
+            results_folder,
+            label="results folder with sidecar outputs",
+        )
     if simple:
         sorted_json_paths = get_paths_sorted(results_folder)
         records: list[dict] = []
@@ -395,6 +408,10 @@ def main(argv=None):
     output_path = str(expand_path(args.output)) if args.output else None
     if output_path is None:
         output_path = str(DISJOINT_ARTIFACTS_DIR / "resultados.csv.gzip")
+    try:
+        ensure_not_archived_v1020(output_path, label="CSV output")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     print("Saving data to", output_path)
     df.to_csv(output_path, index=False, compression="gzip")
     print(f"Done. rows={len(df)} cols={list(df.columns)}")

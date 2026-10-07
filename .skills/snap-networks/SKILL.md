@@ -38,7 +38,7 @@ Use this taxonomy before choosing an evaluation metric:
 | email-Eu-core | **Disjoint labels**: one department per node | A single-label/partition baseline, not overlapping ground truth. |
 | Cora | **Disjoint labels**: one of seven paper classes | A citation graph with class labels and attributes, not an overlapping community cover. |
 | PubMed Diabetes | **Disjoint labels**: one of three paper classes | A citation graph with class labels and attributes, not an overlapping community cover. |
-| DBLP_CLI | **No ground truth**: prior experiment artifacts | Do not use result JSON, plots, or cached covers as network ground truth. |
+| `artifacts/overlapping/resolution_f1` | **No ground truth**: prior experiment artifacts | Do not use result JSON, plots, or cached covers as network ground truth. |
 
 “Disjoint” here means each node has one supplied label. “Overlapping” means the supplied community/category file gives a node membership cover and nodes can occur in multiple communities. A graph may be directed or undirected independently of this ground-truth classification.
 
@@ -46,7 +46,7 @@ Use this taxonomy before choosing an evaluation metric:
 - **Overlapping category cover:** Wikipedia `wiki-topcats-categories.txt.gz` has `Category:name; node IDs` lines; the graph is directed in the saved cache.
 - **Disjoint labels:** Email-Eu-core has one department label per node, not an overlapping community cover.
 - **Attributed or single-label citation data:** Cora and PubMed provide node features/classes and directed citation edges. Use them for attributed or supervised baselines, not as overlapping ground truth without an explicit cover construction.
-- **Prior results:** `DBLP_CLI/` contains JSON, logs, plots, and per-run cover caches. Do not treat these as raw SNAP input.
+- **Prior results:** `artifacts/overlapping/resolution_f1/` contains JSON, logs, plots, and per-run cover caches. Do not treat these as raw SNAP input.
 
 ## Align node IDs before detection
 
@@ -144,21 +144,21 @@ available:
     hedonic-exp overlapping-benchmark --list-methods
 
     # Validate graph/cover paths, ID mappings, and diagnostics without detection.
-    hedonic-exp overlapping-benchmark --datasets amazon,dblp --cover top5000 --profile standard --dry-run --output_dir /tmp/hedonic-snap-dry-run
+    hedonic-exp overlapping-benchmark --datasets amazon,dblp --cover top5000 --profile standard --dry-run --output_dir artifacts/overlapping/snap_benchmark/dry_run
 
 ### Choose a profile and dataset/cover scope
 
     # No archive required: built-in overlapping fixtures for all five datasets.
-    hedonic-exp overlapping-benchmark --profile smoke --output_dir /tmp/hedonic-snap-smoke
+    hedonic-exp overlapping-benchmark --profile smoke --output_dir artifacts/overlapping/snap_benchmark/smoke
 
     # Safe default for saved data: deterministic GT-informed 3,000-node induced subgraphs.
-    hedonic-exp overlapping-benchmark --profile standard --datasets amazon,dblp,livejournal,youtube,wikipedia --cover top5000 --output_dir ~/Databases/Hedonic/Networks/SNAP_BENCHMARK_CLI
+    hedonic-exp overlapping-benchmark --profile standard --datasets amazon,dblp,livejournal,youtube,wikipedia --cover top5000 --output_dir artifacts/overlapping/snap_benchmark
 
     # Use every complete supplied cover. Wikipedia categories are included here.
-    hedonic-exp overlapping-benchmark --profile standard --cover all --datasets amazon,dblp,livejournal,youtube,wikipedia --output_dir /tmp/hedonic-snap-all
+    hedonic-exp overlapping-benchmark --profile standard --cover all --datasets amazon,dblp,livejournal,youtube,wikipedia --output_dir artifacts/overlapping/snap_benchmark/all
 
     # Full graph: remove the standard cap deliberately and keep runs resumable.
-    hedonic-exp overlapping-benchmark --profile full --datasets dblp --cover top5000 --timeout_per_run 1800 --resume --output_dir ~/Databases/Hedonic/Networks/SNAP_BENCHMARK_CLI/full-dblp
+    hedonic-exp overlapping-benchmark --profile full --datasets dblp --cover top5000 --timeout_per_run 1800 --resume --output_dir artifacts/overlapping/snap_benchmark/full-dblp
 
 top5000 is a supplied cover for Amazon, DBLP, LiveJournal, and YouTube.
 Wikipedia uses wiki-topcats-categories and has only --cover all; requesting
@@ -184,13 +184,13 @@ names rather than ad-hoc per-library flags; exact baseline parameters are
 recorded in every run JSON and shown by --list-methods.
 
     # Compare the two hedonic variants at three explicit CPM resolutions.
-    hedonic-exp overlapping-benchmark --datasets amazon --cover top5000 --methods hedonic_local,hedonic_multiphase --resolutions 0:1:3 --seeds 0-4 --output_dir /tmp/amazon-hedonic-resolution
+    hedonic-exp overlapping-benchmark --datasets amazon --cover top5000 --methods hedonic_local,hedonic_multiphase --resolutions 0:1:3 --seeds 0-4 --output_dir artifacts/overlapping/snap_benchmark/amazon-hedonic-resolution
 
     # Compare independent overlap baselines against local hedonic detection.
-    hedonic-exp overlapping-benchmark --datasets dblp --cover top5000 --methods hedonic_local,cpm,demon --seeds 0,1,2 --timeout_per_run 300 --max_nodes 5000 --output_dir /tmp/dblp-method-comparison
+    hedonic-exp overlapping-benchmark --datasets dblp --cover top5000 --methods hedonic_local,cpm,demon --seeds 0,1,2 --timeout_per_run 300 --max_nodes 5000 --output_dir artifacts/overlapping/snap_benchmark/dblp-method-comparison
 
     # auto is the graph-density resolution; --max_nodes 0 disables the cap.
-    hedonic-exp overlapping-benchmark --datasets youtube --cover all --methods cpm --resolutions auto --max_nodes 0 --timeout_per_run 600 --output_dir /tmp/youtube-cpm-full
+    hedonic-exp overlapping-benchmark --datasets youtube --cover all --methods cpm --resolutions auto --max_nodes 0 --timeout_per_run 600 --output_dir artifacts/overlapping/snap_benchmark/youtube-cpm-full
 
 --seeds accepts comma lists and inclusive ranges such as 0-4. --resolutions
 accepts auto, comma-separated floats, or inclusive start:stop:count grids
@@ -218,12 +218,12 @@ The implementation samples pairs and never allocates a dense vertex-pair
 matrix:
 
     # Recovery plus sampled Omega for a bounded standard DBLP run.
-    hedonic-exp overlapping-benchmark --datasets dblp --cover top5000 --methods hedonic_local,demon --omega --omega_sample_size 100000 --output_dir /tmp/dblp-omega
+    hedonic-exp overlapping-benchmark --datasets dblp --cover top5000 --methods hedonic_local,demon --omega --omega_sample_size 100000 --output_dir artifacts/overlapping/snap_benchmark/dblp-omega
 
     # Write result tables without plotting, useful for a parameter sweep.
-    hedonic-exp overlapping-benchmark --datasets amazon --cover top5000 --resolutions 0:1:11 --seeds 0-4 --no-plots --output_dir /tmp/amazon-resolution-sweep
+    hedonic-exp overlapping-benchmark --datasets amazon --cover top5000 --resolutions 0:1:11 --seeds 0-4 --no-plots --output_dir artifacts/overlapping/snap_benchmark/amazon-resolution-sweep
 
-The output root contains manifest.json, per-run JSON under runs/,
+The output root under `artifacts/overlapping/snap_benchmark/` contains manifest.json, per-run JSON under runs/,
 results.jsonl, results.csv.gz, summary.json, summary.csv,
 method_availability.json, logs/benchmark.log, and, unless --no-plots is used,
 recovery/runtime/overlap/method-comparison plots. Use the manifest and
@@ -237,6 +237,6 @@ For synthetic or known-cover data, report F1/Jaccard plus membership and overlap
 
 ## Reproducibility and output discipline
 
-Record dataset name, input paths, cover variant (`all`, `top5000`, or categories), ID mapping strategy, graph `n`/`m`/directedness, resolution, `n_iterations`, `max_memberships`, `local_move_only`, seed, runtime, and metric singleton mode. Write generated JSON/CSV/plots outside the archived input tree or under an explicitly named results directory such as `DBLP_CLI/` or `SNAP_BENCHMARK_CLI/`; never overwrite the original SNAP files or archived V1020 data.
+Record dataset name, input paths, cover variant (`all`, `top5000`, or categories), ID mapping strategy, graph `n`/`m`/directedness, resolution, `n_iterations`, `max_memberships`, `local_move_only`, seed, runtime, and metric singleton mode. Write generated JSON/CSV/plots under the repository artifact tree, such as `artifacts/overlapping/snap_benchmark/` or `artifacts/overlapping/resolution_f1/`; never overwrite the original SNAP files or archived V1020 data.
 
 When changing an experiment module in this repository, keep the `hedonic-exp` registry and the experiment documentation synchronized, as required by `AGENTS.md`.

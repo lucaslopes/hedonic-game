@@ -304,7 +304,12 @@ def best_response(
     if not best_labels:
         raise ValueError("no admissible membership action")
     current_utility = _utility_for_labels(state, vertex, current, gamma)
-    regret = best_utility - current_utility
+    if current_utility + 1e-15 >= best_utility:
+        best_utility = current_utility
+        best_labels = current
+        regret = 0.0
+    else:
+        regret = best_utility - current_utility
     return {
         "vertex": int(vertex),
         "gamma": float(gamma),
@@ -603,6 +608,9 @@ def exhaustive_best_response(
     utility, selected = max(candidates, key=lambda item: (item[0], tuple(-x for x in item[1])))
     current = state.memberships[vertex]
     current_utility = _utility_for_labels(state, vertex, current, gamma)
+    if current_utility + 1e-15 >= utility:
+        utility = current_utility
+        selected = current
     return {
         "vertex": int(vertex),
         "gamma": float(gamma),

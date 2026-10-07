@@ -1,9 +1,13 @@
 """Reproducible multi-network overlapping-community benchmark CLI.
 
 ``hedonic-exp overlapping-benchmark`` is intentionally self-contained at the
-experiment layer: it loads the five supported SNAP covers, delegates methods
-through adapters, writes resumable run records, and emits aggregate tables and
-plots.  It never writes inside a raw network directory.
+experiment layer: it loads the supported SNAP covers, delegates methods through
+adapters, writes resumable run records, and emits aggregate tables and plots.
+The ``agmfit-replication`` profile is a formation-only ledger of 500
+overlap-centered induced windows per dataset, matching Yang & Leskovec (ICDM
+2012, §VI, p. 7, Fig. 8); it does not mix those graph identities into the
+historical detector loop.  The legacy bounded selector remains explicit and
+version-compatible.  The benchmark never writes inside a raw network directory.
 """
 
 from __future__ import annotations
@@ -32,7 +36,10 @@ import igraph as ig
 
 from hedonic.experiments.config import OVERLAPPING_ARTIFACTS_DIR, expand_path
 from hedonic.experiments.overlapping.methods import (
+    GROUND_TRUTH_REQUIRED_METHODS,
+    LITERATURE_METHODS,
     METHODS,
+    canonical_method_name,
     effective_resolution,
     method_availability,
     method_dependency_identity,
@@ -40,6 +47,7 @@ from hedonic.experiments.overlapping.methods import (
     run_method,
     seeded_initial_membership,
 )
+from hedonic.experiments.overlapping.paper_figures import write_benchmark_plots
 from hedonic.experiments.overlapping.metrics import (
     evaluate_cover,
     quality_overlapping_cpm,
@@ -57,6 +65,7 @@ from hedonic.experiments.overlapping.snap import (
     DEFAULT_NETWORKS_DIR,
     SnapDataset,
     SnapLoadError,
+    SPECS,
     UnsupportedCoverVariant,
     bounded_induced_dataset,
     canonicalize_cover,
@@ -67,6 +76,7 @@ from hedonic.experiments.overlapping.snap import (
     load_snap_dataset,
     network_names,
     print_dataset_report,
+    sample_agmfit_subgraphs,
     smoke_dataset,
 )
 
@@ -105,6 +115,8 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "max_nodes": 64,
         "timeout_per_run": 30.0,
         "plots": True,
+        "subgraph_strategy": "bounded",
+        "subgraph_replicates": 1,
     },
     "standard": {
         "cover": "top5000",
@@ -121,6 +133,9 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "max_nodes": 3_000,
         "timeout_per_run": 180.0,
         "plots": True,
+        # Historical 0.1.0 protocol: one deterministic fixed-budget window.
+        "subgraph_strategy": "bounded",
+        "subgraph_replicates": 1,
     },
     "full": {
         "cover": "top5000",
@@ -137,6 +152,30 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "max_nodes": None,
         "timeout_per_run": 3_600.0,
         "plots": True,
+        "subgraph_strategy": "bounded",
+        "subgraph_replicates": 1,
+    },
+    "agmfit-replication": {
+        "cover": "all",
+        # The AGMfit paper's six SNAP/AGM datasets.  wiki-topcats is not part
+        # of this replication profile; it remains a separate benchmark input.
+        "datasets": ["amazon", "dblp", "livejournal", "youtube", "friendster", "orkut"],
+        "methods": [
+            "hedonic_multiphase",
+            "hedonic_multiphase_x10",
+            "hedonic_multiphase_x100",
+            "cpm",
+            "demon",
+        ],
+        "seeds": [0],
+        "resolutions": ["auto"],
+        "max_nodes": None,
+        "timeout_per_run": 180.0,
+        "plots": False,
+        # Yang & Leskovec report 500 independently sampled subnetworks per
+        # dataset; this profile records that target and uses the sampler below.
+        "subgraph_strategy": "agmfit",
+        "subgraph_replicates": 500,
     },
 }
 
@@ -699,8 +738,17 @@ def _timeout_for(options: dict[str, Any], dataset: str, method: str) -> float:
 
 
 def _cache_parameters_compatible(existing: dict[str, Any], expected: dict[str, Any]) -> bool:
-    """Check the full identity of an experimental condition, excluding outcome."""
-    if identity_rejection_reasons(
+    """Check the full identity of an experimental condition, excluding outcome.
+
+    Under the frozen-lock policy (the default; the standard and full
+    profiles) a record resumes only if it was produced by the locked stack.
+    Profiles that record but do not enforce the lock (smoke) resume a record
+    produced by exactly the same environment and lock as the current run.
+    """
+    if expected.get("_identity_policy") == "same_environment":
+        if existing.get("experiment_identity") != expected.get("experiment_identity"):
+            return False
+    elif identity_rejection_reasons(
         existing.get("experiment_identity"), expected.get("experiment_identity", {})
     ):
         return False
@@ -981,6 +1029,7 @@ def _worker(
     memory_limit_bytes: int | None,
     initial_membership: list[int] | list[list[int]] | None,
     method_parameters: dict[str, Any] | None,
+    ground_truth: list[list[int]] | None,
 ) -> None:
     """Run one detector and persist its potentially large result off-pipe."""
     # Give the detector and every subprocess it creates a private process
@@ -1000,6 +1049,7 @@ def _worker(
             seed=seed,
             parameters=method_parameters,
             initial_membership=initial_membership,
+            ground_truth=ground_truth,
         )
         pre_cleanup_memberships = method_meta.pop(
             "pre_cleanup_memberships", None
@@ -1163,6 +1213,7 @@ def _run_with_timeout(
     memory_limit_bytes: int | None = None,
     initial_membership: list[int] | list[list[int]] | None = None,
     method_parameters: dict[str, Any] | None = None,
+    ground_truth: list[list[int]] | None = None,
 ) -> dict[str, Any]:
     """Run a detector with process-tree RSS and wall-clock enforcement."""
     if (timeout_seconds is None or timeout_seconds <= 0) and memory_limit_bytes is None:
@@ -1175,6 +1226,7 @@ def _run_with_timeout(
                 seed=seed,
                 parameters=method_parameters,
                 initial_membership=initial_membership,
+                ground_truth=ground_truth,
             )
             return {"status": "ok", "cover": cover, "method_meta": method_meta}
         except BaseException as exc:
@@ -1209,6 +1261,7 @@ def _run_with_timeout(
             memory_limit_bytes,
             initial_membership,
             method_parameters,
+            ground_truth,
         ),
     )
     started = time.monotonic()
@@ -1519,48 +1572,8 @@ def _write_summary(output_dir: Path, rows: list[dict[str, Any]]) -> list[dict[st
     return summary_rows
 
 
-def _plot_metric(
-    rows: list[dict[str, Any]], *, metric: str, title: str, path: Path
-) -> bool:
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        return False
-    usable = [
-        row
-        for row in rows
-        if row.get("status") == "completed" and isinstance(row.get(metric), (int, float))
-    ]
-    if not usable:
-        return False
-    labels = [f"{row['dataset']}\n{row['method']}" for row in usable]
-    values = [float(row[metric]) for row in usable]
-    fig, axis = plt.subplots(figsize=(max(6, len(labels) * 0.8), 4.5))
-    axis.bar(range(len(values)), values)
-    axis.set_xticks(range(len(labels)), labels, rotation=45, ha="right")
-    axis.set_title(title)
-    axis.set_ylabel(metric)
-    fig.tight_layout()
-    fig.savefig(path.with_suffix(".png"), dpi=160)
-    fig.savefig(path.with_suffix(".pdf"))
-    plt.close(fig)
-    return True
-
-
 def _write_plots(output_dir: Path, rows: list[dict[str, Any]]) -> list[str]:
-    plots_dir = output_dir / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    requested = [
-        ("symmetric_best_match_f1", "Recovery accuracy by dataset", "accuracy_by_dataset"),
-        ("runtime_seconds", "Runtime by dataset", "runtime_by_dataset"),
-        ("predicted_overlapping_node_fraction", "Predicted overlap structure", "overlap_structure"),
-        ("matching_f1", "One-to-one method comparison", "method_comparison"),
-    ]
-    written: list[str] = []
-    for metric, title, stem in requested:
-        if _plot_metric(rows, metric=metric, title=title, path=plots_dir / stem):
-            written.extend([str(plots_dir / f"{stem}.png"), str(plots_dir / f"{stem}.pdf")])
-    return written
+    return write_benchmark_plots(output_dir, rows)
 
 
 def _safe_output_dir(output_dir: Path, data_root: Path) -> Path:
@@ -1618,7 +1631,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Reproducible overlapping-community benchmark for Amazon, DBLP, "
             "LiveJournal, YouTube, and Wikipedia SNAP covers. Standard runs "
-            "are bounded induced subgraphs; use --profile full to disable that cap."
+            "preserve the historical bounded induced-subgraph protocol; use "
+            "--profile agmfit-replication for the 500-window formation ledger."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -1653,7 +1667,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout_by_dataset",
         help="Per-dataset overrides, e.g. livejournal=1800,youtube=1800",
     )
-    parser.add_argument("--max_nodes", type=int, help="Deterministic GT-informed induced-subgraph cap; <=0 disables")
+    parser.add_argument("--max_nodes", type=int, help="Fixed-budget induced-subgraph cap for the legacy bounded selector; <=0 disables")
+    parser.add_argument(
+        "--subgraph_strategy",
+        choices=("bounded", "agmfit"),
+        help=(
+            "Subgraph formation strategy. 'bounded' preserves the 0.1.0 fixed-budget "
+            "selector; 'agmfit' samples an overlap anchor and induces the union of its "
+            "incident communities."
+        ),
+    )
+    parser.add_argument(
+        "--subgraph_replicates",
+        type=int,
+        help="Number of AGMfit-style windows to target (the paper uses 500; legacy bounded uses 1)",
+    )
+    parser.add_argument(
+        "--subgraph_seed",
+        type=int,
+        help="Base seed for AGMfit window sampling (dataset index is used when omitted)",
+    )
     parser.add_argument(
         "--max_memberships",
         type=int,
@@ -1693,6 +1726,8 @@ def _print_networks() -> None:
     print("  livejournal social-community cover: all, top5000")
     print("  youtube     channel cover: all, top5000")
     print("  wikipedia   wiki-topcats category cover: all (directed graph)")
+    print("  friendster  AGMfit social-community cover: all, top5000 (replication profile)")
+    print("  orkut       AGMfit social-community cover: all, top5000 (replication profile)")
     print("Excluded: email-Eu-core, Cora, and PubMed have disjoint labels; prior resolution artifacts are output only.")
 
 
@@ -1709,8 +1744,28 @@ def _print_methods() -> None:
 
 def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
     profile = PROFILE_DEFAULTS[args.profile]
-    datasets = _parse_csv(args.datasets, network_names(), "dataset") or profile["datasets"]
-    methods = _parse_csv(args.methods, METHODS, "method") or profile["methods"]
+    valid_datasets = (
+        tuple(SPECS)
+        if args.profile == "agmfit-replication"
+        else network_names()
+    )
+    datasets = _parse_csv(args.datasets, valid_datasets, "dataset") or profile["datasets"]
+    canonical_methods = None
+    method_choices = METHODS
+    if args.methods is not None and str(args.methods).strip().lower() in {"all", "literature"}:
+        method_choices = LITERATURE_METHODS
+        canonical_methods = "all"
+    elif args.methods is not None:
+        canonical_methods = ",".join(
+            canonical_method_name(part)
+            for part in str(args.methods).split(",")
+            if part.strip()
+        )
+    methods = (
+        list(method_choices)
+        if canonical_methods == "all"
+        else _parse_csv(canonical_methods, method_choices, "method")
+    ) or profile["methods"]
     skip_methods = _parse_csv(args.skip_methods, METHODS, "skip-methods") or []
     unknown_skip_methods = sorted(set(skip_methods) - set(methods))
     if unknown_skip_methods:
@@ -1735,6 +1790,16 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
     )
     if timeout_per_run <= 0 and not args.dry_run:
         raise ValueError("--timeout_per_run must be positive unless used only for a dry-run")
+    subgraph_strategy = args.subgraph_strategy or profile["subgraph_strategy"]
+    subgraph_replicates = (
+        args.subgraph_replicates
+        if args.subgraph_replicates is not None
+        else profile["subgraph_replicates"]
+    )
+    if subgraph_replicates <= 0:
+        raise ValueError("--subgraph_replicates must be positive")
+    if subgraph_strategy == "bounded" and subgraph_replicates != 1:
+        raise ValueError("bounded subgraph strategy supports exactly one window")
     return {
         "datasets": datasets,
         "methods": methods,
@@ -1743,6 +1808,8 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
         "seeds": parse_seeds(args.seeds) or profile["seeds"],
         "resolutions": parse_resolutions(args.resolutions) or profile["resolutions"],
         "max_nodes": args.max_nodes if args.max_nodes is not None else profile["max_nodes"],
+        "subgraph_strategy": subgraph_strategy,
+        "subgraph_replicates": subgraph_replicates,
         "max_memberships": args.max_memberships,
         "memory_limit_bytes": (
             int(args.memory_limit_gb * (1024**3))
@@ -1756,16 +1823,92 @@ def _effective_options(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _run_agmfit_replication_profile(
+    args: argparse.Namespace, options: dict[str, Any]
+) -> int:
+    """Materialize the AGMfit §VI sampling ledger without running detectors.
+
+    The historical benchmark loop stores one graph per dataset and cannot
+    represent 500 graph identities in a single run record.  This dedicated
+    profile therefore performs the paper's sampling stage only and writes a
+    replayable ledger; detector experiments can consume a selected window
+    explicitly without silently mixing graphs across conditions.
+    """
+    data_root = Path(args.data_root).expanduser() if args.data_root else DEFAULT_NETWORKS_DIR
+    output_dir = _safe_output_dir(
+        expand_path(args.output_dir)
+        if args.output_dir
+        else OVERLAPPING_ARTIFACTS_DIR / "snap_benchmark" / "agmfit-replication",
+        data_root,
+    )
+    ledger: dict[str, Any] = {
+        "schema_version": 1,
+        "profile": "agmfit-replication",
+        "article": {
+            "citation": "Yang & Leskovec, ICDM 2012",
+            "section": "VI Experimental setup",
+            "pdf_page": 7,
+            "figure": 8,
+            "subgraphs_per_dataset": int(options["subgraph_replicates"]),
+        },
+        "strategy": "random_overlap_anchor_union_induced_subgraph",
+        "datasets": {},
+    }
+    for dataset_index, dataset_name in enumerate(options["datasets"]):
+        try:
+            dataset = load_snap_dataset(
+                dataset_name,
+                cover_variant=options["cover"],
+                data_root=data_root,
+            )
+            # Distinct dataset-derived seeds make the ledger stable while
+            # avoiding accidental reuse of the same anchor stream.
+            dataset_seed = int(args.subgraph_seed) if getattr(args, "subgraph_seed", None) is not None else dataset_index
+            windows = sample_agmfit_subgraphs(
+                dataset,
+                n_subgraphs=options["subgraph_replicates"],
+                seed=dataset_seed,
+            )
+            ledger["datasets"][dataset_name] = {
+                "status": "sampled",
+                "source_report": dataset.report,
+                "windows": [
+                    {
+                        "index": index,
+                        "seed": item.report["agmfit_subgraph"]["seed"],
+                        "anchor_vertex_original_index": item.report["agmfit_subgraph"]["anchor_vertex_original_index"],
+                        "anchor_membership_count": item.report["agmfit_subgraph"]["anchor_membership_count"],
+                        "n": item.graph.vcount(),
+                        "m": item.graph.ecount(),
+                        "community_count": len(item.cover),
+                        "graph_sha256": graph_sha256(item.graph),
+                        "cover_sha256": cover_sha256(item.cover),
+                    }
+                    for index, item in enumerate(windows)
+                ],
+            }
+        except (SnapLoadError, ValueError) as exc:
+            ledger["datasets"][dataset_name] = {"status": "unavailable", "reason": str(exc)}
+    _write_json(output_dir / "agmfit_subgraphs.json", ledger)
+    print(f"[done] AGMfit sampling ledger: {output_dir / 'agmfit_subgraphs.json'}")
+    return 0
+
+
 def run_benchmark(args: argparse.Namespace) -> int:
     """Run the configured suite. Public for small-fixture tests and scripts."""
     options = _effective_options(args)
+    if args.profile == "agmfit-replication":
+        return _run_agmfit_replication_profile(args, options)
     experiment_identity = current_experiment_identity()
     selected_methods = resolve_methods(options["methods"])
-    if not experiment_identity["tracked_files_match_lock"]:
+    # Smoke records identity but is not the frozen 125-condition producer.
+    # Standard/full still refuse a drifted wrapper rather than rewrite the lock.
+    enforce_protocol_lock = args.profile != "smoke"
+    if enforce_protocol_lock and not experiment_identity["tracked_files_match_lock"]:
         raise ValueError("Protocol-locked code/config hashes do not match; refresh and review the lock")
-    if not experiment_identity["lucas_igraph"]["package_identity_matches_lock"]:
+    if enforce_protocol_lock and not experiment_identity["lucas_igraph"]["package_identity_matches_lock"]:
         raise ValueError("installed lucas-igraph package does not match the protocol-locked release")
-    if not experiment_identity["scientific_dependencies_match_lock"]:
+    if enforce_protocol_lock and not experiment_identity["scientific_dependencies_match_lock"]:
         raise ValueError(
             "installed numerical packages do not match the protocol-locked implementations"
         )
@@ -1798,7 +1941,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
             )
         )
     ]
-    if selected_external_mismatches:
+    if enforce_protocol_lock and selected_external_mismatches:
         raise ValueError(
             "installed external baseline packages do not match the protocol-locked "
             "implementations: " + ", ".join(selected_external_mismatches)
@@ -1985,6 +2128,9 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             "external_baseline_policy": adapter.name in options["skip_methods"],
                         },
                         "_artifact_root": output_dir,
+                        "_identity_policy": (
+                            "frozen_lock" if enforce_protocol_lock else "same_environment"
+                        ),
                         "_analysis_graph_object": dataset.graph,
                         "_ground_truth_cover": dataset.cover,
                         "_method_available": bool(
@@ -2117,6 +2263,28 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 "execution": "dependency_unavailable",
                             },
                         )
+                        # Availability is a capability decision, not a
+                        # detector failure. Persist the diagnostic record and
+                        # do not invoke the runner (which could otherwise
+                        # turn an unavailable optional baseline into a noisy
+                        # generic failure).
+                        record["execution"] = "dependency_unavailable"
+                        _write_json(path, record)
+                        _append_log(
+                            output_dir,
+                            f"dataset={dataset.name} method={adapter.name} seed={seed} "
+                            f"resolution={resolution:.12g} status={record['status']}",
+                        )
+                        record["run_path"] = path.relative_to(output_dir).as_posix()
+                        records.append(record)
+                        manifest["execution_counts"]["dependency_unavailable"] = (
+                            manifest["execution_counts"].get("dependency_unavailable", 0) + 1
+                        )
+                        print(
+                            f"[unsupported] {dataset.name}/{adapter.name}/seed={seed}/"
+                            f"resolution={resolution:.6g}: {availability[adapter.name]['reason']}"
+                        )
+                        continue
                     else:
                         print(
                             f"[run] {dataset.name}/{adapter.name} seed={seed} "
@@ -2132,6 +2300,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             timeout_seconds=timeout_seconds,
                             memory_limit_bytes=options["memory_limit_bytes"],
                             initial_membership=initial_membership,
+                            ground_truth=(
+                                dataset.cover
+                                if adapter.name in GROUND_TRUTH_REQUIRED_METHODS
+                                else None
+                            ),
                         )
                         if outcome["status"] == "ok":
                             detector_cover = outcome.pop("cover")

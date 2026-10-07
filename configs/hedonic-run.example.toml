@@ -1,0 +1,23 @@
+# Example per-user settings for `hedonic run`.
+# Copy to ~/.config/hedonic/config.toml (or point HEDONIC_CONFIG at a copy),
+# or build it with `hedonic config set KEY VALUE`.
+
+# What a bare `hedonic run` starts: a named config (default, paper, or one of
+# the [profiles.*] below) or a path to a .json/.toml config file.
+run = "paper"
+
+[defaults]          # machine settings, applied to every run unless a flag overrides them
+output_dir = "~/hedonic-runs"
+# cache_dir = "~/.cache/hedonic"
+# network_root = "~/Databases/Hedonic/Networks"   # local SNAP archives, if any
+# threads = 8
+
+[profiles.quick]    # your own named configs: any `hedonic run exp` setting
+networks = ["dblp", "amazon"]
+methods = ["hoc_local", "codeseg", "fox", "cpm"]
+nodes = 20000
+seeds = "0-4"
+
+[profiles.paper-3seeds]
+config = "paper"    # start from a named config and change a few settings
+seeds = "0-2"

@@ -40,6 +40,8 @@ CONSTRUCTION_CAVEAT = (
     "overlapping LFR."
 )
 SCHEMA_VERSION = 2
+# Legacy result-schema marker.  Execution is controlled solely by the
+# negative n_iterations value passed to community_hedonic.
 ENSURE_EQUILIBRIUM = True
 ALLOW_ISOLATION = True
 NEUTRAL_START_SEED_OFFSET = 91_001
@@ -288,7 +290,6 @@ def _neutral_disjoint_start(graph: ig.Graph, resolution: float, seed: int) -> li
         n_iterations=-1,
         seed=seed,
         allow_isolation=ALLOW_ISOLATION,
-        ensure_equilibrium=ENSURE_EQUILIBRIUM,
     )
     return [int(label) for label in partition.membership]
 
@@ -315,7 +316,6 @@ def _detector_worker(
             allow_isolation=ALLOW_ISOLATION,
             initial_membership=initial_membership,
             seed=seed,
-            ensure_equilibrium=ENSURE_EQUILIBRIUM,
         )
         queue.put(
             {

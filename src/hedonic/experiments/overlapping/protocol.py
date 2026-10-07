@@ -1857,7 +1857,7 @@ def _write_report(report: dict[str, Any], output: Path) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Read-only audit of the public overlapping benchmark identity")
+    parser = argparse.ArgumentParser(description="Read-only audit of the locked overlapping-paper evidence")
     parser.add_argument(
         "--artifact-dir",
         type=Path,
@@ -1870,7 +1870,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("configs/hedonic.toml"),
+        default=Path("configs/hedonic-equilibrium-v2.toml"),
     )
     parser.add_argument("--lock", type=Path, default=LOCK_PATH)
     parser.add_argument("--output", type=Path, help="Optional JSON report path; writes a sibling CSV")

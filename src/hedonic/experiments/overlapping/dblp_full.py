@@ -18,7 +18,7 @@ import igraph as ig
 import numpy as np
 
 from hedonic import Game
-from hedonic.experiments.config import DBLP_DIR
+from hedonic.experiments.config import DBLP_DIR, OVERLAPPING_ARTIFACTS_DIR, expand_path
 from hedonic.experiments.overlapping.metrics import (
     cover_quality,
     evaluate_cover,
@@ -27,6 +27,12 @@ from hedonic.experiments.overlapping.metrics import (
     quality_overlapping_cpm,
 )
 from hedonic.experiments.overlapping.protocol import current_experiment_identity
+
+
+ALLOW_ISOLATION = True
+# Legacy result-schema marker.  Execution is controlled solely by the
+# negative n_iterations value passed to community_hedonic.
+ENSURE_EQUILIBRIUM = True
 
 
 def log(msg: str, t0: float | None = None) -> None:
@@ -168,9 +174,11 @@ def run_experiment(
     results = {
         "params": {
             "resolution": resolution,
-            "n_iterations": n_iter,
+            "n_iterations": -1 if ENSURE_EQUILIBRIUM else n_iter,
             "max_memberships": k,
             "n_gt_communities": len(gt),
+            "allow_isolation": ALLOW_ISOLATION,
+            "ensure_equilibrium": ENSURE_EQUILIBRIUM,
         }
     }
 
@@ -181,6 +189,7 @@ def run_experiment(
         n_iterations=-1,
         max_memberships=1,
         local_move_only=False,
+        allow_isolation=ALLOW_ISOLATION,
     )
     t_leiden = time.time() - t0
     leiden_cover = partition_to_cover_lists(leiden_part)
@@ -205,10 +214,11 @@ def run_experiment(
     t0 = time.time()
     hedonic_cover_obj = game.community_hedonic(
         resolution=resolution,
-        n_iterations=n_iter,
+        n_iterations=-1 if ENSURE_EQUILIBRIUM else n_iter,
         max_memberships=k,
         local_move_only=True,
         initial_membership=list(leiden_part.membership),
+        allow_isolation=ALLOW_ISOLATION,
     )
     t_hedonic = time.time() - t0
     cover_lists = partition_to_cover_lists(hedonic_cover_obj)
@@ -274,6 +284,7 @@ def resolution_sweep(game, gt, resolutions, n_iter, max_memberships: int | None 
             n_iterations=-1,
             max_memberships=1,
             local_move_only=False,
+            allow_isolation=ALLOW_ISOLATION,
         )
         log(f"  {max(part.membership) + 1:,} communities in {time.time() - t:.1f}s")
 
@@ -281,10 +292,11 @@ def resolution_sweep(game, gt, resolutions, n_iter, max_memberships: int | None 
         t = time.time()
         cover_obj = game.community_hedonic(
             resolution=res,
-            n_iterations=n_iter,
+            n_iterations=-1 if ENSURE_EQUILIBRIUM else n_iter,
             max_memberships=k,
             local_move_only=True,
             initial_membership=list(part.membership),
+            allow_isolation=ALLOW_ISOLATION,
         )
         cover = partition_to_cover_lists(cover_obj)
         log(f"  {len(cover):,} communities in {time.time() - t:.1f}s")
@@ -294,7 +306,9 @@ def resolution_sweep(game, gt, resolutions, n_iter, max_memberships: int | None 
         metrics = _evaluate_no_omega(cover, gt, n)
         metrics["resolution"] = res
         metrics["max_memberships"] = k
-        metrics["n_iterations"] = n_iter
+        metrics["n_iterations"] = -1 if ENSURE_EQUILIBRIUM else n_iter
+        metrics["allow_isolation"] = ALLOW_ISOLATION
+        metrics["ensure_equilibrium"] = ENSURE_EQUILIBRIUM
         q = cover_quality(cover_obj)
         if q is None:
             q = quality_overlapping_cpm(game, cover, res)
@@ -340,8 +354,16 @@ def main(argv=None):
         default=0,
         help="Seed the igraph RNG before the detector calls (default: 0).",
     )
-    parser.add_argument("--output", default="results.json")
+    parser.add_argument(
+        "--output",
+        default=str(OVERLAPPING_ARTIFACTS_DIR / "dblp_full" / "results.json"),
+        help=(
+            "JSON result path (default: "
+            "artifacts/overlapping/dblp_full/results.json)"
+        ),
+    )
     args = parser.parse_args(argv)
+    args.output = str(expand_path(args.output))
 
     log("=" * 55)
     log("  DBLP Overlapping Hedonic Game Experiment")

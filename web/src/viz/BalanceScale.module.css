@@ -1,0 +1,38 @@
+.scale {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  font-family: var(--font-body);
+}
+
+.member {
+  transition: transform 520ms var(--ease);
+}
+
+.member circle {
+  transition:
+    r 320ms var(--ease),
+    fill 320ms var(--ease);
+}
+
+.badge {
+  transition: transform 420ms var(--ease);
+}
+
+.badgeText {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.panLetter {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  fill: var(--ink-2);
+}
+
+.agent {
+  font-size: 18px;
+  font-weight: 700;
+  fill: var(--paper);
+}

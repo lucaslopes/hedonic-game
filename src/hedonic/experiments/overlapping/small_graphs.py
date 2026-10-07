@@ -37,7 +37,10 @@ def run_tests() -> None:
     print(f"Resolution (density): {res:.4f}")
 
     cover = g.community_hedonic(
-        resolution=res, n_iterations=-1, max_memberships=4
+        resolution=res,
+        n_iterations=-1,
+        max_memberships=4,
+        allow_isolation=True,
     )
     cover_lists = partition_to_cover_lists(cover)
     print(f"Communities found: {len(cover_lists)}")
@@ -73,7 +76,10 @@ def run_tests() -> None:
     res_sbm = 0.1
     # max_memberships = number of ground-truth communities
     cover_sbm = g_sbm.community_hedonic(
-        resolution=res_sbm, n_iterations=-1, max_memberships=n_blocks
+        resolution=res_sbm,
+        n_iterations=-1,
+        max_memberships=n_blocks,
+        allow_isolation=True,
     )
     cover_sbm_lists = partition_to_cover_lists(cover_sbm)
     print(f"Resolution: {res_sbm}")
@@ -102,7 +108,10 @@ def run_tests() -> None:
     res3 = g3.density()
 
     p_no = g3.community_hedonic(
-        resolution=res3, n_iterations=-1, max_memberships=1
+        resolution=res3,
+        n_iterations=-1,
+        max_memberships=1,
+        allow_isolation=True,
     )
     cover_no = partition_to_cover_lists(p_no)
     q_no = cover_quality(p_no)
@@ -114,6 +123,7 @@ def run_tests() -> None:
         n_iterations=-1,
         max_memberships=4,
         initial_membership=list(p_no.membership),
+        allow_isolation=True,
     )
     cover_ov_lists = partition_to_cover_lists(cover_ov)
     q_ov = cover_quality(cover_ov)

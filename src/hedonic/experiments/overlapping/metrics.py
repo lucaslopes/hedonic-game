@@ -12,13 +12,45 @@ from __future__ import annotations
 from collections import Counter, defaultdict, deque
 from itertools import combinations
 from collections.abc import Sequence
-from typing import Literal
+import math
+from typing import Any, Literal
 
 import numpy as np
 
+SCORE_DEFINITION_VERSION = "canonical_unique_vertex_set_cover_v1"
+SCORE_DEFINITION = {
+    "version": SCORE_DEFINITION_VERSION,
+    "canonicalization": "unique_sorted_vertex_sets",
+    "duplicate_communities": "collapsed_before_scoring",
+    "matching_weight_default": "f1",
+    "matching": "one_to_one_maximum_weight_assignment",
+    "matching_precision_denominator": "canonical_predicted_communities",
+    "matching_recall_denominator": "canonical_ground_truth_communities",
+    "node_micro_denominator": "canonical_vertex_community_incidences",
+    "node_macro_denominator": "aligned_gt_labels_plus_unmatched_predicted_labels",
+    "singleton_mode_default": "all",
+    "singleton_mode_size_ge_2": "drop_communities_of_size_1_before_scoring",
+    "omega": "sampled_pairwise_never_dense_n_by_n",
+    "empty_predicted_or_gt": "precision_or_recall_zero_when_its_denominator_is_zero",
+    "both_empty_matching_mean_weight": 1.0,
+    "uncovered_vertices": "absent_from_incidence_numerators_and_counted_in_coverage_diagnostics",
+}
 SingletonMode = Literal["all", "size_ge_2"]
 MatchingWeight = Literal["f1", "jaccard"]
 MAX_DENSE_MATCHING_CELLS = 5_000_000
+
+# These are the scalar names accepted by ``Game.evaluate_against`` and are
+# useful to notebooks that want the same compact score vector as the smoke
+# report.  Keeping the contract beside the metric implementation prevents
+# report/tutorial cells from duplicating it.
+GAME_EVALUATION_METRICS: tuple[str, ...] = (
+    "f1",
+    "one_to_one_f1",
+    "jaccard",
+    "omega",
+    "node_micro_f1",
+    "size_weighted_community_f1",
+)
 
 
 def cover_quality(result) -> float | None:
@@ -50,6 +82,60 @@ def partition_to_cover_lists(partition) -> list[list[int]]:
 def flat_membership_to_cover_init(membership: list[int]) -> list[list[int]]:
     """Disjoint membership vector → overlapping initial_membership format."""
     return [[int(c)] for c in membership]
+
+
+def cover_to_memberships(
+    cover: Sequence[Sequence[int]], n_vertices: int
+) -> list[list[int]]:
+    """Convert community lists to the canonical per-vertex Game state.
+
+    Vertices absent from a predicted cover receive deterministic singleton
+    labels.  This is the same representation persisted by
+    :meth:`hedonic.Game.community_hedonic`, making the helper convenient for
+    notebooks and experiment adapters that already have a cover in list form.
+    """
+    rows = [[] for _ in range(int(n_vertices))]
+    for community_id, community in enumerate(cover):
+        for vertex in sorted(set(map(int, community))):
+            if 0 <= vertex < n_vertices:
+                rows[vertex].append(community_id)
+    next_label = len(cover)
+    for row in rows:
+        if not row:
+            row.append(next_label)
+            next_label += 1
+    labels = sorted({label for row in rows for label in row})
+    remap = {old: new for new, old in enumerate(labels)}
+    return [[remap[label] for label in row] for row in rows]
+
+
+def score_cover(
+    graph: Any,
+    ground_truth: Sequence[Sequence[int]],
+    cover: Sequence[Sequence[int]],
+    *,
+    metrics: Sequence[str] = GAME_EVALUATION_METRICS,
+    omega_sample_size: int = 10_000,
+    seed: int = 7,
+) -> dict[str, float | None]:
+    """Score a cover through the public :class:`hedonic.Game` facade.
+
+    The import is local so the metrics package remains usable without making
+    the core package eagerly import the optional experiment machinery.
+    """
+    from hedonic import Game
+
+    game = Game(graph)
+    game.memberships = cover_to_memberships(cover, graph.vcount())
+    return {
+        metric: game.evaluate_against(
+            ground_truth,
+            method=metric,
+            omega_sample_size=omega_sample_size,
+            omega_seed=seed,
+        )
+        for metric in metrics
+    }
 
 
 def singleton_cover(n: int) -> list[list[int]]:
@@ -359,6 +445,203 @@ def symmetric_best_match_f1(
     return (pred_mean + gt_mean) / 2.0
 
 
+def _binary_entropy(probability: float) -> float:
+    """Return binary Shannon entropy in bits for a probability in [0, 1]."""
+    if probability <= 0.0 or probability >= 1.0:
+        return 0.0
+    return float(
+        -probability * math.log2(probability)
+        - (1.0 - probability) * math.log2(1.0 - probability)
+    )
+
+
+def _categorical_entropy(probabilities: Sequence[float]) -> float:
+    """Return Shannon entropy in bits for a finite probability vector."""
+    return float(
+        -sum(probability * math.log2(probability) for probability in probabilities if probability > 0.0)
+    )
+
+
+def _pair_conditional_entropy(
+    source_size: int,
+    target_size: int,
+    intersection_size: int,
+    universe_size: int,
+) -> float:
+    """Compute the LFK conditional entropy for one community pair.
+
+    This is the pairwise definition used by the original overlapping-NMI
+    implementation (Lancichinetti--Fortunato--Kertész).  The branch selecting
+    the smaller conditional direction is part of the reference implementation
+    and avoids a directional bias for communities with very different sizes.
+    """
+    if universe_size <= 0:
+        return 0.0
+    n = float(universe_size)
+    a = (universe_size - source_size - target_size + intersection_size) / n
+    b = (target_size - intersection_size) / n
+    c = (source_size - intersection_size) / n
+    d = intersection_size / n
+    # Rounding at the integer boundary can otherwise produce log2(-0.0).
+    a, b, c, d = (max(0.0, min(1.0, value)) for value in (a, b, c, d))
+    if _binary_entropy(a) + _binary_entropy(d) > _binary_entropy(b) + _binary_entropy(c):
+        joint = _categorical_entropy((a, b, c, d))
+        return max(0.0, joint - _binary_entropy(target_size / n))
+    return _binary_entropy(source_size / n)
+
+
+def _sparse_best_conditional_entropy(
+    source_sets: Sequence[set[int]],
+    target_sets: Sequence[set[int]],
+    intersections: dict[tuple[int, int], int],
+    universe_size: int,
+) -> list[float]:
+    """Average best-match conditional entropy without a dense pair matrix.
+
+    Positive intersections are enumerated through a vertex inverted index.  A
+    source community can also match a target with no shared vertices, so the
+    lower envelope of those zero-intersection pairs is considered by target
+    community size.  The resulting score is equivalent to the reference
+    implementation for set covers, while avoiding the quadratic community-pair
+    allocation that is infeasible on DBLP and the other SNAP archives.
+    """
+    if not source_sets:
+        return 0.0
+    target_sizes = [len(community) for community in target_sets]
+    size_counts = Counter(target_sizes)
+    unique_target_sizes = np.asarray(sorted(size_counts), dtype=np.int64)
+    target_size_counts = np.asarray(
+        [size_counts[int(size)] for size in unique_target_sizes], dtype=np.int64
+    )
+    conditional_cache: dict[tuple[int, int, int], float] = {}
+
+    def conditional(source_size: int, target_size: int, intersection: int) -> float:
+        key = (int(source_size), int(target_size), int(intersection))
+        value = conditional_cache.get(key)
+        if value is None:
+            value = _pair_conditional_entropy(
+                source_size, target_size, intersection, universe_size
+            )
+            conditional_cache[key] = value
+        return value
+
+    overlapped_sizes_by_source: dict[int, Counter[int]] = defaultdict(Counter)
+    positive_pairs_by_source: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for (source_index, target_index), intersection in intersections.items():
+        if intersection > 0:
+            overlapped_sizes_by_source[source_index][
+                len(target_sets[target_index])
+            ] += 1
+            positive_pairs_by_source[source_index].append((target_index, intersection))
+
+    best_values: list[float] = []
+    for source_index, source in enumerate(source_sets):
+        source_size = len(source)
+        best = float("inf")
+        # There is a zero-intersection candidate for a size if at least one
+        # target community of that size is not present in the positive pair
+        # list for this source community.
+        overlapped_sizes = overlapped_sizes_by_source.get(source_index, Counter())
+        if unique_target_sizes.size:
+            available = np.asarray(
+                [
+                    int(count) > int(overlapped_sizes.get(int(size), 0))
+                    for size, count in zip(unique_target_sizes, target_size_counts)
+                ],
+                dtype=bool,
+            )
+            for target_size in unique_target_sizes[available].tolist():
+                best = min(
+                    best,
+                    conditional(source_size, int(target_size), 0),
+                )
+        for target_index, intersection in positive_pairs_by_source.get(source_index, ()):
+            best = min(
+                best,
+                conditional(source_size, len(target_sets[target_index]), int(intersection)),
+            )
+        # An empty target cover is handled by the public function.  This guard
+        # keeps malformed/degenerate covers from propagating infinity.
+        best_values.append(0.0 if not math.isfinite(best) else best)
+    return best_values
+
+
+def overlapping_normalized_mutual_information_lfk(
+    predicted: Sequence[Sequence[int]],
+    ground_truth: Sequence[Sequence[int]],
+    *,
+    n_vertices: int | None = None,
+) -> float:
+    """Compute the LFK overlapping normalized mutual information (ONMI).
+
+    The CoDeSEG paper delegates ONMI to the LFK/OvpNMI implementation.  This
+    experiment-layer implementation keeps the same pairwise entropy definition
+    but enumerates only positive community intersections, so it remains usable
+    on the full SNAP covers.  ``n_vertices`` controls the universe used for
+    entropy; omit it to reproduce the paper's evaluation convention of using
+    the union of vertices appearing in either cover.
+    """
+    pred_sets = _cover_sets(predicted, "all")
+    gt_sets = _cover_sets(ground_truth, "all")
+    if not pred_sets and not gt_sets:
+        return 1.0
+    if not pred_sets or not gt_sets:
+        return 0.0
+    if pred_sets == gt_sets:
+        return 1.0
+
+    if n_vertices is None:
+        universe = set().union(*(pred_sets + gt_sets))
+        universe_size = len(universe)
+    else:
+        universe_size = int(n_vertices)
+    if universe_size <= 0:
+        return 0.0
+
+    def positive_intersections(
+        left: Sequence[set[int]], right: Sequence[set[int]]
+    ) -> dict[tuple[int, int], int]:
+        vertex_to_right: dict[int, list[int]] = defaultdict(list)
+        for right_index, community in enumerate(right):
+            for vertex in community:
+                vertex_to_right[vertex].append(right_index)
+        counts: dict[tuple[int, int], int] = defaultdict(int)
+        for left_index, community in enumerate(left):
+            for vertex in community:
+                for right_index in vertex_to_right.get(vertex, ()):
+                    counts[(left_index, right_index)] += 1
+        return dict(counts)
+
+    pred_to_gt = positive_intersections(pred_sets, gt_sets)
+    gt_to_pred = {
+        (gt_index, pred_index): intersection
+        for (pred_index, gt_index), intersection in pred_to_gt.items()
+    }
+    pred_conditional = _sparse_best_conditional_entropy(
+        pred_sets, gt_sets, pred_to_gt, universe_size
+    )
+    gt_conditional = _sparse_best_conditional_entropy(
+        gt_sets, pred_sets, gt_to_pred, universe_size
+    )
+
+    # LFK normalizes each directional conditional entropy by the binary
+    # entropy of its source community before averaging over communities.
+    pred_normalized = 0.0
+    for community, conditional in zip(pred_sets, pred_conditional):
+        entropy = _binary_entropy(len(community) / universe_size)
+        pred_normalized += 1.0 if entropy == 0.0 else conditional / entropy
+    gt_normalized = 0.0
+    for community, conditional in zip(gt_sets, gt_conditional):
+        entropy = _binary_entropy(len(community) / universe_size)
+        gt_normalized += 1.0 if entropy == 0.0 else conditional / entropy
+    value = 1.0 - 0.5 * (
+        pred_normalized / len(pred_sets) + gt_normalized / len(gt_sets)
+    )
+    # Numerical round-off in very small/large communities can move the value a
+    # few ulps outside the metric's closed interval.
+    return float(max(0.0, min(1.0, value)))
+
+
 def symmetric_best_match_metrics(
     predicted: Sequence[Sequence[int]],
     ground_truth: Sequence[Sequence[int]],
@@ -654,6 +937,12 @@ def evaluate_cover(
             pred_sets, gt_sets, pred_scores, gt_scores
         ),
         "singleton_mode": singleton_mode,
+        "score_definition_version": SCORE_DEFINITION_VERSION,
+        # One-sided best-match F1 in each direction; their mean is ``f1``.
+        # reference_to_detected_f1 is the "average F1" of NEO-K-Means/NISE/SSE.
+        "reference_to_detected_f1": (sum(sc[0] for sc in gt_scores) / len(gt_scores)) if gt_scores else 0.0,
+        "detected_to_reference_f1": (sum(sc[0] for sc in pred_scores) / len(pred_scores)) if pred_scores else 0.0,
+        "nf1": normalized_f1_rossetti(predicted, ground_truth),
     }
     result.update(
         _one_to_one_metrics_from_matches(
@@ -668,6 +957,55 @@ def evaluate_cover(
         )
     )
     return result
+
+
+def normalized_f1_rossetti(
+    predicted: Sequence[Sequence[int]],
+    ground_truth: Sequence[Sequence[int]],
+) -> float:
+    """NF1 of Rossetti, Pappalardo & Rinzivillo (2016), as used by ANGEL.
+
+    A faithful port of the reference implementation (``NF1`` in CDlib 0.4.0,
+    ``cdlib/evaluation/internal/NF1.py``), including its conventions: each
+    detected community is matched to the reference communities with the largest
+    member count among its vertices (ties give several matches); a vertex is
+    counted only in the first detected community in which it appears; each
+    match's F1 is rounded to two decimals. NF1 = mean F1 x coverage / redundancy,
+    where coverage is the fraction of reference communities matched and
+    redundancy is the number of detected communities per matched reference
+    community.
+    """
+    gt = [list(c) for c in ground_truth]
+    if not gt:
+        return 0.0
+    node_to_gt: dict[int, list[int]] = defaultdict(list)
+    for cid, nodes in enumerate(gt):
+        for v in nodes:
+            node_to_gt[v].append(cid)
+    seen: set[int] = set()
+    matched: set[int] = set()
+    f1s: list[float] = []
+    communities = [list(c) for c in predicted]
+    for nodes in communities:
+        counts: Counter = Counter()
+        for v in nodes:
+            if v not in seen:
+                seen.add(v)
+                for cid in node_to_gt.get(v, ()):
+                    counts[cid] += 1
+        if not counts or not nodes:
+            continue
+        best = max(counts.values())
+        for cid, p in counts.items():
+            if p == best:
+                matched.add(cid)
+                precision, recall = p / len(nodes), p / len(gt[cid])
+                f1s.append(float("%.2f" % (2 * precision * recall / (precision + recall))))
+    if not f1s or not matched:
+        return 0.0
+    coverage = len(matched) / len(gt)
+    redundancy = len(communities) / len(matched)
+    return (sum(f1s) / len(f1s)) * coverage / redundancy
 
 
 def omega_index(
