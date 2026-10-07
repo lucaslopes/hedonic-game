@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-13]
+        os: [ubuntu-22.04, windows-latest, macos-latest]
         # Exercise both supported CPython minors on every uploaded platform.
         python-version: ["3.12", "3.13"]
     steps:
