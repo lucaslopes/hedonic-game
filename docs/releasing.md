@@ -1,7 +1,7 @@
 # Publishing Hedonic
 
-Hedonic uses independent three-component versions. Release 0.1.1 depends on
-`lucas-igraph==1.0.0.4`. The public `main` branch is the publication boundary;
+Hedonic uses independent three-component versions. Release 1.5.0 depends on
+`lucas-igraph==1.0.0.5`. The public `main` branch is the publication boundary;
 never push the private `paper` branch or merge its history into `main`.
 
 1. Prepare the version, dependency pin, README and changelog on `main`.
@@ -11,7 +11,7 @@ never push the private `paper` branch or merge its history into `main`.
    tests/test_overlapping_and_experiments.py::TestCommunityHedonic`), source
    compilation, and `uv build --no-sources`. The research protocol tests are
    intentionally pinned to the historical `lucas-igraph 1.0.0.3` environment;
-   they remain unchanged and are not a release gate for the `.4` dependency
+   they remain unchanged and are not a release gate for a later dependency
    update.
 3. Review the package contents and commit, then push `main`. The
    `Publish to PyPI` workflow tests and saves wheel/sdist artifacts without
@@ -25,6 +25,13 @@ never push the private `paper` branch or merge its history into `main`.
    rebuild or overwrite an existing tag.
 6. Verify the PyPI version and artifact hashes. On a partial upload, inspect
    the index and run preflight again before deciding whether to retry.
+
+After publication, manually dispatch the `Validate released wheels` workflow
+with the immutable version (for this checkout, `1.5.0`). It installs that
+exact release with binary-only dependencies on Ubuntu, Windows, and macOS
+under CPython 3.12 and 3.13. The verifier checks the installed distribution
+origin, confirms the exact `lucas-igraph==1.0.0.5` requirement, and exercises
+the direction-preserving graph copy and round-trip behavior.
 
 For an authorized manual upload, run `./scripts/release.sh publish-pypi --publish`
 from the tagged release checkout. Without a configured `UV_PUBLISH_TOKEN`, the
