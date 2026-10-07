@@ -60,6 +60,7 @@ function MetagraphStage({ active, gamma, setGamma }: MetagraphChapterProps & { a
           showSameLayer={showArcs}
           selectedId={selected}
           onSelectNode={(id) => setSelected((current) => (current === id ? null : id))}
+          onClearSelection={() => setSelected(null)}
         />
       </div>
       {mode !== 'pair' && <MetagraphLegend mode={mode} />}

@@ -60,6 +60,10 @@ export function ExploreSection({ gamma, setGamma }: ExploreSectionProps) {
                     setSelected(id);
                     setSelectedEdge(null);
                   }}
+                  onClearSelection={() => {
+                    setSelected(null);
+                    setSelectedEdge(null);
+                  }}
                   selectedEdgeId={selectedEdge}
                   onSelectEdge={setSelectedEdge}
                   highlightEdgeId={highlight}

@@ -59,6 +59,8 @@ interface MetagraphViewProps {
   readonly reducedMotion: boolean;
   readonly selectedId?: string | null;
   readonly onSelectNode?: (id: string) => void;
+  /** Called when the empty canvas is clicked (not a node, an edge, or the end of a pan). */
+  readonly onClearSelection?: () => void;
   readonly selectedEdgeId?: string | null;
   readonly onSelectEdge?: (id: string) => void;
   /** Temporarily emphasised edge (e.g. a hovered row of the moves table). */
@@ -190,6 +192,7 @@ export function MetagraphView({
   reducedMotion,
   selectedId = null,
   onSelectNode,
+  onClearSelection,
   selectedEdgeId = null,
   onSelectEdge,
   highlightEdgeId = null,
@@ -511,6 +514,13 @@ export function MetagraphView({
           aria-label={labels.figure}
           aria-describedby={`${uid}-hint`}
           data-orientation={scene.orientation}
+          onClick={
+            onClearSelection
+              ? (event) => {
+                  if (!(event.target as Element).closest(`.${styles.node}`)) onClearSelection();
+                }
+              : undefined
+          }
         >
           <defs>
             {[

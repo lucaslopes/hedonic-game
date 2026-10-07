@@ -65,6 +65,7 @@ export function WalkControls({ metagraph, controller, options, selectedId = null
     <div className={styles.option}>
       <Segmented
         legend={t.walk.rule}
+        fill
         value={options.policy}
         onChange={options.setPolicy}
         options={WALK_POLICIES.map((policy) => ({ value: policy, label: t.walk.policies[policy], title: t.walk.policyHelp[policy] }))}

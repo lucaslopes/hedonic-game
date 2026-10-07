@@ -87,6 +87,11 @@ export function WalkChapter({ gamma, setGamma }: WalkChapterProps) {
                 options.setStart(id);
                 controller.reset();
               }}
+              onClearSelection={() => {
+                if (options.start === METAGRAPH.grandCoalitionId) return;
+                options.setStart(METAGRAPH.grandCoalitionId);
+                controller.reset();
+              }}
             />
           </div>
           {!compact && <MetagraphLegend mode="walk" />}

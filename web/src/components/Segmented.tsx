@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, type CSSProperties } from 'react';
 import styles from './Segmented.module.css';
 
 interface SegmentedProps<T extends string> {
@@ -7,15 +7,17 @@ interface SegmentedProps<T extends string> {
   readonly options: readonly { readonly value: T; readonly label: string; readonly title?: string }[];
   readonly onChange: (value: T) => void;
   readonly hideLegend?: boolean;
+  /** Stretch to the container width with equal-sized options (for long labels). */
+  readonly fill?: boolean;
 }
 
 /** A pill-shaped radio group; native radios keep arrow-key navigation. */
-export function Segmented<T extends string>({ legend, value, options, onChange, hideLegend }: SegmentedProps<T>) {
+export function Segmented<T extends string>({ legend, value, options, onChange, hideLegend, fill }: SegmentedProps<T>) {
   const name = useId();
   return (
-    <fieldset className={styles.group}>
+    <fieldset className={`${styles.group} ${fill ? styles.fill : ''}`}>
       <legend className={hideLegend ? 'visually-hidden' : styles.legend}>{legend}</legend>
-      <div className={styles.options}>
+      <div className={styles.options} style={fill ? ({ '--cols': options.length } as CSSProperties) : undefined}>
         {options.map((option) => (
           <label key={option.value} className={styles.option} title={option.title}>
             <input
