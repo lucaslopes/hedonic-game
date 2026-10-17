@@ -322,6 +322,16 @@ latency. A cover's
 rows live in one pool with power-of-two capacities (at most `M`), relocated
 when they grow and compacted when the pool's waste exceeds its live size.
 
+For unit edge weights, a partition visit accumulates support for its own
+community in a local scalar, avoiding its sparse-accumulator lookup on
+every internal edge. The additions still follow CSR edge order: the first
+`0 + 1` is exactly the former assignment of `1`, and each later partial sum
+is identical by induction. Thus the summation and its error bound are
+unchanged. That community is appended to the candidate array for the rare
+bound paths to recall; scoring and the heap walk already exclude it. Every
+alternative keeps its encounter order and tie-breaking. Weighted edges
+retain the original sparse accumulation, including signed-zero behavior.
+
 ## Determinism and platforms
 
 No threads, fixed summation orders, `-ffp-contract=off` (`/fp:strict` on

@@ -433,6 +433,12 @@ HIG_ALWAYS_INLINE hig_error_t hig_partition_visit(hig_partition_state_t *s, hig_
     }
     for (int64_t i = begin; i < end; i++) {
         const hig_id c = s->membership[s->graph.adj[i]];
+        /* Own support needs no sparse lookup. Keep the same unit additions
+         * in CSR order; 0 + 1 is exactly the old first assignment of 1. */
+        if (!weighted && c == c0) {
+            own_weight += 1.0;
+            continue;
+        }
         const double w = weighted ? s->graph.weight[i] : 1.0;
         const hig_id slot = group[c].slot;
         if (weighted) {
@@ -449,8 +455,15 @@ HIG_ALWAYS_INLINE hig_error_t hig_partition_visit(hig_partition_state_t *s, hig_
     }
     if (!weighted) {
         abs_weight = (double) (end - begin);
+        if (own_weight > 0.0) {
+            /* The rare bound paths recall it from the candidate array.
+             * c0 is skipped by scoring and the heap walk, so appending it
+             * preserves the encounter order and ties of every alternative. */
+            s->candidate[count] = c0;
+            s->candidate_weight[count++] = own_weight;
+        }
     }
-    if (group[c0].slot >= 0) {
+    if (weighted && group[c0].slot >= 0) {
         own_weight = s->candidate_weight[group[c0].slot];
     }
     stay = hig_fma(-gn, alone ? 0.0 : (group[c0].mass - nv) + s->tail[c0].lo, own_weight);
