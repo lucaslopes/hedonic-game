@@ -86,7 +86,7 @@ typedef struct {
     hig_id occupied;
 
     double *inv_sqrt;           /* inv_sqrt[k] = 1 / sqrt(k), k <= cap */
-    bool use_heap;
+    bool use_heap, heap_ready;
     hig_heap_t heap;
 
     hig_id *candidate;
@@ -143,7 +143,7 @@ static hig_error_t hig_cover_reserve_labels(hig_cover_state_t *s, int64_t ids) {
         s->group[c] = (hig_group_t) { 0.0, 0, -1 };
         s->tail[c].lo = s->tail[c].err = 0.0;
     }
-    if (s->use_heap) {
+    if (s->heap_ready) {
         HIG_TRY(hig_heap_reserve(&s->heap, capacity));
     }
     s->label_capacity = capacity;
@@ -214,7 +214,7 @@ static void hig_cover_rebuild(hig_cover_state_t *s) {
         }
     }
     s->rebuild = false;   /* a fresh sum is as good as it gets */
-    if (s->use_heap) {
+    if (s->heap_ready) {
         hig_heap_clear(&s->heap);
         for (hig_id c = 0; c < s->label_count; c++) {
             if (s->group[c].members > 0) {
@@ -234,13 +234,13 @@ static hig_error_t hig_cover_leave(hig_cover_state_t *s, hig_id c, double term) 
         HIG_TRY(hig_grow(&s->free_ids, &s->free_capacity, s->free_count + 1, sizeof(hig_id)));
         s->free_ids[s->free_count++] = c;
         s->occupied--;
-        if (s->use_heap) {
+        if (s->heap_ready) {
             hig_heap_remove(&s->heap, s->group, c);
         }
     } else {
         hig_mass_add(&group->mass, &s->tail[c].lo, &s->tail[c].err, -term);
         hig_cover_track(s, c);
-        if (s->use_heap) {
+        if (s->heap_ready) {
             hig_heap_update(&s->heap, s->group, c);
         }
     }
@@ -255,13 +255,13 @@ static void hig_cover_join(hig_cover_state_t *s, hig_id c, double term) {
         group->mass = term;
         s->tail[c].lo = s->tail[c].err = 0.0;
         s->occupied++;
-        if (s->use_heap) {
+        if (s->heap_ready) {
             hig_heap_insert(&s->heap, s->group, c);
         }
     } else {
         hig_mass_add(&group->mass, &s->tail[c].lo, &s->tail[c].err, term);
         hig_cover_track(s, c);
-        if (s->use_heap) {
+        if (s->heap_ready) {
             hig_heap_update(&s->heap, s->group, c);
         }
     }
@@ -271,9 +271,25 @@ static void hig_cover_rescale(hig_cover_state_t *s, hig_id c, double old_term, d
     hig_mass_add(&s->group[c].mass, &s->tail[c].lo, &s->tail[c].err, -old_term);
     hig_mass_add(&s->group[c].mass, &s->tail[c].lo, &s->tail[c].err, new_term);
     hig_cover_track(s, c);
-    if (s->use_heap) {
+    if (s->heap_ready) {
         hig_heap_update(&s->heap, s->group, c);
     }
+}
+
+/* Build only when a visit first needs labels without edge support. The
+ * mass/id ordering is the same as if every preceding update maintained it. */
+static hig_error_t hig_cover_prepare_heap(hig_cover_state_t *s) {
+    hig_error_t status = hig_heap_reserve(&s->heap, s->label_capacity);
+    if (status != HIG_SUCCESS) {
+        return status;
+    }
+    for (hig_id c = 0; c < s->label_count; c++) {
+        if (s->group[c].members > 0) {
+            hig_heap_insert(&s->heap, s->group, c);
+        }
+    }
+    s->heap_ready = true;
+    return HIG_SUCCESS;
 }
 
 /* ---- Rows ------------------------------------------------------------------- */
@@ -625,6 +641,12 @@ HIG_ALWAYS_INLINE hig_error_t hig_cover_visit(hig_cover_state_t *s, hig_id v, co
     if (s->use_heap && (gn < 0.0 || max_gain < 0.0)) {
         const hig_id want = gn < 0.0 ? s->cap : 1;
         hig_id taken = 0;
+        if (!s->heap_ready) {
+            status = hig_cover_prepare_heap(s);
+            if (status != HIG_SUCCESS) {
+                goto reset;
+            }
+        }
         hig_heap_walk_begin(&s->heap);
         while (taken < want) {
             hig_id c;

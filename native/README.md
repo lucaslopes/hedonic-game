@@ -67,7 +67,14 @@ The communities "with no edge to `v`" come from a binary heap of occupied
 communities ordered by mass (heaviest first when `gamma < 0`), walked
 best-first with a small frontier heap, so a visit never scans all
 communities. The heap is kept only when it can matter: `gamma < 0`,
-isolation off, or a count limit.
+isolation off, or a count limit. Even then, it is allocated and built only
+when a visit first needs that walk; preceding moves update the masses and
+member counts without maintaining a heap. Once built, it is maintained on
+every move as usual, including mass rebuilds and new cover labels. Building
+it from the current occupied communities yields the same mass/id ordering
+as maintaining it from the start: the walk's answers, ties, payoff
+arithmetic, certificates and random draws are unchanged. Runs that never
+need an unsupported community avoid all heap allocation and maintenance.
 
 ## Certified moves
 

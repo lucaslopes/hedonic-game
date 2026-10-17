@@ -51,7 +51,7 @@ typedef struct {
     hig_id *free_ids;           /* empty community ids, a stack */
     hig_id free_count;
     hig_id occupied;
-    bool use_heap;
+    bool use_heap, heap_ready;
     hig_heap_t heap;
     hig_id *candidate;          /* the communities of v's neighbours */
     double *candidate_weight;   /* w(v, c) for each */
@@ -115,7 +115,7 @@ static void hig_partition_rebuild(hig_partition_state_t *s) {
         }
     }
     s->rebuild = false;   /* a fresh sum is as good as it gets */
-    if (s->use_heap) {
+    if (s->heap_ready) {
         hig_heap_clear(&s->heap);
         for (hig_id c = 0; c < n; c++) {
             if (s->group[c].members > 0) {
@@ -133,13 +133,13 @@ HIG_ALWAYS_INLINE void hig_partition_leave(hig_partition_state_t *s, hig_id c, d
         s->tail[c].lo = s->tail[c].err = 0.0;
         s->free_ids[s->free_count++] = c;
         s->occupied--;
-        if (s->use_heap) {
+        if (s->heap_ready) {
             hig_heap_remove(&s->heap, s->group, c);
         }
     } else {
         hig_mass_add(&group->mass, &s->tail[c].lo, &s->tail[c].err, -weight);
         hig_partition_track(s, c);
-        if (s->use_heap) {
+        if (s->heap_ready) {
             hig_heap_update(&s->heap, s->group, c);
         }
     }
@@ -152,19 +152,36 @@ HIG_ALWAYS_INLINE void hig_partition_join(hig_partition_state_t *s, hig_id c, do
         group->mass = weight;
         s->tail[c].lo = s->tail[c].err = 0.0;
         s->occupied++;
-        if (s->use_heap) {
+        if (s->heap_ready) {
             hig_heap_insert(&s->heap, s->group, c);
         }
     } else {
         hig_mass_add(&group->mass, &s->tail[c].lo, &s->tail[c].err, weight);
         hig_partition_track(s, c);
-        if (s->use_heap) {
+        if (s->heap_ready) {
             hig_heap_update(&s->heap, s->group, c);
         }
     }
 }
 
 /* ---- Payoff bounds ---------------------------------------------------------- */
+
+/* Most visits never need a community without edge support. Until the first
+ * walk, its heap can be absent: a heap built from the current masses has
+ * exactly the same mass/id order as one maintained since initialization. */
+static hig_error_t hig_partition_prepare_heap(hig_partition_state_t *s) {
+    hig_error_t status = hig_heap_reserve(&s->heap, s->graph.n);
+    if (status != HIG_SUCCESS) {
+        return status;
+    }
+    for (hig_id c = 0; c < s->graph.n; c++) {
+        if (s->group[c].members > 0) {
+            hig_heap_insert(&s->heap, s->group, c);
+        }
+    }
+    s->heap_ready = true;
+    return HIG_SUCCESS;
+}
 
 /* A bound of |exact payoff - r|, r = fl(w - gn m) the computed payoff of an
  * action: w the computed edge weight to it (error <= ew), m the computed mass
@@ -460,6 +477,12 @@ HIG_ALWAYS_INLINE hig_error_t hig_partition_visit(hig_partition_state_t *s, hig_
     }
     walk = s->use_heap && (gn < 0.0 || best_gain < 0.0);
     if (walk) {
+        if (!s->heap_ready) {
+            status = hig_partition_prepare_heap(s);
+            if (status != HIG_SUCCESS) {
+                goto reset;
+            }
+        }
         hig_heap_walk_begin(&s->heap);
         for (;;) {
             hig_id c;
@@ -478,6 +501,7 @@ HIG_ALWAYS_INLINE hig_error_t hig_partition_visit(hig_partition_state_t *s, hig_
             }
         }
     }
+reset:
     for (hig_id k = 0; k < count; k++) {
         group[s->candidate[k]].slot = -1;
     }
@@ -601,9 +625,6 @@ static hig_error_t hig_partition_init(hig_partition_state_t *s, const hig_graph_
     HIG_TRY(hig_alloc(&s->free_ids, n, sizeof(hig_id), false));
     for (hig_id c = n - 1; c >= s->occupied; c--) {
         s->free_ids[s->free_count++] = c;
-    }
-    if (s->use_heap) {
-        HIG_TRY(hig_heap_reserve(&s->heap, n));
     }
     hig_partition_rebuild(s);   /* the masses, theta and the heap */
     HIG_TRY(hig_alloc(&s->candidate, s->graph.max_degree, sizeof(hig_id), false));
