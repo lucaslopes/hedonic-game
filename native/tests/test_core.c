@@ -1200,11 +1200,17 @@ static double random_sign(double x) {
 }
 
 static double special_value(void) {
-    static const double values[] = {0.0, -0.0, INFINITY, -INFINITY, NAN, DBL_MIN, -DBL_MIN,
-                                    4.9406564584124654e-324, -4.9406564584124654e-324,
-                                    DBL_MAX, -DBL_MAX, 1.0, -1.0, 0x1p-1022 - 0x1p-1074};
+    /* As bit patterns: MSVC does not take INFINITY or NAN as constants. 0, -0,
+     * +-inf, a quiet NaN, +-DBL_MIN, +-the least subnormal, +-DBL_MAX, +-1 and
+     * the largest subnormal. */
+    static const uint64_t values[] = {
+        0x0000000000000000ULL, 0x8000000000000000ULL, 0x7ff0000000000000ULL,
+        0xfff0000000000000ULL, 0x7ff8000000000000ULL, 0x0010000000000000ULL,
+        0x8010000000000000ULL, 0x0000000000000001ULL, 0x8000000000000001ULL,
+        0x7fefffffffffffffULL, 0xffefffffffffffffULL, 0x3ff0000000000000ULL,
+        0xbff0000000000000ULL, 0x000fffffffffffffULL};
     const uint64_t i = fma_next() % 16;
-    return i < 14 ? values[i] : random_double(-1080, 1030);
+    return i < 14 ? from_bits(values[i]) : random_double(-1080, 1030);
 }
 
 #define FMA_CLASSES 12
@@ -1293,7 +1299,11 @@ static void fma_case(int cls, double *x, double *y, double *z) {
         const int ex = fma_range(-200, 200), ey = fma_range(-200, 200);
         *x = random_double(ex, ex); *y = random_double(ey, ey);
         (void) frexp(*x * *y, &e);
-        *z = random_sign(ldexp((double) fma_range(1, 8), e - 53 - fma_range(0, 3)));
+        /* One draw per statement: C leaves the order of sibling arguments
+         * unspecified (GCC on x86_64 evaluates them right to left). */
+        const double multiple = (double) fma_range(1, 8);
+        const int drop = fma_range(0, 3);
+        *z = random_sign(ldexp(multiple, e - 53 - drop));
         break;
     }
     }
