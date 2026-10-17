@@ -16,6 +16,7 @@ import json
 import platform
 import random
 import sys
+import time
 
 import networkx as nx
 
@@ -98,6 +99,10 @@ def main() -> int:
     graph.add_edges_from(
         (int(left), int(right)) for left, right in request.get("edges", [])
     )
+    # The detector's clock (hedonic ``timing_scope`` detector-compute-v1): it starts after the interpreter, the CDlib
+    # import and the NetworkX graph above, and stops when the algorithm has returned, before the cover is read out
+    # and printed. The harness records it as the detection time and the rest of this process as isolation overhead.
+    started = time.perf_counter()
     if method == "angel":
         function = algorithms.angel
         # ANGEL's label propagation draws from the module-level ``random`` (angel/alg/iAngel.py), so the request's seed
@@ -135,6 +140,7 @@ def main() -> int:
             resolution=float(request.get("resolution", 1.0)),
             seed=int(request.get("seed", 0)),
         )
+        detector_seconds = time.perf_counter() - started
         metadata = {
             "method": method,
             "cdlib_version": _version("cdlib"),
@@ -148,18 +154,21 @@ def main() -> int:
             "seed_support": True,
             "output_kind": "overlapping node cover",
         }
-        print(json.dumps({"communities": communities, "metadata": metadata}, sort_keys=True))
+        print(json.dumps({"communities": communities, "metadata": metadata,
+                          "detector_seconds": detector_seconds}, sort_keys=True))
         return 0
     elif method == "infomap":
         function = algorithms.infomap
         result = function(graph, flags=str(request.get("flags", "--two-level --silent")))
     else:
         raise ValueError(f"unsupported CDlib method: {method}")
+    detector_seconds = time.perf_counter() - started
     communities = [sorted(int(vertex) for vertex in community) for community in result.communities]
     print(
         json.dumps(
             {
                 "communities": communities,
+                "detector_seconds": detector_seconds,
                 "metadata": {
                     "method": method,
                     "cdlib_version": _version("cdlib"),

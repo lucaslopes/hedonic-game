@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import sys
+import time
 import types
 from pathlib import Path
 from typing import Any
@@ -88,6 +90,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ground-truth", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--dataset", default="dataset")
+    parser.add_argument("--timing-output", type=Path, default=None,
+                        help="write {\"detector_seconds\": ...} here: the clock around upstream DETECT_COMMUNITIES only "
+                             "(hedonic timing_scope detector-compute-v1)")
     parser.add_argument("--stop-criterion", type=float, default=0.01)
     parser.add_argument("--similarity-type", default="HP")
     return parser
@@ -113,6 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     _install_runtime_stubs(args.ground_truth, capture)
     sys.path.insert(0, str(code_dir))
     ncg = importlib.import_module("NCG")
+    # The detector's clock: upstream's own function, which reads the prepared edge list itself (counted, as an
+    # executable's own reading is) and computes. Interpreter start-up, the imports above and the stubs are not.
+    started = time.perf_counter()
     ncg.DETECT_COMMUNITIES(
         str(args.input),
         str(args.ground_truth),
@@ -120,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         stopCRITERION=float(args.stop_criterion),
         similarity_type=str(args.similarity_type),
     )
+    detector_seconds = time.perf_counter() - started
     communities = capture.get("communities")
     if not isinstance(communities, list) or not communities:
         raise SystemExit("upstream NcGame did not emit a non-empty cover")
@@ -128,6 +137,9 @@ def main(argv: list[str] | None = None) -> int:
             values = [str(int(node)) for node in community]
             if values:
                 stream.write(" ".join(values) + "\n")
+    if args.timing_output is not None:
+        args.timing_output.write_text(
+            json.dumps({"detector_seconds": detector_seconds, "clock": "perf_counter"}), encoding="utf-8")
     return 0
 
 

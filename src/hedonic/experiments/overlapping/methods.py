@@ -16,7 +16,6 @@ import importlib.metadata
 import inspect
 import io
 import random
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -24,6 +23,7 @@ from typing import Any, Callable, Sequence
 import igraph as ig
 from hedonic import Game
 from hedonic.experiments.leiden import seeded_igraph_rng
+from hedonic.experiments import timing
 from hedonic.experiments.overlapping import cdlib_env
 from hedonic.experiments.overlapping.cdlib_env import MethodUnavailable
 from hedonic.experiments.overlapping.metrics import partition_to_cover_lists
@@ -398,15 +398,21 @@ def hedonic_resolution(parameters: dict[str, Any], resolution: float) -> float:
 def _hedonic_local(
     graph: ig.Graph, k: int, resolution: float, seed: int, parameters: dict[str, Any]
 ) -> DetectorOutput:
-    """Hedonic local moving (``Game.community_hedonic``) to an equilibrium, seeded by ``seed``."""
+    """Hedonic local moving (``Game.community_hedonic``) to an equilibrium, seeded by ``seed``.
+
+    The detector clock (``timing``) covers the ``community_hedonic`` call alone: building the ``Game`` from the graph
+    and reading the cover and the labelled memberships out of the result come before and after it.
+    """
     game = Game(graph)
-    result = game.community_hedonic(
-        parameters.get("_initial_membership"),
+    options = dict(
         resolution=hedonic_resolution(parameters, resolution),
         max_memberships=_adapter_cap(parameters, k),
         allow_isolation=bool(parameters.get("allow_isolation", True)),
         seed=int(seed),
     )
+    initial = parameters.get("_initial_membership")
+    with timing.active().measure("Game.community_hedonic"):
+        result = game.community_hedonic(initial, **options)
     return DetectorOutput(
         cover=partition_to_cover_lists(result),
         final_memberships=_final_memberships(game),
@@ -514,10 +520,19 @@ def k_clique_communities(graph: ig.Graph, k: int, *, block_cost: float = 3e7) ->
 def _clique_percolation(
     graph: ig.Graph, _k: int, _resolution: float, _seed: int, parameters: dict[str, Any]
 ) -> list[list[int]]:
-    """Clique-percolation baseline (an overlapping node cover); see :func:`k_clique_communities`."""
+    """Clique-percolation baseline (an overlapping node cover); see :func:`k_clique_communities`.
+
+    NumPy and SciPy are imported before the detector clock starts, so the first call of a process does not pay for them.
+    """
     clique_size = int(parameters.get("clique_size", 3))
     max_communities = int(parameters.get("max_communities", 50_000))
-    return k_clique_communities(graph, clique_size)[:max_communities]
+    import numpy  # noqa: F401
+    from scipy import sparse  # noqa: F401
+    from scipy.sparse.csgraph import connected_components  # noqa: F401
+
+    with timing.active().measure("k_clique_communities"):
+        cover = k_clique_communities(graph, clique_size)
+    return cover[:max_communities]
 
 
 def _demon(
@@ -531,12 +546,15 @@ def _demon(
     # The maintained external DEMON package emits a progress bar and timing
     # line. Keep benchmark logs deterministic and compact while retaining the
     # package's implementation rather than reproducing the algorithm here.
+    # The NetworkX graph is the detector's input, built before the clock starts; only ``execute`` is timed.
+    detector = Demon(
+        graph=_networkx_graph(graph),
+        epsilon=float(parameters.get("epsilon", 0.25)),
+        min_community_size=int(parameters.get("min_community_size", 2)),
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        result = Demon(
-            graph=_networkx_graph(graph),
-            epsilon=float(parameters.get("epsilon", 0.25)),
-            min_community_size=int(parameters.get("min_community_size", 2)),
-        ).execute()
+        with timing.active().measure("demon.Demon.execute"):
+            result = detector.execute()
     return [list(map(int, community)) for community in result]
 
 
@@ -616,7 +634,8 @@ def _infomap(
         # binding was installed.  It draws from igraph's generator: seed it.
         try:
             with seeded_igraph_rng(int(seed)):
-                result = graph.community_infomap()
+                with timing.active().measure("igraph.community_infomap"):
+                    result = graph.community_infomap()
         except Exception as exc:  # pragma: no cover - native build dependent
             raise MethodUnavailable(
                 "Infomap is unavailable: neither the Python binding nor the igraph implementation could run"
@@ -627,7 +646,8 @@ def _infomap(
         infomap = Infomap(options)
         for source, target in graph.get_edgelist():
             infomap.add_link(int(source), int(target))
-        infomap.run()
+        with timing.active().measure("infomap.Infomap.run"):
+            infomap.run()
         communities: dict[int, list[int]] = {}
         for node in infomap.tree:
             leaf_marker = getattr(node, "is_leaf", False)
@@ -1084,16 +1104,21 @@ def run_method(
     ground truth does not change metric computation or post-hoc scoring.
     """
     params = {**adapter.parameters, **(parameters or {})}
-    started = time.monotonic()
     runner_params = {**params}
     if initial_membership is not None:
         runner_params["_initial_membership"] = initial_membership
     if ground_truth is not None:
         runner_params["_ground_truth"] = ground_truth
     detector_resolution = effective_resolution(adapter, graph, resolution)
-    detector_output = adapter.runner(
-        graph, max_memberships, detector_resolution, seed, runner_params
-    )
+    # The detector clock (``timing``) is the run's own when this is called by the benchmark runner, else a fresh one.
+    # Normalising and verifying the cover below happen after it stopped.
+    outer = timing.current()
+    with (contextlib.nullcontext(outer) if outer is not None else timing.detector_run()) as clock:
+        detector_output = adapter.runner(
+            graph, max_memberships, detector_resolution, seed, runner_params
+        )
+    if not clock.used:
+        raise RuntimeError(f"{adapter.name} never started the detector clock (see timing.py)")
     # Record the resolution the detector actually used: the Hedonic adapters
     # replace the density rule by an explicit absolute resolution, or scale it.
     if adapter.runner is _hedonic_local:
@@ -1122,7 +1147,8 @@ def run_method(
                 f"{adapter.name} final memberships disagree with its scoring cover"
             )
     return cover, {
-        "runtime_seconds": time.monotonic() - started,
+        "runtime_seconds": clock.seconds,
+        "timing_scope": timing.TIMING_SCOPE,
         "method": adapter.name,
         "family": adapter.family,
         "implementation": adapter.implementation,

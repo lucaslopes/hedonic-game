@@ -91,10 +91,12 @@ class TestReceiptAndFailClosed(unittest.TestCase):
         self.assertEqual((command[0], mode), (str(python), "project_venv"))
         fake = self.root.parent / "echo_worker.py"
         fake.write_text("import json, sys\nrequest = json.load(sys.stdin)\nprint('chatter')\n"
-                        "print(json.dumps({'echo': request}))\n")
+                        "print(json.dumps({'echo': request, 'detector_seconds': 0.0}))\n")
         with patch.object(ce, "_worker_or_none", return_value=fake):
             payload, run = ce.run_worker("cdlib_worker.py", {"a": 1}, receipt=receipt)
-        self.assertEqual(payload, {"echo": {"a": 1}})
+        self.assertEqual(payload, {"echo": {"a": 1}, "detector_seconds": 0.0})
+        self.assertEqual(run["detector_seconds"], 0.0)  # the worker's own clock, not its start-up
+        self.assertGreaterEqual(run["isolation_overhead_seconds"], 0.0)
         self.assertEqual(run["execution_mode"], "project_venv")
         self.assertEqual(run["worker_source_identity"]["path"], fake.name)  # a name, never an absolute path
 

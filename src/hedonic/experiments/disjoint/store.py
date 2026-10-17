@@ -49,6 +49,10 @@ from typing import Any
 import numpy as np
 
 STORE_SCHEMA = "hedonic-disjoint-store-v2"
+# What the ``duration`` column measures: the detector call only (seeding of the generator, the
+# membership copy, the error fallback and every metric are outside the clock). It is part of the
+# spec, so rows timed under another rule are never mixed into one store.
+TIMING_SCOPE = "detector-call-v1"
 MANIFEST_NAME = "manifest.json"
 RUNS_DIR = "runs"
 _SHARD_METADATA_KEY = b"hedonic.disjoint_store"
@@ -280,6 +284,7 @@ def build_spec(
         },
         "n_runs": int(n_runs),
         "partitions": partitions,
+        "timing_scope": TIMING_SCOPE,
         "runtime": runtime_identity(),
     }
 

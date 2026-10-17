@@ -19,6 +19,7 @@ for a tiny structural check. Prefer writing under a *new* root such as
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import math
@@ -732,18 +733,24 @@ def get_method_result(
     ground_truth,
     display_method: str | None = None,
 ):
-    started = time.perf_counter()
+    # Timing rule ``store_mod.TIMING_SCOPE``: the clock covers the detector call and nothing else.
+    # The error fallback and its report come after the clock stops.
     error_message: str | None = None
+    failure: Exception | None = None
+    partition = None
+    started = time.perf_counter()
     try:
         partition = _call_method(g, method_name, method_params)
     except Exception as e:
-        error_message = f"{type(e).__name__}: {e}"
+        failure = e
+    duration = time.perf_counter() - started
+    if failure is not None:
+        error_message = f"{type(failure).__name__}: {failure}"
         partition = VertexClustering(g, [0] * g.vcount())
         print(
-            f"\nPARTITIONING ERROR:\n{e}\n{method_name=}\n{p_in=}\n"
+            f"\nPARTITIONING ERROR:\n{failure}\n{method_name=}\n{p_in=}\n"
             f"{multiplier=}\n{community_size=}\n{number_of_communities=}"
         )
-    duration = time.perf_counter() - started
     acc = accuracy(g, partition, ground_truth)
     rob = robustness(g, partition)
     label = display_method
@@ -841,18 +848,28 @@ def _execute_store_run(
     if "initial_membership" in params:
         params["initial_membership"] = list(initial_membership)
     error = None
-    start = time.perf_counter()
-    try:
-        if method_call_name in {"community_hedonic", "community_leiden_cpm"}:
-            partition = _call_method(g, method_call_name, dict(params, seed=run_seed))
-        else:
-            with seeded_igraph_rng(run_seed):
-                partition = _call_method(g, method_call_name, params)
-        membership = list(partition.membership)
-    except Exception as exc:  # recorded as an error row, never silently dropped
-        error = f"{type(exc).__name__}: {exc}"
+    failure: Exception | None = None
+    partition = None
+    # Timing rule ``store_mod.TIMING_SCOPE``: the clock covers the detector call and nothing else.
+    # The generator is seeded before it starts, and the membership copy, the error
+    # fallback and every metric come after it stops, the same for every method.
+    seeded = method_call_name in {"community_hedonic", "community_leiden_cpm"}
+    call_params = dict(params, seed=run_seed) if seeded else params
+    with contextlib.nullcontext() if seeded else seeded_igraph_rng(run_seed):
+        start = time.perf_counter()
+        try:
+            partition = _call_method(g, method_call_name, call_params)
+        except Exception as exc:  # recorded as an error row, never silently dropped
+            failure = exc
+        duration = time.perf_counter() - start
+    if failure is None:
+        try:
+            membership = list(partition.membership)
+        except Exception as exc:
+            failure = exc
+    if failure is not None:
+        error = f"{type(failure).__name__}: {failure}"
         membership = [0] * g.vcount()
-    duration = time.perf_counter() - start
     clustering = VertexClustering(g, membership)
     canonical = store_mod.canonical_partition(membership)
     return {

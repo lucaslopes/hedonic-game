@@ -24,6 +24,7 @@ import io
 import json
 import platform
 import sys
+import time
 from typing import Any
 
 import networkx as nx
@@ -61,12 +62,17 @@ def main() -> int:
     # seed parameter.  Seeding in this isolated process gives deterministic
     # results without mutating the caller's RNG state.
     np.random.seed(seed)
+    # The detector's clock (``timing_scope`` detector-compute-v1): the algorithm call only, after the interpreter,
+    # the CDlib import and the graph above, and before the cover is read out and printed.
+    started = time.perf_counter()
     result = algorithms.slpa(graph, t=iterations, r=threshold)
+    detector_seconds = time.perf_counter() - started
     communities = [sorted(int(vertex) for vertex in body) for body in result.communities]
     print(
         json.dumps(
             {
                 "communities": communities,
+                "detector_seconds": detector_seconds,
                 "metadata": {
                     "cdlib_version": _version("cdlib"),
                     "networkx_version": _version("networkx"),
