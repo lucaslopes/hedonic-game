@@ -1,0 +1,104 @@
+name: Explainer site (GitHub Pages)
+
+# Builds the educational explainer in web/ and deploys it to GitHub Pages.
+# Pull requests run the same checks without deploying. In the repository
+# settings, Pages must use "GitHub Actions" as its source.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'src/hedonic/**'
+      - 'pyproject.toml'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/pages.yml'
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'src/hedonic/**'
+      - 'pyproject.toml'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One production deployment at a time and never cancelled midway;
+# superseded pull-request runs are cancelled.
+concurrency:
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      # docs:generate parses the Python sources with the standard library only.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate API reference and citation data
+        run: npm run docs:generate
+
+      - name: Report stale committed generated data
+        run: |
+          # The build always uses freshly generated data; this only flags a
+          # committed copy that lags behind the Python source.
+          if ! git diff --quiet -- web/src/generated/references.json; then
+            echo "::warning::web/src/generated/references.json is stale; run npm run docs:generate and commit it."
+          fi
+
+      - name: Type-check and lint
+        run: |
+          npm run typecheck
+          npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Configure Pages
+        id: pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v6
+
+      - name: Build
+        env:
+          # "/<repository>" for project pages, "" for a custom domain.
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}/
+        run: npm run build
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: web/dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

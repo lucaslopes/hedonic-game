@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Documentation for the hedonic Python package: getting started, the Game API and community_hedonic, the resolution parameter, the Familiarity Index, better-response dynamics and references."
+    />
+    <meta name="theme-color" content="#f6f2ea" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e1522" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Documentation · Hedonic game</title>
+    <script>
+      try {
+        var theme = localStorage.getItem('hedonic:theme');
+        var dark = theme === 'dark' || ((!theme || theme === 'system') && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        var motion = localStorage.getItem('hedonic:motion');
+        if (motion === 'reduce' || motion === 'allow') document.documentElement.dataset.motion = motion;
+      } catch (error) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>This documentation page needs JavaScript to render.</noscript>
+    <script type="module" src="/src/docs-main.tsx"></script>
+  </body>
+</html>

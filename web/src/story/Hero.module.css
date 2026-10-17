@@ -1,0 +1,116 @@
+.hero {
+  padding: clamp(40px, 8vw, 96px) 0 clamp(24px, 5vw, 64px);
+  background:
+    radial-gradient(60rem 30rem at 85% 10%, color-mix(in srgb, var(--friend-soft) 70%, transparent), transparent 70%),
+    radial-gradient(40rem 26rem at 10% 90%, color-mix(in srgb, var(--threshold-soft) 60%, transparent), transparent 70%);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: clamp(24px, 5vw, 72px);
+  align-items: center;
+}
+
+.copy h1 {
+  max-width: 14ch;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 24px 0 28px;
+}
+
+.roadmap ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.roadmap a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--card);
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 0.86rem;
+  font-weight: 560;
+}
+
+.roadmap a:hover {
+  border-color: var(--ink-3);
+  color: var(--ink);
+}
+
+.roadmapNumber {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--paper-2);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.figure {
+  margin: 0;
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+}
+
+.graph {
+  width: min(100%, 340px);
+  margin: 0 auto;
+}
+
+.graph :global(.graph-vertex) {
+  outline: none;
+}
+
+.graph :global(.graph-vertex:focus-visible) circle,
+.graph :global(.graph-vertex:focus-visible) rect {
+  stroke: var(--threshold);
+  stroke-width: 5px;
+}
+
+.pick {
+  margin: 12px 0 2px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.focus {
+  margin: 0 0 10px;
+  font-size: 0.98rem;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 860px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

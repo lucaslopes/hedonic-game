@@ -1,0 +1,264 @@
+/* Styles for Markdown rendered at build time (injected HTML, so global). */
+
+.doc-prose {
+  max-width: 48rem;
+}
+
+/* Long identifiers and commands wrap instead of widening the page on phones. */
+.doc-prose :not(pre) > code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.doc-prose h3 {
+  margin-top: 1.8em;
+  font-size: 1.35rem;
+  scroll-margin-top: calc(var(--header-h) + 12px);
+}
+
+.doc-prose h4 {
+  margin-top: 1.4em;
+  font-size: 1.08rem;
+  scroll-margin-top: calc(var(--header-h) + 12px);
+}
+
+.doc-prose ul,
+.doc-prose ol {
+  padding-left: 1.3em;
+}
+
+.doc-prose li {
+  margin: 0.25em 0;
+}
+
+.doc-prose blockquote {
+  margin: 1em 0;
+  padding: 10px 16px;
+  border-left: 3px solid var(--threshold);
+  background: var(--threshold-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.doc-prose blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.doc-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin: 0.8em 0 1.2em;
+}
+
+.doc-prose th,
+.doc-prose td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-prose thead th {
+  font-size: 0.75rem;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+}
+
+.doc-prose td p,
+.doc-prose td ul {
+  margin: 0;
+}
+
+.doc-prose td code,
+.doc-prose th code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.doc-pre {
+  position: relative;
+}
+
+.doc-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0.85;
+}
+
+.doc-prose .table-scroll {
+  margin: 0.8em 0 1.2em;
+}
+
+.doc-prose .table-scroll table {
+  margin: 0;
+}
+
+/* Generated API blocks */
+.api-block {
+  margin: 1.4em 0 2em;
+  padding: 16px 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--rule);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  scroll-margin-top: calc(var(--header-h) + 12px);
+}
+
+.api-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.api-name {
+  font-size: 1.02rem !important;
+  font-weight: 650;
+  background: none !important;
+  border: 0 !important;
+  padding: 0 !important;
+}
+
+.api-kind {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--clear-soft);
+  color: var(--clear-ink);
+}
+
+.api-source {
+  margin-left: auto;
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+}
+
+.api-signature {
+  font-size: 0.84rem;
+  white-space: pre;
+}
+
+.api-params {
+  table-layout: fixed;
+}
+
+.api-params th:nth-child(1) {
+  width: 22%;
+}
+
+.api-params th:nth-child(2) {
+  width: 24%;
+}
+
+.api-params th:nth-child(3) {
+  width: 12%;
+}
+
+.api-params th code {
+  white-space: normal;
+}
+
+/* Long union types and defaults wrap inside their cells instead of widening the table. */
+.api-params td code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.api-badge {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.api-required {
+  color: var(--ink-3);
+}
+
+.api-returns h4,
+.api-notes h4 {
+  margin: 1em 0 0.3em;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-family: var(--font-body);
+}
+
+.api-caption {
+  font-size: 0.84rem;
+  color: var(--ink-3);
+}
+
+/* Reference cards */
+.ref-group {
+  margin-top: 1.6em;
+}
+
+.ref-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.ref-card {
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  background: var(--card);
+  scroll-margin-top: calc(var(--header-h) + 12px);
+}
+
+.ref-card:target {
+  border-color: var(--threshold);
+  box-shadow: 0 0 0 3px var(--threshold-soft);
+}
+
+.ref-card p {
+  margin: 0 0 4px;
+  font-size: 0.88rem;
+}
+
+.ref-meta {
+  color: var(--ink-3);
+}
+
+.ref-title {
+  margin: 2px 0 6px;
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.ref-venue {
+  font-style: italic;
+  color: var(--ink-2);
+}
+
+.ref-note {
+  color: var(--ink-2);
+}
+
+.ref-links a {
+  margin-right: 8px;
+  word-break: break-all;
+}
+
+.ref-links-none {
+  color: var(--ink-3);
+  font-size: 0.8rem !important;
+}
+
+.ref-key code {
+  font-size: 0.75rem;
+}
+
+.cite {
+  white-space: nowrap;
+}
