@@ -23,7 +23,7 @@ unity_fma.c, dispatch.c  x86_64 only: the core again with the FMA instruction, a
 binding/                 the CPython module hedonic._core
 tests/test_core.c        make test (ASan/UBSan), make test-release (-O3),
                          make test-soft-fma, make test-x86_64 (Rosetta)
-tests/check_libm.py      make check-libm: no libm call but sqrt
+tests/check_libm.py      make check-libm: no libm call but sqrt, fabs
 ```
 
 ## The game
@@ -308,11 +308,13 @@ Assumed, as for any floating-point code: the default environment (rounding
 to nearest, subnormals not flushed to zero).
 
 **No libm.** `make check-libm` (part of `make test`, and of every CI job)
-checks that the compiled core calls no libm function but `sqrt` (and no
+checks that the compiled core calls no libm function but `sqrt` and `fabs` (and no
 `float` or `long double` variant). Functions such as `exp`, `log` or `pow`
 have no rounding requirement and differ between C libraries. `sqrt` is
 correctly rounded by IEEE 754 and is a hardware instruction on every target
-(compilers inline it; a libm `sqrt` computes the same bits). The fused
+(compilers inline it; a libm `sqrt` computes the same bits). `fabs` is
+exact (it clears the sign bit); MSVC calls it under `/fp:strict` where other
+compilers inline it, with the same bits. The fused
 multiply-add is also correctly rounded by IEEE 754, but on x86_64 without
 `-mfma` (the wheels' baseline) `fma()` is a libm call, which would make the
 results rest on each C library's `fma` (glibc, musl, macOS, the Windows

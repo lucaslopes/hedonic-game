@@ -37,7 +37,7 @@ native/                  # the C core (no igraph dependency), built into hedonic
 ├── tests/test_core.c    # `make -C native test` (ASan/UBSan + libm check), `test-release` (-O3),
 │                        #   `test-soft-fma`, `test-x86_64` (Rosetta); C bit pins from
 │                        #   random.Random's order; soft fma against the instruction
-├── tests/check_libm.py  # `make -C native check-libm`: the core calls no libm but sqrt
+├── tests/check_libm.py  # `make -C native check-libm`: the core calls no libm but sqrt, fabs
 └── Makefile
 setup.py                 # the one Extension (hedonic._core); everything else is pyproject.toml
 tools/native_tests.py    # the pinned Python tests with HIG_PINNED=1 (what the wheel builds run)

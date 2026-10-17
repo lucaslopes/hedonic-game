@@ -52,7 +52,7 @@
  * DETERMINISM. No threads, fixed summation orders, explicit fused
  * multiply-adds that are the FMA instruction or the core's own correctly
  * rounded soft fma (never the C library's), no libm function but sqrt
- * (correctly rounded by IEEE 754), and the core is compiled with
+ * (correctly rounded by IEEE 754) and fabs (exact), and the core is compiled with
  * -ffp-contract=off (/fp:strict on MSVC): given the inputs and the random
  * words, results are identical on every platform. On x86_64 the core is
  * built with and without the FMA instruction and each call takes the build

@@ -98,7 +98,7 @@ jobs:
           set HIG_TEST_FMA=
           cl /nologo /std:c11 /O2 /DNDEBUG /fp:strict /W3 /DHIG_FORCE_SOFT_FMA /Inative\include /Inative\core native\tests\test_core.c native\unity.c native\unity_fma.c native\dispatch.c /Fe:test_core_soft.exe || exit /b 1
           test_core_soft.exe
-      - name: The core calls no libm function but sqrt
+      - name: The core calls no libm function but sqrt and fabs
         shell: cmd
         run: |
           cl /nologo /c /std:c11 /O2 /DNDEBUG /fp:strict /Inative\include /Inative\core native\unity.c native\unity_fma.c native\dispatch.c || exit /b 1

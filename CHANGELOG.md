@@ -31,7 +31,7 @@
   reference cover or partition; one-to-one matching uses SciPy
   (`pip install "hedonic[metrics]"`).
 - Wheels for Linux, macOS and Windows; the C core's rounding is fixed by the
-  source and it calls no libm function but `sqrt` (the fused multiply-add is
+  source and it calls no libm function but `sqrt` and the exact `fabs` (the fused multiply-add is
   the instruction or its own correctly rounded soft fma; x86_64 wheels pick
   a build with or without the instruction from CPUID), and every wheel
   job runs the C tests and the Python tests against results pinned bit for

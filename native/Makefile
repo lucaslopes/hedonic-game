@@ -5,7 +5,7 @@
 # on x86_64 targets without a baseline FMA instruction: core/dispatch.h),
 # `make test-soft-fma` at -O3 with the soft fma everywhere
 # (HIG_FORCE_SOFT_FMA), `make check-libm` checks that the core calls no libm
-# function but sqrt, and `make test-x86_64` runs all of it as x86_64 under
+# function but sqrt and fabs, and `make test-x86_64` runs all of it as x86_64 under
 # Rosetta on Apple Silicon (skipped elsewhere, or when the compiler cannot
 # target x86_64). On a dispatch target the tests run as dispatched and then
 # with each of the two builds forced. CC=gcc-16 etc. selects the compiler.
@@ -46,7 +46,7 @@ test-soft-fma: $(BUILD)/test_core_soft
 	$(RUN) ./$<
 
 # The core objects as the wheel compiles them (-O3) and unoptimized: none may
-# call a libm function other than sqrt (tests/check_libm.py says why that
+# call a libm function other than sqrt and fabs (tests/check_libm.py says why that
 # makes the results the same on every platform).
 LIBM_OBJECTS = $(BUILD)/unity_release.o $(BUILD)/unity_debug.o $(BUILD)/unity_fma_release.o \
   $(BUILD)/unity_fma_debug.o $(BUILD)/dispatch_release.o
