@@ -21,9 +21,10 @@ from setuptools.command.build_ext import build_ext
 # GCC and Clang. -ffp-contract=off: every fused multiply-add is an explicit
 # hig_fma() in the source. Python's own CFLAGS come first and carry
 # -fno-strict-overflow (wrapping signed arithmetic); -fno-wrapv turns it back
-# off, as the core checks its overflows explicitly.
+# off, as the core checks its overflows explicitly. They also carry -g on Linux:
+# -g0 keeps debug information out of the wheel (it never changes the code).
 UNIX_FLAGS = ["-std=c11", "-O3", "-DNDEBUG", "-ffp-contract=off", "-fno-wrapv",
-              "-fno-wrapv-pointer"]
+              "-fno-wrapv-pointer", "-g0"]
 # MSVC. /fp:strict: no contraction (as -ffp-contract=off), no reassociation,
 # and no other value-changing transformation of floating-point code, whatever
 # the compiler version's defaults for /fp:precise.

@@ -63,7 +63,7 @@ It is exactly 0 when the arithmetic is exact (for instance unit weights at
 resolution 0, 1/2 or 1), so the result is then an exact Nash equilibrium; on
 complete DBLP and Amazon at other resolutions it is about `1e-21` for
 partitions and `1e-17` for covers.
-[`native/README.md`](native/README.md) gives the bounds, the termination
+[`native/README.md`](https://github.com/lucaslopes/hedonic/blob/main/native/README.md) gives the bounds, the termination
 argument and the proof that the best set of communities is a prefix of the
 sorted gains.
 
@@ -289,7 +289,7 @@ python tools/native_tests.py   # bit-level pins, as the wheel builds run them
 ```
 
 The C core lives in `native/` (`include/hedonic_core.h` is its API,
-[`native/README.md`](native/README.md) its design) and is compiled by
+[`native/README.md`](https://github.com/lucaslopes/hedonic/blob/main/native/README.md) its design) and is compiled by
 `setup.py` into `hedonic._core`. Rounding is fixed by the source (explicit
 fused multiply-adds, computed by the instruction or the core's own correctly
 rounded soft fma, never the C library's; no contraction), so results are
@@ -299,7 +299,7 @@ identical across platforms; the wheel workflow
 ## License
 
 This project is distributed under the GNU General Public License, version 3 or
-later. See [LICENSE](LICENSE). The C core was written for this package and
+later. See [LICENSE](https://github.com/lucaslopes/hedonic/blob/main/LICENSE). The C core was written for this package and
 contains no code from igraph or other libraries; the binding implements the
 MT19937 generator step (Matsumoto and Nishimura) as CPython's `random` module
 does, so that seeded runs draw exactly what `random.Random` would.
