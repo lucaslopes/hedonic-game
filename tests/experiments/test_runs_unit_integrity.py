@@ -373,24 +373,10 @@ class TestUnitDigest(unittest.TestCase):
     """The identity of an opt-in method is readable in a process that never provisioned runtimes (a scan, the queue view)."""
 
     def setUp(self):
-        from hedonic.experiments.overlapping import codeseg_reproduction as cr
         from hedonic.experiments.overlapping import extra_methods
 
-        saved = (dict(cr.METHOD_SPECS), cr.EXTENDED_METHODS, cr._run_method, cr._method_parameters,
-                 cr._method_preflight, extra_methods._INSTALLED)
-
-        def restore():
-            cr.METHOD_SPECS.clear()
-            cr.METHOD_SPECS.update(saved[0])
-            (cr.EXTENDED_METHODS, cr._run_method, cr._method_parameters, cr._method_preflight,
-             extra_methods._INSTALLED) = saved[1:]
-
-        self.addCleanup(restore)
-        for name in (*extra_methods.EXTRA, *extra_methods.CONTROLS):  # as if nothing had been provisioned yet
-            cr.METHOD_SPECS.pop(name, None)
-        cr.EXTENDED_METHODS = tuple(n for n in cr.EXTENDED_METHODS
-                                    if n not in (*extra_methods.EXTRA, *extra_methods.CONTROLS))
-        extra_methods._INSTALLED = False
+        extra_methods.uninstall()  # as if nothing had been provisioned yet
+        self.addCleanup(extra_methods.uninstall)
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.cfg = qs.Config(networks=["dblp:top5000"], methods=["ego_splitting"], seeds=[0], nodes=0,

@@ -41,6 +41,7 @@ CONTROLS = {
     ),
 }
 _INSTALLED = False
+_SAVED: tuple | None = None  # what install() replaced, for uninstall()
 
 
 def _run_extra(name, graph, ground_truth, seed, parameters):
@@ -62,10 +63,12 @@ def _run_extra(name, graph, ground_truth, seed, parameters):
 
 
 def install() -> None:
-    """Register the extra methods with the runner (idempotent)."""
-    global _INSTALLED
+    """Register the extra methods with the runner (idempotent; :func:`uninstall` undoes it)."""
+    global _INSTALLED, _SAVED
     if _INSTALLED:
         return
+    added = tuple(name for name in (*EXTRA, *CONTROLS) if name not in cr.METHOD_SPECS)
+    _SAVED = (added, cr.EXTENDED_METHODS, cr._run_method, cr._method_parameters, cr._method_preflight)
     cr.METHOD_SPECS.update(EXTRA)
     cr.METHOD_SPECS.update(CONTROLS)
     cr.EXTENDED_METHODS = cr.EXTENDED_METHODS + tuple(
@@ -90,3 +93,14 @@ def install() -> None:
 
     cr._run_method, cr._method_parameters, cr._method_preflight = run_method, method_parameters, method_preflight
     _INSTALLED = True
+
+
+def uninstall() -> None:
+    """Restore the runner's registry as it was before :func:`install` (a no-op when nothing is installed)."""
+    global _INSTALLED, _SAVED
+    if not _INSTALLED or _SAVED is None:
+        return
+    added, cr.EXTENDED_METHODS, cr._run_method, cr._method_parameters, cr._method_preflight = _SAVED
+    for name in added:
+        cr.METHOD_SPECS.pop(name, None)
+    _INSTALLED, _SAVED = False, None

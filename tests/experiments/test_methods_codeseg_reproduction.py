@@ -4,8 +4,6 @@ import csv
 import json
 import tempfile
 import unittest
-import tempfile
-from pathlib import Path
 from pathlib import Path
 
 from hedonic.experiments.overlapping import codeseg_reproduction
@@ -59,13 +57,8 @@ class TestCoDeSEGRunner(unittest.TestCase):
         )
         # hedonic 2.0: community_hedonic and the multi-phase variants are gone.
         self.assertEqual(codeseg_reproduction.METHODS, codeseg_reproduction.PAPER_METHODS)
-        from hedonic.experiments.overlapping import extra_methods
-
-        # extra_methods.install() (run by other tests in this process) appends its opt-in methods at the end
-        registered = tuple(name for name in codeseg_reproduction.EXTENDED_METHODS
-                           if name not in {**extra_methods.EXTRA, **extra_methods.CONTROLS})
         self.assertEqual(
-            registered,
+            codeseg_reproduction.EXTENDED_METHODS,
             codeseg_reproduction.METHODS
             + (
                 "hedonic_local",
@@ -90,6 +83,20 @@ class TestCoDeSEGRunner(unittest.TestCase):
         self.assertFalse(set(codeseg_reproduction.DBLP_METHODS) & codeseg_reproduction.REMOVED_METHODS)
         for method in ("nise", "sse", "qoce", "svi", "essc"):
             self.assertIn(method, codeseg_reproduction.DBLP_METHODS)
+
+    def test_the_opt_in_methods_are_appended_by_install_and_removed_by_uninstall(self):
+        from hedonic.experiments.overlapping import extra_methods
+
+        before = (codeseg_reproduction.EXTENDED_METHODS, dict(codeseg_reproduction.METHOD_SPECS),
+                  codeseg_reproduction._run_method)
+        extra_methods.install()
+        extra_methods.install()  # idempotent
+        opt_in = (*extra_methods.EXTRA, *extra_methods.CONTROLS)
+        self.assertEqual(codeseg_reproduction.EXTENDED_METHODS, before[0] + opt_in)
+        self.assertTrue(set(opt_in) <= set(codeseg_reproduction.METHOD_SPECS))
+        extra_methods.uninstall()
+        self.assertEqual((codeseg_reproduction.EXTENDED_METHODS, dict(codeseg_reproduction.METHOD_SPECS),
+                          codeseg_reproduction._run_method), before)
 
     def test_randomized_cover_preserves_ground_truth_shape(self):
         initial, metadata = codeseg_reproduction._randomized_cover_initialization(
