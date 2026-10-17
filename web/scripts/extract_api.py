@@ -348,7 +348,7 @@ def repository_info() -> dict:
     if repository:
         url = f"https://github.com/{repository}"
     else:
-        url = "https://github.com/lucaslopes/hedonic-game"
+        url = "https://github.com/lucaslopes/hedonic"
         try:
             remote = subprocess.run(
                 ["git", "-C", str(REPO), "remote", "get-url", "origin"],

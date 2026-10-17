@@ -26,8 +26,8 @@ classifiers = [
 metrics = ["scipy>=1.10"]
 
 [project.urls]
-Homepage = "https://github.com/lucaslopes/hedonic-game"
-Documentation = "https://lucaslopes.github.io/hedonic-game/"
+Homepage = "https://github.com/lucaslopes/hedonic"
+Documentation = "https://lucaslopes.github.io/hedonic/"
 
 [build-system]
 # setuptools: the package compiles its C core (native/, see setup.py) into the

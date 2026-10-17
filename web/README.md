@@ -12,7 +12,7 @@ npm run build          # static site in web/dist/
 npm run test           # Vitest: model, layout, components, docs pipeline
 npm run docs:generate  # regenerate API reference + citation data
 npm run check          # docs:generate, typecheck, lint, test, build
-npm run preview:pages  # build and serve under /hedonic-game/, like GitHub Pages
+npm run preview:pages  # build and serve under /hedonic/, like GitHub Pages
 ```
 
 The frontend lives in `web/`. The root `package.json` is an npm workspace that

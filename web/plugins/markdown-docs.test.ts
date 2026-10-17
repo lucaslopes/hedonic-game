@@ -9,7 +9,7 @@ const bundle = loadDocs(
     apiFile: resolve(root, 'src/generated/api.json'),
     referencesFile: resolve(root, 'src/generated/references.json'),
   },
-  '/hedonic-game/',
+  '/hedonic/',
 );
 const page = (slug: string) => {
   const found = bundle.pages.find((p) => p.slug === slug);
@@ -59,7 +59,7 @@ describe('documentation bundle', () => {
     expect(html).toContain('class="katex"');
     expect(html).not.toMatch(/\$\\Delta/);
     expect(page('concepts').html).toContain('href="#ref-traag2011cpm"');
-    expect(page('concepts').html).toContain('href="/hedonic-game/#dilemma"');
+    expect(page('concepts').html).toContain('href="/hedonic/#dilemma"');
     expect(page('game-api').html).toMatch(/href="https:\/\/github\.com\/[^"]+\/blob\/[^"]+\/src\/hedonic\/Game\.py"/);
   });
 

@@ -280,8 +280,8 @@ publishes it to GitHub Pages; see `web/README.md` for details.
 ## Development
 
 ```bash
-git clone https://github.com/lucaslopes/hedonic-game.git
-cd hedonic-game
+git clone https://github.com/lucaslopes/hedonic.git
+cd hedonic
 python -m pip install -e ".[metrics]" pytest
 python -m pytest
 make -C native test            # the C core's own tests (sanitizers)

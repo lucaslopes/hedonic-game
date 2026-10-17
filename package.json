@@ -1,5 +1,5 @@
 {
-  "name": "hedonic-game-site",
+  "name": "hedonic-site",
   "private": true,
   "description": "Interactive explainer and documentation site for the hedonic Python package. The frontend lives in web/.",
   "license": "GPL-3.0-or-later",

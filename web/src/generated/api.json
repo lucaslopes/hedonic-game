@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "generator": "web/scripts/extract_api.py",
   "repository": {
-    "url": "https://github.com/lucaslopes/hedonic-game",
+    "url": "https://github.com/lucaslopes/hedonic",
     "ref": "main"
   },
   "package": {
