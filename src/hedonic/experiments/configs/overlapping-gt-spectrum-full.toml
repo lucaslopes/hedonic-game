@@ -1,11 +1,10 @@
 # Ground-truth robustness spectrum on the complete DBLP, Amazon, YouTube and LiveJournal graphs, every ground-truth
 # cover each has (all, top5000). Start with:  hedonic run spectrum --config full  (= hedonic run spectrum-full).
-# Output: --output-dir, else <output_dir from the user config>/<name>. It is a labelled unlocked run (the bounded
-# study of the default spectrum config has its own protocol lock, which this run does not use).
+# Output: --output-dir, else <output_dir from the user config>/<name>. A pair missing locally is downloaded first
+# (--no-provision stops that).
 
 [overlapping_gt_spectrum]
 name = "gt-robustness"
-allow_unlocked = true
 workers = 8                                    # processes side by side; ~2 GB each (--workers overrides)
 
 # Every network crossed with every cover, in the order the study runs them: the top5000 covers first (DBLP, Amazon,

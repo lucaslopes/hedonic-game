@@ -85,6 +85,15 @@ class TestConfiguration(unittest.TestCase):
             self.assertIn(1e-4, options["grid"])
             self.assertEqual(Path(options["output_dir"]), (Path(tmp) / "gt-posthoc-amazon-all-full").resolve())
 
+    def test_the_package_ships_the_amazon_full_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            options = gp.load_options("amazon-full", default_output_root=tmp)
+        self.assertEqual(Path(options["config"]).name, "overlapping-gt-posthoc-amazon-full.toml")
+        self.assertEqual((options["dataset"], options["cover"], options["max_nodes"]), ("amazon", "all", None))
+        self.assertEqual(options["grid"], gp.locked_grid())
+        text = Path(options["config"]).read_text(encoding="utf-8")
+        self.assertNotIn("lock", text)
+
     def test_a_missing_config_is_a_clear_error(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(resources, "CONFIG_DIR", Path(tmp)):
             with self.assertRaisesRegex(ValueError, "no such config: amazon-full"):
