@@ -46,7 +46,6 @@ import hashlib
 import json
 import os
 import random
-import resource
 import shlex
 import shutil
 import subprocess
@@ -62,6 +61,7 @@ import igraph as ig
 from hedonic.experiments import runtime
 from hedonic.experiments.config import NETWORKS_DIR, OVERLAPPING_ARTIFACTS_DIR, expand_path
 from hedonic.experiments.leiden import seeded_igraph_rng
+from hedonic.experiments import timing
 from hedonic.experiments.overlapping.cdlib_env import (
     MethodUnavailable,
     run_slpa,
@@ -97,7 +97,10 @@ from hedonic.experiments.overlapping.snap import (
 # v4: hedonic 2.0. The identity of a record is the selected methods' parameters
 # plus the runtime of the methods that run in this process (hedonic's version
 # and core SHA-256, python-igraph's version); absolute paths are provenance only.
-PROTOCOL_VERSION = "codeseg-www25-snap-overlap-v4"
+# v5: the detection clock changed meaning (``timing.TIMING_SCOPE``, "detector-compute-v1"): v4 records timed the
+# adapters' graph conversions, input files, result parsing and validation with the detector, and recorded a peak
+# child RSS that was a running maximum over earlier methods. A v4 record is never reused for a v5 run.
+PROTOCOL_VERSION = "codeseg-www25-snap-overlap-v5"
 # Pre-registered, reference-free membership cap M_0 of the density-resolution
 # Hedonic adapters.  Protocol-v3 records obtained this value from
 # ``max(2, min(8, max(len(community) for community in reference)))``, which
@@ -422,25 +425,40 @@ def identity_payload(config: dict[str, Any]) -> dict[str, Any]:
     return identity
 
 
-def _resource_snapshot() -> dict[str, float | int]:
-    """Capture process and child resource counters for one detector run.
+def _stamp_detector_clock(record: dict[str, Any], clock: timing.DetectorClock) -> None:
+    """Put the detector clock's seconds, regions and resources on ``record`` (before anything is scored).
 
-    ``ru_maxrss`` is reported in bytes on macOS and KiB on Linux.  Converting
-    here keeps the JSON/CSV ledger portable while avoiding a hard dependency on
-    psutil.  The peak values are cumulative OS counters; the record stores both
-    before/after snapshots so callers can distinguish a pre-existing peak from
-    a detector's newly observed peak.
+    ``detection_seconds`` is the sum of the counted regions (``timing.TIMING_RULE``); a run whose detector failed
+    keeps what it had run for in ``elapsed_before_failure_seconds`` and has no ``detection_seconds``. The resource
+    counters belong to the detector run alone: ``user_cpu_seconds``/``system_cpu_seconds`` are this process's during
+    in-process regions, ``child_*`` those of the programs the detector started, and ``peak_child_rss_bytes`` the
+    largest peak of one of those programs (the OS figure of that process, not a running maximum of earlier ones).
+    ``peak_rss_bytes`` is the harness process's lifetime peak read when the clock stopped.
     """
-    factor = 1 if sys.platform == "darwin" else 1024
-    own = resource.getrusage(resource.RUSAGE_SELF)
-    children = resource.getrusage(resource.RUSAGE_CHILDREN)
-    return {
-        "user_cpu_seconds": float(own.ru_utime),
-        "system_cpu_seconds": float(own.ru_stime),
-        "child_user_cpu_seconds": float(children.ru_utime),
-        "child_system_cpu_seconds": float(children.ru_stime),
-        "peak_rss_bytes": int(own.ru_maxrss * factor),
-        "peak_child_rss_bytes": int(children.ru_maxrss * factor),
+    report = clock.report()
+    record["timing_scope"] = timing.TIMING_SCOPE
+    record["timing"] = {
+        "regions": report["regions"],
+        "isolation_overhead_seconds": report["isolation_overhead_seconds"],
+        "rss_before_detector_bytes": report["rss_before_detector_bytes"],
+    }
+    elapsed = sum(float(region["seconds"]) for region in report["regions"] if region["kind"] != "worker")
+    if clock.used:
+        record["detection_seconds"] = float(report["detection_seconds"])
+        record["runtime_seconds"] = record["detection_seconds"]  # the detector's own time; the unit's is unit_seconds
+    else:
+        record["elapsed_before_failure_seconds"] = elapsed
+    record["resources"] = {
+        "scope": "detector",
+        "user_cpu_seconds": max(0.0, float(report["user_cpu_seconds"])),
+        "system_cpu_seconds": max(0.0, float(report["system_cpu_seconds"])),
+        "child_user_cpu_seconds": float(report["child_user_cpu_seconds"]),
+        "child_system_cpu_seconds": float(report["child_system_cpu_seconds"]),
+        "peak_rss_bytes": int(report["harness_peak_rss_at_stop_bytes"] or 0),
+        "peak_child_rss_bytes": int(clock.process_peak_rss_bytes),
+        "detector_peak_rss_bytes": int(report["detector_peak_rss_bytes"]),
+        "detector_peak_rss_scope": report["detector_peak_rss_scope"],
+        "rss_before_detector_bytes": report["rss_before_detector_bytes"],
     }
 
 
@@ -688,8 +706,10 @@ def _hedonic_adapter_cap(
 
 
 def _run_louvain(graph: ig.Graph, seed: int, _parameters: dict[str, Any]) -> tuple[list[list[int]], dict[str, Any]]:
+    clock = timing.active()
     with seeded_igraph_rng(int(seed)):
-        result = graph.community_multilevel()
+        with clock.measure("igraph.community_multilevel"):
+            result = graph.community_multilevel()
     return _partition_cover(result), {
         "implementation": "igraph.Graph.community_multilevel",
         "seed": int(seed),
@@ -699,14 +719,16 @@ def _run_louvain(graph: ig.Graph, seed: int, _parameters: dict[str, Any]) -> tup
 
 def _run_leiden(graph: ig.Graph, seed: int, parameters: dict[str, Any]) -> tuple[list[list[int]], dict[str, Any]]:
     # Stock python-igraph's modularity Leiden (the CoDeSEG paper's Leiden), not hedonic's detector.
+    clock = timing.active()
     with seeded_igraph_rng(int(seed)):
-        result = ig.Graph.community_leiden(
-            graph,
-            objective_function="modularity",
-            n_iterations=int(parameters.get("n_iterations", 2)),
-            beta=0.01,
-            resolution=1.0,
-        )
+        with clock.measure("igraph.community_leiden"):
+            result = ig.Graph.community_leiden(
+                graph,
+                objective_function="modularity",
+                n_iterations=int(parameters.get("n_iterations", 2)),
+                beta=0.01,
+                resolution=1.0,
+            )
     return _partition_cover(result), {
         "implementation": "igraph.Graph.community_leiden(objective_function='modularity')",
         "seed": int(seed),
@@ -716,8 +738,10 @@ def _run_leiden(graph: ig.Graph, seed: int, parameters: dict[str, Any]) -> tuple
 
 
 def _run_flpa(graph: ig.Graph, seed: int, _parameters: dict[str, Any]) -> tuple[list[list[int]], dict[str, Any]]:
+    clock = timing.active()
     with seeded_igraph_rng(int(seed)):
-        result = graph.community_label_propagation()
+        with clock.measure("igraph.community_label_propagation"):
+            result = graph.community_label_propagation()
     return _partition_cover(result), {
         "implementation": "igraph.Graph.community_label_propagation",
         "seed": int(seed),
@@ -738,6 +762,30 @@ def _last_json_line(stdout: str) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
     raise MethodUnavailable("isolated baseline worker emitted no JSON result")
+
+
+def _run_executable(
+    command: Sequence[str],
+    label: str,
+    parameters: dict[str, Any],
+    *,
+    cwd: Path | str | None = None,
+    env: dict[str, str] | None = None,
+    input_path: Path | str | None = None,
+    stdin_text: str | None = None,
+    counted: bool = True,
+) -> timing.ProcessResult:
+    """Run an external program under the detector clock (exec to exit; see ``timing``), with ``subprocess.run``'s errors.
+
+    The timeout is the run's ``--timeout``; a program that outlives it is killed with its whole process group.
+    """
+    try:
+        return timing.active().process(
+            command, label=label, cwd=cwd, env=env, input_path=input_path, stdin_text=stdin_text, counted=counted,
+            timeout=parameters.get("timeout_seconds"),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise MethodUnavailable(f"{label} command could not complete: {exc}") from exc
 
 
 def _der_worker() -> Path:
@@ -789,16 +837,13 @@ def _run_der(
     environment = os.environ.copy()
     environment.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "hedonic-codeseg-matplotlib"))
     worker = _der_worker()
-    started = time.perf_counter()
+    # The worker times its own detector call (``detector_seconds``); its interpreter start-up, CDlib import, graph
+    # build and JSON transport are isolation overhead, recorded but not counted (see ``timing``).
+    clock = timing.active()
     try:
-        process = subprocess.run(
-            [str(python), str(worker)],
-            input=json.dumps(request, separators=(",", ":")),
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=parameters.get("timeout_seconds"),
-            env=environment,
+        process = clock.process(
+            [str(python), str(worker)], label="isolated DER worker", counted=False, env=environment,
+            stdin_text=json.dumps(request, separators=(",", ":")), timeout=parameters.get("timeout_seconds"),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise MethodUnavailable(f"isolated DER worker could not complete: {exc}") from exc
@@ -821,6 +866,10 @@ def _run_der(
     }
     if mismatches:
         raise MethodUnavailable(f"DER worker dependency drift: {mismatches}")
+    try:
+        detector_seconds = clock.adopt(payload.get(timing.REPORT_KEY), process, label="isolated DER worker")
+    except ValueError as exc:
+        raise MethodUnavailable(f"isolated DER worker: {exc}") from exc
     mapped_communities = [
         [active_vertices[int(vertex)] for vertex in community]
         for community in communities
@@ -830,7 +879,8 @@ def _run_der(
         "implementation": "cdlib.algorithms.der",
         "worker_source": worker.name,
         "worker_source_sha256": _sha256_file(worker),
-        "worker_seconds": time.perf_counter() - started,
+        "worker_seconds": process.seconds,
+        "detector_seconds": detector_seconds,
         "seed": int(seed),
         "stochastic": False,
         "detector_graph_nodes": len(active_vertices),
@@ -903,20 +953,9 @@ def _run_oslom(
         ]
         if bool(parameters.get("fast", True)):
             command.append("-fast")
-        try:
-            environment = os.environ.copy()
-            environment["PATH"] = str(tool_dir) + os.pathsep + environment.get("PATH", "")
-            result = subprocess.run(
-                command,
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                env=environment,
-                timeout=parameters.get("timeout_seconds"),
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MethodUnavailable(f"OSLOM command could not complete: {exc}") from exc
+        environment = os.environ.copy()
+        environment["PATH"] = str(tool_dir) + os.pathsep + environment.get("PATH", "")
+        result = _run_executable(command, "OSLOM", parameters, cwd=root, env=environment, input_path=edge_path)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
             raise MethodUnavailable(
@@ -982,17 +1021,7 @@ def _run_neo_kmeans(
             str(graph_path),
             str(effective_clusters),
         ]
-        try:
-            result = subprocess.run(
-                command,
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                timeout=parameters.get("timeout_seconds"),
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MethodUnavailable(f"NEO-K-Means command could not complete: {exc}") from exc
+        result = _run_executable(command, "NEO-K-Means", parameters, cwd=root, input_path=graph_path)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
             raise MethodUnavailable(
@@ -1036,25 +1065,43 @@ def _run_neo_kmeans(
         }
 
 
+def _octave_timed(call: str, timing_path: Path) -> str:
+    """The Octave statement ``call`` wrapped in the detector clock: ``tic``/``toc`` around it alone, written to
+    ``timing_path`` (the script's loading of its inputs and saving of its output stay outside, see ``timing``)."""
+    return (
+        f"__hedonic_t = tic; {call} __hedonic_s = toc(__hedonic_t);\n"
+        f"__hedonic_f = fopen('{timing_path.as_posix()}','w'); "
+        "fprintf(__hedonic_f,'{\"detector_seconds\": %.9f}', __hedonic_s); fclose(__hedonic_f);\n"
+    )
+
+
 def _run_octave_script(
     script: str,
     *,
     root: Path,
     octave: str,
     timeout: float | None,
-) -> subprocess.CompletedProcess[str]:
+    timing_path: Path | None = None,
+) -> timing.ProcessResult:
+    """Run an Octave script. With ``timing_path`` the script times its own detector call (:func:`_octave_timed`) and
+    that is what counts, not Octave's start-up; without it the whole process is counted."""
     script_path = root / "run_method.m"
     script_path.write_text(script, encoding="utf-8")
+    return _run_executable(
+        [str(octave), "--no-gui", "--quiet", "--eval", f"run('{script_path.as_posix()}')"],
+        "Octave method", {"timeout_seconds": timeout}, cwd=root, counted=timing_path is None,
+    )
+
+
+def _adopt_script_time(result: timing.ProcessResult, timing_path: Path, label: str) -> None:
+    """Count the detector time a script reported (after :func:`_octave_output_or_error` accepted the run)."""
     try:
-        return subprocess.run(
-            [str(octave), "--no-gui", "--quiet", "--eval", f"run('{script_path.as_posix()}')"],
-            cwd=str(root), capture_output=True, text=True, timeout=timeout, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise MethodUnavailable(f"Octave method could not complete: {exc}") from exc
+        timing.active().adopt(timing.read_report(timing_path), result, label=label)
+    except ValueError as exc:
+        raise MethodUnavailable(f"{label} did not report its detector time: {exc}") from exc
 
 
-def _octave_output_or_error(result: subprocess.CompletedProcess[str], label: str) -> None:
+def _octave_output_or_error(result: timing.ProcessResult, label: str) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip().splitlines()
         useful = [line for line in detail if "ignoring const execution_exception" not in line]
@@ -1108,18 +1155,24 @@ def _run_nise(
         )
         requested_k = int(parameters.get("communities", max(2, min(64, len(ground_truth) or 64))))
         k = max(2, min(requested_k, max(2, graph.vcount() - 1)))
+        timing_path = root / "timing.json"
+        seeding = str(parameters.get("seeding", "sphub"))
+        ego = "true" if parameters.get("ego", True) else "false"
+        expansion = str(parameters.get("expansion", "ppr"))
+        detector_call = f"C = nise(A,{k},'{seeding}',{ego},'{expansion}',{int(parameters.get('nworkers', 1))});"
         script = f"""
 addpath('{root.as_posix()}'); addpath(genpath('{source_path.as_posix()}'));
 E = dlmread('{edge_path.as_posix()}');
 n = {int(graph.vcount())};
 if isempty(E), A = sparse(n,n); else, A = sparse([E(:,1);E(:,2)]+1,[E(:,2);E(:,1)]+1,1,n,n); end;
-C = nise(A,{k},'{str(parameters.get('seeding', 'sphub'))}',{'true' if parameters.get('ego', True) else 'false'},'{str(parameters.get('expansion', 'ppr'))}',{int(parameters.get('nworkers', 1))});
-fid = fopen('{output_path.as_posix()}','w');
+{_octave_timed(detector_call, timing_path)}fid = fopen('{output_path.as_posix()}','w');
 for j = 1:size(C,2), I = find(C(:,j)>0)-1; if ~isempty(I), fprintf(fid,'%d ',I); fprintf(fid,'\\n'); end; end;
 fclose(fid);
 """
-        result = _run_octave_script(script, root=root, octave=str(octave), timeout=parameters.get("timeout_seconds"))
+        result = _run_octave_script(script, root=root, octave=str(octave), timeout=parameters.get("timeout_seconds"),
+                                    timing_path=timing_path)
         _octave_output_or_error(result, "NISE")
+        _adopt_script_time(result, timing_path, "NISE")
         cover = _read_cover_lines(output_path)
         return cover, {
             "implementation": "official NISE MATLAB/Octave source",
@@ -1154,19 +1207,17 @@ def _run_qoce(
         edge_path = root / "graph.pairs"
         seed_path = root / "seeds.txt"
         output_path = root / "communities.txt"
+        timing_path = root / "timing.json"
         # QOCE's loader expects 1-based MATLAB node identifiers.
         with edge_path.open("w", encoding="utf-8") as stream:
             for left, right in _undirected_graph(graph).get_edgelist():
                 if int(left) != int(right):
                     stream.write(f"{int(left)+1} {int(right)+1}\n")
-        try:
-            clique_result = subprocess.run(
-                [str(clique_finder), str(edge_path), str(int(parameters.get("min_clique_size", 3)))],
-                cwd=str(root), capture_output=True, text=True,
-                timeout=parameters.get("timeout_seconds"), check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MethodUnavailable(f"QOCE clique enumeration could not complete: {exc}") from exc
+        # The clique seeds are part of QOCE's pipeline: the CliqueFinder program is counted from exec to exit.
+        clique_result = _run_executable(
+            [str(clique_finder), str(edge_path), str(int(parameters.get("min_clique_size", 3)))],
+            "QOCE clique enumeration", parameters, cwd=root, input_path=edge_path,
+        )
         if clique_result.returncode != 0:
             raise MethodUnavailable("QOCE CliqueFinder failed: " + (clique_result.stderr or clique_result.stdout)[-500:])
         seed_path.write_text(clique_result.stdout, encoding="utf-8")
@@ -1188,15 +1239,20 @@ def _run_qoce(
         (root / "optimoptions.m").write_text(
             "function o=optimoptions(varargin), o=struct(); end\n", encoding="utf-8"
         )
+        detector_call = (
+            f"C = QOCE(G,S,{int(parameters.get('nthread', 1))},{int(parameters.get('t0', 3))},"
+            f"{float(parameters.get('mu', 0.0))},{float(parameters.get('alpha', 0.2))},{int(parameters.get('w', 5))});"
+        )
         script = f"""
 addpath('{root.as_posix()}'); addpath(genpath('{qoce_codes.as_posix()}'));
 G = loadGraph('{edge_path.as_posix()}');
 S = loadCommunities('{seed_path.as_posix()}');
-C = QOCE(G,S,{int(parameters.get('nthread',1))},{int(parameters.get('t0',3))},{float(parameters.get('mu',0.0))},{float(parameters.get('alpha',0.2))},{int(parameters.get('w',5))});
-saveCommunities('{output_path.as_posix()}',C);
+{_octave_timed(detector_call, timing_path)}saveCommunities('{output_path.as_posix()}',C);
 """
-        result = _run_octave_script(script, root=root, octave=str(octave), timeout=parameters.get("timeout_seconds"))
+        result = _run_octave_script(script, root=root, octave=str(octave), timeout=parameters.get("timeout_seconds"),
+                                    timing_path=timing_path)
         _octave_output_or_error(result, "QOCE")
+        _adopt_script_time(result, timing_path, "QOCE")
         return _read_cover_lines(output_path), {
             "implementation": "PanShi2016/QOCE MATLAB/Octave source",
             "source": str(qoce_codes),
@@ -1229,10 +1285,7 @@ def _run_svi(
         k = max(2, min(requested_k, max(2, graph.vcount() - 1)))
         command = [str(binary_path), "-file", str(edge_path), "-n", str(graph.vcount()), "-k", str(k), "-label", "svi", "-seed", str(seed), "-max-iterations", str(int(parameters.get("max_iterations", 10))), "-nthreads", str(int(parameters.get("threads", 1)))]
         if parameters.get("link_sampling", True): command.append("-link-sampling")
-        try:
-            result = subprocess.run(command, cwd=str(root), capture_output=True, text=True, timeout=parameters.get("timeout_seconds"), check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MethodUnavailable(f"SVI command could not complete: {exc}") from exc
+        result = _run_executable(command, "SVI", parameters, cwd=root, input_path=edge_path)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
             raise MethodUnavailable("SVI exited %s: %s" % (result.returncode, detail[-1] if detail else "no diagnostic"))
@@ -1258,21 +1311,25 @@ def _run_essc(
         _write_edge_list(graph, edge_path)
         script = root / "run.R"
         script.write_text(
-            "args <- commandArgs(trailingOnly=TRUE); lib <- args[[1]]; edge <- args[[2]]; out <- args[[3]]; n <- as.integer(args[[4]]); "
+            "args <- commandArgs(trailingOnly=TRUE); lib <- args[[1]]; edge <- args[[2]]; out <- args[[3]]; n <- as.integer(args[[4]]); tfile <- args[[5]]; "
             ".libPaths(c(lib, .libPaths())); suppressPackageStartupMessages(library(Matrix)); suppressPackageStartupMessages(library(ESSC)); "
             "E <- tryCatch(read.table(edge, header=FALSE), error=function(e) matrix(numeric(0), ncol=2)); "
             "if (nrow(E)>0) A <- sparseMatrix(i=c(E[,1],E[,2])+1,j=c(E[,2],E[,1])+1,x=1,dims=c(n,n)) else A <- sparseMatrix(n,n); "
-            "R <- essc(A, alpha=0.1, Null='Poisson', Num.Samples=n); f <- file(out,'w'); "
+            "t0 <- proc.time()[[3]]; R <- essc(A, alpha=0.1, Null='Poisson', Num.Samples=n); dt <- proc.time()[[3]] - t0; "
+            "writeLines(sprintf('{\"detector_seconds\": %.9f}', dt), tfile); f <- file(out,'w'); "
             "for (cc in R$Communities) { if(length(cc)>0) { writeLines(paste(cc-1, collapse=' '), f) } }; close(f)",
             encoding="utf-8",
         )
-        try:
-            result = subprocess.run([str(rscript), str(script), str(library), str(edge_path), str(output_path), str(graph.vcount())], cwd=str(root), capture_output=True, text=True, timeout=parameters.get("timeout_seconds"), check=False, env={**os.environ, "R_LIBS_USER": str(library)})
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MethodUnavailable(f"ESSC R command could not complete: {exc}") from exc
+        timing_path = root / "timing.json"
+        # The R script times its own essc() call (R start-up, library loading and the sparse-matrix build stay outside).
+        result = _run_executable(
+            [str(rscript), str(script), str(library), str(edge_path), str(output_path), str(graph.vcount()), str(timing_path)],
+            "ESSC R", parameters, cwd=root, env={**os.environ, "R_LIBS_USER": str(library)}, counted=False,
+        )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
             raise MethodUnavailable("ESSC exited %s: %s" % (result.returncode, detail[-1] if detail else "no diagnostic"))
+        _adopt_script_time(result, timing_path, "ESSC")
         return _read_cover_lines(output_path), {"implementation": "jdwilson4/ESSC R package", "rscript": str(rscript), "library": str(library), "seed": int(_seed), "stochastic": True, "null": "Poisson", "alpha": 0.1}
 
 
@@ -1327,6 +1384,7 @@ def _run_template_command(
         edge_path = root / "graph.txt"
         truth_path = root / "ground_truth.txt"
         output_path = root / "communities.txt"
+        timing_path = root / "timing.json"
         # The upstream NcGame script uses pandas.read_csv(..., skiprows=4),
         # so its command template receives a conventional four-line SNAP
         # header.  Other adapters use the dedicated plain edge-list writer.
@@ -1340,28 +1398,32 @@ def _run_template_command(
             "seed": int(seed),
             "nodes": int(graph.vcount()),
             "edges": int(graph.ecount()),
+            "timing": str(timing_path),
         }
         try:
             command = [part.format(**values) for part in shlex.split(template)]
         except (KeyError, ValueError) as exc:
             raise MethodUnavailable(f"invalid {name} command template: {exc}") from exc
-        try:
-            result = subprocess.run(
-                command,
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                timeout=parameters.get("timeout_seconds"),
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MethodUnavailable(f"{name} command could not complete: {exc}") from exc
+        # A template with ``{timing}`` names a program that times its own detector call and writes it there (the
+        # shipped NcGame wrapper does); its start-up and imports are then not counted. Any other command is a black
+        # box timed from exec to exit, like an executable (see ``timing``).
+        if name == "ncgame" and "ncgame_worker.py" in template and "{timing}" not in template:
+            # a setup written before the wrapper timed itself: the shipped wrapper accepts the option, so ask for it
+            template += " --timing-output {timing}"
+            command = [part.format(**values) for part in shlex.split(template)]
+        self_timed = "{timing}" in template
+        result = _run_executable(command, name, parameters, cwd=root, input_path=edge_path, counted=not self_timed)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
             raise MethodUnavailable(
                 f"{name} command exited {result.returncode}: "
                 + (detail[-1] if detail else "no diagnostic")
             )
+        if self_timed:
+            try:
+                timing.active().adopt(timing.read_report(timing_path), result, label=f"{name} command")
+            except ValueError as exc:
+                raise MethodUnavailable(f"{name} command did not report its detector time: {exc}") from exc
         candidate = output_path if output_path.is_file() else None
         if candidate is None:
             output_file = parameters.get("output_file")
@@ -1379,6 +1441,7 @@ def _run_template_command(
             "stdout_tail": result.stdout[-2000:],
             "seed": int(seed),
             "stochastic": True,
+            "self_timed": self_timed,
         }
 
 
@@ -1428,16 +1491,7 @@ def _run_codeseg(
         ]
         if graph.is_directed():
             command.append("-d")
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=parameters.get("timeout_seconds"),
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MethodUnavailable(f"CoDeSEG command could not complete: {exc}") from exc
+        result = _run_executable(command, "CoDeSEG", parameters, input_path=edge_path)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
             raise MethodUnavailable(
@@ -1470,6 +1524,11 @@ def _run_bigclam(
     binary_path = Path(str(binary)).expanduser()
     if not binary_path.is_file() or not os.access(binary_path, os.X_OK):
         raise MethodUnavailable(f"Bigclam executable is not runnable: {binary_path}")
+    # SNAP's published Bigclam example uses colon-prefixed options.  Keep that
+    # exact interface as the default while allowing a command template for
+    # forks with a different CLI.
+    if _command_template("bigclam", parameters):
+        return _run_template_command("bigclam", graph, ground_truth, seed, parameters)
     with tempfile.TemporaryDirectory(prefix="hedonic-codeseg-bigclam-") as temporary:
         root = Path(temporary)
         edge_path = root / "graph.txt"
@@ -1477,12 +1536,6 @@ def _run_bigclam(
         output_prefix = root / "result-"
         _write_edge_list(graph, edge_path)
         _write_cover(ground_truth, truth_path)
-        # SNAP's published Bigclam example uses colon-prefixed options.  Keep
-        # that exact interface as the default while allowing a command template
-        # for forks with a different CLI.
-        template = _command_template("bigclam", parameters)
-        if template:
-            return _run_template_command("bigclam", graph, ground_truth, seed, parameters)
         requested_communities = int(
             parameters.get("communities", PAPER_OVERLAP_PARAMS["bigclam_communities"])
         )
@@ -1499,16 +1552,7 @@ def _run_bigclam(
             f"-c:{effective_communities}",
             f"-nt:{int(parameters.get('threads', 1))}",
         ]
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=parameters.get("timeout_seconds"),
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MethodUnavailable(f"Bigclam command could not complete: {exc}") from exc
+        result = _run_executable(command, "Bigclam", parameters, input_path=edge_path)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
             raise MethodUnavailable(
@@ -1564,16 +1608,7 @@ def _run_fox(
             "--wcc-threshold",
             str(float(parameters.get("wcc_threshold", PAPER_OVERLAP_PARAMS["fox_wcc_threshold"]))),
         ]
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=parameters.get("timeout_seconds"),
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MethodUnavailable(f"LazyFox command could not complete: {exc}") from exc
+        result = _run_executable(command, "LazyFox", parameters, input_path=edge_path)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
             raise MethodUnavailable(
@@ -1894,8 +1929,7 @@ def _run_dataset(
         parameters["dataset"] = dataset.name
         if timeout_seconds is not None:
             parameters["timeout_seconds"] = float(timeout_seconds)
-        started = time.perf_counter()
-        resource_before = _resource_snapshot()
+        unit_started = time.perf_counter()  # the whole unit, scoring and saving included: ``unit_seconds``
         record: dict[str, Any] = {
             "protocol_version": PROTOCOL_VERSION,
             "config_digest": config_digest,
@@ -1903,18 +1937,24 @@ def _run_dataset(
             "method": name,
             "seed": int(seed),
             "status": "running",
+            "timing_scope": timing.TIMING_SCOPE,
             "runtime_versions": runtime.runtime_versions(),
             "dataset_report": dataset.report,
             "ground_truth_report": gt_report,
             "method_spec": METHOD_SPECS[name].__dict__,
             "paper_filter_enabled": bool(paper_filter),
         }
+        clock: timing.DetectorClock | None = None
         try:
-            detection_started = time.perf_counter()
-            cover, detector_metadata = _run_method(
-                name, dataset.graph, ground_truth, int(seed), parameters
-            )
-            record["detection_seconds"] = time.perf_counter() - detection_started
+            # The detector clock runs inside the adapters (``timing``), around the detector's own computation only.
+            # Everything below it (validation, canonicalisation, scoring, saving the cover) comes after it stopped.
+            with timing.detector_run() as clock:
+                cover, detector_metadata = _run_method(
+                    name, dataset.graph, ground_truth, int(seed), parameters
+                )
+            if not clock.used:
+                raise RuntimeError(f"{name}: the detector never started the detector clock (see timing.py)")
+            _stamp_detector_clock(record, clock)
             scoring_started = time.perf_counter()
             scored_prediction = (
                 _filter_prediction(cover, gt_nodes=gt_nodes, n_vertices=dataset.graph.vcount())
@@ -1986,44 +2026,13 @@ def _run_dataset(
                     "reason": f"{type(exc).__name__}: {exc}",
                 }
             )
-        resource_after = _resource_snapshot()
-        record["runtime_seconds"] = time.perf_counter() - started
-        record["resources"] = {
-            "before": resource_before,
-            "after": resource_after,
-            "user_cpu_seconds": max(
-                0.0,
-                float(resource_after["user_cpu_seconds"])
-                - float(resource_before["user_cpu_seconds"]),
-            ),
-            "system_cpu_seconds": max(
-                0.0,
-                float(resource_after["system_cpu_seconds"])
-                - float(resource_before["system_cpu_seconds"]),
-            ),
-            "child_user_cpu_seconds": max(
-                0.0,
-                float(resource_after["child_user_cpu_seconds"])
-                - float(resource_before["child_user_cpu_seconds"]),
-            ),
-            "child_system_cpu_seconds": max(
-                0.0,
-                float(resource_after["child_system_cpu_seconds"])
-                - float(resource_before["child_system_cpu_seconds"]),
-            ),
-            "peak_rss_bytes": int(resource_after["peak_rss_bytes"]),
-            "peak_child_rss_bytes": int(resource_after["peak_child_rss_bytes"]),
-            "vertices_per_second": (
-                float(dataset.graph.vcount()) / record["runtime_seconds"]
-                if record["runtime_seconds"] > 0
-                else None
-            ),
-            "edges_per_second": (
-                float(dataset.graph.ecount()) / record["runtime_seconds"]
-                if record["runtime_seconds"] > 0
-                else None
-            ),
-        }
+        if clock is not None and "resources" not in record:  # the detector raised: keep what it had run for
+            _stamp_detector_clock(record, clock)
+        record["unit_seconds"] = time.perf_counter() - unit_started
+        if "resources" in record:
+            seconds = record.get("detection_seconds")
+            for key, count in (("vertices_per_second", dataset.graph.vcount()), ("edges_per_second", dataset.graph.ecount())):
+                record["resources"][key] = float(count) / seconds if seconds and seconds > 0 else None
         _atomic_json(run_path, record)
         records.append(record)
         status = record["status"]
@@ -2042,6 +2051,9 @@ def _write_csv(path: Path, records: Sequence[dict[str, Any]]) -> None:
         "status",
         "seed",
         "runtime_seconds",
+        "detection_seconds",
+        "unit_seconds",
+        "timing_scope",
         "f1",
         "f1_percent",
         "onmi",
@@ -2071,6 +2083,8 @@ def _write_csv(path: Path, records: Sequence[dict[str, Any]]) -> None:
         "child_system_cpu_seconds",
         "peak_rss_bytes",
         "peak_child_rss_bytes",
+        "detector_peak_rss_bytes",
+        "detector_peak_rss_scope",
         "vertices_per_second",
         "edges_per_second",
         "reason",
@@ -2559,6 +2573,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     preflight = {
         "protocol_version": PROTOCOL_VERSION,
+        "timing": {"scope": timing.TIMING_SCOPE, "rule": timing.TIMING_RULE},
         "config": config_payload,
         "config_digest": config_digest,
         "methods": {name: _method_preflight(name, method_parameters[name]) for name in methods},
@@ -2625,6 +2640,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     manifest = {
         "protocol_version": PROTOCOL_VERSION,
+        "timing": {"scope": timing.TIMING_SCOPE, "rule": timing.TIMING_RULE},
         "config": config_payload,
         "config_digest": config_digest,
         "runtime_versions": runtime.runtime_versions(),

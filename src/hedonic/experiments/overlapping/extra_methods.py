@@ -2,7 +2,7 @@
 
 The public registry (and its 25-method DBLP default set) is left unchanged; a
 caller that wants these methods calls :func:`install` before invoking the
-runner, which then loads, bounds, scores, times, and records them exactly like
+runner, which then loads, bounds, scores, times (``timing.py``), and records them exactly like
 the registered methods.
 
 ego_splitting  Epasto, Lattanzi & Paes Leme (KDD 2017) persona-graph splitting
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from hedonic.experiments.overlapping import codeseg_reproduction as cr
 from hedonic.experiments.overlapping import methods as om
+from hedonic.experiments import timing
 
 EXTRA = {
     "ego_splitting": cr.MethodSpec(
@@ -55,7 +56,8 @@ def _run_extra(name, graph, ground_truth, seed, parameters):
     if name == "disjoint_oracle":
         from hedonic.experiments.overlapping.disjoint_oracle import oracle_partition
 
-        cover, report = oracle_partition(ground_truth)
+        with timing.active().measure("oracle_partition"):  # same clock as every detector: the computation only
+            cover, report = oracle_partition(ground_truth)
         return cover, {"implementation": CONTROLS[name].paper_implementation, "supervised": True,
                        "max_memberships": 1, "oracle": report}
     raise ValueError(name)

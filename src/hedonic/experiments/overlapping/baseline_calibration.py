@@ -304,6 +304,8 @@ def default_runner(method: str, graph: ig.Graph, params: dict[str, Any], seed: i
 
 
 def _child(runner, method, graph, params, seed, path):
+    # ``detect_seconds`` here is the probe's wall-clock (fork, pickle and the runner's conversions included): budget
+    # accounting for the search, not a method comparison. Reported times come from ``timing`` in the benchmark.
     t0 = time.perf_counter()
     try:
         cover = runner(method, graph, params, seed)
