@@ -1,0 +1,35 @@
+# The label-free calibration of the eight baselines on every network/cover pair the article uses.
+#
+# The pairs are the ones Table 1 marks "In paper" (the checkmarks of the manuscript): DBLP, Amazon and YouTube with both
+# covers, Friendster and LiveJournal with `top5000` only. Orkut and the `all` covers of Friendster and LiveJournal are
+# deferred to future work, so they are not calibrated here. The order is the one the paper queue uses: the `top5000`
+# covers first (in Table 1's network order), then the complete `all` covers.
+#
+#   hedonic run calibrate-baselines --config baseline-calibration-paper --dry-run
+#   hedonic run calibrate-baselines --config baseline-calibration-paper
+#
+# The paper queue's `baseline-calibration` item runs the same settings on the queue's eight pairs.
+#
+# Finished work is reused: a calibration already recorded in the output folder's baseline_tuned.json is skipped, and every
+# setting already in its ledger/ is read, not rerun (the ledger is keyed by method, parameters, graph and split, so it can
+# be copied between folders). Flags on the command line override this file.
+[calibrate_baselines]
+name = "baseline-paper"
+# output_dir: <the user config's output_dir>/baseline-paper unless --output-dir is given
+networks = [
+  "dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000",
+  "dblp:all", "amazon:all", "youtube:all",
+]
+# Method by method, cheapest first (single-core probe minutes recorded so far): the three fixed settings run no probes,
+# then FOX, CliquePerc, ANGEL, and last BigCLAM and NEO-K-Means, which take almost all the time. All pairs of a method run
+# side by side before the next method starts.
+methods = ["codeseg", "ncgame", "ego_splitting", "fox", "clique_percolation", "angel", "bigclam", "neo_kmeans"]
+max_evals = 8
+max_minutes = 240
+eval_timeout_minutes = 60
+replicates = 1
+# Cores: the pairs of one method run side by side (workers, each forked child loads its own pair; no more than `workers`,
+# and a new one starts only while the machine's free memory is 15 points above the floor, 20 s after the previous start).
+# Detector probes are single-core, so `workers` pairs use `workers` cores. A free-memory floor (HEDONIC_MEMORY_FLOOR,
+# default 10%) stops the run instead of swapping. Fewer workers than cores keeps the 60-minute probe timeout fair.
+workers = 6

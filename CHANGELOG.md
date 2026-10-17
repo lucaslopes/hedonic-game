@@ -22,9 +22,11 @@
 - When the queue of vertices to visit runs dry, the vertices not yet settled
   are visited again in a fresh random order. A fixed order made complete
   YouTube at its density take 11 to 18 minutes; it now takes under 5 s.
-- Dependencies are the standard `igraph>=1.0` package and NumPy. Importing
-  `hedonic` does not check igraph's version, so it installs next to any
-  igraph 1.x.
+- The library needs only the standard `igraph>=1.0` package and NumPy.
+  Importing `hedonic` does not check igraph's version, so it installs next to
+  any igraph 1.x. The package also depends on SciPy, pandas, Matplotlib,
+  NetworkX, PyArrow, DuckDB and tqdm for its experiment command line; the
+  `fast` extra adds Numba for the exact robustness audit.
 - `Game.community_hedonic(initial_membership, *, max_communities,
   max_memberships, resolution, allow_isolation, edge_weights, seed,
   node_weights, max_total_communities, n_communities)`: everything after
@@ -51,9 +53,9 @@
 - Community-count limits: `max_total_communities` (at most K) and
   `n_communities` (exactly K), enforced at every move.
 - `hedonic.metrics` and `Game.evaluate_against` score a result against a
-  reference cover or partition (a flat reference may use any labels); only
-  the scores built on a one-to-one matching use SciPy
-  (`pip install "hedonic[metrics]"`). `restrict_to_reference=True` (and
+  reference cover or partition (a flat reference may use any labels); the
+  scores built on a one-to-one matching use SciPy (the `metrics` extra is
+  kept for older install lines). `restrict_to_reference=True` (and
   `hedonic.metrics.restrict_cover`) scores against a reference that labels
   only part of the graph; Omega is exact on graphs with at most
   `omega_sample_size` (100,000) vertex pairs. `hedonic.metrics` is reachable
@@ -66,3 +68,26 @@
   a build with or without the instruction from CPUID), and every wheel
   job runs the C tests and the Python tests against results pinned bit for
   bit.
+- The experiment command line ships with the package: `pip install hedonic`
+  installs `hedonic` (runs) and `hedonic-exp` (analysis and utility
+  commands), with the run configs and the external-method workers as package
+  data.
+  - `hedonic run queue paper` runs the overlapping-communities paper's six
+    experiments on eight SNAP graph/cover pairs, pair by pair, writing under
+    `--root DIR` (default `OUTPUT_DIR/paper-queue`); `--dry-run` prints the
+    plan and what is already done, and a started queue checks that its data
+    and methods are prepared.
+  - `hedonic setup [--pairs P,...] [--methods M,...] [--all] [--dry-run]`
+    downloads SNAP pairs and builds or installs the external baselines,
+    after checking the system tools they need.
+  - `hedonic run disjoint --preset smoke|paper` reproduces the disjoint
+    paper.
+  - Runs are detached and resumable (`hedonic run list|status|attach|logs|
+    stop|resume|check`); `hedonic guide` is a tour of the commands.
+  - Records carry the hedonic version and the SHA-256 of the C core as their
+    runtime identity. Hedonic is the method `hedonic`; the multilevel phase
+    (`hoc_multilevel`, multi-phase variants) is not available and is refused
+    with that message.
+  - Data defaults to `~/hedonic-data` and runs to `~/hedonic-runs`
+    (`HEDONIC_DATA_DIR`, `HEDONIC_OUTPUT_DIR`, `HEDONIC_NETWORKS_DIR` and
+    `~/.config/hedonic/config.toml` override them).

@@ -1,0 +1,30 @@
+# Ground-truth robustness spectrum on the complete DBLP, Amazon, YouTube and LiveJournal graphs, every ground-truth
+# cover each has (all, top5000). Start with:  hedonic run spectrum --config full  (= hedonic run spectrum-full).
+# Output: --output-dir, else <output_dir from the user config>/<name>. It is a labelled unlocked run (the bounded
+# study of the default spectrum config has its own protocol lock, which this run does not use).
+
+[overlapping_gt_spectrum]
+name = "gt-robustness"
+allow_unlocked = true
+workers = 8                                    # processes side by side; ~2 GB each (--workers overrides)
+
+# Every network crossed with every cover, in the order the study runs them: the top5000 covers first (DBLP, Amazon,
+# YouTube, LiveJournal), then the complete `all` covers in the same order. A pair already in the output folder's ledger
+# is not run again, so widening this list only adds the missing pairs; reordering it changes only what runs first.
+pairs = ["dblp/top5000", "amazon/top5000", "youtube/top5000", "livejournal/top5000",
+         "dblp/all", "amazon/all", "youtube/all", "livejournal/all"]
+uncovered_policy = "covered-induced"           # every vertex in a reference community
+max_nodes = 0                                  # complete graph
+isolation_policies = ["fixed_labels", "open_labels"]
+
+seeds = "0-4"
+# The bounded study's grids plus the whole-graph tuned resolutions of the benchmark's first calibration:
+# 1/7 (DBLP), 1/11 and 1/723 (Amazon).
+detector_resolutions = "0+geom:1e-4:1:9+0.1428571428571428+0.0909090909090909+0.0013831258644536654"
+audit_resolutions = "0:1:101+geom:1e-4:1:33+0.1428571428571428+0.0909090909090909+0.0013831258644536654"
+
+robustness_atol = 1e-10
+robustness_rtol = 1e-9
+omega = true
+omega_sample_size = 100000
+timeout_per_run = 3600

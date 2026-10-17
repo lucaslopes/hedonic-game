@@ -9,9 +9,18 @@ authors = [
     { name = "Lucas Lopes Felipe" }
 ]
 requires-python = ">=3.12"
+# The library needs igraph and numpy; the rest is the experiment CLI (`hedonic`, `hedonic-exp`), so a plain
+# `pip install hedonic` can run every experiment of the papers.
 dependencies = [
     "igraph>=1.0",
     "numpy",
+    "scipy>=1.10",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "networkx>=3.0",
+    "pyarrow>=14",
+    "duckdb>=1.0",
+    "tqdm>=4.60",
 ]
 keywords = ["community detection", "hedonic games", "graphs", "networks", "overlapping communities"]
 classifiers = [
@@ -22,8 +31,16 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# One-to-one matching in hedonic.metrics (Game.evaluate_against "one_to_one_f1").
+# One-to-one matching in hedonic.metrics (Game.evaluate_against "one_to_one_f1"); scipy is now a dependency, the
+# extra is kept so `pip install "hedonic[metrics]"` still works.
 metrics = ["scipy>=1.10"]
+# Compiled kernels of the exact robustness audit (cover audits, the ground-truth spectrum); without it the same
+# results are computed in pure Python, more slowly.
+fast = ["numba>=0.59"]
+
+[project.scripts]
+hedonic = "hedonic.experiments.CLI:hedonic_main"
+hedonic-exp = "hedonic.experiments.CLI:main"
 
 [project.urls]
 Homepage = "https://github.com/lucaslopes/hedonic"
@@ -43,3 +60,10 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 hedonic = ["py.typed"]
+# Shipped run configs (`hedonic run queue paper`, `--config NAME`) and the external-method workers, including the
+# locked CDlib project (slpa_env/pyproject.toml and uv.lock): hedonic.experiments.resources finds them.
+"hedonic.experiments" = ["configs/*.toml", "workers/*.py", "workers/*.md", "workers/slpa_env/*.py",
+                         "workers/slpa_env/pyproject.toml", "workers/slpa_env/uv.lock"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["__pycache__/*", "*.pyc", ".venv/*"]

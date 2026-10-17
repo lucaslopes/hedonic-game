@@ -1,0 +1,61 @@
+# The overlap paper's experiment queue: six runs over eight SNAP network:cover pairs.
+#
+#   hedonic setup --all                     # once: download the eight pairs and build the eight baselines
+#   hedonic run queue paper --dry-run       # the plan, what is already done, and what setup still misses
+#   hedonic run queue paper                 # start (durable: closing the terminal does not stop it)
+#   hedonic run status paper-queue          # progress; `hedonic run attach paper-queue` opens the live tree
+#   hedonic run stop paper-queue            # stop; run the same `hedonic run queue paper` again to continue
+#
+# {root} is the folder every run writes into: `--root DIR`, by default <output_dir>/paper-queue with the output_dir of
+# `hedonic config` (else ~/hedonic-runs). Running the queue again skips what its files on disk show finished and
+# resumes the rest. The two calibrations come first because the later runs read their results (--tuned); then the
+# synthetic study; then leveraging-gt, gt-robustness and the benchmark go pair by pair, in the order of `pairs`.
+
+name = "paper-queue"
+pairs = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "livejournal:top5000",
+         "dblp:all", "amazon:all", "youtube:all", "livejournal:all"]
+
+[[items]]
+name = "hedonic-calibration"
+short = "calibrate"
+title = "precondition: Hedonic (gamma, cap) per pair"
+about = "Searches Hedonic's resolution and membership cap on each pair's covered subgraph, scored against that pair's cover. Writes hoc_tuned.json, which leveraging-gt and the benchmark read."
+run = ["calibrate", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all,livejournal:all", "--mode", "auto", "--name", "hedonic-calibration", "--output-dir", "{root}/hedonic-calibration"]
+
+[[items]]
+name = "baseline-calibration"
+short = "calib-base"
+title = "precondition: the baselines' parameters per pair"
+about = "Chooses CliquePerc k, ANGEL phi and the BigCLAM / NEO-K-Means K on each pair's covered subgraph without ground truth and fixes the other baselines at their published values. Writes baseline_tuned.json, which the benchmark reads."
+run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all,livejournal:all", "--methods", "codeseg,ncgame,ego_splitting,fox,clique_percolation,angel,bigclam,neo_kmeans", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--name", "baseline-calibration", "--output-dir", "{root}/baseline-calibration"]
+
+[[items]]
+name = "synthetic-networks"
+short = "synthetic"
+title = "Appendix: controlled-overlap heatmap"
+about = "Synthetic LFR-derived graphs with a controlled overlap: caps, starts and resolutions crossed. No network and no cover."
+run = ["controlled", "--config", "overlap-heatmap", "--name", "synthetic-networks", "--output-dir", "{root}/synthetic-networks"]
+
+[[items]]
+name = "leveraging-gt"
+by_pair = true
+short = "leveraging"
+title = "Hedonic from a corrupted cover"
+about = "Hedonic local moving started from the ground-truth cover corrupted by degree-preserving incidence switches: 9 corruption levels x 10 seeds per pair, at the calibrated settings."
+run = ["startcurve", "--config", "start-quality-hoc-local", "--tuned", "{root}/hedonic-calibration/hoc_tuned.json", "--name", "leveraging-gt", "--output-dir", "{root}/leveraging-gt"]
+
+[[items]]
+name = "gt-robustness"
+by_pair = true
+short = "gt-robust"
+title = "stability of the supplied covers"
+about = "Exact stability of every supplied ground-truth cover over resolution (fixed and open labels), then local moving from the exact cover at each resolution and seed. Whole graphs."
+run = ["spectrum", "--config", "full", "--name", "gt-robustness", "--output-dir", "{root}/gt-robustness"]
+
+[[items]]
+name = "benchmark"
+by_pair = true
+short = "benchmark"
+title = "accuracy, time and robustness"
+about = "Hedonic and eight baselines on the subgraph each cover induces, seeds 0-9, one detector at a time (time and memory are results). Each saved cover is audited for robustness right after its run."
+run = ["exp", "--config", "paper-benchmark", "--tuned", "{root}/hedonic-calibration/hoc_tuned.json,{root}/baseline-calibration/baseline_tuned.json", "--name", "benchmark", "--output-dir", "{root}/benchmark", "--yes"]
