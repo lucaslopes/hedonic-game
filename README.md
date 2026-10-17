@@ -101,7 +101,9 @@ The package also installs the experiment command line (`hedonic` and
 `hedonic-exp`, see [Command line](#command-line-reproducing-the-experiments))
 and its dependencies (SciPy, pandas, Matplotlib, NetworkX, PyArrow, DuckDB and
 tqdm). The experiments' robustness audits run on the same C audit as
-`Game.stable_intervals` and `Game.regrets`, so they need nothing more.
+`Game.stable_intervals` and `Game.regrets`, so they need nothing more. The
+command line runs on macOS and Linux; on Windows the package installs the
+library alone.
 
 ## Tutorial
 
