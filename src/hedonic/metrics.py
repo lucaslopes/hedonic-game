@@ -103,6 +103,25 @@ def flat_membership_to_cover_init(membership: list[int]) -> list[list[int]]:
     return [[int(c)] for c in membership]
 
 
+def restrict_cover(
+    cover: Sequence[Sequence[int]], reference: Sequence[Sequence[int]]
+) -> list[list[int]]:
+    """``cover`` restricted to the vertices that ``reference`` covers.
+
+    Every community keeps only its vertices that belong to some community of
+    ``reference``, in their order; a community left empty is dropped. This is
+    how a prediction on a whole graph is scored against a reference that
+    labels only part of it.
+    """
+    covered = {int(vertex) for community in reference for vertex in community}
+    restricted = []
+    for community in cover:
+        kept = [int(vertex) for vertex in community if int(vertex) in covered]
+        if kept:
+            restricted.append(kept)
+    return restricted
+
+
 def cover_to_memberships(
     cover: Sequence[Sequence[int]], n_vertices: int
 ) -> list[list[int]]:
@@ -135,13 +154,18 @@ def score_cover(
     cover: Sequence[Sequence[int]],
     *,
     metrics: Sequence[str] = GAME_EVALUATION_METRICS,
-    omega_sample_size: int = 10_000,
-    seed: int = 7,
+    omega_sample_size: int = 100_000,
+    seed: int = 0,
+    restrict_to_reference: bool = False,
 ) -> dict[str, float | None]:
     """Score a cover through the public :class:`hedonic.Game` facade.
 
-    The import is local so the metrics package remains usable without making
-    the core package eagerly import the optional experiment machinery.
+    The defaults are those of :meth:`hedonic.Game.evaluate_against`. Vertices
+    the cover leaves out play alone (``cover_to_memberships``), so they count
+    as singleton predictions; pass ``restrict_to_reference=True`` to score
+    only the vertices the reference covers. The import is local so the
+    metrics package remains usable without making the core package eagerly
+    import the optional experiment machinery.
     """
     from hedonic import Game
 
@@ -153,6 +177,7 @@ def score_cover(
             method=metric,
             omega_sample_size=omega_sample_size,
             omega_seed=seed,
+            restrict_to_reference=restrict_to_reference,
         )
         for metric in metrics
     }
@@ -1114,11 +1139,14 @@ def omega_index(
     sample_size: int = 100_000,
     seed: int = 0,
 ) -> float:
-    """Sampled Omega approximation with no dense ``n × n`` allocation.
+    """Omega index, exact on small graphs and sampled on large ones.
 
-    ``sample_size`` unordered vertex pairs are drawn uniformly with replacement.
-    Memory is O(total memberships + n + sample_size), making the metric safe for
-    full DBLP.  Use a fixed ``seed`` for reproducible rescoring.
+    When the graph has at most ``sample_size`` unordered vertex pairs, every
+    pair is counted once and the result is the exact Omega index (``seed`` is
+    then unused). Otherwise ``sample_size`` pairs are drawn uniformly with
+    replacement. Memory is O(total memberships + n + sample_size), with no
+    dense ``n × n`` allocation, making the metric safe for full DBLP. Use a
+    fixed ``seed`` for reproducible rescoring.
     """
     n = _check_count(n, "n", minimum=0)
     sample_size = _check_count(sample_size, "sample_size", minimum=1)
@@ -1138,11 +1166,16 @@ def omega_index(
 
     pred_memberships = vertex_memberships(pred)
     gt_memberships = vertex_memberships(gt)
-    rng = np.random.default_rng(seed)
-    first = rng.integers(0, n, size=int(sample_size), dtype=np.int64)
-    second = rng.integers(0, n - 1, size=int(sample_size), dtype=np.int64)
-    # Map [0, n-1) onto all vertices except ``first`` without rejection.
-    second += second >= first
+    if n_pairs <= sample_size:
+        # Every pair once: the exact index.
+        first, second = np.triu_indices(n, k=1)
+        sample_size = n_pairs
+    else:
+        rng = np.random.default_rng(seed)
+        first = rng.integers(0, n, size=int(sample_size), dtype=np.int64)
+        second = rng.integers(0, n - 1, size=int(sample_size), dtype=np.int64)
+        # Map [0, n-1) onto all vertices except ``first`` without rejection.
+        second += second >= first
     k_pred = np.fromiter(
         (len(pred_memberships[u] & pred_memberships[v]) for u, v in zip(first, second)),
         dtype=np.int32,

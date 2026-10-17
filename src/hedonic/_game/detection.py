@@ -238,7 +238,8 @@ def community_hedonic(
         source = "initial_membership"
         try:
             rows = game._normalize_membership(
-                candidate, collapse_duplicate_labels=True, name=source
+                candidate, collapse_duplicate_labels=True, renumber_labels=True,
+                name=source,
             )
         except (TypeError, ValueError) as exc:
             message = str(exc)

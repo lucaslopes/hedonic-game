@@ -58,6 +58,8 @@ scores = evaluate_cover(partition_to_cover_lists(partition), reference_cover, gr
 print(scores["f1"])  # equals graph.evaluate_against(reference_cover) after the detection call
 ```
 
+A reference that labels only part of the graph is scored against the whole result unless `restrict_to_reference=True` is passed, which first drops the vertices the reference does not contain from every detected community (`hedonic.metrics.restrict_cover`). Omega is exact on graphs with at most `omega_sample_size` vertex pairs (default 100,000) and sampled with `omega_seed` above that.
+
 ```api evaluate_cover
 ```
 

@@ -16,7 +16,7 @@ order: 4
 # Disjoint partition, run until no vertex wants to move; the seed fixes the visiting order.
 part = g.community_hedonic(resolution=g.density(), max_memberships=1, seed=0)
 
-# Warm start from a known partition: one label per vertex, contiguous from 0.
+# Warm start from a known partition: one label per vertex (gaps are renumbered).
 tracked = g.community_hedonic(initial_membership=list(previous.membership), seed=0)
 
 # Overlapping cover, warm-started from the disjoint result.

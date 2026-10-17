@@ -94,7 +94,9 @@ class Game(Graph):
         ``None`` means no state. The setter accepts the flat partition form
         (and tuples or NumPy arrays) and stores the normalized
         list-of-lists. A call starts from this state only when it is passed
-        as ``initial_membership``.
+        as ``initial_membership``. Assign a new state rather than editing the
+        returned lists in place (an edit is not validated), and note that
+        editing the graph does not update it.
         """
         return self._memberships
 
@@ -121,6 +123,7 @@ class Game(Graph):
         matching_weight: str = "f1",
         omega_sample_size: int = 100_000,
         omega_seed: int = 0,
+        restrict_to_reference: bool = False,
     ) -> float:
         """Score the stored partition/cover against an explicit ground truth.
 
@@ -147,6 +150,13 @@ class Game(Graph):
             Options forwarded to :func:`hedonic.metrics.evaluate_cover`.
             ``omega`` is estimated from ``omega_sample_size`` vertex pairs
             drawn with ``omega_seed``.
+        restrict_to_reference:
+            Score only the vertices the reference covers: every predicted
+            community loses the vertices that are in no reference community
+            (and is dropped if none is left). This is the usual protocol for
+            a reference that labels only part of the graph (the SNAP top-5000
+            covers, for example): without it, communities found among the
+            unlabelled vertices count as unmatched predictions.
 
         Returns
         -------
@@ -166,6 +176,7 @@ class Game(Graph):
             matching_weight=matching_weight,
             omega_sample_size=omega_sample_size,
             omega_seed=omega_seed,
+            restrict_to_reference=restrict_to_reference,
         )
 
     # A descriptive alias for callers who prefer the word "accuracy".  Keep
@@ -208,8 +219,9 @@ class Game(Graph):
 
         With ``max_memberships``, no row may hold more labels. This checks a
         state strictly. ``community_hedonic`` is more lenient with a start:
-        it reads a repeated label in a row once, and projects a row with more
-        than ``max_memberships`` labels to the ones its vertex prefers.
+        it reads a repeated label in a row once, renumbers labels with gaps
+        in their order, and projects a row with more than
+        ``max_memberships`` labels to the ones its vertex prefers.
         """
         return _validate_membership(
             self,
@@ -224,6 +236,7 @@ class Game(Graph):
         *,
         max_memberships: int | None = None,
         collapse_duplicate_labels: bool = False,
+        renumber_labels: bool = False,
         name: str = "memberships",
     ) -> list[list[int]]:
         """Validate and normalize a partition or cover to per-vertex rows.
@@ -231,8 +244,9 @@ class Game(Graph):
         Labels are required to be non-negative integers and contiguous from
         zero, matching igraph's membership convention.  Every row must be
         non-empty and duplicate labels within a vertex are rejected unless
-        ``collapse_duplicate_labels`` is set, as detector initialization does
-        for overlapping starts.  The optional cap is checked here so persisted
+        ``collapse_duplicate_labels`` is set, and labels with gaps are
+        rejected unless ``renumber_labels`` is set, as detector initialization
+        does for its starts.  The optional cap is checked here so persisted
         state cannot silently be accepted for an incompatible detector call.
         """
         return _normalize_membership_impl(
@@ -240,6 +254,7 @@ class Game(Graph):
             membership,
             max_memberships=max_memberships,
             collapse_duplicate_labels=collapse_duplicate_labels,
+            renumber_labels=renumber_labels,
             name=name,
         )
 
@@ -300,8 +315,9 @@ class Game(Graph):
             random start with ``max_communities``, or a feasible round-robin
             start when a community-count limit is set. Otherwise one entry
             per vertex: a community label (a partition) or a list of labels
-            (a cover); labels are non-negative integers contiguous from 0,
-            and a list, tuple or NumPy array is accepted, as is an igraph
+            (a cover); labels are non-negative integers, and labels with
+            gaps are renumbered in their order (0, 2, 5 become 0, 1, 2). A
+            list, tuple or NumPy array is accepted, as is an igraph
             ``VertexClustering`` or ``VertexCover`` of a graph with the same
             vertices. A label repeated in a row counts once. To continue from
             the previous result, pass ``initial_membership=g.memberships``.
@@ -357,6 +373,10 @@ class Game(Graph):
             graph, weights, parameters, start state and seed. ``None`` draws
             from Python's ``random`` module (python-igraph's default
             generator), so ``random.seed(...)`` also makes a run repeatable.
+            Any integer is a seed, negative ones included, as for
+            ``random.Random``. The visiting order follows the vertex ids and
+            each vertex's edges in the graph's edge order, so a repeatable run
+            also needs the same vertex numbering and edge order.
         node_weights :
             Optional vertex weights ``w_v`` (a sequence of real numbers in
             vertex order, or a vertex-attribute name), finite and
@@ -384,6 +404,17 @@ class Game(Graph):
         term is each vertex's own crowding, the same for every state. The returned
         memberships are also stored in ``self.memberships``; pass
         ``initial_membership=g.memberships`` to continue from them.
+
+        Every vertex of a cover keeps at least one community: the actions are
+        the non-empty sets of at most ``max_memberships`` labels (with
+        ``allow_isolation`` one of them is a new community of its own, worth
+        0). A cover can return two labels with the same members; they are
+        kept apart, as the equilibrium is a statement about labels.
+
+        The binding holds the GIL for the whole call, so calls from several
+        threads are safe but run one at a time (use processes to run them in
+        parallel); with ``seed=None`` they also share the ``random`` module's
+        state.
         """
         if positional:
             raise TypeError(

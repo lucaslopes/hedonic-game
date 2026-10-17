@@ -53,7 +53,13 @@
 - `hedonic.metrics` and `Game.evaluate_against` score a result against a
   reference cover or partition (a flat reference may use any labels); only
   the scores built on a one-to-one matching use SciPy
-  (`pip install "hedonic[metrics]"`).
+  (`pip install "hedonic[metrics]"`). `restrict_to_reference=True` (and
+  `hedonic.metrics.restrict_cover`) scores against a reference that labels
+  only part of the graph; Omega is exact on graphs with at most
+  `omega_sample_size` (100,000) vertex pairs. `hedonic.metrics` is reachable
+  from `import hedonic` and loaded on first use.
+- A start whose labels have gaps is renumbered in label order rather than
+  refused.
 - Wheels for Linux, macOS and Windows; the C core's rounding is fixed by the
   source and it calls no libm function but `sqrt` and the exact `fabs` (the fused multiply-add is
   the instruction or its own correctly rounded soft fma; x86_64 wheels pick

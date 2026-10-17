@@ -68,7 +68,7 @@ class TestRemovedKeywords(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(game_module, name))
                 self.assertFalse(hasattr(hedonic, name))
-        self.assertEqual(hedonic.__all__, ["Game"])
+        self.assertEqual(hedonic.__all__, ["Game", "metrics"])
 
     def test_results_carry_no_removed_attributes(self):
         for max_memberships in (1, 3):
@@ -212,6 +212,48 @@ class TestMetrics(unittest.TestCase):
                 self.assertEqual(game.evaluate_against(truth, method), 1.0)
         game.memberships = [0] * 5 + [1] * 5
         self.assertLess(game.evaluate_against(truth, "f1"), 1.0)
+
+    def test_omega_is_exact_on_small_graphs(self):
+        from itertools import combinations
+
+        from hedonic.metrics import omega_index
+
+        pred = [[0, 1, 2, 3], [3, 4, 5], [6, 7]]
+        truth = [[0, 1, 2], [2, 3, 4, 5, 6], [7, 8]]
+        n = 9
+
+        def shared(cover):
+            rows = [{c for c, members in enumerate(cover) if v in members} for v in range(n)]
+            return [len(rows[u] & rows[v]) for u, v in combinations(range(n), 2)]
+
+        a, b = shared(pred), shared(truth)
+        pairs = len(a)
+        observed = sum(x == y for x, y in zip(a, b)) / pairs
+        expected = sum(a.count(k) * b.count(k) for k in set(a) | set(b)) / pairs**2
+        exact = (observed - expected) / (1 - expected)
+        for seed in (0, 1, 2):
+            with self.subTest(seed=seed):
+                self.assertAlmostEqual(omega_index(pred, truth, n, seed=seed), exact, places=12)
+
+    def test_restrict_to_reference_drops_unlabelled_vertices(self):
+        from hedonic.metrics import restrict_cover
+
+        truth = [[0, 1, 2], [3, 4]]
+        self.assertEqual(restrict_cover([[0, 1, 9], [7, 8], [3, 4]], truth),
+                         [[0, 1], [3, 4]])
+        game = _two_cliques()
+        game.memberships = [[0]] * 3 + [[1]] * 2 + [[2]] * 5
+        self.assertLess(game.evaluate_against(truth, "f1"), 1.0)
+        self.assertEqual(game.evaluate_against(truth, "f1", restrict_to_reference=True), 1.0)
+        with self.assertRaises(TypeError):
+            game.evaluate_against(truth, "f1", restrict_to_reference="yes")
+
+    def test_metrics_is_reachable_from_the_package(self):
+        script = ("import sys, hedonic; print('hedonic.metrics' in sys.modules); "
+                  "print(hedonic.metrics.restrict_cover([[0, 5]], [[0]]))")
+        out = subprocess.run([sys.executable, "-c", script], check=True,
+                             capture_output=True, text=True)
+        self.assertEqual(out.stdout.split(), ["False", "[[0]]"])
 
     def test_metrics_import_does_not_load_scipy(self):
         script = "import sys, hedonic.metrics; print('scipy' in sys.modules)"

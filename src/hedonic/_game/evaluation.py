@@ -31,6 +31,7 @@ def evaluate_against(
     matching_weight: str = "f1",
     omega_sample_size: int = 100_000,
     omega_seed: int = 0,
+    restrict_to_reference: bool = False,
 ) -> float:
     """Score ``game.memberships`` against ``ground_truth`` (see the facade)."""
     if not isinstance(method, str):
@@ -51,6 +52,7 @@ def evaluate_against(
         evaluate_cover,
         flat_labels_to_cover,
         partition_to_cover_lists,
+        restrict_cover,
     )
 
     predicted = game._memberships_as_cover()
@@ -100,6 +102,10 @@ def evaluate_against(
             truth = [list(community) for community in truth_values]
     if not any(len(community) for community in truth):
         raise ValueError("ground_truth has no communities")
+    if not isinstance(restrict_to_reference, bool):
+        raise TypeError("restrict_to_reference must be True or False")
+    if restrict_to_reference:
+        predicted = restrict_cover(predicted, truth)
 
     scores = evaluate_cover(
         predicted,

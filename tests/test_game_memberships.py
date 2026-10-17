@@ -73,7 +73,6 @@ def test_a_seed_sweep_on_one_game_gives_independent_runs():
     "value",
     [
         [[0], [], [1]],  # empty row
-        [[0], [0, 2], [2]],  # non-contiguous labels
         [[0], [0, "x"], [1]],  # non-integer label
         [0, 1],  # one row short
     ],
@@ -83,6 +82,14 @@ def test_an_invalid_start_never_reaches_the_detector(value):
         with pytest.raises(ValueError, match="Invalid initial_membership"):
             _game().community_hedonic(value, resolution=0.5)
     native.assert_not_called()
+
+
+def test_a_start_with_label_gaps_is_renumbered_in_label_order():
+    calls = []
+    with patch(NATIVE, side_effect=_fake_native(calls)):
+        _game().community_hedonic([[0], [0, 7], [7]], max_memberships=2, resolution=0.5)
+        _game().community_hedonic([5, 9, 5], resolution=0.5)
+    assert calls == [[[0], [0, 1], [1]], [0, 1, 0]]
 
 
 def test_a_cover_start_keeps_each_vertex_preferred_labels():

@@ -63,6 +63,7 @@ def normalize_membership(
     *,
     max_memberships: int | None = None,
     collapse_duplicate_labels: bool = False,
+    renumber_labels: bool = False,
     name: str = "memberships",
 ) -> list[list[int]]:
     """Validate and normalize a partition or cover to per-vertex rows.
@@ -72,9 +73,10 @@ def normalize_membership(
     duplicate labels within a vertex are rejected. The optional cap is checked
     here so persisted state cannot silently be accepted for an incompatible
     detector call. Detector initialization may opt to collapse repeated labels
-    within a row; ordinary stored-state validation remains strict. An igraph
-    ``VertexClustering`` or ``VertexCover`` of a graph with the same vertex
-    count stands for its per-vertex memberships.
+    within a row and to renumber labels with gaps in their order (labels are
+    names: 0, 2, 5 become 0, 1, 2); ordinary stored-state validation remains
+    strict. An igraph ``VertexClustering`` or ``VertexCover`` of a graph with
+    the same vertex count stands for its per-vertex memberships.
     """
     membership, source_graph = _rows_of(membership)
     if not isinstance(membership, (list, tuple)):
@@ -163,6 +165,9 @@ def normalize_membership(
         rows.append(labels)
         all_labels.update(labels)
 
+    if all_labels and max(all_labels) != len(all_labels) - 1 and renumber_labels:
+        new = {label: index for index, label in enumerate(sorted(all_labels))}
+        return [[new[label] for label in row] for row in rows]
     if all_labels and max(all_labels) != len(all_labels) - 1:
         # Labels are non-negative and distinct, so they are 0 .. k-1
         # exactly when the largest is k - 1.

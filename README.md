@@ -170,6 +170,9 @@ for community in cover:              # overlapping clusters
 | one label per vertex | that partition |
 | one list of labels per vertex | that cover |
 
+Labels are non-negative integers; a start whose labels have gaps
+(`[5, 9, 5]`) is renumbered in label order (`[0, 1, 0]`).
+
 Every call stores its result in `h.memberships`, one list of labels per
 vertex, and never reads it back by itself. To continue from the last
 equilibrium, pass it:
@@ -256,12 +259,25 @@ print(h.evaluate_against(truth, method="f1"))
 Methods: `f1` (symmetric best match), `one_to_one_f1`, `jaccard`, `omega`,
 `node_micro_f1` and `size_weighted_community_f1`; the two built on a
 one-to-one matching (`one_to_one_f1`, `node_micro_f1`) need SciPy. `omega`
-is estimated from 100,000 sampled vertex pairs (`omega_sample_size`,
-`omega_seed`). A flat reference may use any hashable labels, but every vertex
-needs one (`None` and NaN are refused); a list of lists is read as
-communities, each a list of vertices of the graph. Communities with the same
-members count once, on both sides. The underlying functions are in
-`hedonic.metrics`.
+is exact when the graph has at most 100,000 vertex pairs and otherwise
+estimated from that many sampled pairs (`omega_sample_size`, `omega_seed`). A
+flat reference may use any hashable labels, but every vertex needs one (`None`
+and NaN are refused); a list of lists is read as communities, each a list of
+vertices of the graph. Communities with the same members count once, on both
+sides.
+
+A reference that labels only part of the graph (the SNAP ground-truth covers,
+for instance) is scored against the whole result by default.
+`restrict_to_reference=True` first drops the vertices the reference does not
+contain from every detected community (`hedonic.metrics.restrict_cover`), the
+usual convention for partial ground truth:
+
+```python
+h.evaluate_against([[0, 1, 2], [33, 32]], method="f1", restrict_to_reference=True)
+```
+
+The underlying functions are in `hedonic.metrics` (also reachable as
+`hedonic.metrics` after `import hedonic`).
 
 ### 5. Worked example
 
