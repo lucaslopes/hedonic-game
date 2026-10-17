@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
+
+import numpy as np
+
 EVALUATION_METHODS = {
     "f1": "f1",
     "symmetric_f1": "f1",
@@ -50,8 +55,20 @@ def evaluate_against(
 
     predicted = game._memberships_as_cover()
     if hasattr(ground_truth, "membership"):
+        source = getattr(ground_truth, "graph", None)
+        if source is not None and source.vcount() != game.vcount():
+            raise ValueError(
+                f"ground_truth is a clustering of a graph with {source.vcount()} "
+                f"vertices; this graph has {game.vcount()}"
+            )
         truth = partition_to_cover_lists(ground_truth)
     else:
+        if isinstance(ground_truth, Mapping):
+            raise ValueError(
+                "ground_truth cannot be a dict; pass one label per vertex in "
+                "vertex order, a list of communities (each a list of vertices), "
+                "or a VertexClustering/VertexCover"
+            )
         try:
             truth_values = list(ground_truth)
         except TypeError as exc:
@@ -68,9 +85,21 @@ def evaluate_against(
                     f"({game.vcount()}); a cover is a list of communities, "
                     "each a list of vertices"
                 )
+            for vertex, label in enumerate(truth_values):
+                if label is None or (
+                    isinstance(label, (float, np.floating)) and math.isnan(label)
+                ):
+                    raise ValueError(
+                        f"ground_truth: vertex {vertex} has no label ({label!r}); "
+                        "a flat reference labels every vertex. To score against "
+                        "a reference that leaves vertices out, pass its "
+                        "communities (lists of vertices)"
+                    )
             truth = flat_labels_to_cover(truth_values)
         else:
             truth = [list(community) for community in truth_values]
+    if not any(len(community) for community in truth):
+        raise ValueError("ground_truth has no communities")
 
     scores = evaluate_cover(
         predicted,

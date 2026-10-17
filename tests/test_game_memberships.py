@@ -136,7 +136,7 @@ def test_ground_truth_vertices_must_be_vertices_and_flat_labels_may_be_anything(
     game = _game()
     game.memberships = [0, 0, 1]
     for truth in ([[0, 1, 3]], [[0, -1]], [[0, 1.5]]):
-        with pytest.raises(ValueError, match="not an integer in range"):
+        with pytest.raises(ValueError, match="not an integer|outside range"):
             game.evaluate_against(truth)
     assert game.evaluate_against(["a", "a", "b"]) == 1.0
     assert game.evaluate_against([7, 7, 3]) == 1.0

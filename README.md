@@ -32,8 +32,10 @@ cover = h.community_hedonic(max_memberships=3)      # overlapping
   is an equilibrium of the game, with a certified bound on what any vertex
   could still gain (`equilibrium_slack`). There is nothing to tune: no
   iteration budget, no round cap, no tolerance.
-- Every call starts from singletons unless you pass `initial_membership`. The
-  result is also stored in `h.memberships`; pass
+- Every call starts afresh: from singletons, unless you pass
+  `initial_membership` (or ask for a random start with `max_communities`, or
+  set a community-count limit). The result is also stored in
+  `h.memberships`; pass
   `initial_membership=h.memberships` to continue from it (see
   [Start states](#start-states)).
 
@@ -42,13 +44,15 @@ cover = h.community_hedonic(max_memberships=3)      # overlapping
 A **hedonic game** is a coalition-formation game: each vertex is a player,
 each community is a coalition, and a player prefers the coalition that
 improves its payoff. Here the payoff is the Constant Potts Model (CPM) score
-at a resolution γ (by default, the graph density): a vertex gains from its
-neighbours inside a community and pays γ for every member.
+at a resolution γ (by default, the weighted density: the total edge weight
+over the number of vertex pairs): a vertex gains from its neighbours inside a
+community and pays γ for every member.
 
 `community_hedonic()` visits the vertices in random order and lets each one
 take its **best response**: move to the community it prefers (disjoint), or
 choose the set of at most `max_memberships` communities it prefers
-(overlapping, where a vertex's weight is split evenly over its communities).
+(overlapping, where a vertex in k communities takes part in each with
+intensity 1/√k).
 After a move it revisits the vertex's neighbours, and it stops only when
 every vertex has been visited, without moving, since the last move. That is a
 Nash equilibrium: no vertex can improve its payoff alone. It is the
@@ -62,12 +66,14 @@ bound. Every move therefore raises the exact CPM potential, and the process
 always stops. The result reports `equilibrium_slack` in
 `result._hedonic_provenance`: no vertex can raise its exact payoff by more
 than the slack times the total edge weight (normalized like the quality).
-For a partition it is exactly 0 when the arithmetic is exact (for instance
-unit weights at resolution 0, 1/2 or 1), so the result is then an exact Nash
-equilibrium. Covers split a vertex's weight as 1/√k over its k communities,
-which no float holds exactly, so their slack stays a tiny positive number. On
-complete DBLP and Amazon at the density it is about `1e-21` for partitions and
-`1e-17` for covers.
+For a partition it is exactly 0 whenever no deviation's exact gain can be
+positive: always when the arithmetic is exact (for instance unit weights at
+resolution 0, 1/2 or 1), and often otherwise (with integer weights, for
+instance, when every vertex's best deviation is certainly worse). The result
+is then an exact Nash equilibrium. A cover's intensities 1/√k are rounded,
+so its slack stays a tiny positive number, smaller on larger graphs: about
+`1e-15` on Zachary's karate club and `1e-17` on complete DBLP and Amazon,
+where partitions get about `1e-21`.
 [`native/README.md`](https://github.com/lucaslopes/hedonic/blob/main/native/README.md) gives the bounds, the termination
 argument and the proof that the best set of communities is a prefix of the
 sorted gains.
@@ -223,13 +229,17 @@ cover = h.community_hedonic(max_memberships=3, max_total_communities=4)
 
 Both must be positive integers, and `n_communities` must not exceed
 `max_total_communities`. Without a start state, a deterministic feasible start
-is built; a supplied start that violates a limit is rejected, never silently
-repaired. The result is then an equilibrium over the moves the limit allows.
+is built; a supplied start that violates a limit (after its projection to
+`max_memberships`) is rejected, never silently repaired. The result is then
+an equilibrium over the moves the limit allows.
 
 **What the result carries.** Besides the communities, a result has
 `_hedonic_provenance` (versions, effective parameters, count mode, and
-`equilibrium_slack`) and `_hedonic_native_quality`, the potential of the
-returned state.
+`equilibrium_slack`) and `_hedonic_native_quality`, the quality of the
+returned state: `(Φ − γ Σ_v n_v² / 2) / W` for its exact potential `Φ` (a
+sum over pairs of vertices), the vertex weights `n_v` and the total edge
+weight `W`; the constant term is each vertex's own crowding, the same for
+every state.
 
 ### 4. Scoring against a reference
 
@@ -245,9 +255,13 @@ print(h.evaluate_against(truth, method="f1"))
 
 Methods: `f1` (symmetric best match), `one_to_one_f1`, `jaccard`, `omega`,
 `node_micro_f1` and `size_weighted_community_f1`; the two built on a
-one-to-one matching (`one_to_one_f1`, `node_micro_f1`) need SciPy. A flat
-reference may use any labels; a cover must name vertices of the graph. The
-underlying functions are in `hedonic.metrics`.
+one-to-one matching (`one_to_one_f1`, `node_micro_f1`) need SciPy. `omega`
+is estimated from 100,000 sampled vertex pairs (`omega_sample_size`,
+`omega_seed`). A flat reference may use any hashable labels, but every vertex
+needs one (`None` and NaN are refused); a list of lists is read as
+communities, each a list of vertices of the graph. Communities with the same
+members count once, on both sides. The underlying functions are in
+`hedonic.metrics`.
 
 ### 5. Worked example
 

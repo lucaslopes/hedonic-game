@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import random as _random
+import sys
 from numbers import Integral, Real
 
 import numpy as np
@@ -16,10 +17,12 @@ import numpy as np
 from .. import _native
 from ..utils import sample_uniform_ints
 from .helpers import (
+    ARITHMETIC_BOUND,
     check_start_counts,
     node_weight_values as _node_weight_values,
     runtime_versions,
-    total_edge_weight,
+    sequential_sum,
+    weight_vector,
 )
 
 
@@ -50,7 +53,7 @@ def _preferred_labels(game, rows, cap, resolution, edge_weights, node_weights):
     dropped and the rest renumbered in order. Returns the rows and the number
     of vertices that had to choose.
     """
-    weights = node_weights or [1.0] * game.vcount()
+    weights = node_weights if node_weights is not None else [1.0] * game.vcount()
     mass: dict[int, float] = {}
     size: dict[int, int] = {}
     for vertex, row in enumerate(rows):
@@ -62,8 +65,6 @@ def _preferred_labels(game, rows, cap, resolution, edge_weights, node_weights):
         for vertex, row in enumerate(rows)
         if len(row) > cap
     }
-    if isinstance(edge_weights, str):
-        edge_weights = game.es[edge_weights]
     for index, (a, b) in enumerate(game.get_edgelist()):
         weight = 1.0 if edge_weights is None else float(edge_weights[index])
         for x, y in ((a, b), (b, a)):
@@ -126,16 +127,38 @@ def community_hedonic(
     if max_memberships == -1 or max_memberships > game.vcount():
         # No vertex can hold more labels than there are vertices.
         max_memberships = game.vcount()
+    overlapping = max_memberships > 1
     max_total_communities = _positive_or_none("max_total_communities", max_total_communities)
     n_communities = _positive_or_none("n_communities", n_communities)
     if max_communities is not None:
         max_communities = _positive_or_none("max_communities", max_communities)
+        if max_communities > 2**63:
+            raise ValueError("max_communities must be at most 2**63")
     if (
         max_total_communities is not None
         and n_communities is not None
         and n_communities > max_total_communities
     ):
         raise ValueError("n_communities must not exceed max_total_communities")
+    # A state occupies at most n x max_memberships communities.
+    capacity = game.vcount() * max_memberships
+    if n_communities is not None and n_communities > capacity:
+        if not overlapping:
+            bound = f"the vertex count ({capacity})"
+        else:
+            bound = (
+                f"the vertex count times max_memberships ({game.vcount()} x "
+                f"{max_memberships} = {capacity}), the most communities a cover "
+                "can occupy"
+                + ("" if requested_max_memberships == max_memberships else
+                   f" (max_memberships={requested_max_memberships} is capped at "
+                   "the vertex count)")
+            )
+        raise ValueError(f"n_communities={n_communities} exceeds {bound}")
+    # A larger limit binds nothing; the core takes 64-bit counts.
+    native_max_total = (
+        None if max_total_communities is None else min(max_total_communities, capacity)
+    )
     count_constrained = max_total_communities is not None or n_communities is not None
     if seed is not None:
         if not _integer(seed):
@@ -144,64 +167,89 @@ def community_hedonic(
     if not isinstance(allow_isolation, (bool, np.bool_)):
         raise ValueError("allow_isolation must be True or False")
     allow_isolation = bool(allow_isolation)
-    if isinstance(edge_weights, str):
-        if edge_weights not in game.es.attributes():
-            raise ValueError(f"edge_weights: the graph has no edge attribute {edge_weights!r}")
-    elif edge_weights is not None:
-        # Read once: an iterator would be empty the second time.
-        edge_weights = (
-            edge_weights.tolist() if isinstance(edge_weights, np.ndarray) else list(edge_weights)
-        )
+    if resolution is not None:
+        if not isinstance(resolution, Real) or isinstance(resolution, (bool, np.bool_)):
+            raise ValueError("resolution must be a finite real number or None")
+        try:
+            res = float(resolution)
+        except OverflowError:
+            res = math.inf
+        if not math.isfinite(res):
+            raise ValueError("resolution must be a finite real number")
 
-    weight_total = total_edge_weight(game, edge_weights)
+    # Read the weights once, as float64 arrays (an iterator would be empty
+    # the second time); a cover takes non-negative edge weights only.
+    if edge_weights is not None:
+        edge_weights = weight_vector(
+            game, edge_weights, "edge_weights", per_vertex=False, nonnegative=overlapping
+        )
+    if game.ecount() == 0:
+        weight_total = 0.0
+    elif edge_weights is None:
+        weight_total = float(game.ecount())
+    else:
+        weight_total = sequential_sum(edge_weights)
+    if game.ecount() == 0:
+        raise ValueError(
+            f"community_hedonic needs a graph with edges (this one has "
+            f"{game.vcount()} vertices and none): the quality, the potential "
+            "divided by the total edge weight W, is undefined when W = 0"
+        )
     if weight_total <= 0:
         raise ValueError(
             "community_hedonic requires a positive total edge weight W "
             f"(here W = {weight_total:g}); the quality, the potential divided "
             "by W, is undefined otherwise"
         )
+    if weight_total < sys.float_info.min:
+        raise ValueError(
+            f"the total edge weight W = {weight_total:g} is below the smallest "
+            "normal double (about 2.2e-308); scale the weights up (the game is "
+            "unchanged when every weight and the resolution are scaled by the "
+            "same factor)"
+        )
     node_weight_values = _node_weight_values(game, node_weights)
 
-    overlapping = max_memberships > 1
-    if n_communities is not None:
-        capacity = game.vcount() * max_memberships
-        if n_communities > capacity:
-            raise ValueError(
-                f"n_communities={n_communities} exceeds the "
-                + ("vertex count" if not overlapping else
-                   "vertex count times max_memberships")
-                + f" ({capacity}) with max_memberships={requested_max_memberships}"
-            )
     if resolution is None:
         # The weighted density: W over the number of vertex pairs (the
         # density of a simple unweighted graph).
         n = game.vcount()
         res = weight_total / (n * (n - 1) / 2) if n > 1 else 0.0
-        if not math.isfinite(res):
-            raise ValueError(
-                "the weighted density is not a finite resolution; "
-                "pass resolution= explicitly"
-            )
-    else:
-        if not isinstance(resolution, Real) or isinstance(resolution, (bool, np.bool_)):
-            raise ValueError("resolution must be a finite real number or None")
-        res = float(resolution)
-        if not math.isfinite(res):
-            raise ValueError("resolution must be a finite real number")
+    # Every crowding sum is at most |resolution| x N^2 x max_memberships for
+    # the total vertex weight N (the core's own check, named here).
+    with np.errstate(over="ignore"):
+        mass = (
+            float(game.vcount()) if node_weight_values is None
+            else float(node_weight_values.sum())
+        )
+    scale = max(mass, 1.0)
+    if not abs(res) <= ARITHMETIC_BOUND / scale / scale / max_memberships:
+        raise ValueError(
+            "the crowding term would overflow: |resolution| x N^2 x "
+            f"max_memberships, with |resolution| = {abs(res):g}, the total "
+            f"vertex weight N = {mass:g} and max_memberships = {max_memberships}, "
+            f"must stay below about {ARITHMETIC_BOUND:.3g}"
+        )
 
     projected = None
+    start_seed_used = None
     candidate = initial_membership
     if candidate is not None:
         source = "initial_membership"
         try:
-            rows = game._normalize_membership(candidate, collapse_duplicate_labels=True)
+            rows = game._normalize_membership(
+                candidate, collapse_duplicate_labels=True, name=source
+            )
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid {source}: {exc}") from exc
+            message = str(exc)
+            if message.startswith(source + " "):
+                message = message[len(source) + 1:]
+            raise ValueError(f"Invalid {source}: {message}") from exc
         if any(len(row) > max_memberships for row in rows):
             rows, projected = _preferred_labels(
                 game, rows, max_memberships, res, edge_weights, node_weight_values
             )
-        check_start_counts(rows, source, max_total_communities, n_communities)
+        check_start_counts(rows, source, max_total_communities, n_communities, projected)
         membership_vector = rows if overlapping else [row[0] for row in rows]
         max_communities_effect = "none: a start state was supplied"
     elif count_constrained:
@@ -226,6 +274,7 @@ def community_hedonic(
         membership_vector = sample_uniform_ints(
             game.vcount(), max_communities - 1, start_seed
         ).tolist()
+        start_seed_used = start_seed
         # A draw can leave labels unused, and the detector takes labels
         # contiguous from 0: renumber the drawn labels in order (the
         # identity when every label was drawn).
@@ -243,7 +292,7 @@ def community_hedonic(
         allow_isolation=allow_isolation,
         edge_weights=edge_weights,
         node_weights=node_weight_values,
-        max_total_communities=max_total_communities,
+        max_total_communities=native_max_total,
         n_communities=n_communities,
         seed=seed,
     )
@@ -286,13 +335,16 @@ def community_hedonic(
             "n_communities": n_communities,
             "max_communities": max_communities,
             "max_communities_effect": max_communities_effect,
+            # The seed of a random max_communities start (drawn when the
+            # call has none), so the start can be rebuilt.
+            "start_seed": start_seed_used,
             "initialization": (
                 "initial_membership, projected to max_memberships"
                 if projected is not None
                 else "initial_membership" if candidate is not None
                 else "default"
             ),
-            "projected_vertices": projected,
+            "projected_vertices": projected or 0,
             "occupied_communities": occupied,
             "allow_isolation": bool(allow_isolation),
             "edge_weighted": edge_weights is not None,

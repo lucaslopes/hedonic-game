@@ -43,12 +43,27 @@ def validate_membership(
     return True
 
 
+def _rows_of(membership):
+    """Per-vertex entries of a membership given as a list, tuple, NumPy array or
+    igraph clustering/cover."""
+    from igraph import VertexClustering, VertexCover
+
+    if isinstance(membership, VertexClustering):
+        return list(membership.membership), membership.graph
+    if isinstance(membership, VertexCover):
+        return [list(row) for row in membership.membership], membership.graph
+    if hasattr(membership, "tolist") and not isinstance(membership, (list, tuple)):
+        membership = membership.tolist()   # a NumPy array
+    return membership, None
+
+
 def normalize_membership(
     game,
     membership: list[int] | list[list[int]],
     *,
     max_memberships: int | None = None,
     collapse_duplicate_labels: bool = False,
+    name: str = "memberships",
 ) -> list[list[int]]:
     """Validate and normalize a partition or cover to per-vertex rows.
 
@@ -57,61 +72,92 @@ def normalize_membership(
     duplicate labels within a vertex are rejected. The optional cap is checked
     here so persisted state cannot silently be accepted for an incompatible
     detector call. Detector initialization may opt to collapse repeated labels
-    within a row; ordinary stored-state validation remains strict.
+    within a row; ordinary stored-state validation remains strict. An igraph
+    ``VertexClustering`` or ``VertexCover`` of a graph with the same vertex
+    count stands for its per-vertex memberships.
     """
-    if hasattr(membership, "tolist") and not isinstance(membership, (list, tuple)):
-        membership = membership.tolist()   # a NumPy array
+    membership, source_graph = _rows_of(membership)
     if not isinstance(membership, (list, tuple)):
         raise TypeError(
-            "memberships must be a list (or tuple or NumPy array) with one "
-            "entry per vertex"
+            f"{name} must be a list (or tuple, NumPy array, or igraph "
+            "VertexClustering/VertexCover) with one entry per vertex, got "
+            f"{type(membership).__name__}"
+        )
+    if source_graph is not None and source_graph.vcount() != game.vcount():
+        raise ValueError(
+            f"{name} is a clustering of a graph with {source_graph.vcount()} "
+            f"vertices; this graph has {game.vcount()}"
         )
     if len(membership) != game.vcount():
         raise ValueError(
-            f"memberships must contain one row per vertex ({game.vcount()}), "
+            f"{name} must contain one row per vertex ({game.vcount()}), "
             f"got {len(membership)}: give each vertex its label (or its list "
             "of labels), not a list of communities"
         )
     if not membership:
-        raise ValueError("memberships cannot be empty")
+        raise ValueError(f"{name} cannot be empty")
     if max_memberships is not None and (
-        not isinstance(max_memberships, int) or max_memberships < 1
+        isinstance(max_memberships, bool)
+        or not isinstance(max_memberships, Integral)
+        or max_memberships < 1
     ):
         raise ValueError("max_memberships must be an integer >= 1")
 
-    first_nested = isinstance(membership[0], (list, tuple))
+    def row_of(entry):
+        if isinstance(entry, (list, tuple)):
+            return entry
+        if hasattr(entry, "tolist") and getattr(entry, "ndim", 0) == 1:
+            return entry.tolist()   # a NumPy row
+        return None
+
+    first_nested = row_of(membership[0]) is not None
     rows: list[list[int]] = []
     all_labels: set[int] = set()
-    for entry in membership:
+    for vertex, entry in enumerate(membership):
         if first_nested:
-            if not isinstance(entry, (list, tuple)):
-                raise ValueError("membership cannot mix flat and nested rows")
+            entry = row_of(entry)
+            if entry is None:
+                raise ValueError(
+                    f"{name} cannot mix flat and nested rows (vertex {vertex})"
+                )
             if len(entry) == 0:
-                raise ValueError("each membership row must be non-empty")
+                raise ValueError(
+                    f"each {name} row must be non-empty (vertex {vertex} has none)"
+                )
             labels = []
             for label in entry:
                 if isinstance(label, bool) or not isinstance(label, Integral):
-                    raise ValueError("membership labels must be integers")
+                    raise ValueError(
+                        f"{name} labels must be integers (vertex {vertex} has {label!r})"
+                    )
                 value = int(label)
                 if value < 0:
-                    raise ValueError("membership labels must be non-negative")
+                    raise ValueError(
+                        f"{name} labels must be non-negative (vertex {vertex} has {value})"
+                    )
                 labels.append(value)
             if len(labels) != len(set(labels)) and not collapse_duplicate_labels:
-                raise ValueError("duplicate labels in a membership row")
+                raise ValueError(f"duplicate labels in the {name} row of vertex {vertex}")
             if collapse_duplicate_labels:
                 labels = list(dict.fromkeys(labels))
         else:
-            if isinstance(entry, (list, tuple)):
-                raise ValueError("membership cannot mix flat and nested rows")
+            if row_of(entry) is not None:
+                raise ValueError(
+                    f"{name} cannot mix flat and nested rows (vertex {vertex})"
+                )
             if isinstance(entry, bool) or not isinstance(entry, Integral):
-                raise ValueError("membership labels must be integers")
+                raise ValueError(
+                    f"{name} labels must be integers (vertex {vertex} has {entry!r})"
+                )
             value = int(entry)
             if value < 0:
-                raise ValueError("membership labels must be non-negative")
+                raise ValueError(
+                    f"{name} labels must be non-negative (vertex {vertex} has {value})"
+                )
             labels = [value]
         if max_memberships is not None and len(labels) > max_memberships:
             raise ValueError(
-                "a vertex exceeds max_memberships "
+                f"vertex {vertex} exceeds max_memberships "
                 f"({len(labels)} > {max_memberships})"
             )
         rows.append(labels)
@@ -120,7 +166,12 @@ def normalize_membership(
     if all_labels and max(all_labels) != len(all_labels) - 1:
         # Labels are non-negative and distinct, so they are 0 .. k-1
         # exactly when the largest is k - 1.
-        raise ValueError("membership labels must be contiguous from 0")
+        missing = min(set(range(max(all_labels) + 1)) - all_labels) \
+            if max(all_labels) < 10 * len(membership) else None
+        raise ValueError(
+            f"{name} labels must be contiguous from 0"
+            + (f" (label {missing} is unused)" if missing is not None else "")
+        )
     return rows
 
 

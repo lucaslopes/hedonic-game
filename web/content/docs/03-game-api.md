@@ -23,7 +23,7 @@ from hedonic import Game
 
 ## Membership state
 
-`community_hedonic` stores its result in `Game.memberships` (one list of labels per vertex) but never reads it back by itself: every call starts from singletons unless `initial_membership` is given. Pass `initial_membership=g.memberships` to continue from the last equilibrium.
+`community_hedonic` stores its result in `Game.memberships` (one list of labels per vertex) but never reads it back by itself: every call starts afresh, from singletons unless `initial_membership` is given (or a random start with `max_communities`, or a feasible start under a community-count limit). Pass `initial_membership=g.memberships` to continue from the last equilibrium.
 
 ```api Game.memberships
 ```

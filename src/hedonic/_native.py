@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import math as _math
 import random as _random
-from array import array as _array
 
 from ._core import core_version
 from ._core import cover as _cover
@@ -65,42 +64,23 @@ def default_rng():
     return _random
 
 
-def _edge_weight_buffer(graph, values):
-    """One real weight per edge whose total is finite (signs are allowed)."""
+def _edge_weight_buffer(graph, values, nonnegative=False):
+    """One finite real weight per edge, as contiguous doubles."""
     if values is None:
         return None
-    values = graph.es[values] if isinstance(values, str) else list(values)
-    if len(values) != graph.ecount():
-        raise ValueError("edge_weights must have one value per graph edge")
-    buffer = _array("d")
-    total = 0.0
-    for value in values:
-        if isinstance(value, bool):
-            raise ValueError("edge_weights must be real numbers")
-        weight = float(value)
-        total += weight
-        if not _math.isfinite(total):
-            raise ValueError("edge_weights must be finite")
-        buffer.append(weight)
-    return buffer
+    from ._game.helpers import weight_vector
+
+    return weight_vector(graph, values, "edge_weights", per_vertex=False,
+                         nonnegative=nonnegative)
 
 
 def _node_weight_buffer(graph, values):
-    """One finite, non-negative weight per vertex."""
+    """One finite, non-negative weight per vertex, as contiguous doubles."""
     if values is None:
         return None
-    values = graph.vs[values] if isinstance(values, str) else list(values)
-    if len(values) != graph.vcount():
-        raise ValueError("node_weights must have one value per vertex")
-    buffer = _array("d")
-    for value in values:
-        if isinstance(value, bool):
-            raise ValueError("node_weights must be real numbers")
-        weight = float(value)
-        if not _math.isfinite(weight) or weight < 0:
-            raise ValueError("node_weights must be finite and non-negative")
-        buffer.append(weight)
-    return buffer
+    from ._game.helpers import weight_vector
+
+    return weight_vector(graph, values, "node_weights", per_vertex=True, nonnegative=True)
 
 
 def community_hedonic(
@@ -163,9 +143,9 @@ def community_hedonic(
         if not _math.isfinite(res):
             raise ValueError("resolution must be a finite real number")
 
-    edge_buffer = _edge_weight_buffer(graph, edge_weights)
-    node_buffer = _node_weight_buffer(graph, node_weights)
     overlapping = max_memberships > 1
+    edge_buffer = _edge_weight_buffer(graph, edge_weights, nonnegative=overlapping)
+    node_buffer = _node_weight_buffer(graph, node_weights)
     # The C side reads the edges straight from the igraph graph, checks the
     # start (see the docstring) and builds the result lists.
     out = _detect(
@@ -190,7 +170,10 @@ def community_hedonic(
         membership, nb_clusters, quality, slack = out
         modularity_params = {"resolution": res}
         if edge_weights is not None:
-            modularity_params["weights"] = edge_weights
+            # An attribute name as given; otherwise the validated values.
+            modularity_params["weights"] = (
+                edge_weights if isinstance(edge_weights, str) else edge_buffer
+            )
         return VertexClustering(graph, membership,
                                 params={"quality": quality, "equilibrium_slack": slack},
                                 modularity_params=modularity_params)

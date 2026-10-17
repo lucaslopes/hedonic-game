@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict, deque
 from itertools import combinations
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 import math
 from typing import Any, Literal
 
@@ -113,11 +113,12 @@ def cover_to_memberships(
     :meth:`hedonic.Game.community_hedonic`, making the helper convenient for
     notebooks and experiment adapters that already have a cover in list form.
     """
-    rows = [[] for _ in range(int(n_vertices))]
+    n_vertices = _check_count(n_vertices, "n_vertices", minimum=0)
+    _check_vertices(cover, n_vertices, "cover")
+    rows = [[] for _ in range(n_vertices)]
     for community_id, community in enumerate(cover):
         for vertex in sorted(set(map(int, community))):
-            if 0 <= vertex < n_vertices:
-                rows[vertex].append(community_id)
+            rows[vertex].append(community_id)
     next_label = len(cover)
     for row in rows:
         if not row:
@@ -334,6 +335,11 @@ def one_to_one_community_metrics(
     matched-pair recall over *all GT* communities.  Thus an unmatched predicted
     community contributes zero precision and an unmatched GT community
     contributes zero recall.  ``matching_f1`` is their harmonic mean.
+
+    When several assignments reach the maximum total weight, the solver picks
+    one; covers above ``MAX_DENSE_MATCHING_CELLS`` pair cells are matched by
+    a sparse solver that can pick another, so these scores can differ between
+    the two paths on tied inputs (the total weight does not).
     """
     pred_sets = _cover_sets(predicted, singleton_mode)
     gt_sets = _cover_sets(ground_truth, singleton_mode)
@@ -389,8 +395,10 @@ def node_membership_multilabel_metrics(
     """Multilabel membership scores after one-to-one community alignment.
 
     Micro scores count vertex-community assignments.  Macro F1 is the standard
-    label-wise multilabel macro average over aligned GT labels plus unmatched
-    predicted labels; unmatched labels therefore receive F1 zero.
+    label-wise multilabel macro average over the label space after alignment:
+    every GT label (a matched predicted community takes its GT label) plus the
+    unmatched predicted labels, that is ``|predicted| + |GT| - |matches|``
+    labels; an unmatched label, on either side, receives F1 zero.
     """
     pred_sets = _cover_sets(predicted, singleton_mode)
     gt_sets = _cover_sets(ground_truth, singleton_mode)
@@ -605,6 +613,10 @@ def overlapping_normalized_mutual_information_lfk(
     entropy; omit it to reproduce the paper's evaluation convention of using
     the union of vertices appearing in either cover.
     """
+    if n_vertices is not None:
+        n_vertices = _check_count(n_vertices, "n_vertices", minimum=0)
+    _check_vertices(predicted, n_vertices, "predicted")
+    _check_vertices(ground_truth, n_vertices, "ground_truth")
     pred_sets = _cover_sets(predicted, "all")
     gt_sets = _cover_sets(ground_truth, "all")
     if not pred_sets and not gt_sets:
@@ -767,6 +779,9 @@ def cover_diagnostics(
     singleton_mode: SingletonMode = "all",
 ) -> dict[str, float | int | None]:
     """Descriptive cover statistics after applying ``singleton_mode``."""
+    n_vertices = _check_count(n_vertices, "n_vertices", minimum=0)
+    _check_vertices(predicted, n_vertices, "predicted")
+    _check_vertices(ground_truth, n_vertices, "ground_truth")
     pred_sets = _cover_sets(predicted, singleton_mode)
     gt_sets = _cover_sets(ground_truth, singleton_mode)
 
@@ -908,19 +923,33 @@ def structural_overlap_metrics(
     }
 
 
-def _check_vertices(cover, n_vertices: int, name: str) -> None:
-    """Every vertex of ``cover`` is an integer in ``range(n_vertices)``."""
+def _check_vertices(cover, n_vertices: int | None, name: str) -> None:
+    """Every vertex of ``cover`` is an integer in ``range(n_vertices)`` (any
+    non-negative integer when ``n_vertices`` is None)."""
+    if isinstance(cover, (str, bytes)) or not isinstance(cover, Iterable):
+        raise ValueError(f"{name} must be a list of communities, each a list of vertices")
     for community in cover:
+        if isinstance(community, (str, bytes)) or not isinstance(community, Iterable):
+            raise ValueError(
+                f"{name} must be a list of communities, each a list of vertices; "
+                f"got the entry {community!r}"
+            )
         for vertex in community:
-            if (
-                isinstance(vertex, (bool, np.bool_))
-                or not isinstance(vertex, (int, np.integer))
-                or not 0 <= vertex < n_vertices
-            ):
+            if isinstance(vertex, (bool, np.bool_)) or not isinstance(vertex, (int, np.integer)):
+                raise ValueError(f"{name}: vertex {vertex!r} is not an integer")
+            if vertex < 0 or (n_vertices is not None and vertex >= n_vertices):
                 raise ValueError(
-                    f"{name}: vertex {vertex!r} is not an integer in "
-                    f"range({n_vertices})"
+                    f"{name}: vertex {vertex} is outside range({n_vertices})"
+                    if n_vertices is not None else f"{name}: vertex {vertex} is negative"
                 )
+
+
+def _check_count(value, name: str, *, minimum: int) -> int:
+    """``value`` as an int, an integer (not a bool) at least ``minimum``."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) \
+            or value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}, got {value!r}")
+    return int(value)
 
 
 def evaluate_cover(
@@ -940,6 +969,18 @@ def evaluate_cover(
     Vertices are integers in ``range(n_vertices)``. ``one_to_one=False``
     skips the one-to-one matching (and the metrics built on it, which are
     then absent), the only part that needs SciPy.
+
+    Both covers are read as sets of vertex sets (``SCORE_DEFINITION``):
+    repeated members count once and communities with the same members are
+    collapsed into one before scoring (``n_pred_comms`` and ``n_gt_comms``
+    count them after the collapse); ``singleton_mode="size_ge_2"`` then drops
+    communities of one vertex. A vertex absent from a cover is in none of its
+    communities. When a side is empty, a precision or recall over it is 0, so
+    the community and vertex F1 and Jaccard scores are 0; for two empty
+    covers, Omega, ``node_macro_f1`` and ``matching_mean_weight`` are 1 (as
+    is ONMI, :func:`overlapping_normalized_mutual_information_lfk`). Omega is a sampled estimate
+    (``omega_sample_size`` vertex pairs drawn with ``omega_seed``); ``nf1``
+    follows its reference implementation (see :func:`normalized_f1_rossetti`).
     """
     _check_vertices(predicted, n_vertices, "predicted")
     _check_vertices(ground_truth, n_vertices, "ground_truth")
@@ -1026,6 +1067,11 @@ def normalized_f1_rossetti(
     where coverage is the fraction of reference communities matched and
     redundancy is the number of detected communities per matched reference
     community.
+
+    As in the reference, the covers are used as given: duplicate communities
+    are not collapsed and ``singleton_mode`` does not apply, and NF1 exceeds 1
+    when there are fewer detected communities than matched reference ones (one
+    detected community tied between two reference communities, for instance).
     """
     gt = [list(c) for c in ground_truth]
     if not gt:
@@ -1074,18 +1120,20 @@ def omega_index(
     Memory is O(total memberships + n + sample_size), making the metric safe for
     full DBLP.  Use a fixed ``seed`` for reproducible rescoring.
     """
+    n = _check_count(n, "n", minimum=0)
+    sample_size = _check_count(sample_size, "sample_size", minimum=1)
+    seed = _check_count(seed, "seed", minimum=0)
+    _check_vertices(pred, n, "pred")
+    _check_vertices(gt, n, "gt")
     n_pairs = n * (n - 1) // 2
     if n_pairs == 0:
         return 1.0
-    if sample_size <= 0:
-        raise ValueError("sample_size must be positive")
 
     def vertex_memberships(cover: Sequence[Sequence[int]]) -> list[set[int]]:
         memberships = [set() for _ in range(n)]
         for community, members in enumerate(cover):
             for vertex in set(members):
-                if 0 <= vertex < n:
-                    memberships[vertex].add(community)
+                memberships[vertex].add(community)
         return memberships
 
     pred_memberships = vertex_memberships(pred)

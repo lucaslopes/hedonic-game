@@ -36,8 +36,8 @@
         "sections": {}
       },
       "path": "src/hedonic/Game.py",
-      "line": 38,
-      "endLine": 376,
+      "line": 46,
+      "endLine": 410,
       "members": [
         {
           "name": "__init__",
@@ -67,8 +67,8 @@
           "decorators": [],
           "doc": null,
           "path": "src/hedonic/Game.py",
-          "line": 45,
-          "endLine": 74,
+          "line": 53,
+          "endLine": 82,
           "kind": "method"
         },
         {
@@ -84,8 +84,8 @@
             "sections": {}
           },
           "path": "src/hedonic/Game.py",
-          "line": 76,
-          "endLine": 78,
+          "line": 84,
+          "endLine": 86,
           "kind": "method"
         },
         {
@@ -103,8 +103,8 @@
             "sections": {}
           },
           "path": "src/hedonic/Game.py",
-          "line": 81,
-          "endLine": 91,
+          "line": 89,
+          "endLine": 99,
           "kind": "property",
           "settable": true
         },
@@ -118,7 +118,7 @@
               "kind": "positional-or-keyword",
               "annotation": null,
               "default": null,
-              "description": "Community lists, or an igraph ``VertexClustering``/``VertexCover``.\nA flat per-vertex partition vector is also accepted."
+              "description": "Community lists (each a list of vertices of this graph), an igraph\n``VertexClustering``/``VertexCover`` of a graph with the same\nvertices, or a flat vector with one hashable label per vertex\n(``None`` and NaN are refused: every vertex needs a label). A\nlist whose entries are lists is read as communities, not as one\nrow of labels per vertex. Communities with the same members count\nonce, on both sides."
             },
             {
               "name": "method",
@@ -132,28 +132,28 @@
               "kind": "keyword-only",
               "annotation": "str",
               "default": "'all'",
-              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`.\n``omega`` is estimated from ``omega_sample_size`` vertex pairs\ndrawn with ``omega_seed``."
             },
             {
               "name": "matching_weight",
               "kind": "keyword-only",
               "annotation": "str",
               "default": "'f1'",
-              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`.\n``omega`` is estimated from ``omega_sample_size`` vertex pairs\ndrawn with ``omega_seed``."
             },
             {
               "name": "omega_sample_size",
               "kind": "keyword-only",
               "annotation": "int",
               "default": "100000",
-              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`.\n``omega`` is estimated from ``omega_sample_size`` vertex pairs\ndrawn with ``omega_seed``."
             },
             {
               "name": "omega_seed",
               "kind": "keyword-only",
               "annotation": "int",
               "default": "0",
-              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`.\n``omega`` is estimated from ``omega_sample_size`` vertex pairs\ndrawn with ``omega_seed``."
             }
           ],
           "returns": "float",
@@ -162,7 +162,7 @@
             "summary": "Score the stored partition/cover against an explicit ground truth.",
             "description": "``community_hedonic`` persists its return value in ``memberships`` as\none list of community labels per vertex.  This convenience facade\nconverts that state to the community-list representation used by the\nexperimental evaluator and returns the selected scalar score.",
             "sections": {
-              "Parameters": "ground_truth:\n    Community lists, or an igraph ``VertexClustering``/``VertexCover``.\n    A flat per-vertex partition vector is also accepted.\nmethod:\n    ``f1`` (symmetric best-match), ``one_to_one_f1``, ``jaccard``,\n    ``omega``, ``node_micro_f1``, or ``size_weighted_community_f1``.\n    A few explicit aliases are accepted for compatibility.\nsingleton_mode, matching_weight, omega_sample_size, omega_seed:\n    Options forwarded to :func:`hedonic.metrics.evaluate_cover`.",
+              "Parameters": "ground_truth:\n    Community lists (each a list of vertices of this graph), an igraph\n    ``VertexClustering``/``VertexCover`` of a graph with the same\n    vertices, or a flat vector with one hashable label per vertex\n    (``None`` and NaN are refused: every vertex needs a label). A\n    list whose entries are lists is read as communities, not as one\n    row of labels per vertex. Communities with the same members count\n    once, on both sides.\nmethod:\n    ``f1`` (symmetric best-match), ``one_to_one_f1``, ``jaccard``,\n    ``omega``, ``node_micro_f1``, or ``size_weighted_community_f1``.\n    A few explicit aliases are accepted for compatibility.\nsingleton_mode, matching_weight, omega_sample_size, omega_seed:\n    Options forwarded to :func:`hedonic.metrics.evaluate_cover`.\n    ``omega`` is estimated from ``omega_sample_size`` vertex pairs\n    drawn with ``omega_seed``.",
               "Returns": "float\n    The selected metric value.",
               "Notes": "The metrics module is imported only when this method is called.\n``one_to_one_f1`` needs SciPy (``pip install \"hedonic[metrics]\"``)."
             },
@@ -170,7 +170,7 @@
               {
                 "names": "ground_truth",
                 "type": "",
-                "description": "Community lists, or an igraph ``VertexClustering``/``VertexCover``.\nA flat per-vertex partition vector is also accepted."
+                "description": "Community lists (each a list of vertices of this graph), an igraph\n``VertexClustering``/``VertexCover`` of a graph with the same\nvertices, or a flat vector with one hashable label per vertex\n(``None`` and NaN are refused: every vertex needs a label). A\nlist whose entries are lists is read as communities, not as one\nrow of labels per vertex. Communities with the same members count\nonce, on both sides."
               },
               {
                 "names": "method",
@@ -180,13 +180,13 @@
               {
                 "names": "singleton_mode, matching_weight, omega_sample_size, omega_seed",
                 "type": "",
-                "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+                "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`.\n``omega`` is estimated from ``omega_sample_size`` vertex pairs\ndrawn with ``omega_seed``."
               }
             ]
           },
           "path": "src/hedonic/Game.py",
-          "line": 105,
-          "endLine": 152,
+          "line": 115,
+          "endLine": 169,
           "kind": "method"
         },
         {
@@ -195,8 +195,8 @@
           "qualname": "Game.evaluate_accuracy",
           "aliasOf": "evaluate_against",
           "path": "src/hedonic/Game.py",
-          "line": 156,
-          "endLine": 156
+          "line": 173,
+          "endLine": 173
         },
         {
           "name": "to_igraph",
@@ -211,8 +211,8 @@
             "sections": {}
           },
           "path": "src/hedonic/Game.py",
-          "line": 158,
-          "endLine": 169,
+          "line": 175,
+          "endLine": 186,
           "kind": "method"
         },
         {
@@ -242,13 +242,13 @@
           "returns": "bool",
           "decorators": [],
           "doc": {
-            "summary": "Validate a community membership vector or overlapping cover init.",
-            "description": "Disjoint (``overlapping=False``):\n  - length == n (flat labels, or nested singleton rows)\n  - non-negative integer labels\n  - labels contiguous from 0\n\nOverlapping (``overlapping=True``):\n  - length == n\n  - each entry is a non-empty list of non-negative community ids\n    (one membership list per vertex), **or** a flat disjoint vector\n    (accepted and later expanded to singleton lists). Duplicate labels\n    in one row are rejected.",
+            "summary": "Whether ``membership`` is a valid membership state of this graph.",
+            "description": "Disjoint (``overlapping=False``):\n  - length == n (flat labels, or nested singleton rows)\n  - non-negative integer labels\n  - labels contiguous from 0\n\nOverlapping (``overlapping=True``):\n  - length == n\n  - each entry is a non-empty list of non-negative community ids\n    (one membership list per vertex), **or** a flat disjoint vector\n    (accepted and later expanded to singleton lists). Duplicate labels\n    in one row are rejected.\n\nWith ``max_memberships``, no row may hold more labels. This checks a\nstate strictly. ``community_hedonic`` is more lenient with a start:\nit reads a repeated label in a row once, and projects a row with more\nthan ``max_memberships`` labels to the ones its vertex prefers.",
             "sections": {}
           },
           "path": "src/hedonic/Game.py",
-          "line": 171,
-          "endLine": 197,
+          "line": 188,
+          "endLine": 219,
           "kind": "method"
         },
         {
@@ -261,7 +261,7 @@
               "kind": "positional-or-keyword",
               "annotation": "list[int] | list[list[int]] | None",
               "default": "None",
-              "description": "The start. ``None`` (the default) is the singleton start, a\nrandom start with ``max_communities``, or a feasible round-robin\nstart when a community-count limit is set. Otherwise one entry\nper vertex: a community label (a partition) or a list of labels\n(a cover); labels are non-negative integers contiguous from 0,\nand a list, tuple or NumPy array is accepted. To continue from\nthe previous result, pass ``initial_membership=g.memberships``.\nA vertex with more labels than ``max_memberships`` keeps the\n``max_memberships`` it prefers, ranked by the payoff of belonging\nto each community alone, evaluated on the start as given (ties\nto the larger community, then the smaller label); the detector\nthen moves from there to an equilibrium. A cover passed to a\npartition call (``max_memberships=1``) thus becomes the partition\nin which every vertex keeps its preferred community.\n``_hedonic_provenance[\"projected_vertices\"]`` counts the vertices\nthat had to choose."
+              "description": "The start. ``None`` (the default) is the singleton start, a\nrandom start with ``max_communities``, or a feasible round-robin\nstart when a community-count limit is set. Otherwise one entry\nper vertex: a community label (a partition) or a list of labels\n(a cover); labels are non-negative integers contiguous from 0,\nand a list, tuple or NumPy array is accepted, as is an igraph\n``VertexClustering`` or ``VertexCover`` of a graph with the same\nvertices. A label repeated in a row counts once. To continue from\nthe previous result, pass ``initial_membership=g.memberships``.\nA vertex with more labels than ``max_memberships`` keeps the\n``max_memberships`` it prefers, ranked by the payoff of belonging\nto each community alone, evaluated on the start as given (ties\nto the larger community, then the smaller label); the detector\nthen moves from there to an equilibrium. A cover passed to a\npartition call (``max_memberships=1``) thus becomes the partition\nin which every vertex keeps its preferred community.\n``_hedonic_provenance[\"projected_vertices\"]`` counts the vertices\nthat had to choose."
             },
             {
               "name": "positional",
@@ -302,7 +302,7 @@
               "kind": "keyword-only",
               "annotation": null,
               "default": "None",
-              "description": "Optional edge weights (sequence or edge-attribute name), finite;\nnon-negative for covers. A partition accepts negative weights as\nlong as ``W > 0``. An edge attribute named ``\"weight\"`` is not\nused unless named here."
+              "description": "Optional edge weights (a sequence of real numbers in edge order,\nor an edge-attribute name), finite; non-negative for covers. A\npartition accepts negative weights as long as ``W > 0``. An edge\nattribute named ``\"weight\"`` is not used unless named here.\nBooleans, strings, complex numbers, ``None`` and dicts are\nrefused. The sum of their absolute values must stay below about\n4e304, and ``W`` must be a normal double (at least about 2.2e-308)."
             },
             {
               "name": "seed",
@@ -316,7 +316,7 @@
               "kind": "keyword-only",
               "annotation": null,
               "default": "None",
-              "description": "Optional vertex weights ``w_v`` (sequence or vertex-attribute\nname), finite and non-negative. They enter the crowding term\n``γ w_u w_v``; unit weights are the default."
+              "description": "Optional vertex weights ``w_v`` (a sequence of real numbers in\nvertex order, or a vertex-attribute name), finite and\nnon-negative. They enter the crowding term ``γ w_u w_v``; unit\nweights are the default. ``|resolution| x N² x max_memberships``,\nfor the total vertex weight ``N``, must stay below about 4e304."
             },
             {
               "name": "max_total_communities",
@@ -330,7 +330,7 @@
               "kind": "keyword-only",
               "annotation": "int | None",
               "default": "None",
-              "description": "Optional exact number of occupied communities. Without a start\nstate, a deterministic round-robin start occupies all ``K``\nlabels. A start state that violates either count limit is\nrejected."
+              "description": "Optional exact number of occupied communities. Without a start\nstate, a deterministic round-robin start occupies all ``K``\nlabels. A start state that violates either count limit (after\nits projection to ``max_memberships``) is rejected."
             },
             {
               "name": "removed",
@@ -343,16 +343,16 @@
           "decorators": [],
           "doc": {
             "summary": "Community detection with the CPM hedonic game, disjoint or overlapping.",
-            "description": "Each vertex is an agent that moves to the community (or, for covers,\nthe set of at most ``max_memberships`` communities) it prefers, one\nvertex at a time, until no vertex can improve: every vertex is\nvisited, in a random order, and revisited after a neighbour moves.\nA move is taken only when its computed gain exceeds a rigorous bound\nof its rounding error, so every move raises the exact potential and\nevery call terminates. At return no unilateral deviation raises a\nvertex's exact payoff by more than\n``_hedonic_provenance[\"equilibrium_slack\"]`` times the total edge\nweight; the slack is 0 when the arithmetic is exact (for instance a\npartition with unit weights at resolution 0, 1/2 or 1), and the\nresult is then an exact Nash equilibrium. Covers, whose payoffs\ndivide by square roots, usually keep a slack near 1e-16. The result\nis an equilibrium reached from the start, not the best partition or\ncover: from singletons at resolution 0, for instance, a connected\ngraph need not end as one community. The computation runs in this\npackage's C core (``hedonic._core``). Every argument after\n``initial_membership`` is keyword-only.\n\nThe graph must be undirected and free of self-loops (a loop ties a\nvertex to no one else; ``g.simplify(multiple=False, loops=True)``\nremoves them). Parallel edges count as one edge whose weight is\ntheir sum.",
+            "description": "Each vertex is an agent that moves to the community (or, for covers,\nthe set of at most ``max_memberships`` communities) it prefers, one\nvertex at a time, until no vertex can improve: every vertex is\nvisited, in a random order, and revisited after a neighbour moves.\nA move is taken only when its computed gain exceeds a rigorous bound\nof its rounding error, so every move raises the exact potential and\nevery call terminates. At return no unilateral deviation raises a\nvertex's exact payoff by more than\n``_hedonic_provenance[\"equilibrium_slack\"]`` times the total edge\nweight. For a partition the slack is 0 whenever no deviation's exact\ngain can be positive: always when the arithmetic is exact (for\ninstance unit weights at resolution 0, 1/2 or 1), and often\notherwise; the result is then an exact Nash equilibrium. Covers,\nwhose payoffs divide by square roots, keep a tiny positive slack\n(about 1e-15 on small graphs, less on large ones). The result\nis an equilibrium reached from the start, not the best partition or\ncover: from singletons at resolution 0, for instance, a connected\ngraph need not end as one community. The computation runs in this\npackage's C core (``hedonic._core``). Every argument after\n``initial_membership`` is keyword-only.\n\nThe graph must be undirected and free of self-loops (a loop ties a\nvertex to no one else; ``g.simplify(multiple=False, loops=True)``\nremoves them). Parallel edges count as one edge whose weight is\ntheir sum.",
             "sections": {
-              "Parameters": "initial_membership :\n    The start. ``None`` (the default) is the singleton start, a\n    random start with ``max_communities``, or a feasible round-robin\n    start when a community-count limit is set. Otherwise one entry\n    per vertex: a community label (a partition) or a list of labels\n    (a cover); labels are non-negative integers contiguous from 0,\n    and a list, tuple or NumPy array is accepted. To continue from\n    the previous result, pass ``initial_membership=g.memberships``.\n    A vertex with more labels than ``max_memberships`` keeps the\n    ``max_memberships`` it prefers, ranked by the payoff of belonging\n    to each community alone, evaluated on the start as given (ties\n    to the larger community, then the smaller label); the detector\n    then moves from there to an equilibrium. A cover passed to a\n    partition call (``max_memberships=1``) thus becomes the partition\n    in which every vertex keeps its preferred community.\n    ``_hedonic_provenance[\"projected_vertices\"]`` counts the vertices\n    that had to choose.\nmax_communities :\n    Initialization only: when ``initial_membership`` is ``None`` and\n    ``max_memberships == 1``, random start over ``[0, max_communities)``\n    (labels a draw leaves unused are dropped and the rest renumbered\n    in order).\n    It has no effect with a supplied start, with overlapping defaults,\n    or when community-count limits select a feasible default start;\n    ``_hedonic_provenance[\"max_communities_effect\"]`` records which\n    case applied. It is not an output constraint (see\n    ``max_total_communities``/``n_communities``), but without\n    ``allow_isolation`` no vertex can open a new community, so the\n    result then has at most ``max_communities`` communities.\nmax_memberships :\n    Per-vertex cap. ``1`` (default) gives a partition\n    (``VertexClustering``); ``> 1`` gives an overlapping cover\n    (``VertexCover``) in which each vertex belongs to at most this\n    many communities. ``-1`` removes the practical per-vertex cap (the\n    effective cap is the vertex count, recorded in\n    ``_hedonic_provenance``).\nresolution :\n    CPM resolution γ. Defaults to the weighted density, the total\n    edge weight ``W`` over the number of vertex pairs (the density of\n    a simple unweighted graph). Must be a finite real. Smaller values\n    give larger communities. A total edge weight ``W <= 0`` is\n    rejected: the quality, the potential divided by ``W``, is\n    undefined.\nallow_isolation :\n    Allow a vertex to open a new, empty community.\nedge_weights :\n    Optional edge weights (sequence or edge-attribute name), finite;\n    non-negative for covers. A partition accepts negative weights as\n    long as ``W > 0``. An edge attribute named ``\"weight\"`` is not\n    used unless named here.\nseed :\n    When given, the visiting order is drawn from\n    ``random.Random(seed)``, and the same seed drives the random\n    disjoint start. The returned labels are then a function of the\n    graph, weights, parameters, start state and seed. ``None`` draws\n    from Python's ``random`` module (python-igraph's default\n    generator), so ``random.seed(...)`` also makes a run repeatable.\nnode_weights :\n    Optional vertex weights ``w_v`` (sequence or vertex-attribute\n    name), finite and non-negative. They enter the crowding term\n    ``γ w_u w_v``; unit weights are the default.\nmax_total_communities :\n    Optional upper bound on the number of occupied communities of the\n    result and of every state visited.\nn_communities :\n    Optional exact number of occupied communities. Without a start\n    state, a deterministic round-robin start occupies all ``K``\n    labels. A start state that violates either count limit is\n    rejected.",
-              "Returns": "VertexClustering if ``max_memberships == 1``, else VertexCover.\n\nThe result carries ``_hedonic_provenance`` (versions, effective\nparameters, count mode) and ``_hedonic_native_quality``:\n``(Φ - γ Σ_v n_v² / 2) / W`` for the exact potential ``Φ`` of the\nreturned state (a sum over pairs of vertices; the constant term is\neach vertex's own crowding, the same for every state). The returned\nmemberships are also stored in ``self.memberships``; pass\n``initial_membership=g.memberships`` to continue from them."
+              "Parameters": "initial_membership :\n    The start. ``None`` (the default) is the singleton start, a\n    random start with ``max_communities``, or a feasible round-robin\n    start when a community-count limit is set. Otherwise one entry\n    per vertex: a community label (a partition) or a list of labels\n    (a cover); labels are non-negative integers contiguous from 0,\n    and a list, tuple or NumPy array is accepted, as is an igraph\n    ``VertexClustering`` or ``VertexCover`` of a graph with the same\n    vertices. A label repeated in a row counts once. To continue from\n    the previous result, pass ``initial_membership=g.memberships``.\n    A vertex with more labels than ``max_memberships`` keeps the\n    ``max_memberships`` it prefers, ranked by the payoff of belonging\n    to each community alone, evaluated on the start as given (ties\n    to the larger community, then the smaller label); the detector\n    then moves from there to an equilibrium. A cover passed to a\n    partition call (``max_memberships=1``) thus becomes the partition\n    in which every vertex keeps its preferred community.\n    ``_hedonic_provenance[\"projected_vertices\"]`` counts the vertices\n    that had to choose.\nmax_communities :\n    Initialization only: when ``initial_membership`` is ``None`` and\n    ``max_memberships == 1``, random start over ``[0, max_communities)``\n    (labels a draw leaves unused are dropped and the rest renumbered\n    in order).\n    It has no effect with a supplied start, with overlapping defaults,\n    or when community-count limits select a feasible default start;\n    ``_hedonic_provenance[\"max_communities_effect\"]`` records which\n    case applied. It is not an output constraint (see\n    ``max_total_communities``/``n_communities``), but without\n    ``allow_isolation`` no vertex can open a new community, so the\n    result then has at most ``max_communities`` communities.\nmax_memberships :\n    Per-vertex cap. ``1`` (default) gives a partition\n    (``VertexClustering``); ``> 1`` gives an overlapping cover\n    (``VertexCover``) in which each vertex belongs to at most this\n    many communities. ``-1`` removes the practical per-vertex cap (the\n    effective cap is the vertex count, recorded in\n    ``_hedonic_provenance``).\nresolution :\n    CPM resolution γ. Defaults to the weighted density, the total\n    edge weight ``W`` over the number of vertex pairs (the density of\n    a simple unweighted graph). Must be a finite real. Smaller values\n    give larger communities. A total edge weight ``W <= 0`` is\n    rejected: the quality, the potential divided by ``W``, is\n    undefined.\nallow_isolation :\n    Allow a vertex to open a new, empty community.\nedge_weights :\n    Optional edge weights (a sequence of real numbers in edge order,\n    or an edge-attribute name), finite; non-negative for covers. A\n    partition accepts negative weights as long as ``W > 0``. An edge\n    attribute named ``\"weight\"`` is not used unless named here.\n    Booleans, strings, complex numbers, ``None`` and dicts are\n    refused. The sum of their absolute values must stay below about\n    4e304, and ``W`` must be a normal double (at least about 2.2e-308).\nseed :\n    When given, the visiting order is drawn from\n    ``random.Random(seed)``, and the same seed drives the random\n    disjoint start. The returned labels are then a function of the\n    graph, weights, parameters, start state and seed. ``None`` draws\n    from Python's ``random`` module (python-igraph's default\n    generator), so ``random.seed(...)`` also makes a run repeatable.\nnode_weights :\n    Optional vertex weights ``w_v`` (a sequence of real numbers in\n    vertex order, or a vertex-attribute name), finite and\n    non-negative. They enter the crowding term ``γ w_u w_v``; unit\n    weights are the default. ``|resolution| x N² x max_memberships``,\n    for the total vertex weight ``N``, must stay below about 4e304.\nmax_total_communities :\n    Optional upper bound on the number of occupied communities of the\n    result and of every state visited.\nn_communities :\n    Optional exact number of occupied communities. Without a start\n    state, a deterministic round-robin start occupies all ``K``\n    labels. A start state that violates either count limit (after\n    its projection to ``max_memberships``) is rejected.",
+              "Returns": "VertexClustering if ``max_memberships == 1``, else VertexCover.\n\nThe result carries ``_hedonic_provenance`` (versions, effective\nparameters, count mode) and ``_hedonic_native_quality``:\n``(Φ - γ Σ_v n_v² / 2) / W`` for the exact potential ``Φ`` of the\nreturned state (a sum over pairs of vertices), the vertex weights\n``n_v`` (1 by default) and the total edge weight ``W``; the constant\nterm is each vertex's own crowding, the same for every state. The returned\nmemberships are also stored in ``self.memberships``; pass\n``initial_membership=g.memberships`` to continue from them."
             },
             "parameters": [
               {
                 "names": "initial_membership",
                 "type": "",
-                "description": "The start. ``None`` (the default) is the singleton start, a\nrandom start with ``max_communities``, or a feasible round-robin\nstart when a community-count limit is set. Otherwise one entry\nper vertex: a community label (a partition) or a list of labels\n(a cover); labels are non-negative integers contiguous from 0,\nand a list, tuple or NumPy array is accepted. To continue from\nthe previous result, pass ``initial_membership=g.memberships``.\nA vertex with more labels than ``max_memberships`` keeps the\n``max_memberships`` it prefers, ranked by the payoff of belonging\nto each community alone, evaluated on the start as given (ties\nto the larger community, then the smaller label); the detector\nthen moves from there to an equilibrium. A cover passed to a\npartition call (``max_memberships=1``) thus becomes the partition\nin which every vertex keeps its preferred community.\n``_hedonic_provenance[\"projected_vertices\"]`` counts the vertices\nthat had to choose."
+                "description": "The start. ``None`` (the default) is the singleton start, a\nrandom start with ``max_communities``, or a feasible round-robin\nstart when a community-count limit is set. Otherwise one entry\nper vertex: a community label (a partition) or a list of labels\n(a cover); labels are non-negative integers contiguous from 0,\nand a list, tuple or NumPy array is accepted, as is an igraph\n``VertexClustering`` or ``VertexCover`` of a graph with the same\nvertices. A label repeated in a row counts once. To continue from\nthe previous result, pass ``initial_membership=g.memberships``.\nA vertex with more labels than ``max_memberships`` keeps the\n``max_memberships`` it prefers, ranked by the payoff of belonging\nto each community alone, evaluated on the start as given (ties\nto the larger community, then the smaller label); the detector\nthen moves from there to an equilibrium. A cover passed to a\npartition call (``max_memberships=1``) thus becomes the partition\nin which every vertex keeps its preferred community.\n``_hedonic_provenance[\"projected_vertices\"]`` counts the vertices\nthat had to choose."
               },
               {
                 "names": "max_communities",
@@ -377,7 +377,7 @@
               {
                 "names": "edge_weights",
                 "type": "",
-                "description": "Optional edge weights (sequence or edge-attribute name), finite;\nnon-negative for covers. A partition accepts negative weights as\nlong as ``W > 0``. An edge attribute named ``\"weight\"`` is not\nused unless named here."
+                "description": "Optional edge weights (a sequence of real numbers in edge order,\nor an edge-attribute name), finite; non-negative for covers. A\npartition accepts negative weights as long as ``W > 0``. An edge\nattribute named ``\"weight\"`` is not used unless named here.\nBooleans, strings, complex numbers, ``None`` and dicts are\nrefused. The sum of their absolute values must stay below about\n4e304, and ``W`` must be a normal double (at least about 2.2e-308)."
               },
               {
                 "names": "seed",
@@ -387,7 +387,7 @@
               {
                 "names": "node_weights",
                 "type": "",
-                "description": "Optional vertex weights ``w_v`` (sequence or vertex-attribute\nname), finite and non-negative. They enter the crowding term\n``γ w_u w_v``; unit weights are the default."
+                "description": "Optional vertex weights ``w_v`` (a sequence of real numbers in\nvertex order, or a vertex-attribute name), finite and\nnon-negative. They enter the crowding term ``γ w_u w_v``; unit\nweights are the default. ``|resolution| x N² x max_memberships``,\nfor the total vertex weight ``N``, must stay below about 4e304."
               },
               {
                 "names": "max_total_communities",
@@ -397,13 +397,13 @@
               {
                 "names": "n_communities",
                 "type": "",
-                "description": "Optional exact number of occupied communities. Without a start\nstate, a deterministic round-robin start occupies all ``K``\nlabels. A start state that violates either count limit is\nrejected."
+                "description": "Optional exact number of occupied communities. Without a start\nstate, a deterministic round-robin start occupies all ``K``\nlabels. A start state that violates either count limit (after\nits projection to ``max_memberships``) is rejected."
               }
             ]
           },
           "path": "src/hedonic/Game.py",
-          "line": 229,
-          "endLine": 376,
+          "line": 253,
+          "endLine": 410,
           "kind": "method"
         }
       ]
@@ -569,7 +569,7 @@
       },
       "path": "src/hedonic/metrics.py",
       "line": 106,
-      "endLine": 128,
+      "endLine": 129,
       "module": "hedonic.metrics"
     },
     {
@@ -622,8 +622,8 @@
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 131,
-      "endLine": 157,
+      "line": 132,
+      "endLine": 158,
       "module": "hedonic.metrics"
     },
     {
@@ -642,8 +642,8 @@
       "decorators": [],
       "doc": null,
       "path": "src/hedonic/metrics.py",
-      "line": 160,
-      "endLine": 161,
+      "line": 161,
+      "endLine": 162,
       "module": "hedonic.metrics"
     },
     {
@@ -662,8 +662,8 @@
       "decorators": [],
       "doc": null,
       "path": "src/hedonic/metrics.py",
-      "line": 164,
-      "endLine": 165,
+      "line": 165,
+      "endLine": 166,
       "module": "hedonic.metrics"
     },
     {
@@ -688,8 +688,8 @@
       "decorators": [],
       "doc": null,
       "path": "src/hedonic/metrics.py",
-      "line": 168,
-      "endLine": 170,
+      "line": 169,
+      "endLine": 171,
       "module": "hedonic.metrics"
     },
     {
@@ -726,12 +726,12 @@
       "decorators": [],
       "doc": {
         "summary": "One-to-one community precision/recall/F1 with zero unmatched scores.",
-        "description": "Matched-pair precision is averaged over *all predicted* communities and\nmatched-pair recall over *all GT* communities.  Thus an unmatched predicted\ncommunity contributes zero precision and an unmatched GT community\ncontributes zero recall.  ``matching_f1`` is their harmonic mean.",
+        "description": "Matched-pair precision is averaged over *all predicted* communities and\nmatched-pair recall over *all GT* communities.  Thus an unmatched predicted\ncommunity contributes zero precision and an unmatched GT community\ncontributes zero recall.  ``matching_f1`` is their harmonic mean.\n\nWhen several assignments reach the maximum total weight, the solver picks\none; covers above ``MAX_DENSE_MATCHING_CELLS`` pair cells are matched by\na sparse solver that can pick another, so these scores can differ between\nthe two paths on tied inputs (the total weight does not).",
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 324,
-      "endLine": 343,
+      "line": 325,
+      "endLine": 349,
       "module": "hedonic.metrics"
     },
     {
@@ -768,12 +768,12 @@
       "decorators": [],
       "doc": {
         "summary": "Multilabel membership scores after one-to-one community alignment.",
-        "description": "Micro scores count vertex-community assignments.  Macro F1 is the standard\nlabel-wise multilabel macro average over aligned GT labels plus unmatched\npredicted labels; unmatched labels therefore receive F1 zero.",
+        "description": "Micro scores count vertex-community assignments.  Macro F1 is the standard\nlabel-wise multilabel macro average over the label space after alignment:\nevery GT label (a matched predicted community takes its GT label) plus the\nunmatched predicted labels, that is ``|predicted| + |GT| - |matches|``\nlabels; an unmatched label, on either side, receives F1 zero.",
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 382,
-      "endLine": 398,
+      "line": 388,
+      "endLine": 406,
       "module": "hedonic.metrics"
     },
     {
@@ -808,8 +808,8 @@
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 456,
-      "endLine": 469,
+      "line": 464,
+      "endLine": 477,
       "module": "hedonic.metrics"
     },
     {
@@ -844,8 +844,8 @@
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 593,
-      "endLine": 666,
+      "line": 601,
+      "endLine": 678,
       "module": "hedonic.metrics"
     },
     {
@@ -880,8 +880,8 @@
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 669,
-      "endLine": 687,
+      "line": 681,
+      "endLine": 699,
       "module": "hedonic.metrics"
     },
     {
@@ -916,8 +916,8 @@
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 718,
-      "endLine": 738,
+      "line": 730,
+      "endLine": 750,
       "module": "hedonic.metrics"
     },
     {
@@ -958,8 +958,8 @@
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 762,
-      "endLine": 829,
+      "line": 774,
+      "endLine": 844,
       "module": "hedonic.metrics"
     },
     {
@@ -1000,8 +1000,8 @@
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 832,
-      "endLine": 908,
+      "line": 847,
+      "endLine": 923,
       "module": "hedonic.metrics"
     },
     {
@@ -1068,12 +1068,12 @@
       "decorators": [],
       "doc": {
         "summary": "Evaluate a cover with legacy and recommended overlap-aware metrics.",
-        "description": "Vertices are integers in ``range(n_vertices)``. ``one_to_one=False``\nskips the one-to-one matching (and the metrics built on it, which are\nthen absent), the only part that needs SciPy.",
+        "description": "Vertices are integers in ``range(n_vertices)``. ``one_to_one=False``\nskips the one-to-one matching (and the metrics built on it, which are\nthen absent), the only part that needs SciPy.\n\nBoth covers are read as sets of vertex sets (``SCORE_DEFINITION``):\nrepeated members count once and communities with the same members are\ncollapsed into one before scoring (``n_pred_comms`` and ``n_gt_comms``\ncount them after the collapse); ``singleton_mode=\"size_ge_2\"`` then drops\ncommunities of one vertex. A vertex absent from a cover is in none of its\ncommunities. When a side is empty, a precision or recall over it is 0, so\nthe community and vertex F1 and Jaccard scores are 0; for two empty\ncovers, Omega, ``node_macro_f1`` and ``matching_mean_weight`` are 1 (as\nis ONMI, :func:`overlapping_normalized_mutual_information_lfk`). Omega is a sampled estimate\n(``omega_sample_size`` vertex pairs drawn with ``omega_seed``); ``nf1``\nfollows its reference implementation (see :func:`normalized_f1_rossetti`).",
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 926,
-      "endLine": 1011,
+      "line": 955,
+      "endLine": 1052,
       "module": "hedonic.metrics"
     },
     {
@@ -1098,12 +1098,12 @@
       "decorators": [],
       "doc": {
         "summary": "NF1 of Rossetti, Pappalardo & Rinzivillo (2016), as used by ANGEL.",
-        "description": "A faithful port of the reference implementation (``NF1`` in CDlib 0.4.0,\n``cdlib/evaluation/internal/NF1.py``), including its conventions: each\ndetected community is matched to the reference communities with the largest\nmember count among its vertices (ties give several matches); a vertex is\ncounted only in the first detected community in which it appears; each\nmatch's F1 is rounded to two decimals. NF1 = mean F1 x coverage / redundancy,\nwhere coverage is the fraction of reference communities matched and\nredundancy is the number of detected communities per matched reference\ncommunity.",
+        "description": "A faithful port of the reference implementation (``NF1`` in CDlib 0.4.0,\n``cdlib/evaluation/internal/NF1.py``), including its conventions: each\ndetected community is matched to the reference communities with the largest\nmember count among its vertices (ties give several matches); a vertex is\ncounted only in the first detected community in which it appears; each\nmatch's F1 is rounded to two decimals. NF1 = mean F1 x coverage / redundancy,\nwhere coverage is the fraction of reference communities matched and\nredundancy is the number of detected communities per matched reference\ncommunity.\n\nAs in the reference, the covers are used as given: duplicate communities\nare not collapsed and ``singleton_mode`` does not apply, and NF1 exceeds 1\nwhen there are fewer detected communities than matched reference ones (one\ndetected community tied between two reference communities, for instance).",
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 1014,
-      "endLine": 1060,
+      "line": 1055,
+      "endLine": 1106,
       "module": "hedonic.metrics"
     },
     {
@@ -1150,8 +1150,8 @@
         "sections": {}
       },
       "path": "src/hedonic/metrics.py",
-      "line": 1063,
-      "endLine": 1116,
+      "line": 1109,
+      "endLine": 1164,
       "module": "hedonic.metrics"
     }
   ],

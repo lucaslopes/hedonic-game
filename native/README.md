@@ -215,9 +215,11 @@ deviation the core did not take has `d <= e`, so `d + e <= 2e`). For a
 partition the slack is exactly 0 when every error bound is 0, as with unit
 weights at resolution 0, 1/2 or 1: the result is then an exact Nash
 equilibrium. Other weights carry nonzero bounds even when they are integers
-(the bound does not test whether a sum was exact), and a cover's intensities
-`1/sqrt(k)` are rounded, so a cover's slack is never 0 (about `1e-16`
-normalized). `hig_partition` and `hig_cover`
+(the bound does not test whether a sum was exact), yet the slack is still 0
+when every vertex's best deviation is certainly worse (`d + e <= 0`), which
+is common with integer weights. A cover's intensities `1/sqrt(k)` are
+rounded, so a cover's slack is never 0 (normalized, about `1e-15` on
+Zachary's karate club and smaller on larger graphs). `hig_partition` and `hig_cover`
 return it divided by `|W|` (normalized like the quality, rounded up, plus
 `eta`; NaN if `W = 0`), and the Python layer reports it as
 `equilibrium_slack` in `_hedonic_provenance`. On complete DBLP and Amazon

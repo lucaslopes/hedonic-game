@@ -45,6 +45,6 @@ In between, $\gamma$ acts as a zoom knob: lower values merge denser groups into 
 
 ## In the package
 
-`community_hedonic(resolution=None)` uses the weighted density, the total edge weight over the $n(n-1)/2$ vertex pairs, as $\gamma$; for an unweighted simple graph that is the density $2m / (n(n-1))$. Any finite value is accepted; the mathematical statements on this site are scoped to $0 \le \gamma \le 1$.
+`community_hedonic(resolution=None)` uses the weighted density, the total edge weight over the $n(n-1)/2$ vertex pairs, as $\gamma$; for an unweighted simple graph that is the density $2m / (n(n-1))$. Any finite value is accepted as long as the crowding sums stay in floating-point range ($|\gamma| N^2 M$ below about $4 \times 10^{304}$, for the total vertex weight $N$ and the cap $M$); the mathematical statements on this site are scoped to $0 \le \gamma \le 1$. The detector reports the quality $(\Phi - \gamma \sum_v n_v^2 / 2) / W$: the potential over pairs of vertices less each vertex's own crowding (the same for every state), divided by the total edge weight $W$.
 
 The detector returns an equilibrium, not the optimum: at $\gamma = 0$ the grand coalition is the unique optimum of a connected graph, but a run from singletons can stop earlier, in a partition where no single vertex gains by moving.

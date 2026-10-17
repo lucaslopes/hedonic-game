@@ -15,7 +15,7 @@ again = graph.community_hedonic(resolution=0.1, seed=7)
 assert first.membership == again.membership
 ```
 
-Every call starts from singletons unless `initial_membership` is given, so repeating a call on the same `Game` repeats the run. Each result also carries a `_hedonic_provenance` dictionary with the package and igraph versions and the effective parameters of the call, which is worth saving next to the result.
+Every call starts afresh (from singletons unless `initial_membership`, `max_communities` or a count limit says otherwise), so repeating a seeded call on the same `Game` repeats the run. Each result also carries a `_hedonic_provenance` dictionary with the package and igraph versions and the effective parameters of the call, which is worth saving next to the result.
 
 ## The explainer
 

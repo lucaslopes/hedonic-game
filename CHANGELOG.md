@@ -16,8 +16,9 @@
   deviation raises a vertex's exact payoff by more than the slack times the
   total edge weight. For a partition it is 0 when the arithmetic is exact
   (for instance unit weights at resolution 0, 1/2 or 1): an exact Nash
-  equilibrium. A cover's payoffs divide by square roots, so its slack stays
-  a tiny positive bound (about `1e-16` of the total weight).
+  equilibrium; other weights often give 0 too. A cover's payoffs divide by
+  square roots, so its slack stays a tiny positive bound (`1e-15` to `1e-17`
+  of the total weight, smaller on larger graphs).
 - When the queue of vertices to visit runs dry, the vertices not yet settled
   are visited again in a fresh random order. A fixed order made complete
   YouTube at its density take 11 to 18 minutes; it now takes under 5 s.
@@ -31,9 +32,12 @@
   `local_move_only`, `beta`, `debug_trace`, `phase_policy` and
   `ensure_equilibrium`, and 1.x-style positional calls, raise a `TypeError`
   that says what replaces them.
-- Every call starts from its default start (singletons) unless
-  `initial_membership` is given. The result is stored in `Game.memberships`;
-  pass `initial_membership=g.memberships` to continue from it.
+- Every call starts afresh, from its default start (singletons, a random
+  start with `max_communities`, or a feasible start under a count limit)
+  unless `initial_membership` is given; an igraph `VertexClustering` or
+  `VertexCover` is accepted as a start. The result is stored in
+  `Game.memberships`; pass `initial_membership=g.memberships` to continue
+  from it.
 - A start with more labels per vertex than `max_memberships` keeps each
   vertex's preferred labels (ranked by the payoff of each community on the
   start), so a cover can start a partition; `_hedonic_provenance` counts the
