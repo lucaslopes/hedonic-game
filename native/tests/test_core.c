@@ -1289,7 +1289,9 @@ static void fma_case(int cls, double *x, double *y, double *z) {
     }
     case 10: {  /* exponent gaps from 54 to 1100 between x y and z */
         const int ex = fma_range(-30, 30), ey = fma_range(-30, 30);
-        const int gap = fma_range(54, 1100) * (fma_next() & 1 ? 1 : -1);
+        /* One draw per statement (the operands of * are unsequenced). */
+        const int magnitude = fma_range(54, 1100);
+        const int gap = magnitude * (fma_next() & 1 ? 1 : -1);
         *x = random_double(ex, ex); *y = random_double(ey, ey);
         *z = random_sign(ldexp(random_double(0, 0), ex + ey + gap));
         break;
