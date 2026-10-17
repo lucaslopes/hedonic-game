@@ -364,6 +364,36 @@ npm run dev
 The GitHub Actions workflow `.github/workflows/pages.yml` tests, builds and
 publishes it to GitHub Pages; see `web/README.md` for details.
 
+## Stability of a fixed cover
+
+```python
+from hedonic.stability import stable_fraction, stable_measures, nash_window
+
+intervals = h.stable_intervals(max_memberships=3, allow_isolation=True)
+regret, tolerance = h.regrets([0.0, h.density(), 0.1, 1.0], max_memberships=3,
+                            allow_isolation=True)
+stable = regret <= tolerance
+linear_share, log_share = stable_measures(intervals)  # log floor: 1e-4
+fractions = stable_fraction(intervals, [0.0, 0.1, 1.0])
+window = nash_window(intervals)
+```
+
+Both methods default to `h.memberships`, preserving its community labels.
+Pass `memberships=` to audit another cover, or `vertices=range(start, stop)`
+to split work across processes. Rows are copied, repeated labels count once,
+and label gaps are renumbered in numeric order. Every vertex needs a label;
+complete uncovered vertices explicitly with private labels. The cap defaults
+to the largest row and cannot be smaller.
+
+The C audit finds closed stable intervals over resolution [0, 1] using the
+paper's tolerance `1e-10 + 1e-9 * max(1, abs(current_utility))`. This differs
+from the detector's rigorous equilibrium certificate. Audits support unit
+node weights only, finite non-negative edge weights, and undirected graphs
+without self-loops. `edge_weights=None` uses the graph's `weight` attribute
+if present, otherwise ones. The native implementation computes each vertex's
+supports on demand, avoiding a global vertex-by-label support table.
+See [the core arithmetic contract](native/README.md#fixed-cover-stability-audit).
+
 ## Development
 
 ```bash

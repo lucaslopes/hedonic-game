@@ -100,12 +100,18 @@ static PyMethodDef core_methods[] = {
       "_verify_partition(n, edges, membership, edge_weights=None, node_weights=None,\n"
       "resolution=1.0, max_total_communities=None, n_communities=None,\n"
       "allow_isolation=True) -> {'vertices', 'improvable', 'max_certified', 'max_bound'}\n\n"
-      "The independent verifier (native/core/check.c): every deviation of every vertex\n"
+      "The independent verifier (native/core/check/check.c): every deviation of every vertex\n"
       "scored afresh with certified bounds. For tests." },
     { "_verify_cover", (PyCFunction) (void (*)(void)) py_verify_cover,
       METH_VARARGS | METH_KEYWORDS,
       "_verify_cover(n, edges, memberships, max_memberships, ...): the same for a cover\n"
       "(sorted rows of distinct labels). For tests." },
+    { "_audit_prepare", (PyCFunction) (void (*)(void)) py_audit_prepare,
+      METH_VARARGS | METH_KEYWORDS, "Fixed-cover audit prepare (private binding)." },
+    { "_audit_intervals", (PyCFunction) (void (*)(void)) py_audit_intervals,
+      METH_VARARGS | METH_KEYWORDS, "Fixed-cover audit intervals (private binding)." },
+    { "_audit_regrets", (PyCFunction) (void (*)(void)) py_audit_regrets,
+      METH_VARARGS | METH_KEYWORDS, "Fixed-cover audit regrets (private binding)." },
     { NULL, NULL, 0, NULL }
 };
 

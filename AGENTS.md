@@ -24,12 +24,26 @@ native/                  # the C core (no igraph dependency), built into hedonic
 │   ├── internal.h       # what the engines share, certified (upward-rounded) arithmetic, hig_fma
 │   ├── softfma.h        # correctly rounded fma in integer arithmetic (from musl, MIT licence)
 │   ├── dispatch.h       # x86_64 without baseline FMA: two builds, chosen from CPUID
-│   ├── common.c         # errors, input checks, adjacency, random order + queue, mass heap
-│   ├── partition.c      # the disjoint engine (hig_partition)
-│   ├── cover.c          # the overlapping engine (hig_cover)
-│   ├── check.c          # the independent verifier (tests only)
-│   └── hedonic_check.h  # traced runs and the verifier (tests only, not the API)
-├── unity.c              # the core as one translation unit (how the extension builds it)
+│   ├── shared/          # what both engines share (declared in internal.h)
+│   │   ├── inputs.c     # errors, memory, input checks, adjacency, start labels
+│   │   ├── random.c     # random numbers; which fma the build runs
+│   │   ├── queue.c      # random visiting order + queue
+│   │   └── heap.c       # communities by mass
+│   ├── partition/       # the disjoint engine (hig_partition)
+│   │   ├── partition.h  # its state, functions its files share
+│   │   ├── visit.c      # masses, payoff bounds, a visit, the run
+│   │   └── partition.c  # start, quality, entry points
+│   ├── cover/           # the overlapping engine (hig_cover)
+│   │   ├── cover.h      # its state, functions its files share
+│   │   ├── rows.c       # labels and rows
+│   │   ├── visit.c      # candidates, bounds, best set; the run, the slack
+│   │   ├── start.c      # start and setup
+│   │   └── cover.c      # result, quality, entry points
+│   └── check/           # tests only
+│       ├── check.c      # the independent verifier
+│       └── hedonic_check.h  # traced runs and the verifier (not the API)
+├── unity.c              # the core as one translation unit (how the extension builds it;
+│                        #   HIG_SHARED is static there, `make test` compiles each file alone)
 ├── unity_fma.c, dispatch.c  # x86_64: the core again with the FMA instruction, and the entry
 │                        #   points that pick a build from CPUID (empty on other targets)
 ├── binding/             # CPython binding: detect() for Game, partition()/cover() over plain

@@ -17,14 +17,14 @@
 */
 
 /*
- * The independent verifier of the core (native/core/check.c) over plain
+ * The independent verifier of the core (native/core/check/check.c) over plain
  * Python data: a vertex count, a flat edge buffer, the result to check and
  * the options it was computed under. Returns {"vertices", "improvable",
  * "max_certified", "max_bound"} (raw gains, not divided by |W|).
  */
 
 #include "binding.h"
-#include "hedonic_check.h"
+#include "check/hedonic_check.h"
 
 static PyObject *report_dict(const hig_verify_t *report) {
     return Py_BuildValue("{sLsLsdsd}", "vertices", (long long) report->vertices, "improvable",

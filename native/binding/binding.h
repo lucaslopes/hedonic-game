@@ -143,4 +143,10 @@ int cover_lists(const hig_cover_t *cover, hig_int nb_clusters, PyObject **rows_o
 
 PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds);
 
+
+/* ---- audit.c: immutable prepared state and fixed-cover queries ---- */
+PyObject *py_audit_prepare(PyObject *self, PyObject *args, PyObject *kwds);
+PyObject *py_audit_intervals(PyObject *self, PyObject *args, PyObject *kwds);
+PyObject *py_audit_regrets(PyObject *self, PyObject *args, PyObject *kwds);
+
 #endif

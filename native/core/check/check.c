@@ -33,7 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define HIG_KAPPA_CHECK (5.0 * HIG_U)   /* as HIG_KAPPA of cover.c */
+#define HIG_KAPPA_CHECK (5.0 * HIG_U)   /* as HIG_KAPPA of cover/visit.c */
 
 /* A lower bound of d - e > 0 (0 otherwise). */
 static double hig_certified(double d, double e) {

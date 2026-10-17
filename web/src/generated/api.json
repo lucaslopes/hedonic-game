@@ -22,7 +22,8 @@
   },
   "exports": [
     "Game",
-    "metrics"
+    "metrics",
+    "stability"
   ],
   "classes": [
     {
@@ -38,7 +39,7 @@
       },
       "path": "src/hedonic/Game.py",
       "line": 46,
-      "endLine": 441,
+      "endLine": 525,
       "members": [
         {
           "name": "__init__",
@@ -108,6 +109,198 @@
           "endLine": 101,
           "kind": "property",
           "settable": true
+        },
+        {
+          "name": "stable_intervals",
+          "qualname": "Game.stable_intervals",
+          "signature": "stable_intervals(memberships=None, *, max_memberships=None, allow_isolation=False, edge_weights=None, atol=1e-10, rtol=1e-09, vertices=None)",
+          "parameters": [
+            {
+              "name": "memberships",
+              "kind": "positional-or-keyword",
+              "annotation": null,
+              "default": "None",
+              "description": "Per-vertex label lists, a flat partition, or an igraph cover;\ndefaults to ``self.memberships``. Repeated labels count once,\ngaps are renumbered in label order, and input rows are not\nmutated. Every vertex needs a label; complete uncovered vertices\nwith private labels before calling."
+            },
+            {
+              "name": "max_memberships",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "None",
+              "description": "Maximum labels in a deviation. Defaults to the largest row and\ncannot be smaller than it."
+            },
+            {
+              "name": "allow_isolation",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "False",
+              "description": "Whether a deviation may use a fresh label with score zero."
+            },
+            {
+              "name": "edge_weights",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "None",
+              "description": "Non-negative finite weights or an edge attribute name. None uses\nthe graph's ``weight`` attribute if present, otherwise ones."
+            },
+            {
+              "name": "atol",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "1e-10",
+              "description": "Heuristic tolerance ``atol + rtol * max(1, abs(current_utility))``.\nThis is independent of the detector's certified rounding bound."
+            },
+            {
+              "name": "rtol",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "1e-09",
+              "description": "Heuristic tolerance ``atol + rtol * max(1, abs(current_utility))``.\nThis is independent of the detector's certified rounding bound."
+            },
+            {
+              "name": "vertices",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "None",
+              "description": "A range or sequence of vertex indices; defaults to all vertices.\nOutput follows this order, including repeated indices, so ranges\ncan be split across processes."
+            }
+          ],
+          "returns": null,
+          "decorators": [],
+          "doc": {
+            "summary": "Audit a fixed cover's stable resolutions on [0, 1].",
+            "description": "",
+            "sections": {
+              "Parameters": "memberships:\n    Per-vertex label lists, a flat partition, or an igraph cover;\n    defaults to ``self.memberships``. Repeated labels count once,\n    gaps are renumbered in label order, and input rows are not\n    mutated. Every vertex needs a label; complete uncovered vertices\n    with private labels before calling.\nmax_memberships:\n    Maximum labels in a deviation. Defaults to the largest row and\n    cannot be smaller than it.\nallow_isolation:\n    Whether a deviation may use a fresh label with score zero.\nedge_weights:\n    Non-negative finite weights or an edge attribute name. None uses\n    the graph's ``weight`` attribute if present, otherwise ones.\natol, rtol:\n    Heuristic tolerance ``atol + rtol * max(1, abs(current_utility))``.\n    This is independent of the detector's certified rounding bound.\nvertices:\n    A range or sequence of vertex indices; defaults to all vertices.\n    Output follows this order, including repeated indices, so ranges\n    can be split across processes.",
+              "Returns": "list[list[tuple[float, float]]]\n    Sorted, disjoint, closed stable intervals for each selected\n    vertex. Empty lists mean never stable. Only unit node weights\n    and undirected graphs without self-loops are supported.",
+              "See Also": "regrets, hedonic.stability.stable_fraction,\nhedonic.stability.stable_measures, hedonic.stability.nash_window"
+            },
+            "parameters": [
+              {
+                "names": "memberships",
+                "type": "",
+                "description": "Per-vertex label lists, a flat partition, or an igraph cover;\ndefaults to ``self.memberships``. Repeated labels count once,\ngaps are renumbered in label order, and input rows are not\nmutated. Every vertex needs a label; complete uncovered vertices\nwith private labels before calling."
+              },
+              {
+                "names": "max_memberships",
+                "type": "",
+                "description": "Maximum labels in a deviation. Defaults to the largest row and\ncannot be smaller than it."
+              },
+              {
+                "names": "allow_isolation",
+                "type": "",
+                "description": "Whether a deviation may use a fresh label with score zero."
+              },
+              {
+                "names": "edge_weights",
+                "type": "",
+                "description": "Non-negative finite weights or an edge attribute name. None uses\nthe graph's ``weight`` attribute if present, otherwise ones."
+              },
+              {
+                "names": "atol, rtol",
+                "type": "",
+                "description": "Heuristic tolerance ``atol + rtol * max(1, abs(current_utility))``.\nThis is independent of the detector's certified rounding bound."
+              },
+              {
+                "names": "vertices",
+                "type": "",
+                "description": "A range or sequence of vertex indices; defaults to all vertices.\nOutput follows this order, including repeated indices, so ranges\ncan be split across processes."
+              }
+            ]
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 113,
+          "endLine": 161,
+          "kind": "method"
+        },
+        {
+          "name": "regrets",
+          "qualname": "Game.regrets",
+          "signature": "regrets(resolutions, memberships=None, *, max_memberships=None, allow_isolation=False, edge_weights=None, atol=1e-10, rtol=1e-09, vertices=None)",
+          "parameters": [
+            {
+              "name": "resolutions",
+              "kind": "positional-or-keyword",
+              "annotation": null,
+              "default": null,
+              "description": "One-dimensional sequence of finite resolutions in [0, 1]."
+            },
+            {
+              "name": "memberships",
+              "kind": "positional-or-keyword",
+              "annotation": null,
+              "default": "None",
+              "description": "As in :meth:`stable_intervals`. Memberships default to the stored\nlabelled state; the cap defaults to its largest row. Node weights\nare unit only."
+            },
+            {
+              "name": "max_memberships",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "None",
+              "description": "As in :meth:`stable_intervals`. Memberships default to the stored\nlabelled state; the cap defaults to its largest row. Node weights\nare unit only."
+            },
+            {
+              "name": "allow_isolation",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "False",
+              "description": "As in :meth:`stable_intervals`. Memberships default to the stored\nlabelled state; the cap defaults to its largest row. Node weights\nare unit only."
+            },
+            {
+              "name": "edge_weights",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "None",
+              "description": "As in :meth:`stable_intervals`. Memberships default to the stored\nlabelled state; the cap defaults to its largest row. Node weights\nare unit only."
+            },
+            {
+              "name": "atol",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "1e-10",
+              "description": "As in :meth:`stable_intervals`. Memberships default to the stored\nlabelled state; the cap defaults to its largest row. Node weights\nare unit only."
+            },
+            {
+              "name": "rtol",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "1e-09",
+              "description": "As in :meth:`stable_intervals`. Memberships default to the stored\nlabelled state; the cap defaults to its largest row. Node weights\nare unit only."
+            },
+            {
+              "name": "vertices",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "None",
+              "description": "As in :meth:`stable_intervals`. Memberships default to the stored\nlabelled state; the cap defaults to its largest row. Node weights\nare unit only."
+            }
+          ],
+          "returns": null,
+          "decorators": [],
+          "doc": {
+            "summary": "Audit the best-response regret of a fixed cover on a resolution grid.",
+            "description": "",
+            "sections": {
+              "Parameters": "resolutions:\n    One-dimensional sequence of finite resolutions in [0, 1].\nmemberships, max_memberships, allow_isolation, edge_weights, atol, rtol, vertices:\n    As in :meth:`stable_intervals`. Memberships default to the stored\n    labelled state; the cap defaults to its largest row. Node weights\n    are unit only.",
+              "Returns": "hedonic.stability.RegretResult\n    ``regret`` and ``tolerance`` NumPy arrays, shaped\n    ``(len(vertices), len(resolutions))``. Regret is the best utility\n    minus current utility, clamped to zero when at most 1e-15.\n    A vertex is stable where ``regret <= tolerance``. The grid sums\n    evaluated scores, so rounding near interval endpoints can differ\n    from :meth:`stable_intervals`' affine coefficient sums."
+            },
+            "parameters": [
+              {
+                "names": "resolutions",
+                "type": "",
+                "description": "One-dimensional sequence of finite resolutions in [0, 1]."
+              },
+              {
+                "names": "memberships, max_memberships, allow_isolation, edge_weights, atol, rtol, vertices",
+                "type": "",
+                "description": "As in :meth:`stable_intervals`. Memberships default to the stored\nlabelled state; the cap defaults to its largest row. Node weights\nare unit only."
+              }
+            ]
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 163,
+          "endLine": 195,
+          "kind": "method"
         },
         {
           "name": "evaluate_against",
@@ -198,8 +391,8 @@
             ]
           },
           "path": "src/hedonic/Game.py",
-          "line": 117,
-          "endLine": 180,
+          "line": 201,
+          "endLine": 264,
           "kind": "method"
         },
         {
@@ -208,8 +401,8 @@
           "qualname": "Game.evaluate_accuracy",
           "aliasOf": "evaluate_against",
           "path": "src/hedonic/Game.py",
-          "line": 184,
-          "endLine": 184
+          "line": 268,
+          "endLine": 268
         },
         {
           "name": "to_igraph",
@@ -224,8 +417,8 @@
             "sections": {}
           },
           "path": "src/hedonic/Game.py",
-          "line": 186,
-          "endLine": 197,
+          "line": 270,
+          "endLine": 281,
           "kind": "method"
         },
         {
@@ -260,8 +453,8 @@
             "sections": {}
           },
           "path": "src/hedonic/Game.py",
-          "line": 199,
-          "endLine": 231,
+          "line": 283,
+          "endLine": 315,
           "kind": "method"
         },
         {
@@ -415,8 +608,8 @@
             ]
           },
           "path": "src/hedonic/Game.py",
-          "line": 268,
-          "endLine": 441,
+          "line": 352,
+          "endLine": 525,
           "kind": "method"
         }
       ]
@@ -1202,6 +1395,90 @@
       "line": 1134,
       "endLine": 1197,
       "module": "hedonic.metrics"
+    },
+    {
+      "name": "stable_fraction",
+      "qualname": "stable_fraction",
+      "signature": "stable_fraction(intervals, resolutions)",
+      "parameters": [
+        {
+          "name": "intervals",
+          "kind": "positional-or-keyword",
+          "annotation": null,
+          "default": null
+        },
+        {
+          "name": "resolutions",
+          "kind": "positional-or-keyword",
+          "annotation": null,
+          "default": null
+        }
+      ],
+      "returns": null,
+      "decorators": [],
+      "doc": {
+        "summary": "Fraction of vertices stable at each resolution (closed endpoints).",
+        "description": "``intervals`` is the list returned by ``Game.stable_intervals`` and\n``resolutions`` is a one-dimensional grid in [0, 1]. An empty population\nhas stable fraction NaN. Overlapping intervals count their owner once.",
+        "sections": {}
+      },
+      "path": "src/hedonic/stability.py",
+      "line": 22,
+      "endLine": 38,
+      "module": "hedonic.stability"
+    },
+    {
+      "name": "stable_measures",
+      "qualname": "stable_measures",
+      "signature": "stable_measures(intervals, *, log_floor=0.0001)",
+      "parameters": [
+        {
+          "name": "intervals",
+          "kind": "positional-or-keyword",
+          "annotation": null,
+          "default": null
+        },
+        {
+          "name": "log_floor",
+          "kind": "keyword-only",
+          "annotation": null,
+          "default": "0.0001"
+        }
+      ],
+      "returns": null,
+      "decorators": [],
+      "doc": {
+        "summary": "Mean stable shares of linear and logarithmic resolution, as a pair.",
+        "description": "Linear measure averages the lengths in [0, 1]. Log measure averages the\nlengths in log10 resolution on [log10(log_floor), 0]; the default floor\nis 1e-4 (four decades). An empty population returns (NaN, NaN).",
+        "sections": {}
+      },
+      "path": "src/hedonic/stability.py",
+      "line": 41,
+      "endLine": 60,
+      "module": "hedonic.stability"
+    },
+    {
+      "name": "nash_window",
+      "qualname": "nash_window",
+      "signature": "nash_window(intervals)",
+      "parameters": [
+        {
+          "name": "intervals",
+          "kind": "positional-or-keyword",
+          "annotation": null,
+          "default": null
+        }
+      ],
+      "returns": null,
+      "decorators": [],
+      "doc": {
+        "summary": "Intersect every vertex's closed stable set, in vertex order.",
+        "description": "Returns a list of (lo, hi) pairs. An empty population imposes no\nconstraints and returns [(0, 1)]; any never-stable vertex returns [].",
+        "sections": {}
+      },
+      "path": "src/hedonic/stability.py",
+      "line": 63,
+      "endLine": 75,
+      "module": "hedonic.stability"
     }
   ],
   "constants": [
@@ -1239,6 +1516,7 @@
     "src/hedonic/Game.py",
     "src/hedonic/__init__.py",
     "src/hedonic/metrics.py",
+    "src/hedonic/stability.py",
     "src/hedonic/utils.py"
   ]
 }

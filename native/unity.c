@@ -17,17 +17,27 @@
 */
 
 /*
- * The extension compiles the core as one unit, so the helpers of common.c
- * (static here, see HIG_SHARED) inline into the engines' loops. Floating-point
- * contraction is off and every fma is an explicit hig_fma, so this changes no
- * result. On an x86_64 dispatch target (core/dispatch.h) this is the build
- * with the soft fma, its entry points named hig_x86soft_*; unity_fma.c
- * includes this file again for the build with the FMA instruction.
+ * The extension compiles the core as one unit, so the helpers of core/shared/
+ * and of each engine's files (static here, see HIG_SHARED) inline into the
+ * engines' loops. Floating-point contraction is off and every fma is an
+ * explicit hig_fma, so this changes no result. On an x86_64 dispatch target
+ * (core/dispatch.h) this is the build with the soft fma, its entry points
+ * named hig_x86soft_*; unity_fma.c includes this file again for the build
+ * with the FMA instruction.
  */
 
 #define HIG_UNITY_BUILD
 
-#include "common.c"
-#include "partition.c"
-#include "cover.c"
-#include "check.c"
+#include "shared/inputs.c"
+#include "shared/random.c"
+#include "shared/queue.c"
+#include "shared/heap.c"
+#include "partition/visit.c"
+#include "partition/partition.c"
+#include "cover/rows.c"
+#include "cover/visit.c"
+#include "cover/start.c"
+#include "cover/cover.c"
+#include "check/check.c"
+
+#include "check/audit.c"

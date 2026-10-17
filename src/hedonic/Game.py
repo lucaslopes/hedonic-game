@@ -110,6 +110,90 @@ class Game(Graph):
         self._memberships = self._normalize_membership(value)
 
 
+    def stable_intervals(
+        self, memberships=None, *, max_memberships=None, allow_isolation=False,
+        edge_weights=None, atol=1e-10, rtol=1e-9, vertices=None,
+    ):
+        """Audit a fixed cover's stable resolutions on [0, 1].
+
+        Parameters
+        ----------
+        memberships:
+            Per-vertex label lists, a flat partition, or an igraph cover;
+            defaults to ``self.memberships``. Repeated labels count once,
+            gaps are renumbered in label order, and input rows are not
+            mutated. Every vertex needs a label; complete uncovered vertices
+            with private labels before calling.
+        max_memberships:
+            Maximum labels in a deviation. Defaults to the largest row and
+            cannot be smaller than it.
+        allow_isolation:
+            Whether a deviation may use a fresh label with score zero.
+        edge_weights:
+            Non-negative finite weights or an edge attribute name. None uses
+            the graph's ``weight`` attribute if present, otherwise ones.
+        atol, rtol:
+            Heuristic tolerance ``atol + rtol * max(1, abs(current_utility))``.
+            This is independent of the detector's certified rounding bound.
+        vertices:
+            A range or sequence of vertex indices; defaults to all vertices.
+            Output follows this order, including repeated indices, so ranges
+            can be split across processes.
+
+        Returns
+        -------
+        list[list[tuple[float, float]]]
+            Sorted, disjoint, closed stable intervals for each selected
+            vertex. Empty lists mean never stable. Only unit node weights
+            and undirected graphs without self-loops are supported.
+
+        See Also
+        --------
+        regrets, hedonic.stability.stable_fraction,
+        hedonic.stability.stable_measures, hedonic.stability.nash_window
+        """
+        from ._audit import stable_intervals
+
+        return stable_intervals(
+            self, memberships, max_memberships=max_memberships,
+            allow_isolation=allow_isolation, edge_weights=edge_weights,
+            atol=atol, rtol=rtol, vertices=vertices,
+        )
+
+    def regrets(
+        self, resolutions, memberships=None, *, max_memberships=None,
+        allow_isolation=False, edge_weights=None, atol=1e-10, rtol=1e-9,
+        vertices=None,
+    ):
+        """Audit the best-response regret of a fixed cover on a resolution grid.
+
+        Parameters
+        ----------
+        resolutions:
+            One-dimensional sequence of finite resolutions in [0, 1].
+        memberships, max_memberships, allow_isolation, edge_weights, atol, rtol, vertices:
+            As in :meth:`stable_intervals`. Memberships default to the stored
+            labelled state; the cap defaults to its largest row. Node weights
+            are unit only.
+
+        Returns
+        -------
+        hedonic.stability.RegretResult
+            ``regret`` and ``tolerance`` NumPy arrays, shaped
+            ``(len(vertices), len(resolutions))``. Regret is the best utility
+            minus current utility, clamped to zero when at most 1e-15.
+            A vertex is stable where ``regret <= tolerance``. The grid sums
+            evaluated scores, so rounding near interval endpoints can differ
+            from :meth:`stable_intervals`' affine coefficient sums.
+        """
+        from ._audit import regrets
+
+        return regrets(
+            self, resolutions, memberships, max_memberships=max_memberships,
+            allow_isolation=allow_isolation, edge_weights=edge_weights,
+            atol=atol, rtol=rtol, vertices=vertices,
+        )
+
     def _memberships_as_cover(self) -> list[list[int]]:
         """Convert the stored per-vertex memberships to community lists."""
         return _memberships_as_cover(self)

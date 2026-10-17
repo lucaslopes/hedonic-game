@@ -32,7 +32,7 @@
 #if HIG_DISPATCH
 
 #include "hedonic_core.h"
-#include "hedonic_check.h"
+#include "check/hedonic_check.h"
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>
@@ -42,6 +42,11 @@
 #endif
 
 #define HIG_DECLARE_BUILD(p)                                                                 \
+    hig_error_t p##audit_prepare(const hig_graph_t *, const hig_cover_t *, const hig_interrupt_t *, hig_audit_state_t **); \
+    void p##audit_free(hig_audit_state_t *); \
+    hig_error_t p##audit_intervals(const hig_audit_state_t *, const hig_audit_options_t *, hig_audit_selection_t, hig_audit_intervals_t *); \
+    void p##audit_intervals_free(hig_audit_intervals_t *); \
+    hig_error_t p##audit_regrets(const hig_audit_state_t *, const hig_audit_options_t *, hig_audit_selection_t, const double *, hig_int, double *, double *); \
     void p##pcg32_seed(hig_pcg32_t *pcg, uint64_t seed, uint64_t stream);                    \
     uint32_t p##pcg32_next32(void *pcg, int *failed);                                       \
     void p##cover_free(hig_cover_t *cover);                                                 \
@@ -199,6 +204,26 @@ hig_error_t hig_cover_traced(const hig_graph_t *graph, const hig_options_t *opti
                              const hig_trace_t *trace) {
     return HIG_DISPATCH_CALL(cover_traced, graph, options, start, result, nb_communities,
                              quality, raw_slack, trace);
+}
+
+hig_error_t hig_audit_prepare(const hig_graph_t *g, const hig_cover_t *c,
+                              const hig_interrupt_t *i, hig_audit_state_t **s) {
+    return HIG_DISPATCH_CALL(audit_prepare, g, c, i, s);
+}
+void hig_audit_free(hig_audit_state_t *s) {
+    HIG_DISPATCH_CALL(audit_free, s);
+}
+hig_error_t hig_audit_intervals(const hig_audit_state_t *s, const hig_audit_options_t *o,
+                                hig_audit_selection_t v, hig_audit_intervals_t *r) {
+    return HIG_DISPATCH_CALL(audit_intervals, s, o, v, r);
+}
+void hig_audit_intervals_free(hig_audit_intervals_t *r) {
+    HIG_DISPATCH_CALL(audit_intervals_free, r);
+}
+hig_error_t hig_audit_regrets(const hig_audit_state_t *s, const hig_audit_options_t *o,
+                              hig_audit_selection_t v, const double *g, hig_int n,
+                              double *r, double *t) {
+    return HIG_DISPATCH_CALL(audit_regrets, s, o, v, g, n, r, t);
 }
 
 hig_error_t hig_verify_partition(const hig_graph_t *graph, const hig_options_t *options,

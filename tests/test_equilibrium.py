@@ -17,7 +17,7 @@ equilibrium slack. In exact arithmetic the oracle checks:
 (b) at return, no feasible unilateral deviation raises a vertex's exact
     payoff by more than the slack, and the slack is exactly 0 for unit-weight
     partitions at resolutions whose products are exact (0, 1/2, 1, ...);
-(c) the independent C verifier (``_core._verify_*``, native/core/check.c)
+(c) the independent C verifier (``_core._verify_*``, native/core/check/check.c)
     certifies no gain above the slack.
 
 Partition deviations are scored exactly. Cover deviations are every set of

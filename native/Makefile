@@ -15,8 +15,8 @@ CFLAGS_COMMON = -std=c11 -Wall -Wextra -Wpedantic -Wvla -ffp-contract=off -Iincl
 SANITIZE = -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined \
   -fno-sanitize-recover=undefined
 RELEASE = -O3 -DNDEBUG
-SOURCES = $(wildcard core/*.c)
-HEADERS = include/hedonic_core.h $(wildcard core/*.h)
+SOURCES = $(wildcard core/*/*.c)
+HEADERS = include/hedonic_core.h $(wildcard core/*.h core/*/*.h)
 # The second build and the entry points of an x86_64 dispatch target.
 DISPATCH = unity_fma.c dispatch.c
 BUILD = build/c
@@ -36,14 +36,17 @@ each_build = $(LEAKS) $(RUN) ./$(1) && \
 
 .PHONY: test test-release test-soft-fma test-x86_64 check-libm clean
 
-test: $(BUILD)/test_core_sanitized check-libm
+test: $(BUILD)/test_core_sanitized check-libm $(BUILD)/test_audit_sanitized
 	@$(call each_build,$<)
+	$(LEAKS) $(RUN) ./$(filter %test_audit %test_audit_sanitized,$^)
 
-test-release: $(BUILD)/test_core
+test-release: $(BUILD)/test_core $(BUILD)/test_audit
 	@$(call each_build,$<)
+	$(LEAKS) $(RUN) ./$(filter %test_audit %test_audit_sanitized,$^)
 
-test-soft-fma: $(BUILD)/test_core_soft
+test-soft-fma: $(BUILD)/test_core_soft $(BUILD)/test_audit_soft
 	$(RUN) ./$<
+	$(RUN) ./$(BUILD)/test_audit_soft
 
 # The core objects as the wheel compiles them (-O3) and unoptimized: none may
 # call a libm function other than sqrt and fabs (tests/check_libm.py says why that
@@ -98,3 +101,15 @@ test-x86_64:
 
 clean:
 	rm -rf $(BUILD)
+
+$(BUILD)/test_audit_sanitized: tests/test_audit.c $(SOURCES) $(DISPATCH) unity.c $(HEADERS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS_COMMON) $(SANITIZE) $< $(SOURCES) $(DISPATCH) -lm -o $@
+
+$(BUILD)/test_audit: tests/test_audit.c unity.c $(DISPATCH) $(SOURCES) $(HEADERS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS_COMMON) $(RELEASE) $< unity.c $(DISPATCH) -lm -o $@
+
+$(BUILD)/test_audit_soft: tests/test_audit.c unity.c $(DISPATCH) $(SOURCES) $(HEADERS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS_COMMON) $(RELEASE) -DHIG_FORCE_SOFT_FMA $< unity.c $(DISPATCH) -lm -o $@
