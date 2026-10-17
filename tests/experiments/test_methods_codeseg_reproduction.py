@@ -98,6 +98,18 @@ class TestCoDeSEGRunner(unittest.TestCase):
         self.assertEqual((codeseg_reproduction.EXTENDED_METHODS, dict(codeseg_reproduction.METHOD_SPECS),
                           codeseg_reproduction._run_method), before)
 
+    def test_uninstall_never_restores_a_hook_patched_in_while_installing(self):
+        from unittest.mock import patch
+
+        from hedonic.experiments.overlapping import extra_methods
+
+        real = codeseg_reproduction._run_method
+        with patch.object(codeseg_reproduction, "_run_method", lambda *a: ([], {})):
+            extra_methods.install()  # wraps the patched hook; the patch's exit then puts the real one back
+        self.assertIs(codeseg_reproduction._run_method, real)
+        extra_methods.uninstall()  # must not bring the patch back
+        self.assertIs(codeseg_reproduction._run_method, real)
+
     def test_randomized_cover_preserves_ground_truth_shape(self):
         initial, metadata = codeseg_reproduction._randomized_cover_initialization(
             [[0, 1], [1, 2]],

@@ -94,15 +94,25 @@ def install() -> None:
         return preflight(name, parameters)
 
     cr._run_method, cr._method_parameters, cr._method_preflight = run_method, method_parameters, method_preflight
+    _SAVED = (*_SAVED, (run_method, method_parameters, method_preflight))
     _INSTALLED = True
 
 
 def uninstall() -> None:
-    """Restore the runner's registry as it was before :func:`install` (a no-op when nothing is installed)."""
+    """Restore the runner's registry as it was before :func:`install` (a no-op when nothing is installed).
+
+    Each hook is put back only while it is still the one :func:`install` set: a hook that something else replaced
+    since (a test's ``patch`` that has already ended, for instance) is left alone, so the original installed under
+    such a patch never outlives it."""
     global _INSTALLED, _SAVED
     if not _INSTALLED or _SAVED is None:
         return
-    added, cr.EXTENDED_METHODS, cr._run_method, cr._method_parameters, cr._method_preflight = _SAVED
+    added, extended, run, params, preflight, ours = _SAVED
+    cr.EXTENDED_METHODS = extended
+    for attr, saved, wrapper in zip(("_run_method", "_method_parameters", "_method_preflight"),
+                                    (run, params, preflight), ours):
+        if getattr(cr, attr) is wrapper:
+            setattr(cr, attr, saved)
     for name in added:
         cr.METHOD_SPECS.pop(name, None)
     _INSTALLED, _SAVED = False, None
