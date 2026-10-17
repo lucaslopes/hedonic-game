@@ -329,6 +329,7 @@ hedonic setup --all              # download the pairs; build and install the bas
 hedonic run queue paper --dry-run
 hedonic run queue paper          # detached and resumable; days on a laptop
 hedonic run attach paper-queue   # live view (q or Ctrl-C closes the view, never the run)
+hedonic run queue paper --report # what is done, run by run and pair by pair
 ```
 
 `hedonic setup` needs git, a C and C++ compiler, CMake and make, a C++
@@ -336,13 +337,15 @@ compiler with OpenMP for FOX (Homebrew `g++` on macOS) and
 [`uv`](https://docs.astral.sh/uv/) for the locked CDlib environment of ANGEL
 and Ego-Splitting; `--dry-run` says which are missing. Starting the queue
 again continues it: every run decides from its files what is already done.
+The queue writes under `--root DIR` (default `~/hedonic-runs/paper-queue`).
 
 Runs execute detached (tmux when available), so closing the terminal does not
 stop them: `hedonic run list`, `status`, `attach`, `logs`, `stop NAME` and
 `resume NAME` manage them. Data goes to `~/hedonic-data` (`HEDONIC_DATA_DIR`;
 SNAP files under `networks/`, or `HEDONIC_NETWORKS_DIR`), runs to
 `~/hedonic-runs` (`HEDONIC_OUTPUT_DIR`), and built method runtimes to
-`~/.cache/hedonic`. `hedonic config set output_dir PATH` and
+`~/.cache/hedonic/codeseg` (`HEDONIC_CODESEG_CACHE`, or `hedonic config set
+cache_dir PATH`). `hedonic config set output_dir PATH` and
 `hedonic config set network_root PATH` change them for every run;
 `hedonic config example` prints every setting.
 

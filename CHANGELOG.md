@@ -101,4 +101,10 @@
     two policies) takes 4 s instead of 2 minutes.
   - Data defaults to `~/hedonic-data` and runs to `~/hedonic-runs`
     (`HEDONIC_DATA_DIR`, `HEDONIC_OUTPUT_DIR`, `HEDONIC_NETWORKS_DIR` and
-    `~/.config/hedonic/config.toml` override them).
+    `~/.config/hedonic/config.toml` override them). `hedonic setup` and every
+    run find the external methods in one folder: `HEDONIC_CODESEG_CACHE`,
+    else the user config's `cache_dir/codeseg`, else
+    `~/.cache/hedonic/codeseg`.
+  - Configs resolve from the package (a file that exists wins), so a run
+    needs no checkout: for example `hedonic run posthoc --config amazon-full`
+    and `hedonic run spectrum --config full`. There is no protocol lock file.
