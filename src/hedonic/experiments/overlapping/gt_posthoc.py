@@ -1,7 +1,8 @@
 """Exact post-hoc stability of a supplied ground-truth cover, as a durable run.
 
 For every vertex, the exact set of resolutions in [0, 1] where its ground-truth
-membership is a best response (``overlapping.stability``), under both isolation
+membership is a best response (``overlapping.stability``: the C audit of
+``hedonic._core``), under both isolation
 policies. It then audits the locked resolution grid: the exact and grid stable
 fractions side by side, the Nash window, and the vertices with several intervals.
 No detector runs, and no spectrum output is touched.
@@ -25,7 +26,6 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
-import multiprocessing as mp
 import os
 import time
 import tomllib
@@ -35,7 +35,6 @@ from typing import Any, Callable, Iterator
 import numpy as np
 
 from hedonic.experiments.config import RUNS_ROOT, expand_path
-from hedonic.experiments.overlapping import capacity
 from hedonic.experiments.overlapping import ground_truth_data as gtd
 from hedonic.experiments.overlapping import robustness as rb
 from hedonic.experiments.overlapping import snap
@@ -48,7 +47,6 @@ ATOL, RTOL = 1e-10, 1e-9
 PROGRESS_EVERY = 400  # vertex updates per policy
 
 Progress = Callable[[dict[str, Any]], None]
-_WORK: dict[str, Any] = {}
 
 
 def _silent(event: dict[str, Any]) -> None:
@@ -56,30 +54,28 @@ def _silent(event: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- computation
-def _exact_for_vertex(v: int) -> list[list[float]]:
-    intervals = st.exact_stable_intervals(_WORK["state"], v, _WORK["cap"], _WORK["allow"],
-                                          atol=_WORK["atol"], rtol=_WORK["rtol"], engine=_WORK["engine"])
-    return [[float(lo), float(hi)] for lo, hi in intervals]
-
-
 VERTEX_ORDER_SEED = 0
 
 
-def _vertex_stream(n_vertices: int, workers: int) -> Iterator[tuple[int, list[list[float]]]]:
-    """``(vertex, intervals)`` in a fixed pseudo-random order; forked workers read ``_WORK`` set before iteration.
+def vertex_order(n_vertices: int) -> np.ndarray:
+    """The fixed pseudo-random order the vertices are audited in.
 
-    The order is not the index order, because on DBLP the low-index vertices are heavier: the first 1,304
-    have about three times the share of vertices with more than 320 candidate labels (16% against 6%), so an
-    ETA taken from that prefix is far too pessimistic. Only the schedule changes; each vertex's intervals are
-    the same, and the caller stores them by vertex id.
+    Not the index order, because on DBLP the low-index vertices are heavier: the first 1,304 have about three times the
+    share of vertices with more than 320 candidate labels (16% against 6%), so an ETA taken from that prefix is far too
+    pessimistic. Only the schedule changes; each vertex's intervals are the same, and the caller stores them by vertex.
     """
-    order = np.random.default_rng(VERTEX_ORDER_SEED).permutation(n_vertices).tolist()
-    if workers > 1:
-        with mp.get_context("fork").Pool(workers) as pool:
-            yield from zip(order, pool.imap(_exact_for_vertex, order, chunksize=256))
-    else:
-        for v in order:
-            yield v, _exact_for_vertex(v)
+    return np.random.default_rng(VERTEX_ORDER_SEED).permutation(n_vertices)
+
+
+def _vertex_stream(cover: st.PreparedCover, cap: int, allow: bool, *, atol: float, rtol: float, workers: int,
+                   chunk: int | None = None) -> Iterator[tuple[list[int], list[list[list[float]]]]]:
+    """``(vertices, intervals)`` chunk by chunk in ``vertex_order``; ``workers`` forked processes split the chunks
+    (the prepared C state is read-only and inherited, so they share it)."""
+    n = cover.n_vertices
+    size = chunk or max(1, min(st.MAX_CHUNK, -(-n // PROGRESS_EVERY)))
+    for vertices, intervals in st.stream_intervals(cover, cap, allow, atol=atol, rtol=rtol, workers=workers,
+                                                   order=vertex_order(n), chunk=size):
+        yield vertices.tolist(), [[[float(lo), float(hi)] for lo, hi in row] for row in intervals]
 
 
 def _nash_window(per_vertex: list[list[list[float]]]) -> list[list[float]]:
@@ -110,43 +106,32 @@ def _interval_arrays(per_vertex: list[list[list[float]]]) -> tuple[np.ndarray, n
     return np.asarray(lo, dtype=float), np.asarray(hi, dtype=float), np.asarray(owner, dtype=np.int64)
 
 
-def analyse_state(state: rb.FractionalState, *, n_vertices: int, cap: int, grid: list[float],
-                  workers: int = 1, atol: float = ATOL, rtol: float = RTOL,
-                  progress: Progress = _silent, engine: str | None = None) -> dict[str, Any]:
-    """Exact intervals for every vertex and both policies, audited against ``grid``.
-
-    ``engine`` defaults to the compiled kernel when numba is installed. Both engines return identical intervals.
-    """
-    engine = engine or st.default_engine()
-    if engine == "numba":
-        st.warm_up()  # compile before the pool forks, so every worker inherits the compiled code
+def analyse_state(cover: st.PreparedCover, *, cap: int, grid: list[float], workers: int = 1, atol: float = ATOL,
+                  rtol: float = RTOL, progress: Progress = _silent) -> dict[str, Any]:
+    """Exact intervals for every vertex and both policies, audited against ``grid`` (``cover`` from ``st.prepare``)."""
+    n_vertices = cover.n_vertices
     total = n_vertices * len(POLICIES)
     done, start = 0, time.time()
-    stride = max(1, n_vertices // PROGRESS_EVERY)
     policies: dict[str, Any] = {}
     for policy, allow in POLICIES:
-        _WORK.update(state=state, cap=cap, allow=allow, atol=atol, rtol=rtol, engine=engine)
         progress({"type": "policy", "policy": policy, "vertices": n_vertices})
         per_vertex: list[list[list[float]] | None] = [None] * n_vertices
         policy_done = 0
         t = time.time()
-        for v, intervals in _vertex_stream(n_vertices, workers):
-            per_vertex[v] = intervals
-            done += 1
-            policy_done += 1
-            if policy_done % stride == 0 or policy_done == n_vertices:
-                progress({"type": "vertices", "policy": policy, "policy_done": policy_done,
-                          "policy_total": n_vertices, "done": done, "total": total,
-                          "elapsed": time.time() - start})
+        for vertices, intervals in _vertex_stream(cover, cap, allow, atol=atol, rtol=rtol, workers=workers):
+            for v, found in zip(vertices, intervals):
+                per_vertex[v] = found
+            done += len(vertices)
+            policy_done += len(vertices)
+            progress({"type": "vertices", "policy": policy, "policy_done": policy_done,
+                      "policy_total": n_vertices, "done": done, "total": total,
+                      "elapsed": time.time() - start})
         exact_seconds = time.time() - t
         progress({"type": "stage", "text": f"{policy}: grid audit on {len(grid)} resolutions"})
-        entries = st.build_entries(state, cap, allow)
-        audit_engine = "numba" if st.HAVE_NUMBA else "numpy"
+        rows = st.spectrum_rows(cover, cap, grid, atol=atol, rtol=rtol, allow_isolation=allow, workers=workers)
         lo, hi, owner = _interval_arrays(per_vertex)
         per_gamma = []
-        for i, gamma in enumerate(grid, 1):
-            row = st.vector_spectrum_rows(entries, [gamma], atol=atol, rtol=rtol, allow_isolation=allow,
-                                          engine=audit_engine)[0]
+        for gamma, row in zip(grid, rows):
             exact_count = int(np.unique(owner[(lo <= gamma) & (hi >= gamma)]).size)
             per_gamma.append({
                 "gamma": gamma,
@@ -181,16 +166,12 @@ def analyse(options: dict[str, Any], progress: Progress = _silent) -> dict[str, 
     gt_cover = rb.canonicalize_cover(prepared.dataset.cover, graph.vcount())
     memberships = rb.cover_to_vertex_memberships(gt_cover, graph.vcount(), require_covered=True)
     cap = max(2, max(len(labels) for labels in memberships))
-    workers = capacity.exact_audit_workers(graph, memberships, options["workers"],
-                                           label=f"{options['dataset']}/{options['cover']}")
-    state = rb.build_fractional_state(graph, memberships)
-    engine = st.default_engine()
-    policies = analyse_state(state, n_vertices=graph.vcount(), cap=cap, grid=options["grid"],
-                             workers=workers, atol=options["atol"], rtol=options["rtol"],
-                             progress=progress, engine=engine)
+    cover = st.prepare(graph, memberships)
+    policies = analyse_state(cover, cap=cap, grid=options["grid"], workers=options["workers"], atol=options["atol"],
+                             rtol=options["rtol"], progress=progress)
     return {"dataset": options["dataset"], "cover": options["cover"], "graph_identity": prepared.graph_identity,
             "n_vertices": graph.vcount(), "n_edges": graph.ecount(), "cap": cap,
-            "atol": options["atol"], "rtol": options["rtol"], "grid": options["grid"], "engine": engine,
+            "atol": options["atol"], "rtol": options["rtol"], "grid": options["grid"], "engine": cover.engine,
             "policies": policies, "seconds": round(time.time() - started, 2)}
 
 

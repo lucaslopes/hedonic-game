@@ -68,6 +68,7 @@ from hedonic.experiments.overlapping import ground_truth_robustness as v3
 from hedonic.experiments.overlapping import capacity
 from hedonic.experiments.overlapping import robustness as rb
 from hedonic.experiments.overlapping import snap
+from hedonic.experiments.overlapping import stability as stab
 from hedonic.experiments.overlapping.execution import run_in_subprocess
 from hedonic.experiments.overlapping.metrics import (
     _cover_sets,
@@ -99,6 +100,7 @@ SOURCE_MODULES = (
     "hedonic.experiments.overlapping.ground_truth_robustness",
     "hedonic.experiments.overlapping.ground_truth_data",
     "hedonic.experiments.overlapping.robustness",
+    "hedonic.experiments.overlapping.stability",
     "hedonic.experiments.overlapping.execution",
     "hedonic.experiments.overlapping.snap",
     "hedonic.experiments.overlapping.metrics",
@@ -710,62 +712,29 @@ def spectrum_audit(
     atol: float,
     rtol: float,
     dense: bool = False,
-    state: rb.FractionalState | None = None,
+    cover: stab.PreparedCover | None = None,
     density: float | None = None,
+    workers: int = 1,
+    progress=None,
 ) -> list[dict[str, Any]]:
     """Per-resolution vertex stability of a cover under one action policy.
 
-    ``state`` (and the graph ``density``) may be passed in when it is already built: the state of a large pair is
-    built once and shared by every resolution and worker, never rebuilt per call.
+    ``cover`` (``stability.prepare``) and the graph ``density`` may be passed in when they are already known: a pair's
+    cover is prepared once and serves every resolution and both policies. ``workers`` forked processes split the
+    vertices; ``progress(done, gamma)`` follows the resolutions.
 
-    One fractional state serves every resolution.  For each gamma the exact
-    unit-l2 best response (prefix optimisation, ``robustness.best_response``) is
-    evaluated at every vertex; a vertex is *stable* when its regret is at most
-    ``atol + rtol * max(1, |utility|)`` (the locked audit tolerance).  Equal, by
-    construction, to ``robustness.audit_cover`` at that gamma (tested).
+    For each gamma the exact unit-l2 best response (prefix optimisation) of every vertex is evaluated by the C audit; a
+    vertex is *stable* when its regret is at most ``atol + rtol * max(1, |utility|)`` (the audit tolerance). The
+    candidate set is exact for every gamma in [0, 1], so ``dense`` (the 1.x all-labels oracle) changes no number; it
+    stays a recorded option.
     """
-    if state is None:
-        state = rb.build_fractional_state(graph, memberships)
-    n = state.n_vertices
+    if cover is None:
+        cover = stab.prepare(graph, memberships)
     density = graph.density() if density is None else density
-    rows = []
-    for gamma in gammas:
-        stable = 0
-        profitable = 0
-        regrets: list[float] = []
-        max_tolerance = float(atol + rtol)
-        for vertex in range(n):
-            diagnostic = rb.best_response(state, vertex, float(gamma), cap, allow_isolation, dense=dense)
-            tolerance = rb._tolerance(diagnostic["current_utility"], atol, rtol)
-            max_tolerance = max(max_tolerance, tolerance)
-            regret = max(0.0, float(diagnostic["regret"]))
-            regrets.append(regret)
-            if regret <= tolerance:
-                stable += 1
-            else:
-                profitable += 1
-        rows.append(
-            {
-                "gamma": float(gamma),
-                "gamma_over_density": float(gamma) / density if density > 0 else None,
-                "action_policy": "open_labels" if allow_isolation else "fixed_labels",
-                "allow_isolation": bool(allow_isolation),
-                "cap": int(cap),
-                "n_vertices_covered": n,
-                "stable_vertex_count": stable,
-                "stable_fraction": stable / n,
-                "profitable_vertex_count": profitable,
-                "profitable_fraction": profitable / n,
-                "mean_positive_regret": sum(regrets) / n,
-                "max_positive_regret": max(regrets, default=0.0),
-                "p95_positive_regret": rb._percentile(regrets, 0.95),
-                "max_tolerance": max_tolerance,
-                "is_nash_equilibrium": profitable == 0,
-                "atol": float(atol),
-                "rtol": float(rtol),
-            }
-        )
-    return rows
+    rows = stab.spectrum_rows(cover, cap, [float(g) for g in gammas], atol=atol, rtol=rtol,
+                            allow_isolation=allow_isolation, workers=workers, progress=progress)
+    return [{"gamma": row["gamma"], "gamma_over_density": row["gamma"] / density if density > 0 else None,
+             **{key: value for key, value in row.items() if key != "gamma"}} for row in rows]
 
 
 # --------------------------------------------------------------------------- jobs
@@ -1042,9 +1011,9 @@ def _score_record(
         key = (job.prepared.graph_identity, digest, int(cap), float(gamma), allow_isolation,
                float(options["atol"]), float(options["rtol"]), bool(options["dense"]))
         if key not in audit_cache:
-            audit_cache[key] = rb.audit_cover(
+            audit_cache[key] = stab.audit_cover(
                 graph, memberships, max_memberships=cap, allow_isolation=allow_isolation, gamma=float(gamma),
-                interval=(0.0, 1.0), atol=options["atol"], rtol=options["rtol"], dense=options["dense"])
+                interval=(0.0, 1.0), atol=options["atol"], rtol=options["rtol"])
         return audit_cache[key]
 
     selected = audit(raw, raw_membership_digest)
@@ -1353,7 +1322,7 @@ def inspect_pairs(options: dict[str, Any], rows: list[dict[str, Any]]) -> list[d
         try:  # what the memory free now allows this pair, before anything is built
             plan = job_capacity(job, options, say=None)
             capacity_note = {"audit_workers": plan["audit_workers"], "detector_workers": plan["detector_workers"],
-                             "state_gib": plan["state_bytes"] / GIB, "lines": plan["lines"]}
+                             "lines": plan["lines"]}
         except capacity.CapacityError as exc:
             capacity_note = {"refused": str(exc)}
         out.append({
@@ -1434,7 +1403,7 @@ def render_plan(options: dict[str, Any], rows: list[dict[str, Any]], inspected: 
                 if "refused" in note:
                     lines.append(f"      memory: REFUSED now · {note['refused']}")
                 elif note:
-                    lines.append(f"      memory: state {note['state_gib']:.1f} GiB · audit {note['audit_workers']} worker(s), "
+                    lines.append(f"      memory: audit {note['audit_workers']} worker(s), "
                                  f"detector runs {note['detector_workers']} worker(s) of {options['workers']} requested "
                                  "(from the memory free now)")
                 for s in item.get("settings", []):
@@ -1571,13 +1540,10 @@ def run_study(options: dict[str, Any], progress: Callable[[dict[str, Any]], None
         job_provenance.append(provenance)
         _atomic_json(output_dir / "jobs" / f"{job.key}.json", provenance)
         _persist_cover(output_dir, job.gt_cover)
-        executor = _make_executor(job, options, identity, capacity_plan["audit_workers"])
+        executor = None
         try:
-            rows_for_job = _audit_job(job, options, identity, emit, executor)
-            if executor is not None:  # the audit and the detector runs have different footprints: a pool for each
-                executor.shutdown(wait=True, cancel_futures=True)
+            audit_rows.extend(_audit_job(job, options, identity, emit))
             executor = _make_executor(job, options, identity, capacity_plan["detector_workers"])
-            audit_rows.extend(rows_for_job)
             if options.get("detector_settings") is not None:
                 audit_rows.extend(_audit_settings(job, options, identity, emit))
             reference = _with_omega(_base_metrics(job, options, identity, job.gt_cover, job.gt_hash), job, job.gt_cover,
@@ -1617,45 +1583,32 @@ def _pool_condition(policy: str, gamma: float, seed: int, rescore: bool, setting
     return run_condition(job, options, identity, policy, gamma, seed, cache, setting)
 
 
-def _pool_audit(policy: str, gammas: list[float], state_dir: str) -> list[dict[str, Any]]:
-    """One audit task in a pool worker: the state is the one the parent built, memory-mapped from ``state_dir``."""
-    job, options = _WORKER["job"], _WORKER["options"]
-    if _WORKER.get("state_dir") != state_dir:
-        _WORKER.update(state=rb.FractionalState.load(state_dir), state_dir=state_dir)
-    return spectrum_audit(job.graph, job.memberships, cap=job.cap, allow_isolation=policy == "open_labels",
-                          gammas=gammas, atol=options["atol"], rtol=options["rtol"], dense=options["dense"],
-                          state=_WORKER["state"], density=job.density)
-
-
 GIB = 1024 ** 3
 
 
 def job_capacity(job: Job, options: dict[str, Any], say=print) -> dict[str, Any]:
-    """What this pair needs, against the memory free now: the workers its audit and its detector runs may use.
+    """What this pair's detector runs need, against the memory free now: the workers they may use.
 
-    Sizes come from the loaded pair (a sampled count of support entries, the cap's native workspace, the graph a
-    spawned worker receives). ``capacity.CapacityError`` is raised, before anything is built, when not even one
-    worker fits; the pair is then recorded as refused (with the figures) instead of taking the machine down.
+    The audit needs no plan: the C audit's prepared cover is O(n + m + incidences), a fraction of the loaded graph,
+    and forked audit workers share it. A detector worker holds a copy of the graph, the cap's native workspace and the
+    prepared covers of the returns it audits. ``capacity.CapacityError`` is raised, before anything is built, when not
+    even one detector worker fits; the pair is then recorded as refused (with the figures).
     """
     graph, n = job.graph, job.graph.vcount()
     edges, incidences = graph.ecount(), sum(map(len, job.memberships))
-    support = capacity.sample_support_entries(graph, job.memberships)
-    state = capacity.state_bytes(n, edges, incidences, support, len(job.gt_cover))
-    build = capacity.state_build_transient(edges, rb.SUPPORT_BLOCK, support)
     graph_copy = n * 200 + edges * 100 + incidences * 100  # what each spawned worker holds of the job
     requested = max(1, min(int(options["workers"]), os.cpu_count() or 1))
-    capacity.plan_workers(capacity.Need(f"{job.key}: building the audit state", state + build, 0), 1)
-    audit = capacity.plan_workers(capacity.Need(f"{job.key}: spectrum audit", state, graph_copy + 0.5 * GIB), requested)
-    detector = audit
+    lines: list[str] = []
+    detector_workers = requested
     if not options["audit_only"]:
-        per_detector = graph_copy + n * job.cap * 8 + 2 * state + 0.5 * GIB  # copy, native n x cap workspace, two audited states
+        per_detector = 2 * graph_copy + n * job.cap * 8 + 0.5 * GIB  # copy, native n x cap workspace, audited covers
         detector = capacity.plan_workers(capacity.Need(f"{job.key}: detector runs", 0, per_detector), requested)
-    lines = [f"[capacity] {plan.line()}" for plan in (audit, detector)]
+        detector_workers = detector.workers
+        lines.append(f"[capacity] {detector.line()}")
     for line in lines:
         if say is not None:
             say(line, flush=True)
-    return {"audit_workers": audit.workers, "detector_workers": detector.workers, "lines": lines,
-            "support_entries": support, "state_bytes": state}
+    return {"audit_workers": requested, "detector_workers": detector_workers, "lines": lines}
 
 
 def _make_executor(job: Job, options: dict[str, Any], identity: dict[str, Any], workers: int | None = None):
@@ -1726,8 +1679,8 @@ def _audit_cached(cached: dict[str, Any] | None, audit_identity: str) -> bool:
     return bool(cached) and cached.get("audit_identity") == audit_identity
 
 
-def _audit_job(job: Job, options: dict[str, Any], identity: dict[str, Any], emit, executor=None) -> list[dict[str, Any]]:
-    """Spectrum audit of the untouched GT, cached per exact input and grid (pool-parallel over policy x γ chunks)."""
+def _audit_job(job: Job, options: dict[str, Any], identity: dict[str, Any], emit) -> list[dict[str, Any]]:
+    """Spectrum audit of the untouched GT, cached per exact input and grid (forked workers split the vertices)."""
     output_dir: Path = options["output_dir"]
     path = output_dir / "audit" / f"{job.key}.json"
     identity_payload = {
@@ -1744,48 +1697,24 @@ def _audit_job(job: Job, options: dict[str, Any], identity: dict[str, Any], emit
     display_job = f"{job.dataset}/{snap.cover_variant_label(job.cover)}"
     emit({"type": "audit_start", "job": display_job})
     gammas = [float(g) for g in options["audit_resolutions"]]
-    # One task per (policy, resolution) so progress is reported per resolution, not per pair.
-    work = [(policy, [gamma]) for policy in options["isolation_policies"] for gamma in gammas]
-    total = len(work)
-
-    def progress(done: int, policy: str, gamma: float) -> None:
-        emit({"type": "audit_progress", "job": display_job, "policy": policy, "gamma": gamma,
-              "done": done, "total": total, "elapsed": time.monotonic() - started})
-
-    emit({"type": "stage", "job": display_job, "text": "building the audit state"})
-    state = rb.build_fractional_state(job.graph, job.memberships)  # once per pair, for every resolution and worker
-    if executor is None:
-        parts = []
-        for index, (p, piece) in enumerate(work, 1):
-            parts.append(spectrum_audit(job.graph, job.memberships, cap=job.cap, allow_isolation=p == "open_labels",
-                                        gammas=piece, atol=options["atol"], rtol=options["rtol"],
-                                        dense=options["dense"], state=state, density=job.density))
-            progress(index, p, piece[0])
-    else:
-        import concurrent.futures
-        import shutil
-
-        state_dir = output_dir / "audit" / f".state-{job.key}-{os.getpid()}"  # workers memory-map it: one copy in memory
-        try:
-            state.save(state_dir)
-            del state
-            futures = {executor.submit(_pool_audit, p, piece, str(state_dir)): (p, piece[0]) for p, piece in work}
-            by_key = {}
-            for index, future in enumerate(concurrent.futures.as_completed(futures), 1):
-                key = futures[future]
-                by_key[key] = future.result()
-                progress(index, *key)
-        finally:
-            shutil.rmtree(state_dir, ignore_errors=True)
-        parts = [by_key[(p, piece[0])] for p, piece in work]
+    total = len(gammas) * len(options["isolation_policies"])
+    workers = max(1, min(int(options["workers"]), os.cpu_count() or 1))
+    emit({"type": "stage", "job": display_job, "text": "preparing the audit"})
+    cover = stab.prepare(job.graph, job.memberships)  # once per pair, for every resolution, policy and worker
     rows = []
-    for policy in options["isolation_policies"]:
-        items = sorted((item for (p, _), part in zip(work, parts) if p == policy for item in part),
-                       key=lambda item: item["gamma"])
+    for index, policy in enumerate(options["isolation_policies"]):
+        def progress(done: int, gamma: float, before: int = index * len(gammas), policy: str = policy) -> None:
+            emit({"type": "audit_progress", "job": display_job, "policy": policy, "gamma": gamma,
+                  "done": before + done, "total": total, "elapsed": time.monotonic() - started})
+
+        items = spectrum_audit(job.graph, job.memberships, cap=job.cap, allow_isolation=policy == "open_labels",
+                               gammas=gammas, atol=options["atol"], rtol=options["rtol"], dense=options["dense"],
+                               cover=cover, density=job.density, workers=workers, progress=progress)
         rows.extend({"row_type": "ground_truth_audit", "dataset": job.dataset, "cover": job.cover,
-                     "density": job.density, "n_vertices": job.graph.vcount(), **item} for item in items)
+                     "density": job.density, "n_vertices": job.graph.vcount(), **item}
+                    for item in sorted(items, key=lambda item: item["gamma"]))
     _atomic_json(path, {"audit_identity": audit_identity, "identity": identity_payload, "rows": rows,
-                           "audit_runtime_seconds": time.monotonic() - started})
+                        "audit_runtime_seconds": time.monotonic() - started})
     return rows
 
 

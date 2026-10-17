@@ -25,8 +25,9 @@
 - The library needs only the standard `igraph>=1.0` package and NumPy.
   Importing `hedonic` does not check igraph's version, so it installs next to
   any igraph 1.x. The package also depends on SciPy, pandas, Matplotlib,
-  NetworkX, PyArrow, DuckDB and tqdm for its experiment command line; the
-  `fast` extra adds Numba for the exact robustness audit.
+  NetworkX, PyArrow, DuckDB and tqdm for its experiment command line. The
+  experiments' robustness audits run on the C audit, so there is no Numba
+  extra.
 - `Game.community_hedonic(initial_membership, *, max_communities,
   max_memberships, resolution, allow_isolation, edge_weights, seed,
   node_weights, max_total_communities, n_communities)`: everything after
@@ -88,6 +89,16 @@
     runtime identity. Hedonic is the method `hedonic`; the multilevel phase
     (`hoc_multilevel`, multi-phase variants) is not available and is refused
     with that message.
+  - The robustness audits (`hedonic run audit`, the benchmark's
+    `--robustness` stage, `hedonic run posthoc`, the ground-truth spectrum
+    and the calibration's label-free audit) run on the C audit behind
+    `Game.stable_intervals` and `Game.regrets`; `--workers` forked processes
+    split the vertices and share its read-only prepared state. It returns the
+    floats of the pure-Python reference (kept for tests), so the records keep
+    their format and values; the spectrum's regret aggregates, which 1.x
+    computed through a separate best-response path, can differ from 1.x in
+    the last bit. The complete DBLP/top5000 spectrum audit (131 resolutions,
+    two policies) takes 4 s instead of 2 minutes.
   - Data defaults to `~/hedonic-data` and runs to `~/hedonic-runs`
     (`HEDONIC_DATA_DIR`, `HEDONIC_OUTPUT_DIR`, `HEDONIC_NETWORKS_DIR` and
     `~/.config/hedonic/config.toml` override them).

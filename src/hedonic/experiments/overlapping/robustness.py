@@ -17,7 +17,6 @@ import json
 import math
 import random
 from collections.abc import Iterable, Sequence
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -136,10 +135,9 @@ class CompactRows(Sequence):
     """Rows of ``{label: value}`` stored as three flat arrays (CSR), read back as one small dict per row.
 
     A Python dict per vertex costs about 100 bytes per entry; on the 1.1 M-vertex LiveJournal cover the support has
-    some 3.2e8 entries, over 30 GB, and every worker of a pool built its own. Here an entry is a 4-byte label and an
-    8-byte value, a row is materialised only when asked for, and the arrays can be shared by forked workers (nothing
-    in them is reference-counted) or memory-mapped from disk by spawned ones. The last row is kept, because the
-    best-response code reads one vertex's row once per candidate label.
+    some 3.2e8 entries, over 30 GB. Here an entry is a 4-byte label and an 8-byte value and a row is materialised only
+    when asked for. The last row is kept, because the best-response code reads one vertex's row once per candidate
+    label. (The experiments' audits run on the C engine, which keeps no support table; this is the Python reference.)
     """
 
     __slots__ = ("indptr", "labels", "values", "_last_index", "_last_row")
@@ -172,17 +170,6 @@ class CompactRows(Sequence):
     @property
     def nbytes(self) -> int:
         return int(self.indptr.nbytes + self.labels.nbytes + self.values.nbytes)
-
-    def save(self, directory: str | Path, name: str) -> None:
-        directory = Path(directory)
-        for part in ("indptr", "labels", "values"):
-            np.save(directory / f"{name}.{part}.npy", getattr(self, part))
-
-    @classmethod
-    def load(cls, directory: str | Path, name: str, *, mmap: bool = True) -> "CompactRows":
-        directory = Path(directory)
-        mode = "r" if mmap else None
-        return cls(*(np.load(directory / f"{name}.{part}.npy", mmap_mode=mode) for part in ("indptr", "labels", "values")))
 
 
 class _IntensityRows(Sequence):
@@ -222,32 +209,6 @@ class FractionalState:
     @property
     def n_communities(self) -> int:
         return len(self.masses)
-
-    def save(self, directory: str | Path) -> None:
-        """Write the state so spawned workers can ``load`` it memory-mapped instead of building their own."""
-        import pickle
-
-        directory = Path(directory)
-        directory.mkdir(parents=True, exist_ok=True)
-        if not isinstance(self.support, CompactRows):
-            raise TypeError("only a state built by build_fractional_state can be saved")
-        self.support.save(directory, "support")
-        np.save(directory / "edge_weights.npy", np.asarray(self.edge_weights, dtype=float))
-        with open(directory / "rest.pickle", "wb") as handle:
-            pickle.dump({"memberships": self.memberships, "masses": self.masses,
-                         "lightest_labels": self.lightest_labels}, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-    @classmethod
-    def load(cls, directory: str | Path) -> "FractionalState":
-        import pickle
-
-        directory = Path(directory)
-        with open(directory / "rest.pickle", "rb") as handle:
-            rest = pickle.load(handle)
-        return cls(memberships=rest["memberships"], masses=rest["masses"],
-                   support=CompactRows.load(directory, "support"), intensities=_IntensityRows(rest["memberships"]),
-                   lightest_labels=rest["lightest_labels"],
-                   edge_weights=np.load(directory / "edge_weights.npy", mmap_mode="r"))
 
 
 SUPPORT_BLOCK = 20_000_000  # (target, label) contributions expanded at once while the support is built
@@ -309,14 +270,11 @@ def _compact_support(n: int, edges: np.ndarray, weights: np.ndarray, member_indp
     return CompactRows(indptr, labels, values)
 
 
-def build_fractional_state(
-    graph,
-    memberships: Sequence[Sequence[int]],
-    *,
-    edge_weights: Sequence[float] | None = None,
-    block: int = SUPPORT_BLOCK,
-) -> FractionalState:
-    """Build masses and compact neighbor support for a valid cover (see ``CompactRows``)."""
+def normalize_memberships(graph, memberships: Sequence[Sequence[int]]) -> tuple[list[tuple[int, ...]], int]:
+    """Sorted, repeat-free label rows of a valid cover, and its largest label.
+
+    Every vertex needs a label, labels are non-negative and contiguous from zero, and there is one row per vertex.
+    """
     n = graph.vcount()
     normalized: list[tuple[int, ...]] = []
     max_label = -1
@@ -335,7 +293,23 @@ def build_fractional_state(
     labels = {label for vertex_labels in normalized for label in vertex_labels}
     if labels != set(range(max_label + 1)):
         raise ValueError("membership labels must be contiguous from zero")
-    del labels
+    return normalized, max_label
+
+
+def build_fractional_state(
+    graph,
+    memberships: Sequence[Sequence[int]],
+    *,
+    edge_weights: Sequence[float] | None = None,
+    block: int = SUPPORT_BLOCK,
+) -> FractionalState:
+    """Build masses and compact neighbor support for a valid cover (see ``CompactRows``).
+
+    This is the Python reference state. The experiments audit covers with the C engine (``stability.prepare``),
+    which builds a vertex's supports when it visits it and keeps no global support table.
+    """
+    n = graph.vcount()
+    normalized, max_label = normalize_memberships(graph, memberships)
 
     masses = [0.0] * (max_label + 1)
     intensity = np.empty(n)
@@ -728,20 +702,31 @@ def fractional_phi(
     *,
     edge_weights: Sequence[float] | None = None,
 ) -> float:
-    r"""Compute the normalized unit-$\ell_2$ fractional CPM potential."""
-    state = build_fractional_state(graph, memberships, edge_weights=edge_weights)
-    total_weight = sum(state.edge_weights)
+    r"""Compute the normalized unit-$\ell_2$ fractional CPM potential.
+
+    Needs the masses and intensities only, never the neighbour support, so it costs O(n + m + incidences).
+    """
+    normalized, max_label = normalize_memberships(graph, memberships)
+    weights = np.asarray(_edge_weights(graph, edge_weights), dtype=float)
+    total_weight = sum(weights)  # NumPy scalars: sequential additions, as the state-based version summed them
     if total_weight <= 0:
         return 0.0
+    masses = [0.0] * (max_label + 1)
+    intensity = []
+    for vertex_labels in normalized:
+        value = 1.0 / math.sqrt(len(vertex_labels))
+        intensity.append(value)
+        for label in vertex_labels:
+            masses[label] += value
     internal = 0.0
     for edge_index, (first, second) in enumerate(graph.get_edgelist()):
-        shared = set(state.memberships[first]).intersection(state.memberships[second])
+        shared = set(normalized[first]).intersection(normalized[second])
         if not shared:
             continue
-        weight = state.edge_weights[edge_index]
-        for label in shared:
-            internal += weight * state.intensities[first][label] * state.intensities[second][label]
-    penalty = sum(mass * mass for mass in state.masses)
+        weight = weights[edge_index]
+        for _label in shared:
+            internal += weight * intensity[first] * intensity[second]
+    penalty = sum(mass * mass for mass in masses)
     return float((2.0 * internal - float(gamma) * penalty) / (2.0 * total_weight))
 
 
@@ -1050,6 +1035,7 @@ __all__ = [
     "exhaustive_best_response",
     "fractional_phi",
     "nearest_equilibrium_tiny",
+    "normalize_memberships",
     "perturb_cover_incidence",
     "stability_interval_for_vertex",
     "vertex_memberships_to_cover",

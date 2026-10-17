@@ -34,9 +34,6 @@ classifiers = [
 # One-to-one matching in hedonic.metrics (Game.evaluate_against "one_to_one_f1"); scipy is now a dependency, the
 # extra is kept so `pip install "hedonic[metrics]"` still works.
 metrics = ["scipy>=1.10"]
-# Compiled kernels of the exact robustness audit (cover audits, the ground-truth spectrum); without it the same
-# results are computed in pure Python, more slowly.
-fast = ["numba>=0.59"]
 
 [project.scripts]
 hedonic = "hedonic.experiments.CLI:hedonic_main"

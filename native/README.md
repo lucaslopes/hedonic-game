@@ -499,7 +499,7 @@ sums explicitly, independently of the host Python version. This is a narrow
 exception to sequential summation, needed for bit-identical interval endpoints
 with that reference. A Python 3.11 execution of the paper code can therefore
 produce different endpoint bits. Grid regrets still sum evaluated scores
-sequentially, as the numba kernel does.
+sequentially, as the reference's grid kernel does.
 
 Intervals enumerate all pairwise score crossings and current-utility
 crossings of +1 and -1, sort the cuts, and visit every nonempty cell. Score

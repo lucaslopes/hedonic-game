@@ -100,8 +100,8 @@ distribution, which needs a C11 compiler.
 The package also installs the experiment command line (`hedonic` and
 `hedonic-exp`, see [Command line](#command-line-reproducing-the-experiments))
 and its dependencies (SciPy, pandas, Matplotlib, NetworkX, PyArrow, DuckDB and
-tqdm). The `fast` extra adds Numba, which compiles the kernels of the exact
-robustness audit: `pip install "hedonic[fast]"`.
+tqdm). The experiments' robustness audits run on the same C audit as
+`Game.stable_intervals` and `Game.regrets`, so they need nothing more.
 
 ## Tutorial
 
@@ -399,7 +399,7 @@ See [the core arithmetic contract](native/README.md#fixed-cover-stability-audit)
 ```bash
 git clone https://github.com/lucaslopes/hedonic.git
 cd hedonic
-python -m pip install -e ".[fast]" pytest
+python -m pip install -e . pytest
 python -m pytest
 make -C native test            # the C core's own tests (sanitizers)
 python tools/native_tests.py   # bit-level pins, as the wheel builds run them

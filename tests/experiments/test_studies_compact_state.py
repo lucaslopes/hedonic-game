@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import math
 import random
-import tempfile
 import unittest
 from collections import defaultdict
 
 import igraph as ig
-import numpy as np
 
 from hedonic.experiments.overlapping import robustness as rb
 
@@ -91,21 +89,6 @@ class TestCompactState(unittest.TestCase):
         cap = max(len(row) for row in memberships)
         regrets = [rb.best_response(state, v, 0.05, cap, True)["regret"] for v in range(graph.vcount())]
         self.assertTrue(all(r >= 0 for r in regrets))
-
-    def test_a_saved_state_loads_memory_mapped_and_equal(self):
-        graph, memberships = random_case(8)
-        state = rb.build_fractional_state(graph, memberships)
-        with tempfile.TemporaryDirectory() as tmp:
-            state.save(tmp)
-            loaded = rb.FractionalState.load(tmp)
-            self.assertIsInstance(loaded.support.values, np.memmap)
-            for vertex in range(graph.vcount()):
-                self.assertEqual(loaded.support[vertex], state.support[vertex])
-            self.assertEqual(loaded.memberships, state.memberships)
-            cap = max(len(row) for row in memberships)
-            for vertex in range(0, graph.vcount(), 7):
-                self.assertEqual(rb.best_response(loaded, vertex, 0.1, cap, True),
-                                 rb.best_response(state, vertex, 0.1, cap, True))
 
     def test_the_arrays_are_much_smaller_than_the_dicts(self):
         graph, memberships = random_case(1, n=400, extra_edges=3000)

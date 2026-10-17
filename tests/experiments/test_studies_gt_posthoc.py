@@ -19,9 +19,8 @@ class TestAnalyseState(unittest.TestCase):
         grid = [0.0, 0.1, 0.35, 0.6, 1.0]
         for seed in range(6):
             graph, memberships = random_instance(seed)
-            state = rb.build_fractional_state(graph, memberships)
             cap = max(2, max(len(row) for row in memberships))
-            out = gp.analyse_state(state, n_vertices=graph.vcount(), cap=cap, grid=grid, workers=1)
+            out = gp.analyse_state(st.prepare(graph, memberships), cap=cap, grid=grid, workers=1)
             for policy, block in out.items():
                 self.assertEqual(len(block["per_gamma"]), len(grid))
                 for row in block["per_gamma"]:
@@ -30,10 +29,9 @@ class TestAnalyseState(unittest.TestCase):
 
     def test_progress_reaches_total(self):
         graph, memberships = random_instance(3)
-        state = rb.build_fractional_state(graph, memberships)
         cap = max(2, max(len(row) for row in memberships))
         events = []
-        gp.analyse_state(state, n_vertices=graph.vcount(), cap=cap, grid=[0.5], progress=events.append)
+        gp.analyse_state(st.prepare(graph, memberships), cap=cap, grid=[0.5], progress=events.append)
         vertex_events = [e for e in events if e["type"] == "vertices"]
         self.assertTrue(vertex_events)
         last = vertex_events[-1]
@@ -45,7 +43,7 @@ class TestAnalyseState(unittest.TestCase):
         graph, memberships = random_instance(4)
         state = rb.build_fractional_state(graph, memberships)
         cap = max(2, max(len(row) for row in memberships))
-        out = gp.analyse_state(state, n_vertices=graph.vcount(), cap=cap, grid=[0.5], workers=1)
+        out = gp.analyse_state(st.prepare(graph, memberships), cap=cap, grid=[0.5], workers=2)
         stored = out["fixed_labels"]["intervals"]
         for v in range(graph.vcount()):
             expected = [[float(lo), float(hi)]
@@ -54,19 +52,16 @@ class TestAnalyseState(unittest.TestCase):
 
 
 class TestEngines(unittest.TestCase):
-    def test_python_and_compiled_engines_store_identical_intervals(self):
-        if not st.HAVE_NUMBA:
-            self.skipTest("numba is not installed")
+    def test_the_c_and_python_engines_store_identical_results(self):
         for seed in range(5):
             graph, memberships = random_instance(seed)
-            state = rb.build_fractional_state(graph, memberships)
             cap = max(2, max(len(row) for row in memberships))
-            kwargs = {"n_vertices": graph.vcount(), "cap": cap, "grid": [0.0, 0.3, 1.0], "workers": 1}
-            reference = gp.analyse_state(state, engine="python", **kwargs)
-            compiled = gp.analyse_state(state, engine="numba", **kwargs)
+            kwargs = {"cap": cap, "grid": [0.0, 0.3, 1.0], "workers": 1}
+            reference = gp.analyse_state(st.prepare(graph, memberships, engine="python"), **kwargs)
+            compiled = gp.analyse_state(st.prepare(graph, memberships), **kwargs)
             for policy in reference:
-                self.assertEqual(compiled[policy]["intervals"], reference[policy]["intervals"], (seed, policy))
-                self.assertEqual(compiled[policy]["per_gamma"], reference[policy]["per_gamma"], (seed, policy))
+                for key in ("intervals", "per_gamma", "nash_window", "vertices_with_several_intervals"):
+                    self.assertEqual(compiled[policy][key], reference[policy][key], (seed, policy, key))
 
 
 AMAZON_FULL = ('[overlapping_gt_posthoc]\nname = "gt-posthoc-amazon-all-full"\ndataset = "amazon"\ncover = "all"\n'

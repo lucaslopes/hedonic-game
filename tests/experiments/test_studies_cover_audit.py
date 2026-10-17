@@ -17,7 +17,6 @@ from hedonic.experiments import CLI
 from hedonic.experiments.overlapping import cover_audit as ca
 from hedonic.experiments.overlapping import gt_posthoc as gp
 from hedonic.experiments.overlapping import quickstart as qs
-from hedonic.experiments.overlapping import robustness as rb
 from hedonic.experiments.overlapping import runqueue
 from hedonic.experiments.overlapping import stability as st
 from tests.experiments.test_studies_stability_exact import random_instance
@@ -140,11 +139,11 @@ class TestExactAudit(unittest.TestCase):
         for seed in range(6):
             graph, memberships = random_instance(seed)
             n = graph.vcount()
-            state = rb.build_fractional_state(graph, memberships)
+            cover = st.prepare(graph, memberships)
             cap = max(2, max(len(row) for row in memberships))
-            audited = ca.audit_state(state, n_vertices=n, cap=cap, grid=grid, regret_gammas=grid, workers=1,
-                                     atol=gp.ATOL, rtol=gp.RTOL, engine="python")
-            reference = gp.analyse_state(state, n_vertices=n, cap=cap, grid=grid, workers=1)
+            audited = ca.audit_state(cover, cap=cap, grid=grid, regret_gammas=grid, workers=1,
+                                     atol=gp.ATOL, rtol=gp.RTOL)
+            reference = gp.analyse_state(st.prepare(graph, memberships, engine="python"), cap=cap, grid=grid, workers=1)
             for policy, block in audited.items():
                 self.assertEqual([round(f * n) for f in block["stable_fraction"]],
                                  [row["exact_stable_vertex_count"] for row in reference[policy]["per_gamma"]],
@@ -159,9 +158,9 @@ class TestExactAudit(unittest.TestCase):
         graph = two_cliques()
         labelled = [[0]] * 4 + [[1]] * 4 + [[2]]
         memberships, _ = ca.labelled_profile(labelled, N)
-        state = rb.build_fractional_state(graph, memberships)
-        out = ca.audit_state(state, n_vertices=N, cap=2, grid=[0.0, 0.3], regret_gammas=[0.3], workers=1,
-                             atol=gp.ATOL, rtol=gp.RTOL, engine="python")
+        cover = st.prepare(graph, memberships)
+        out = ca.audit_state(cover, cap=2, grid=[0.0, 0.3], regret_gammas=[0.3], workers=1,
+                             atol=gp.ATOL, rtol=gp.RTOL)
         for block in out.values():
             self.assertEqual(block["regret"][0]["stable_fraction"], 1.0)
             self.assertTrue(block["regret"][0]["is_nash_equilibrium"])
@@ -190,10 +189,10 @@ class TestAuditProgress(unittest.TestCase):
     def test_audit_state_reports_every_vertex_and_times_each_stage(self):
         graph, memberships = random_instance(3)
         n = graph.vcount()
-        state = rb.build_fractional_state(graph, memberships)
+        cover = st.prepare(graph, memberships)
         events = []
-        out = ca.audit_state(state, n_vertices=n, cap=2, grid=[0.0, 0.5], regret_gammas=[0.0, 1.0], workers=1,
-                             atol=gp.ATOL, rtol=gp.RTOL, engine="python", progress=events.append, label="u · ")
+        out = ca.audit_state(cover, cap=2, grid=[0.0, 0.5], regret_gammas=[0.0, 1.0], workers=1,
+                             atol=gp.ATOL, rtol=gp.RTOL, progress=events.append, label="u · ")
         for number, policy in enumerate(out, 1):
             seen = [e["done"] for e in events if e["type"] == "vertices" and e["policy"] == policy]
             self.assertEqual(seen, list(range(1, n + 1)), policy)  # fewer than PROGRESS_STEPS vertices: one event each
@@ -205,11 +204,11 @@ class TestAuditProgress(unittest.TestCase):
     def test_events_are_thinned_to_progress_steps_per_policy(self):
         graph = ig.Graph.Ring(2000)
         memberships = [[v // 100] for v in range(2000)]
-        state = rb.build_fractional_state(graph, memberships)
+        cover = st.prepare(graph, memberships)
         events = []
         with patch.object(ca, "PROGRESS_STEPS", 20):
-            ca.audit_state(state, n_vertices=2000, cap=2, grid=[0.0], regret_gammas=[0.0], workers=1,
-                           atol=gp.ATOL, rtol=gp.RTOL, engine="python", progress=events.append)
+            ca.audit_state(cover, cap=2, grid=[0.0], regret_gammas=[0.0], workers=1,
+                           atol=gp.ATOL, rtol=gp.RTOL, progress=events.append)
         counts = [e["done"] for e in events if e["type"] == "vertices" and e["policy"] == "fixed_labels"]
         self.assertEqual(counts, list(range(100, 2001, 100)))  # every 2000 // 20 vertices, ending on the last
 

@@ -1,54 +1,67 @@
-"""Stability of a fixed overlapping cover over the resolution range.
+"""Stability of a fixed overlapping cover over the resolution range, for the experiments.
 
-Two tools that answer the same question as ``gt_spectrum.spectrum_audit`` (is
-each vertex stable at resolution gamma?) without relying on a dense gamma grid
-for the stability answer itself:
+Every study that audits a cover (``cover_audit``, ``gt_posthoc``, ``gt_spectrum`` and the benchmark's robustness
+stage) goes through this module:
 
-* ``exact_stable_intervals`` returns, per vertex, the exact set of gamma in
-  [0, 1] where the vertex is stable (regret <= the audit tolerance).  Every
-  candidate action has utility affine in gamma, the tolerance is affine on
-  each piece cut at |U_cur| = 1, and the top-k prefix of gains changes only at
-  pairwise crossings.  Between consecutive crossings every constraint is affine,
-  so the stable set is an explicit union of intervals.  It is not assumed to be
-  one interval, which matters because the tolerance depends on gamma.
+* :func:`prepare` turns a graph and a cover into a read-only audit object. The default engine, ``"c"``, is the
+  library's C audit (``native/core/check/audit.c``, the code behind ``Game.stable_intervals`` and ``Game.regrets``):
+  its prepared state holds the adjacency and the rows, O(n + m + incidences), builds a vertex's supports when it
+  visits it, and can be shared with forked processes. ``"python"`` is the reference implementation below, on
+  ``robustness.FractionalState``; it returns the same floats, bit for bit, and exists for tests and cross-checks.
+* :func:`stream_intervals` yields every vertex's exact stable set on [0, 1] (a sorted list of closed intervals),
+  chunk by chunk, optionally in forked worker processes that split the vertices.
+* :func:`spectrum_rows` evaluates the regret of every vertex on a resolution grid and aggregates each resolution
+  into a row (stable count, regret mean, max and 95th percentile, Nash flag).
+* :func:`audit_cover` is the endpoint audit a spectrum condition stores for each returned cover.
 
-* ``certify_interval`` is the sound endpoint rule: the regret of a fixed profile
-  is convex in gamma, so its maximum on [g0, g1] is at an endpoint, and it is
-  stable on the whole interval when the larger endpoint regret does not exceed
-  the smallest tolerance the interval can attain.
+Arithmetic (see ``native/README.md``): the C audit sums with sequential binary64 additions, except the two
+current-utility coefficients of a vertex's affine data, which use the compensated (Neumaier) sum of CPython 3.12's
+built-in ``sum``. The Python reference spells that sum out (``_compensated_sum``) instead of calling ``sum``, so both
+engines agree on any interpreter, not only on the one the C was checked against.
 
-* ``vector_spectrum_rows`` is the vectorised grid audit.  Each gamma costs one
-  sort over all (vertex, candidate) entries instead of a Python loop per vertex.
-  It reproduces ``spectrum_audit``'s per-gamma stability counts and regret
-  statistics.
-
-Scope: a fixed cover, unit node weights, gamma in [0, 1], exact prefix
-optimisation over the gamma-free candidate set of ``robustness``.  Mean, max and
-p95 regret are not determined by the stable intervals and are reported only by
-the grid audit.
+Scope: a fixed cover, unit node weights, gamma in [0, 1], exact prefix optimisation over a gamma-free candidate set
+(the vertex's own labels, the labels with positive support, the lightest remaining label and, with isolation, a
+fresh label). Mean, max and p95 regret are not determined by the stable intervals and come from the grid.
 """
 
 from __future__ import annotations
 
 import math
+import multiprocessing as mp
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 import numpy as np
 
 from hedonic.experiments.overlapping import robustness as rb
 
 Interval = tuple[float, float]
-REGRET_EPS = 1e-15  # the same threshold as robustness.best_response
+REGRET_EPS = 1e-15  # regrets at most this are zero (the C audit and the reference clamp the same way)
+ENGINES = ("c", "python")
+DEFAULT_ENGINE = "c"
+CHUNKS_PER_WORKER = 16  # vertex chunks per forked worker: small enough to balance the load, few enough to be cheap
+MAX_CHUNK = 8192  # vertices per interval query at most, so progress keeps moving on large graphs
+REGRET_CELLS = 16_000_000  # vertex x resolution regrets (two doubles each) held at once by ``spectrum_rows``
+MAX_GAMMA_BLOCK = 32  # resolutions per regret query (a vertex's supports are built once per query)
+
+
+# --------------------------------------------------------------------------- the Python reference
+def _compensated_sum(values) -> float:
+    """CPython 3.12's float ``sum`` (Neumaier compensation), written out so it does not depend on the interpreter."""
+    high = low = 0.0
+    for value in values:
+        total = high + value
+        low += (high - total) + value if abs(high) >= abs(value) else (value - total) + high
+        high = total
+    return high + low
 
 
 @dataclass(frozen=True)
 class VertexAffine:
     """Gamma-affine data of one vertex's candidate actions.
 
-    A candidate label c has score ``a[c] - gamma * b[c]`` (the support minus the
-    crowding term of ``robustness._label_score``).  The current action has
-    utility ``cur_a - gamma * cur_b``.
+    A candidate label c has score ``a[c] - gamma * b[c]`` (the support minus the crowding term of
+    ``robustness._label_score``).  The current action has utility ``cur_a - gamma * cur_b``.
     """
 
     labels: tuple[int, ...]
@@ -63,15 +76,13 @@ def vertex_affine(state: rb.FractionalState, vertex: int, cap: int, allow_isolat
                   prune: bool = True) -> VertexAffine:
     """The gamma-affine data of ``vertex``'s candidate actions.
 
-    ``rb._candidate_labels`` is a superset: besides the vertex's own and neighbour labels it adds the ``cap + |labels| + 1``
-    lightest-mass labels (every community when the cover is small), all with zero support.  A label with zero support
-    that the vertex does not hold scores ``-gamma * crowding <= 0`` and never enters an optimal prefix: once a prefix sum
-    is positive, a non-positive score lowers ``sum / sqrt(k)``, and when no score is positive the best action is the single
-    highest score, which among zero-support labels is the lightest one.  So with ``prune`` those labels are dropped except
-    the lightest (ties by label), which keeps the optimum, the regret and the stable set exactly and leaves the kernel only
-    the labels that can matter.  Without it the cost per vertex grows like ``cap`` squared: a cover with a vertex in 1,817
-    communities gave every vertex ~1,900 filler labels and an audit of about a day.  ``prune=False`` is the reference the
-    tests compare against.
+    ``rb._candidate_labels`` is a superset: besides the vertex's own and neighbour labels it adds the
+    ``cap + |labels| + 1`` lightest-mass labels (every community when the cover is small), all with zero support.  A
+    label with zero support that the vertex does not hold scores ``-gamma * crowding <= 0`` and never enters an optimal
+    prefix: once a prefix sum is positive, a non-positive score lowers ``sum / sqrt(k)``, and when no score is positive
+    the best action is the single highest score, which among zero-support labels is the lightest one.  So with
+    ``prune`` those labels are dropped except the lightest (ties by label), which keeps the optimum, the regret and the
+    stable set exactly.  ``prune=False`` is the larger set the tests compare against.
     """
     if prune:
         labels = _relevant_labels(state, vertex, allow_isolation)
@@ -88,8 +99,8 @@ def vertex_affine(state: rb.FractionalState, vertex: int, cap: int, allow_isolat
     current = state.memberships[vertex]
     norm = math.sqrt(len(current))
     index = {label: i for i, label in enumerate(labels)}
-    cur_a = sum(a[index[label]] for label in current) / norm
-    cur_b = sum(b[index[label]] for label in current) / norm
+    cur_a = _compensated_sum(a[index[label]] for label in current) / norm
+    cur_b = _compensated_sum(b[index[label]] for label in current) / norm
     return VertexAffine(tuple(labels), tuple(a), tuple(b), float(cur_a), float(cur_b), int(cap))
 
 
@@ -99,8 +110,7 @@ def _relevant_labels(state: rb.FractionalState, vertex: int, allow_isolation: bo
     Its own labels, the labels with positive support among its neighbours, the fresh label when isolation is allowed,
     and the lightest of the remaining labels: those all have zero support and are not held, so their score is
     ``-gamma * mass`` and the lightest is the first of ``state.lightest_labels`` (sorted by mass, then label) that is
-    none of the above.  This is the set ``rb._candidate_labels`` returns with its zero-support filler reduced to that
-    one label, built without enumerating the filler.
+    none of the above.
     """
     keep = set(state.memberships[vertex])
     keep.update(label for label, value in state.support[vertex].items() if value > 0.0)
@@ -156,28 +166,16 @@ def _cell_stable(data: VertexAffine, p: float, q: float, atol: float, rtol: floa
     return (lo, hi) if lo <= hi else None
 
 
-def exact_stable_intervals(
-    state: rb.FractionalState,
-    vertex: int,
-    cap: int,
-    allow_isolation: bool,
-    *,
-    atol: float,
-    rtol: float,
-    engine: str = "python",
-    prune: bool = True,
-) -> list[Interval]:
-    """Exact stable set of ``vertex`` on [0, 1] as a sorted list of closed intervals.
+def exact_stable_intervals(state: rb.FractionalState, vertex: int, cap: int, allow_isolation: bool, *,
+                           atol: float, rtol: float, prune: bool = True) -> list[Interval]:
+    """Exact stable set of ``vertex`` on [0, 1] as a sorted list of closed intervals (the Python reference).
 
-    ``engine`` is ``"python"`` (the reference) or ``"numba"`` (the compiled kernel, which must return the
-    same floats; ``TestCompiledIntervals`` checks equality, not closeness).  ``prune`` drops the candidate labels that
-    cannot matter (``vertex_affine``); the intervals are the same either way.
+    Every candidate action has utility affine in gamma, the tolerance is affine on each piece cut at |U_cur| = 1, and
+    the top-k prefix of gains changes only at pairwise crossings.  Between consecutive crossings every constraint is
+    affine, so the stable set is an explicit union of intervals (not assumed to be one, because the tolerance depends
+    on gamma).
     """
     data = vertex_affine(state, vertex, cap, allow_isolation, prune=prune)
-    if engine == "numba":
-        return _compiled_intervals(data, atol, rtol)
-    if engine != "python":
-        raise ValueError("engine must be 'python' or 'numba'")
     points = {0.0, 1.0}
     n = len(data.labels)
     for i in range(n):
@@ -200,6 +198,37 @@ def exact_stable_intervals(
             if found is not None:
                 pieces.append(found)
     return _merge(pieces)
+
+
+def vertex_regrets(state: rb.FractionalState, vertex: int, gammas: Sequence[float], cap: int, allow_isolation: bool,
+                   *, atol: float, rtol: float, prune: bool = True) -> tuple[list[float], list[float]]:
+    """Regret and tolerance of ``vertex`` at each resolution (the Python reference of the C grid audit).
+
+    Scores are evaluated first; the current utility adds the held labels' scores one after another in candidate order;
+    the best action is the best prefix, of at most ``cap`` labels, of the scores in descending order.
+    """
+    data = vertex_affine(state, vertex, cap, allow_isolation, prune=prune)
+    held = set(state.memberships[vertex])
+    current_mask = [label in held for label in data.labels]
+    norm = math.sqrt(len(held))
+    regrets, tolerances = [], []
+    for gamma in gammas:
+        scores = [a - gamma * b for a, b in zip(data.a, data.b)]
+        current = 0.0
+        for score, is_current in zip(scores, current_mask):
+            if is_current:
+                current += score
+        current = current / norm
+        best, prefix = -math.inf, 0.0
+        for k, score in enumerate(sorted(scores, reverse=True)[:cap], 1):
+            prefix += score
+            utility = prefix / math.sqrt(k)
+            if utility > best:
+                best = utility
+        diff = best - current
+        regrets.append(diff if diff > REGRET_EPS else 0.0)
+        tolerances.append(atol + rtol * max(1.0, abs(current)))
+    return regrets, tolerances
 
 
 def in_intervals(intervals: Sequence[Interval], gamma: float, slack: float = 0.0) -> bool:
@@ -230,9 +259,8 @@ def certify_interval(
 ) -> bool:
     """True only if the vertex is provably stable on the whole of [g0, g1].
 
-    Sound because regret is convex in gamma (fixed cover): its maximum on the
-    interval is at an endpoint, and it is compared with the smallest tolerance
-    the interval attains.  A False answer is not evidence of instability.
+    Sound because regret is convex in gamma (fixed cover): its maximum on the interval is at an endpoint, and it is
+    compared with the smallest tolerance the interval attains.  A False answer is not evidence of instability.
     """
     if not 0.0 <= g0 <= g1 <= 1.0:
         raise ValueError("need 0 <= g0 <= g1 <= 1")
@@ -244,270 +272,195 @@ def certify_interval(
     return worst <= tolerance_floor(data, g0, g1, atol, rtol)
 
 
-# ---------------------------------------------------------------------------
-# Vectorised grid audit
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- prepared covers (the engines)
+class PreparedCover:
+    """A fixed cover of a graph, ready for audit queries. Read-only: forked processes may query it concurrently."""
+
+    engine = ""
+
+    def __init__(self, memberships: list[tuple[int, ...]], n_labels: int):
+        self.memberships = memberships
+        self.n_vertices = len(memberships)
+        self.n_communities = n_labels
+
+    def intervals(self, vertices: np.ndarray, cap: int, allow_isolation: bool, *, atol: float,
+                  rtol: float) -> list[list[Interval]]:
+        """The stable intervals of each of ``vertices``, in that order."""
+        raise NotImplementedError
+
+    def regrets(self, vertices: np.ndarray, gammas: np.ndarray, cap: int, allow_isolation: bool, *, atol: float,
+                rtol: float) -> tuple[np.ndarray, np.ndarray]:
+        """``(regret, tolerance)``, each shaped ``(len(vertices), len(gammas))``."""
+        raise NotImplementedError
 
 
-@dataclass(frozen=True)
-class Entries:
-    """Flat (vertex, candidate) arrays for every vertex, built once per cover."""
+class _CCover(PreparedCover):
+    engine = "c"
 
-    n: int
-    vertex: np.ndarray
-    a: np.ndarray
-    b: np.ndarray
-    is_current: np.ndarray
-    current_norm: np.ndarray
-    cap: int
-    starts: np.ndarray  # offsets: vertex v owns entries starts[v]:starts[v+1]
+    def __init__(self, graph, memberships: list[tuple[int, ...]], n_labels: int, weights: np.ndarray | None):
+        from hedonic import _core
 
+        super().__init__(memberships, n_labels)
+        offsets = np.zeros(len(memberships) + 1, dtype=np.int64)
+        np.cumsum([len(row) for row in memberships], out=offsets[1:])
+        labels = np.fromiter((label for row in memberships for label in row), dtype=np.int64, count=int(offsets[-1]))
+        self._core = _core
+        self._state = _core._audit_prepare(graph, offsets, labels, weights)
 
-def build_entries(state: rb.FractionalState, cap: int, allow_isolation: bool,
-                  vertices: range | None = None, *, prune: bool = True) -> Entries:
-    """Candidate entries of ``vertices`` (default: every vertex); vertex ``vertices[i]`` is numbered ``i``."""
-    vertices = range(len(state.memberships)) if vertices is None else vertices
-    n = len(vertices)
-    vertex, a, b, is_current = [], [], [], []
-    current_norm = np.empty(n)
-    for i, v in enumerate(vertices):
-        data = vertex_affine(state, v, cap, allow_isolation, prune=prune)
-        current = set(state.memberships[v])
-        vertex.extend([i] * len(data.labels))
-        a.extend(data.a)
-        b.extend(data.b)
-        is_current.extend(label in current for label in data.labels)
-        current_norm[i] = math.sqrt(len(current))
-    vertex_array = np.asarray(vertex, dtype=np.int64)
-    starts = np.searchsorted(vertex_array, np.arange(n + 1))
-    return Entries(
-        n=n,
-        vertex=vertex_array,
-        a=np.asarray(a, dtype=float),
-        b=np.asarray(b, dtype=float),
-        is_current=np.asarray(is_current, dtype=bool),
-        current_norm=current_norm,
-        cap=int(cap),
-        starts=starts.astype(np.int64),
-    )
+    def intervals(self, vertices, cap, allow_isolation, *, atol, rtol):
+        selected = np.ascontiguousarray(vertices, dtype=np.int64)
+        return self._core._audit_intervals(self._state, selected, int(cap), bool(allow_isolation), float(atol),
+                                           float(rtol), True)
+
+    def regrets(self, vertices, gammas, cap, allow_isolation, *, atol, rtol):
+        selected = np.ascontiguousarray(vertices, dtype=np.int64)
+        grid = np.ascontiguousarray(gammas, dtype=np.float64)
+        regret = np.empty((len(selected), len(grid)))
+        tolerance = np.empty((len(selected), len(grid)))
+        self._core._audit_regrets(self._state, selected, grid, regret, tolerance, int(cap), bool(allow_isolation),
+                                  float(atol), float(rtol), True)
+        return regret, tolerance
 
 
-def vertex_regrets(entries: Entries, gamma: float, atol: float, rtol: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Per-vertex (regret, tolerance, current utility) at one gamma, all vertices at once."""
-    score = entries.a - gamma * entries.b
-    order = np.lexsort((-score, entries.vertex))
-    v_sorted = entries.vertex[order]
-    s_sorted = score[order]
-    starts = np.r_[0, np.flatnonzero(np.diff(v_sorted)) + 1]
-    lengths = np.diff(np.r_[starts, len(v_sorted)])
-    seg = np.repeat(np.arange(len(starts)), lengths)
-    k = np.arange(len(v_sorted)) - starts[seg] + 1
-    csum = np.cumsum(s_sorted)
-    prefix = csum - (csum[starts] - s_sorted[starts])[seg]
-    util = np.full(len(v_sorted), -np.inf)
-    valid = k <= entries.cap
-    util[valid] = prefix[valid] / np.sqrt(k[valid])
-    best = np.maximum.reduceat(util, starts)
-    current = np.bincount(entries.vertex, weights=score * entries.is_current, minlength=entries.n)
-    current = current / entries.current_norm
-    diff = best - current[v_sorted[starts]]
-    regret = np.where(diff > REGRET_EPS, diff, 0.0)
-    tolerance = atol + rtol * np.maximum(1.0, np.abs(current))
-    return regret, tolerance, current
+class _PythonCover(PreparedCover):
+    engine = "python"
+
+    def __init__(self, graph, memberships: list[tuple[int, ...]], n_labels: int, weights: np.ndarray | None):
+        super().__init__(memberships, n_labels)
+        self.state = rb.build_fractional_state(graph, memberships, edge_weights=weights)
+
+    def intervals(self, vertices, cap, allow_isolation, *, atol, rtol):
+        _check_cap(self.memberships, vertices, cap)
+        return [exact_stable_intervals(self.state, int(v), int(cap), bool(allow_isolation), atol=atol, rtol=rtol)
+                for v in vertices]
+
+    def regrets(self, vertices, gammas, cap, allow_isolation, *, atol, rtol):
+        _check_cap(self.memberships, vertices, cap)
+        grid = [float(g) for g in gammas]
+        regret = np.empty((len(vertices), len(grid)))
+        tolerance = np.empty((len(vertices), len(grid)))
+        for i, v in enumerate(vertices):
+            regret[i], tolerance[i] = vertex_regrets(self.state, int(v), grid, int(cap), bool(allow_isolation),
+                                                     atol=atol, rtol=rtol)
+        return regret, tolerance
 
 
-try:  # numba is optional: the numpy path is the reference and the fallback
-    from numba import njit, prange
-
-    HAVE_NUMBA = True
-except ImportError:  # pragma: no cover - exercised only without numba
-    HAVE_NUMBA = False
+def _check_cap(memberships, vertices, cap: int) -> None:
+    if any(len(memberships[int(v)]) > cap for v in vertices):
+        raise ValueError("a vertex holds more labels than max_memberships")
 
 
-if HAVE_NUMBA:
+def prepare(graph, memberships: Sequence[Sequence[int]], *, engine: str = DEFAULT_ENGINE,
+            edge_weights: Sequence[float] | None = None) -> PreparedCover:
+    """The audit object of a valid cover: one non-empty row per vertex, labels contiguous from zero.
 
-    @njit(parallel=True)
-    def _regret_kernel(starts, a, b, is_current, current_norm, cap, gamma, atol, rtol, regret, tolerance):
-        n = starts.shape[0] - 1
-        for v in prange(n):
-            lo = starts[v]
-            m = starts[v + 1] - lo
-            score = np.empty(m)
-            current = 0.0
-            for i in range(m):
-                score[i] = a[lo + i] - gamma * b[lo + i]
-                if is_current[lo + i]:
-                    current += score[i]
-            current = current / current_norm[v]
-            order = np.argsort(-score)
-            best = -np.inf
-            prefix = 0.0
-            for k in range(min(cap, m)):
-                prefix += score[order[k]]
-                utility = prefix / np.sqrt(k + 1.0)
-                if utility > best:
-                    best = utility
-            diff = best - current
-            regret[v] = diff if diff > REGRET_EPS else 0.0
-            tolerance[v] = atol + rtol * max(1.0, abs(current))
-
-    @njit
-    def _breakpoints_kernel(a, b, cur_a, cur_b):
-        # 0, 1, every crossing of two candidate scores in (0, 1), and the crossings of the current score with +-1
-        n = a.shape[0]
-        points = np.empty(n * (n - 1) // 2 + 4)
-        points[0] = 0.0
-        points[1] = 1.0
-        m = 2
-        for i in range(n):
-            for j in range(i + 1, n):
-                db = b[i] - b[j]
-                if db != 0.0:
-                    gamma = (a[i] - a[j]) / db
-                    if 0.0 < gamma < 1.0:
-                        points[m] = gamma
-                        m += 1
-        if cur_b != 0.0:
-            for level in range(2):
-                gamma = (cur_a - (1.0 if level == 0 else -1.0)) / cur_b
-                if 0.0 < gamma < 1.0:
-                    points[m] = gamma
-                    m += 1
-        return np.sort(points[:m])
-
-    @njit
-    def _exact_intervals_kernel(a, b, cur_a, cur_b, cap, atol, rtol):
-        # ``exact_stable_intervals`` cell by cell.  Scores are sorted by descending value, ties by ascending
-        # index (the reference's stable sort).  Two scores cross at most once, so the order carried from one
-        # cell to the next changes only a few times in total, and an insertion sort from it is linear per cell.
-        n = a.shape[0]
-        cuts = _breakpoints_kernel(a, b, cur_a, cur_b)
-        cells = cuts.shape[0] - 1
-        out_lo = np.empty(cells)
-        out_hi = np.empty(cells)
-        pieces = 0
-        scores = np.empty(n)
-        order = np.arange(n)
-        top = min(cap, n)
-        for c in range(cells):
-            p = cuts[c]
-            q = cuts[c + 1]
-            if not q > p:
-                continue
-            mid = 0.5 * (p + q)
-            for i in range(n):
-                scores[i] = a[i] - mid * b[i]
-            for idx in range(1, n):
-                x = order[idx]
-                sx = scores[x]
-                j = idx - 1
-                while j >= 0:
-                    y = order[j]
-                    sy = scores[y]
-                    if sy < sx or (sy == sx and y > x):
-                        order[j + 1] = y
-                        j -= 1
-                    else:
-                        break
-                order[j + 1] = x
-            u_mid = cur_a - mid * cur_b
-            if abs(u_mid) <= 1.0:
-                tau_a = atol + rtol
-                tau_b = 0.0
-            else:
-                sign = 1.0 if u_mid > 0 else -1.0
-                tau_a = atol + rtol * sign * cur_a
-                tau_b = -rtol * sign * cur_b
-            lo = p
-            hi = q
-            sum_a = 0.0
-            sum_b = 0.0
-            stable = True
-            for k in range(1, top + 1):
-                i = order[k - 1]
-                sum_a += a[i]
-                sum_b += b[i]
-                root = math.sqrt(k)
-                c0 = sum_a / root - cur_a - tau_a
-                c1 = -sum_b / root + cur_b - tau_b
-                if c1 > 0:
-                    hi = min(hi, -c0 / c1)
-                elif c1 < 0:
-                    lo = max(lo, -c0 / c1)
-                elif c0 > 0:
-                    stable = False
-                    break
-                if lo > hi:
-                    stable = False
-                    break
-            if stable and lo <= hi:
-                # cells are visited in increasing order, so the reference's sort and merge become one pass
-                if pieces > 0 and lo <= out_hi[pieces - 1] + 1e-15:
-                    out_hi[pieces - 1] = max(out_hi[pieces - 1], hi)
-                else:
-                    out_lo[pieces] = lo
-                    out_hi[pieces] = hi
-                    pieces += 1
-        return out_lo[:pieces], out_hi[:pieces]
+    ``edge_weights`` defaults to the graph's ``weight`` attribute, else ones; weights are finite and non-negative.
+    """
+    if engine not in ENGINES:
+        raise ValueError(f"engine must be one of {', '.join(ENGINES)}, not {engine!r}")
+    if graph.is_directed():
+        raise ValueError("stability audits require an undirected graph")
+    normalized, max_label = rb.normalize_memberships(graph, memberships)
+    weights = None
+    if edge_weights is not None or "weight" in graph.edge_attributes():
+        weights = np.ascontiguousarray(rb._edge_weights(graph, edge_weights), dtype=np.float64)
+    kind = _CCover if engine == "c" else _PythonCover
+    return kind(graph, normalized, max_label + 1, weights)
 
 
-def compiled_regrets(entries: Entries, gamma: float, atol: float, rtol: float) -> tuple[np.ndarray, np.ndarray]:
-    """Numba-compiled per-vertex (regret, tolerance) at one gamma; same semantics as ``vertex_regrets``."""
-    if not HAVE_NUMBA:
-        raise RuntimeError("numba is not installed; use vertex_regrets")
-    starts = entries.starts
-    regret = np.empty(entries.n)
-    tolerance = np.empty(entries.n)
-    _regret_kernel(starts, entries.a, entries.b, entries.is_current, entries.current_norm,
-                   entries.cap, float(gamma), float(atol), float(rtol), regret, tolerance)
-    return regret, tolerance
+# --------------------------------------------------------------------------- forked queries
+_FORKED: dict[str, Any] = {}  # what forked workers read: set before the pool forks, so they inherit it
 
 
-def default_engine() -> str:
-    return "numba" if HAVE_NUMBA else "python"
+def _forked_intervals(chunk: np.ndarray) -> list[list[Interval]]:
+    cover, cap, allow, atol, rtol = _FORKED["intervals"]
+    return cover.intervals(chunk, cap, allow, atol=atol, rtol=rtol)
 
 
-def warm_up() -> None:
-    """Compile the interval kernel in this process, so forked workers inherit compiled code."""
-    if HAVE_NUMBA:
-        _exact_intervals_kernel(np.array([1.0, 0.5]), np.array([0.0, 1.0]), 1.0, 0.5, 2, 1e-10, 1e-9)
+def _forked_regrets(task: tuple[np.ndarray, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    cover, cap, allow, atol, rtol = _FORKED["regrets"]
+    vertices, gammas = task
+    return cover.regrets(vertices, gammas, cap, allow, atol=atol, rtol=rtol)
 
 
-def _compiled_intervals(data: VertexAffine, atol: float, rtol: float) -> list[Interval]:
-    if not HAVE_NUMBA:
-        raise RuntimeError("numba is not installed; use engine='python'")
-    lo, hi = _exact_intervals_kernel(np.asarray(data.a, dtype=float), np.asarray(data.b, dtype=float),
-                                     float(data.cur_a), float(data.cur_b), int(data.cap), float(atol), float(rtol))
-    return list(zip(lo.tolist(), hi.tolist()))
+def _pool(workers: int):
+    return mp.get_context("fork").Pool(workers)
+
+
+def chunk_size(n_vertices: int, workers: int) -> int:
+    """Vertices per query: about ``CHUNKS_PER_WORKER`` chunks per worker, at most ``MAX_CHUNK``."""
+    return max(1, min(MAX_CHUNK, -(-n_vertices // (max(1, workers) * CHUNKS_PER_WORKER))))
+
+
+def stream_intervals(cover: PreparedCover, cap: int, allow_isolation: bool, *, atol: float, rtol: float,
+                     workers: int = 1, order: Sequence[int] | None = None,
+                     chunk: int | None = None) -> Iterator[tuple[np.ndarray, list[list[Interval]]]]:
+    """``(vertices, intervals)`` chunk by chunk, in ``order`` (default: index order).
+
+    With ``workers > 1`` forked processes take the chunks; the prepared cover is inherited, never copied or pickled.
+    The results do not depend on the worker count or the chunk size: each vertex's intervals are its own.
+    """
+    vertices = np.arange(cover.n_vertices, dtype=np.int64) if order is None else np.asarray(order, dtype=np.int64)
+    size = chunk or chunk_size(len(vertices), workers)
+    chunks = [vertices[low:low + size] for low in range(0, len(vertices), size)]
+    if workers > 1 and len(chunks) > 1:
+        _FORKED["intervals"] = (cover, int(cap), bool(allow_isolation), float(atol), float(rtol))
+        try:
+            with _pool(min(workers, len(chunks))) as pool:
+                yield from zip(chunks, pool.imap(_forked_intervals, chunks))
+        finally:
+            _FORKED.pop("intervals", None)
+    else:
+        for part in chunks:
+            yield part, cover.intervals(part, cap, allow_isolation, atol=atol, rtol=rtol)
+
+
+def stable_intervals(cover: PreparedCover, cap: int, allow_isolation: bool, *, atol: float, rtol: float,
+                     workers: int = 1) -> list[list[Interval]]:
+    """Every vertex's stable intervals, in vertex order."""
+    out: list[list[Interval]] = [[] for _ in range(cover.n_vertices)]
+    for vertices, intervals in stream_intervals(cover, cap, allow_isolation, atol=atol, rtol=rtol, workers=workers):
+        for v, found in zip(vertices.tolist(), intervals):
+            out[v] = found
+    return out
+
+
+def regret_blocks(cover: PreparedCover, gammas: Sequence[float], cap: int, allow_isolation: bool, *, atol: float,
+                  rtol: float, workers: int = 1, block: int | None = None
+                  ) -> Iterator[tuple[list[float], np.ndarray, np.ndarray]]:
+    """``(resolutions of the block, regret, tolerance)``, the arrays shaped ``(n_vertices, len(block))``.
+
+    The resolutions go through in blocks, so that at most ``REGRET_CELLS`` vertex x resolution values are held; with
+    ``workers > 1`` forked processes split the vertices of each block.
+    """
+    grid = [float(g) for g in gammas]
+    n = cover.n_vertices
+    size = block or max(1, min(MAX_GAMMA_BLOCK, REGRET_CELLS // max(1, n)))
+    blocks = [grid[low:low + size] for low in range(0, len(grid), size)]
+    if not blocks:
+        return
+    vertices = np.arange(n, dtype=np.int64)
+    if workers > 1 and n > 1:
+        step = chunk_size(n, workers)
+        parts = [vertices[low:low + step] for low in range(0, n, step)]
+        _FORKED["regrets"] = (cover, int(cap), bool(allow_isolation), float(atol), float(rtol))
+        try:
+            with _pool(min(workers, len(parts))) as pool:
+                for piece in blocks:
+                    values = np.asarray(piece, dtype=np.float64)
+                    results = pool.map(_forked_regrets, [(part, values) for part in parts])
+                    yield piece, np.concatenate([r for r, _ in results]), np.concatenate([t for _, t in results])
+        finally:
+            _FORKED.pop("regrets", None)
+    else:
+        for piece in blocks:
+            regret, tolerance = cover.regrets(vertices, np.asarray(piece, dtype=np.float64), cap, allow_isolation,
+                                              atol=atol, rtol=rtol)
+            yield piece, regret, tolerance
 
 
 def _percentile(values: np.ndarray, q: float) -> float:
     return float(rb._percentile(values.tolist(), q))
-
-
-def vector_spectrum_rows(
-    entries: Entries,
-    gammas: Sequence[float],
-    *,
-    atol: float,
-    rtol: float,
-    allow_isolation: bool,
-    engine: str = "numpy",
-) -> list[dict[str, Any]]:
-    """Per-gamma rows with the same stability fields as ``gt_spectrum.spectrum_audit``.
-
-    ``engine`` is ``"numpy"`` (one sort per gamma) or ``"numba"`` (compiled loop over vertices).
-    """
-    if engine not in ("numpy", "numba"):
-        raise ValueError("engine must be 'numpy' or 'numba'")
-    rows = []
-    for gamma in gammas:
-        if engine == "numba":
-            regret, tolerance = compiled_regrets(entries, float(gamma), atol, rtol)
-        else:
-            regret, tolerance, _ = vertex_regrets(entries, float(gamma), atol, rtol)
-        rows.append(_spectrum_row(float(gamma), regret, tolerance, entries.cap, atol, rtol, allow_isolation))
-    return rows
 
 
 def _spectrum_row(gamma: float, regret: np.ndarray, tolerance: np.ndarray, cap: int, atol: float, rtol: float,
@@ -535,41 +488,79 @@ def _spectrum_row(gamma: float, regret: np.ndarray, tolerance: np.ndarray, cap: 
     }
 
 
-ENTRY_BLOCK = 5_000  # vertices whose candidate entries are materialised at once by ``chunked_spectrum_rows``
+def spectrum_rows(cover: PreparedCover, cap: int, gammas: Sequence[float], *, atol: float, rtol: float,
+                  allow_isolation: bool, workers: int = 1,
+                  progress: Callable[[int, float], None] | None = None) -> list[dict[str, Any]]:
+    """One row per resolution: how many vertices are stable there and the distribution of their regrets.
 
-
-def chunked_spectrum_rows(
-    state: rb.FractionalState,
-    cap: int,
-    gammas: Sequence[float],
-    *,
-    atol: float,
-    rtol: float,
-    allow_isolation: bool,
-    engine: str = "numpy",
-    block: int = ENTRY_BLOCK,
-) -> list[dict[str, Any]]:
-    """``vector_spectrum_rows`` without materialising the candidate entries of every vertex at once.
-
-    The entries of all vertices are about (support labels + cap) per vertex: on the 1.1 M-vertex LiveJournal cover
-    that is a billion entries, tens of GB as arrays and several times that as the Python lists they are built from.
-    A vertex's regret does not depend on any other vertex, so the vertices go through in blocks, only the per-vertex
-    regret and tolerance of each gamma are kept (two floats per vertex), and the rows are computed from those.
-    With the compiled engine the result is bit-identical to the unchunked one; with numpy the per-block cumulative
-    sums differ from the global one by rounding only.
+    ``progress(done, gamma)`` is called after each resolution. Each resolution's regrets are summed as one contiguous
+    array in vertex order, so the rows do not depend on ``workers``.
     """
-    gammas = [float(g) for g in gammas]
-    n = len(state.memberships)
-    regret = np.empty((len(gammas), n))
-    tolerance = np.empty((len(gammas), n))
-    for low in range(0, n, block):
-        piece = range(low, min(n, low + block))
-        entries = build_entries(state, cap, allow_isolation, piece)
-        for index, gamma in enumerate(gammas):
-            if engine == "numba":
-                r, t = compiled_regrets(entries, gamma, atol, rtol)
-            else:
-                r, t, _ = vertex_regrets(entries, gamma, atol, rtol)
-            regret[index, piece.start:piece.stop], tolerance[index, piece.start:piece.stop] = r, t
-        del entries
-    return [_spectrum_row(g, regret[i], tolerance[i], cap, atol, rtol, allow_isolation) for i, g in enumerate(gammas)]
+    rows: list[dict[str, Any]] = []
+    for piece, regret, tolerance in regret_blocks(cover, gammas, cap, allow_isolation, atol=atol, rtol=rtol,
+                                                  workers=workers):
+        for j, gamma in enumerate(piece):
+            rows.append(_spectrum_row(gamma, np.ascontiguousarray(regret[:, j]), np.ascontiguousarray(tolerance[:, j]),
+                                      cap, atol, rtol, allow_isolation))
+            if progress is not None:
+                progress(len(rows), gamma)
+    return rows
+
+
+# --------------------------------------------------------------------------- the endpoint audit of one cover
+def audit_cover(graph, memberships: Sequence[Sequence[int]], *, max_memberships: int, allow_isolation: bool,
+                gamma: float | None = None, interval: tuple[float, float] = (0.0, 1.0), atol: float = 1e-10,
+                rtol: float = 1e-9, engine: str = DEFAULT_ENGINE) -> dict[str, Any]:
+    """Endpoint robustness and the equilibrium residual at ``gamma`` of a fixed cover: the fields of
+    ``robustness.audit_cover`` (without its optional per-vertex intervals), from one grid query of the engine.
+
+    A vertex is robust on ``interval`` when it is stable at both endpoints (its regret is convex in gamma).
+    """
+    lower, upper = (float(interval[0]), float(interval[1]))
+    if not 0.0 <= lower <= upper <= 1.0:
+        raise ValueError("interval must satisfy 0 <= lower <= upper <= 1")
+    cover = prepare(graph, memberships, engine=engine)
+    selected_gamma = graph.density() if gamma is None else float(gamma)
+    if selected_gamma < 0 or selected_gamma > 1:
+        raise ValueError("gamma must lie in [0, 1] for robustness auditing")
+    n = cover.n_vertices
+    cap = int(max_memberships)
+    if cap < 1:
+        raise ValueError("max_memberships must be positive")
+    if any(len(row) > cap for row in cover.memberships):
+        raise ValueError("current membership exceeds max_memberships")
+    regret, tolerance = cover.regrets(np.arange(n, dtype=np.int64), np.array([lower, upper, selected_gamma]), cap,
+                                      allow_isolation, atol=atol, rtol=rtol)
+    stable = regret <= tolerance
+    robust = stable[:, 0] & stable[:, 1]
+    at = np.ascontiguousarray(regret[:, 2])
+    tol = np.ascontiguousarray(tolerance[:, 2])
+    saturated = sum(len(row) >= cap for row in cover.memberships)
+    return {
+        "robust_fraction_gamma_0_1": int(robust.sum()) / n,
+        "robust_vertex_count_gamma_0_1": int(robust.sum()),
+        "stable_fraction_at_resolution": int(stable[:, 2].sum()) / n,
+        "stable_vertex_count_at_resolution": int(stable[:, 2].sum()),
+        "mean_positive_regret_at_resolution": float(at.sum() / n),
+        "max_positive_regret_at_resolution": float(at.max()),
+        "max_stability_tolerance_at_resolution": float(tol.max()),
+        "p95_positive_regret_at_resolution": _percentile(at, 0.95),
+        "profitable_vertex_count_at_resolution": int((at > tol).sum()),
+        "is_local_equilibrium_at_resolution": bool(stable[:, 2].all()),
+        "near_tolerance_vertex_count": int((at <= 10.0 * tol).sum()),
+        "n_vertices_scored": n,
+        "n_vertices_graph": n,
+        "n_communities": cover.n_communities,
+        "max_memberships": cap,
+        "cap_saturated_fraction": saturated / n,
+        "cap_saturated_vertex_count": int(saturated),
+        "allow_isolation": bool(allow_isolation),
+        "gamma": selected_gamma,
+        "interval": [lower, upper],
+        "robustness_atol": float(atol),
+        "robustness_rtol": float(rtol),
+        "equilibrium_interval_lower": None,
+        "equilibrium_interval_upper": None,
+        "equilibrium_interval_width": None,
+        "vertex_diagnostics": None,
+    }

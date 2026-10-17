@@ -12,8 +12,9 @@ not even one fits.
 * ``Need`` is a step's footprint: bytes shared by every worker (copy-on-write or memory-mapped, counted once) and
   bytes each worker adds.
 * ``plan_workers`` returns the largest worker count whose ``Need`` fits the budget, or raises ``CapacityError``.
-* ``sample_support_entries`` and ``state_bytes`` price one ``robustness.FractionalState`` from a sample of the
-  graph before it is built.
+
+The exact stability audit needs no plan of its own: the C audit's prepared cover is O(n + m + incidences) and forked
+audit workers share it, so the per-worker state that once had to be priced here no longer exists.
 """
 
 from __future__ import annotations
@@ -21,10 +22,8 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
-import random
 import sys
 from dataclasses import dataclass
-from typing import Sequence
 
 from hedonic.experiments.overlapping import parallel
 
@@ -125,74 +124,3 @@ def plan_workers(need: Need, requested: int, budget: int | None = None) -> Plan:
             f"the {parallel.memory_floor():.0f}% floor and a {MARGIN_PERCENT:.0f}% margin; "
             f"{BUDGET_ENV} sets a fixed allowance). Close other applications, or run it on a larger machine")
     return Plan(workers, requested, budget, need)
-
-
-# --------------------------------------------------------------------------- pricing a fractional state
-def sample_support_entries(graph, memberships: Sequence[Sequence[int]], sample: int = 2000, seed: int = 0) -> float:
-    """Estimated number of (vertex, label) support entries of the cover on this graph, from a vertex sample.
-
-    A vertex's support holds one entry for every distinct label among its neighbours, so the sample counts those
-    for random vertices and scales by the vertex count. The estimate is unbiased; its spread is a few percent
-    on the graphs of this study (a heavy tail of hub vertices is why the sample is not small).
-    """
-    n = graph.vcount()
-    if n == 0:
-        return 0.0
-    rng = random.Random(seed)
-    picked = range(n) if n <= sample else rng.sample(range(n), sample)
-    total = 0
-    for vertex in picked:
-        labels: set[int] = set()
-        for neighbour in graph.neighbors(vertex):
-            labels.update(memberships[neighbour])
-        total += len(labels)
-    return total / len(picked) * n
-
-
-def state_bytes(n_vertices: int, n_edges: int, incidences: int, support_entries: float, n_labels: int) -> float:
-    """Resident size of a compact ``robustness.FractionalState`` (what workers share), in bytes."""
-    support = support_entries * (4 + 8)  # int32 label + float64 value, CSR
-    per_vertex = n_vertices * (8 + 8 + 64)  # indptr, row sizes, membership tuple header
-    per_incidence = incidences * 8 * 2  # membership tuples and the label array they are cut from
-    per_edge = n_edges * 8  # edge weights
-    per_label = n_labels * (8 + 8 + 32)  # masses, lightest-label order, boxed floats
-    return support + per_vertex + per_incidence + per_edge + per_label
-
-
-def state_build_transient(n_edges: int, block: int, support_entries: float | None = None) -> float:
-    """Peak extra bytes while a state is built: the edge list, the sorted contributions and one block's arrays.
-
-    Measured on the 16.9 M-edge LiveJournal cover (3.2e8 support entries): the build peaked 9.5 GB above the loaded
-    graph, 3.9 GB of which is the finished support; 400 bytes per edge plus 64 per block entry prices the rest.
-    """
-    if support_entries is not None:  # a block never holds more contributions than the whole build produces
-        block = min(block, 2 * support_entries)
-    return n_edges * 400 + block * 64
-
-
-GIB = 1024 ** 3
-ENTRY_BYTES_PER_VERTEX = 20_000  # candidate entries of one vertex, as the Python lists and arrays they pass through
-
-
-def exact_audit_workers(graph, memberships: Sequence[Sequence[int]], requested: int, *, label: str = "audit",
-                        say=print) -> int:
-    """Forked workers an exact stability audit of this cover may use, from the memory free now.
-
-    Raises ``CapacityError`` when the state cannot even be built. The state is built once and shared copy-on-write
-    (its arrays are not reference-counted, so forks do not copy them); each worker adds the dicts and lists of the
-    vertex it is on, and the candidate entries are built block by block (``stability.ENTRY_BLOCK`` vertices).
-    """
-    from hedonic.experiments.overlapping import robustness as rb
-    from hedonic.experiments.overlapping import stability as st
-
-    n, edges = graph.vcount(), graph.ecount()
-    labels = max((label for row in memberships for label in row), default=-1) + 1
-    support = sample_support_entries(graph, memberships)
-    state = state_bytes(n, edges, sum(map(len, memberships)), support, labels)
-    build = state_build_transient(edges, rb.SUPPORT_BLOCK, support)
-    plan_workers(Need(f"{label}: building the audit state", state + build, 0), 1)
-    plan = plan_workers(Need(f"{label}: exact stability audit", state + ENTRY_BYTES_PER_VERTEX * st.ENTRY_BLOCK,
-                             0.5 * GIB), requested)
-    if say is not None:
-        say(f"  [capacity] {plan.line()}", flush=True)
-    return plan.workers

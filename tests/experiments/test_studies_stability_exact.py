@@ -1,4 +1,4 @@
-"""Parity of the grid-free and vectorised stability tools with the reference audit."""
+"""Parity of the stability engines (the C audit and the Python reference) with the best-response audit."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ import random
 import unittest
 
 import igraph as ig
+import numpy as np
 
 from hedonic.experiments.overlapping import robustness as rb
 from hedonic.experiments.overlapping import stability as st
-from hedonic.experiments.overlapping.gt_spectrum import spectrum_audit
 
 ATOL, RTOL = 1e-10, 1e-9
 
@@ -39,44 +39,64 @@ def reference_stable(state: rb.FractionalState, v: int, gamma: float, cap: int, 
     return max(0.0, float(diagnostic["regret"])) <= tolerance
 
 
-class TestVectorisedAudit(unittest.TestCase):
-    def test_rows_match_spectrum_audit(self):
+COUNT_KEYS = ("stable_vertex_count", "profitable_vertex_count", "is_nash_equilibrium")
+REGRET_KEYS = ("mean_positive_regret", "max_positive_regret", "p95_positive_regret", "max_tolerance")
+
+
+def reference_rows(graph, memberships, cap, gammas, allow):
+    """Spectrum rows computed vertex by vertex from ``robustness.best_response`` (the original audit)."""
+    state = rb.build_fractional_state(graph, memberships)
+    rows = []
+    for gamma in gammas:
+        regret, tolerance = [], []
+        for v in range(graph.vcount()):
+            diagnostic = rb.best_response(state, v, gamma, cap, allow)
+            regret.append(max(0.0, float(diagnostic["regret"])))
+            tolerance.append(rb._tolerance(diagnostic["current_utility"], ATOL, RTOL))
+        rows.append(st._spectrum_row(gamma, np.array(regret), np.array(tolerance), cap, ATOL, RTOL, allow))
+    return rows
+
+
+def engine_rows(graph, memberships, cap, gammas, allow, engine, workers=1):
+    cover = st.prepare(graph, memberships, engine=engine)
+    return st.spectrum_rows(cover, cap, gammas, atol=ATOL, rtol=RTOL, allow_isolation=allow, workers=workers)
+
+
+class TestSpectrumRows(unittest.TestCase):
+    def assert_close(self, fast, ref, label):
+        for f, r in zip(fast, ref, strict=True):
+            for key in COUNT_KEYS:
+                self.assertEqual(f[key], r[key], (label, f["gamma"], key))
+            for key in REGRET_KEYS:
+                self.assertAlmostEqual(f[key], r[key], delta=1e-12, msg=(label, key))
+
+    def test_rows_match_the_best_response_audit(self):
         gammas = [0.0, 0.05, 0.2, 0.5, 0.8, 1.0]
         for seed in range(25):
             graph, memberships = random_instance(seed)
             top = max(len(row) for row in memberships)
             for cap in (top, top + 1, top + 2):
                 for allow in (False, True):
-                    state = rb.build_fractional_state(graph, memberships)
-                    entries = st.build_entries(state, cap, allow)
-                    fast = st.vector_spectrum_rows(entries, gammas, atol=ATOL, rtol=RTOL, allow_isolation=allow)
-                    ref = spectrum_audit(graph, memberships, cap=cap, allow_isolation=allow,
-                                         gammas=gammas, atol=ATOL, rtol=RTOL, dense=False)
-                    for f, r in zip(fast, ref):
-                        for key in ("stable_vertex_count", "profitable_vertex_count", "is_nash_equilibrium"):
-                            self.assertEqual(f[key], r[key], (seed, cap, allow, f["gamma"], key))
-                        for key in ("mean_positive_regret", "max_positive_regret", "p95_positive_regret",
-                                    "max_tolerance"):
-                            self.assertAlmostEqual(f[key], r[key], delta=1e-12, msg=(seed, cap, allow, key))
+                    ref = reference_rows(graph, memberships, cap, gammas, allow)
+                    for engine in st.ENGINES:
+                        self.assert_close(engine_rows(graph, memberships, cap, gammas, allow, engine), ref,
+                                          (seed, cap, allow, engine))
 
-
-class TestCompiledEngine(unittest.TestCase):
-    def test_numba_engine_matches_numpy(self):
-        if not st.HAVE_NUMBA:
-            self.skipTest("numba is not installed")
+    def test_the_c_engine_returns_the_reference_floats(self):
         gammas = [0.0, 0.1, 0.4, 0.75, 1.0]
         for seed in range(15):
             graph, memberships = random_instance(seed)
             top = max(len(row) for row in memberships)
-            state = rb.build_fractional_state(graph, memberships)
             for allow in (False, True):
-                entries = st.build_entries(state, top, allow)
-                numpy_rows = st.vector_spectrum_rows(entries, gammas, atol=ATOL, rtol=RTOL, allow_isolation=allow)
-                numba_rows = st.vector_spectrum_rows(entries, gammas, atol=ATOL, rtol=RTOL, allow_isolation=allow,
-                                                     engine="numba")
-                for f, r in zip(numba_rows, numpy_rows):
-                    self.assertEqual(f["stable_vertex_count"], r["stable_vertex_count"])
-                    self.assertAlmostEqual(f["max_positive_regret"], r["max_positive_regret"], delta=1e-12)
+                self.assertEqual(engine_rows(graph, memberships, top, gammas, allow, "c"),
+                                 engine_rows(graph, memberships, top, gammas, allow, "python"), (seed, allow))
+
+    def test_rows_do_not_depend_on_the_worker_count(self):
+        graph, memberships = many_label_instance(2)
+        top = max(len(row) for row in memberships)
+        gammas = [i / 20 for i in range(21)]
+        one = engine_rows(graph, memberships, top, gammas, True, "c")
+        self.assertEqual(engine_rows(graph, memberships, top, gammas, True, "c", workers=3), one)
 
 
 class TestExactIntervals(unittest.TestCase):
@@ -121,39 +141,53 @@ class TestExactIntervals(unittest.TestCase):
         self.assertGreater(checked, 50)
 
 
-class TestCompiledIntervals(unittest.TestCase):
-    """The numba kernel returns the reference's floats, not merely close ones."""
+class TestEngineIntervals(unittest.TestCase):
+    """The C audit returns the reference's interval endpoints, not merely close ones."""
 
     def check_instance(self, graph, memberships, label):
         state = rb.build_fractional_state(graph, memberships)
+        cover = st.prepare(graph, memberships)
         top = max(len(row) for row in memberships)
         for cap in (top, top + 1, top + 2):
             for allow in (False, True):
+                fast = st.stable_intervals(cover, cap, allow, atol=ATOL, rtol=RTOL)
                 for v in range(graph.vcount()):
                     ref = st.exact_stable_intervals(state, v, cap, allow, atol=ATOL, rtol=RTOL)
-                    fast = st.exact_stable_intervals(state, v, cap, allow, atol=ATOL, rtol=RTOL, engine="numba")
-                    self.assertEqual(fast, ref, (label, cap, allow, v))
+                    self.assertEqual([tuple(i) for i in fast[v]], ref, (label, cap, allow, v))
 
-    def test_numba_intervals_equal_reference_on_random_instances(self):
-        if not st.HAVE_NUMBA:
-            self.skipTest("numba is not installed")
+    def test_c_intervals_equal_reference_on_random_instances(self):
         for seed in range(40):
             graph, memberships = random_instance(seed)
             self.check_instance(graph, memberships, seed)
 
-    def test_numba_intervals_equal_reference_on_tied_scores(self):
+    def test_c_intervals_equal_reference_on_tied_scores(self):
         # identical rows make many candidate scores equal at every gamma: the index tie-break decides
-        if not st.HAVE_NUMBA:
-            self.skipTest("numba is not installed")
         graph = ig.Graph.Full(6)
         memberships = [[0, 1], [0, 1], [0, 1], [1, 2], [1, 2], [2]]
         self.check_instance(graph, memberships, "tied")
 
+    def test_intervals_do_not_depend_on_workers_or_chunks(self):
+        graph, memberships = many_label_instance(0)
+        cover = st.prepare(graph, memberships)
+        one = st.stable_intervals(cover, 4, True, atol=ATOL, rtol=RTOL)
+        self.assertEqual(st.stable_intervals(cover, 4, True, atol=ATOL, rtol=RTOL, workers=3), one)
+        streamed = {}
+        for vertices, found in st.stream_intervals(cover, 4, True, atol=ATOL, rtol=RTOL, chunk=7,
+                                                   order=list(reversed(range(cover.n_vertices)))):
+            streamed.update(zip(vertices.tolist(), found))
+        self.assertEqual([streamed[v] for v in range(cover.n_vertices)], one)
+
     def test_unknown_engine_is_rejected(self):
         graph, memberships = random_instance(1)
-        state = rb.build_fractional_state(graph, memberships)
         with self.assertRaises(ValueError):
-            st.exact_stable_intervals(state, 0, 2, False, atol=ATOL, rtol=RTOL, engine="fortran")
+            st.prepare(graph, memberships, engine="fortran")
+
+    def test_a_vertex_over_the_cap_is_rejected_by_both_engines(self):
+        graph, memberships = ig.Graph.Full(3), [[0, 1], [0], [1]]
+        for engine in st.ENGINES:
+            cover = st.prepare(graph, memberships, engine=engine)
+            with self.assertRaises(ValueError):
+                cover.intervals(np.arange(3), 1, False, atol=ATOL, rtol=RTOL)
 
 
 def many_label_instance(seed: int, communities: int = 300) -> tuple[ig.Graph, list[list[int]]]:
@@ -224,9 +258,6 @@ class TestPrunedCandidates(unittest.TestCase):
                     ref = st.exact_stable_intervals(state, v, cap, allow, atol=ATOL, rtol=RTOL, prune=False)
                     self.assertEqual(st.exact_stable_intervals(state, v, cap, allow, atol=ATOL, rtol=RTOL), ref,
                                      (label, cap, allow, v, "python"))
-                    if st.HAVE_NUMBA:
-                        fast = st.exact_stable_intervals(state, v, cap, allow, atol=ATOL, rtol=RTOL, engine="numba")
-                        self.assertEqual(fast, ref, (label, cap, allow, v, "numba"))
 
     def test_intervals_are_identical_on_small_random_instances(self):
         for seed in range(40):
@@ -238,7 +269,7 @@ class TestPrunedCandidates(unittest.TestCase):
             graph, memberships = many_label_instance(seed)
             self.check_intervals(graph, memberships, ("many", seed), step=5)
 
-    def test_regret_rows_are_identical_when_most_labels_are_filler(self):
+    def test_regrets_are_identical_when_most_labels_are_filler(self):
         gammas = [0.0, 0.01, 0.1, 0.5, 1.0]
         for seed in range(2):
             graph, memberships = many_label_instance(seed)
@@ -246,32 +277,26 @@ class TestPrunedCandidates(unittest.TestCase):
             top = max(len(row) for row in memberships)
             for cap in (top, top + 2):
                 for allow in (False, True):
-                    full = st.build_entries(state, cap, allow, prune=False)
-                    pruned = st.build_entries(state, cap, allow)
-                    self.assertLess(len(pruned.a), len(full.a))
-                    engines = ["numpy"] + (["numba"] if st.HAVE_NUMBA else [])
-                    for engine in engines:
-                        before = st.vector_spectrum_rows(full, gammas, atol=ATOL, rtol=RTOL, allow_isolation=allow, engine=engine)
-                        after = st.vector_spectrum_rows(pruned, gammas, atol=ATOL, rtol=RTOL, allow_isolation=allow, engine=engine)
-                        for f, r in zip(after, before):
-                            for key in ("stable_vertex_count", "profitable_vertex_count", "is_nash_equilibrium"):
-                                self.assertEqual(f[key], r[key], (seed, cap, allow, engine, f["gamma"], key))
-                            for key in ("mean_positive_regret", "max_positive_regret", "p95_positive_regret", "max_tolerance"):
-                                self.assertAlmostEqual(f[key], r[key], delta=1e-12, msg=(seed, cap, allow, engine, key))
+                    for v in range(0, graph.vcount(), 7):
+                        full = st.vertex_regrets(state, v, gammas, cap, allow, atol=ATOL, rtol=RTOL, prune=False)
+                        pruned = st.vertex_regrets(state, v, gammas, cap, allow, atol=ATOL, rtol=RTOL)
+                        for x, y in zip(pruned[0], full[0], strict=True):
+                            self.assertAlmostEqual(x, y, delta=1e-12, msg=(seed, cap, allow, v))
+                        self.assertEqual(pruned[1], full[1])
 
-    def test_regret_rows_match_the_dense_reference_when_most_labels_are_filler(self):
+    def test_regret_rows_match_the_best_response_audit_when_most_labels_are_filler(self):
         gammas = [0.0, 0.05, 0.5, 1.0]
         graph, memberships = many_label_instance(0)
-        state = rb.build_fractional_state(graph, memberships)
         top = max(len(row) for row in memberships)
         for allow in (False, True):
-            fast = st.vector_spectrum_rows(st.build_entries(state, top, allow), gammas, atol=ATOL, rtol=RTOL, allow_isolation=allow)
-            ref = spectrum_audit(graph, memberships, cap=top, allow_isolation=allow, gammas=gammas, atol=ATOL, rtol=RTOL, dense=False)
-            for f, r in zip(fast, ref):
-                for key in ("stable_vertex_count", "profitable_vertex_count", "is_nash_equilibrium"):
-                    self.assertEqual(f[key], r[key], (allow, f["gamma"], key))
-                for key in ("mean_positive_regret", "max_positive_regret", "p95_positive_regret", "max_tolerance"):
-                    self.assertAlmostEqual(f[key], r[key], delta=1e-12, msg=(allow, key))
+            ref = reference_rows(graph, memberships, top, gammas, allow)
+            for engine in st.ENGINES:
+                fast = engine_rows(graph, memberships, top, gammas, allow, engine)
+                for f, r in zip(fast, ref, strict=True):
+                    for key in COUNT_KEYS:
+                        self.assertEqual(f[key], r[key], (allow, engine, f["gamma"], key))
+                    for key in REGRET_KEYS:
+                        self.assertAlmostEqual(f[key], r[key], delta=1e-12, msg=(allow, engine, key))
 
 
 if __name__ == "__main__":

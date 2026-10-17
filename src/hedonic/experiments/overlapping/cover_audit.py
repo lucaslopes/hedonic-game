@@ -2,8 +2,10 @@
 
 Chapter 6 of the overlapping-communities paper asks how robust each method's cover is, with the definition of the
 ground-truth chapter: for every vertex, the exact set of resolutions in [0, 1] where its memberships are a best
-response (``overlapping.stability``), under both action spaces (fixed and open labels). This module applies that
-analysis to the covers saved by ``hedonic run exp ... --save-covers`` (and ``paper-hoc``), one record per cover.
+response, under both action spaces (fixed and open labels). This module applies that analysis to the covers saved by
+``hedonic run exp ... --save-covers``, one record per cover. The computation is the library's C audit (the code
+behind ``Game.stable_intervals`` and ``Game.regrets``) through ``overlapping.stability``; ``--workers`` forked
+processes split the vertices and share its read-only prepared state.
 
 Two profiles are audited, and every record names the one it used:
 
@@ -48,7 +50,6 @@ import numpy as np
 
 from hedonic.experiments.config import NETWORKS_DIR, RUNS_ROOT, expand_path
 from hedonic.experiments.runtime import runtime_versions
-from hedonic.experiments.overlapping import capacity
 from hedonic.experiments.overlapping import gt_posthoc as ph
 from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.overlapping import robustness as rb
@@ -361,24 +362,27 @@ def vertices_event(label: str, policy: str, number: int, policies: int, done: in
             "elapsed": elapsed, "eta_seconds": eta, "detail": detail, "text": f"{label}{detail}"}
 
 
-def audit_state(state: rb.FractionalState, *, n_vertices: int, cap: int, grid: list[float], regret_gammas: list[float],
-                workers: int, atol: float, rtol: float, engine: str, progress: Progress = _silent,
-                label: str = "") -> dict[str, Any]:
-    """Exact stable intervals of every vertex under both action spaces, and what they say about ``grid``."""
-    if engine == "numba":
-        st.warm_up()  # compile before the pool forks, so every worker inherits the compiled code
-    audit_engine = "numba" if st.HAVE_NUMBA else "numpy"
+def audit_state(cover: st.PreparedCover, *, cap: int, grid: list[float], regret_gammas: list[float], workers: int,
+                atol: float, rtol: float, progress: Progress = _silent, label: str = "") -> dict[str, Any]:
+    """Exact stable intervals of every vertex under both action spaces, and what they say about ``grid``.
+
+    ``cover`` comes from ``stability.prepare`` (the C engine by default); ``workers`` forked processes split the
+    vertices of the exact stage and of the regret table.
+    """
+    n_vertices = cover.n_vertices
     policies: dict[str, Any] = {}
-    stride = max(1, n_vertices // PROGRESS_STEPS)
     for number, (policy, allow) in enumerate(POLICIES, 1):
         progress({"type": "stage", "text": f"{label}{policy}: exact stability of {n_vertices:,} vertices"})
-        ph._WORK.update(state=state, cap=cap, allow=allow, atol=atol, rtol=rtol, engine=engine)
         per_vertex: list[list[list[float]] | None] = [None] * n_vertices
         started = time.time()
-        for count, (vertex, intervals) in enumerate(ph._vertex_stream(n_vertices, workers), 1):
-            per_vertex[vertex] = intervals
-            if count % stride == 0 or count == n_vertices:
-                progress(vertices_event(label, policy, number, len(POLICIES), count, n_vertices, time.time() - started))
+        count = 0
+        chunk = max(1, min(st.MAX_CHUNK, -(-n_vertices // PROGRESS_STEPS)))
+        for vertices, intervals in ph._vertex_stream(cover, cap, allow, atol=atol, rtol=rtol, workers=workers,
+                                                     chunk=chunk):
+            for vertex, found in zip(vertices, intervals):
+                per_vertex[vertex] = found
+            count += len(vertices)
+            progress(vertices_event(label, policy, number, len(POLICIES), count, n_vertices, time.time() - started))
         exact_seconds = time.time() - started
         lo, hi, owner = ph._interval_arrays(per_vertex)
         counts = stable_counts(lo, hi, owner, grid)
@@ -387,8 +391,8 @@ def audit_state(state: rb.FractionalState, *, n_vertices: int, cap: int, grid: l
         decades = -math.log10(LOG_FLOOR)
         progress({"type": "stage", "text": f"{label}{policy} ({number}/{len(POLICIES)}): regret at {len(regret_gammas)} resolutions"})
         regret_started = time.time()
-        regret = st.chunked_spectrum_rows(state, cap, regret_gammas, atol=atol, rtol=rtol, allow_isolation=allow,
-                                          engine=audit_engine)
+        regret = st.spectrum_rows(cover, cap, regret_gammas, atol=atol, rtol=rtol, allow_isolation=allow,
+                                  workers=workers)
         policies[policy] = {
             "exact_seconds": round(exact_seconds, 2),
             "regret_seconds": round(time.time() - regret_started, 2),
@@ -457,18 +461,16 @@ def audit_unit(condition: dict[str, Any], plan: dict[str, Any], graphs: dict[tup
     extra = [density] + ([own_gamma] if own_gamma is not None else [])
     grid = sorted(set(ph.locked_grid()) | set(extra))
     regret_gammas = sorted(set(REGRET_GAMMAS) | set(extra))
-    workers = capacity.exact_audit_workers(graph, memberships, plan["workers"], label=condition["key"])  # CapacityError: unit refused
     building = time.time()
-    state = rb.build_fractional_state(graph, memberships)
+    cover = st.prepare(graph, memberships)
     state_seconds = round(time.time() - building, 2)
     started = time.time()
-    policies = audit_state(state, n_vertices=n_vertices, cap=cap, grid=grid, regret_gammas=regret_gammas,
-                           workers=workers, atol=plan["atol"], rtol=plan["rtol"],
-                           engine=st.default_engine(), progress=progress, label=f"{condition['key']} · ")
+    policies = audit_state(cover, cap=cap, grid=grid, regret_gammas=regret_gammas, workers=plan["workers"],
+                           atol=plan["atol"], rtol=plan["rtol"], progress=progress, label=f"{condition['key']} · ")
     result = {**base, "status": "completed", "n_vertices": n_vertices, "n_edges": graph.ecount(),
               "graph_sha256": identity, "cover_variant": variant, "density": density, "gamma_own": own_gamma,
               "cap": cap, "cap_mode": plan["cap"], "cap_in_record": record_cap, "own_max_multiplicity": own,
-              "atol": plan["atol"], "rtol": plan["rtol"], "engine": st.default_engine(), "grid": grid,
+              "atol": plan["atol"], "rtol": plan["rtol"], "engine": cover.engine, "grid": grid,
               "audit_seconds": round(time.time() - started, 2), "load_seconds": load_seconds, "state_seconds": state_seconds,
               "policies": policies, **info}
     warnings = [gamma_note] if gamma_note else []
@@ -683,7 +685,7 @@ class Stage:
     detector run, so one run yields accuracy, time and robustness.
 
     The audit runs in one long-lived child process, never in the worker: the worker's lifetime peak RSS is what a
-    benchmark record without ``--isolate`` reports as its memory, and an audit is far heavier than the detector. The
+    benchmark record without ``--isolate`` reports as its memory, and the audit loads its own graph and cover. The
     worker waits for the child, so audits and detector runs never share the machine (the detector timings stay clean).
     Records go to ``<run>/robustness/cover_audit.jsonl``, the file ``hedonic run audit`` writes, so the two are
     interchangeable and a unit audited by either is skipped by the other.
