@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import sys
 from collections.abc import Mapping
 
@@ -202,8 +203,8 @@ def check_start_counts(
         )
 
 
-def runtime_versions() -> dict[str, str | None]:
-    """Versions of the packages that ran a detector call."""
+@functools.cache
+def _versions() -> tuple[tuple[str, str | None], ...]:
     try:
         from importlib.metadata import version
 
@@ -212,8 +213,17 @@ def runtime_versions() -> dict[str, str | None]:
         hedonic_version = None
     from .. import _core
 
-    return {
-        "hedonic": hedonic_version,
-        "hedonic_core": _core.core_version,
-        "python_igraph": getattr(igraph, "__version__", None),
-    }
+    return (
+        ("hedonic", hedonic_version),
+        ("hedonic_core", _core.core_version),
+        ("python_igraph", getattr(igraph, "__version__", None)),
+    )
+
+
+def runtime_versions() -> dict[str, str | None]:
+    """Versions of the packages that ran a detector call.
+
+    Read once per process (the metadata lookup costs about 0.3 ms, a tenth of
+    a small detector call) and returned as a fresh dict each time.
+    """
+    return dict(_versions())
