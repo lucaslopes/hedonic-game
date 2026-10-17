@@ -1,6 +1,6 @@
 ---
 title: Disjoint and overlapping communities
-summary: One API, two kinds of output — and which one this explainer covers.
+summary: One API, two kinds of output — and where the explainer covers each.
 group: Python API
 order: 5
 ---
@@ -16,7 +16,7 @@ In a **partition** every vertex belongs to exactly one community. In a **cover**
 
 ## What the explainer covers
 
-The explainer, its decision tree, the Familiarity Index and the metagraph all describe the **disjoint** model of the SRC abstract and of arXiv:2509.03834: every agent holds exactly one community label. The overlapping mode (`max_memberships > 1`) runs in the same C core with its own utility, which is out of scope here.
+The main explainer, its decision tree, the Familiarity Index and the metagraph describe the **disjoint** model of the SRC abstract and of arXiv:2509.03834: every agent holds exactly one community label. The overlapping mode (`max_memberships > 1`) runs in the same C core with its own utility; the [overlap explainer](story:overlap/) follows it on a six-vertex graph, and [The overlapping game](docs:#overlapping-game) gives its rules.
 
 ## Where to go next
 

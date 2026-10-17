@@ -26,6 +26,7 @@ describe('documentation bundle', () => {
       'game-api',
       'community-hedonic',
       'disjoint-vs-overlapping',
+      'overlapping-game',
       'resolution',
       'familiarity-index',
       'metagraph',
@@ -39,6 +40,13 @@ describe('documentation bundle', () => {
       expect(p.title).not.toBe(p.slug);
       expect(p.html.length).toBeGreaterThan(200);
     });
+  });
+
+  it('documents the overlapping game with its audit API and links to the overlap page', () => {
+    const html = page('overlapping-game').html;
+    expect(html).toContain('id="api-game-stable-intervals"');
+    expect(html).toContain('id="api-game-regrets"');
+    expect(html).toContain('href="/hedonic/overlap/#sees"');
   });
 
   it('generates the API reference from the Python source', () => {
