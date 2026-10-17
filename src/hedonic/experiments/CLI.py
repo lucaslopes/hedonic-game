@@ -254,7 +254,19 @@ COMMANDS: dict[str, Command] = {
 SUBCOMMANDS: tuple[str, ...] = tuple(COMMANDS.keys())
 
 
+
+def _posix_only() -> int | None:
+    """The experiment command line runs on macOS and Linux (tmux, fork, flock); on Windows only the library works."""
+    if sys.platform == "win32":
+        print("hedonic: the experiment command line runs on macOS and Linux; on Windows use the library "
+              "(from hedonic import Game).", file=sys.stderr)
+        return 2
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
+    if (refused := _posix_only()) is not None:
+        return refused
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help"):
         _print_root_help()
@@ -374,6 +386,8 @@ Data, runtimes and settings
 
 
 def hedonic_main(argv: list[str] | None = None) -> int:
+    if (refused := _posix_only()) is not None:
+        return refused
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help") or argv[:2] in (["run", "-h"], ["run", "--help"]):
         print(HEDONIC_HELP)
