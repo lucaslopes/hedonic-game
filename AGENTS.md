@@ -118,8 +118,10 @@ publishing needs every job. Branch pushes only build and test; a tag publishes,
 and sets the version (`tools/release_version.py`; `pyproject.toml` holds the
 release): `v2.0.0.devN` goes to TestPyPI, `v2.0.0rcN` (a pre-release) and
 `v2.0.0` to PyPI, all by trusted publishing (environments `testpypi`, `pypi`).
-Try a release as `.devN`, then `rcN`, and tag the release on the commit of the
-last good candidate.
+After each upload the `verify` jobs install that version from its index on
+every platform and run the pinned tests and the test suite. Try a release as
+`.devN`, then `rcN`, and tag the release on the commit of the last good
+candidate.
 
 ## Web explainer (`web/`)
 

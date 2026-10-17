@@ -17,6 +17,8 @@
 #
 # Publishing is trusted publishing (no token): each index needs a trusted
 # publisher for this repository, workflow `wheels.yml` and that environment.
+# After the upload, `verify` installs that version from the index on every
+# platform and runs the pinned tests and the whole test suite against it.
 name: Wheels
 
 on:
@@ -237,3 +239,52 @@ jobs:
       - name: Upload to PyPI
         if: steps.check.outputs.index == 'pypi'
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  # What was published, installed from the index it went to on every platform
+  # (hedonic with --no-deps from that index, its dependencies from PyPI, so a
+  # TestPyPI upload never pulls other projects from TestPyPI), then the pinned
+  # tests and the whole test suite against the installed package (the src
+  # layout keeps the checkout's sources off the path).
+  verify:
+    name: Install from ${{ contains(github.ref_name, '.dev') && 'TestPyPI' || 'PyPI' }} (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: publish
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, windows-2022, windows-11-arm]
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the published version
+        shell: bash
+        run: |
+          index=$(python tools/release_version.py)
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "$index" = testpypi ]; then url=https://test.pypi.org/simple/; else url=https://pypi.org/simple/; fi
+          python -m pip install -U pip
+          python -m pip install igraph numpy scipy pytest
+          # A new upload can take a few minutes to reach the index's mirrors.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            python -m pip install --no-deps --only-binary :all: --no-cache-dir \
+              --index-url "$url" "hedonic==$version" && break
+            [ "$attempt" = 10 ] && exit 1
+            sleep 30
+          done
+          python - "$version" <<'PY'
+          import sys, importlib.metadata, hedonic
+          assert importlib.metadata.version("hedonic") == sys.argv[1]
+          assert "site-packages" in hedonic.__file__, hedonic.__file__
+          print("hedonic", sys.argv[1], "from", hedonic.__file__)
+          PY
+          # The tests read pyproject.toml's own version (the release).
+          git checkout -- pyproject.toml
+      - name: Pinned tests (no skips)
+        run: python tools/native_tests.py
+      - name: The whole test suite
+        env:
+          HIG_PINNED: "1"
+        run: python -m pytest -q -p no:cacheprovider
