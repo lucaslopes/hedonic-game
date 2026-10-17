@@ -276,13 +276,15 @@ class TestCLI(unittest.TestCase):
         from hedonic.experiments.overlapping import quickstart as qs
 
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_CONFIG": os.path.join(d, "c.toml")}):
+            os.environ.pop("HEDONIC_CODESEG_CACHE", None)  # restored by patch.dict
             self.assertEqual(CLI.hedonic_main(["config", "set", "cache_dir", d]), 0)
             with patch("hedonic.experiments.overlapping.info.method_status") as method_status, \
                     patch("hedonic.experiments.overlapping.info.network_status", return_value=[]), \
                     patch("hedonic.experiments.overlapping.info.render_networks", return_value=""), \
                     patch("hedonic.experiments.overlapping.info.render_methods", return_value=""):
                 self.assertEqual(qs.main(["--list"]), 0)
-                self.assertEqual(method_status.call_args.args[0], Path(d))  # not the literal path "None"
+                # the `hedonic setup` folder under the configured cache_dir (not the literal path "None")
+                self.assertEqual(method_status.call_args.args[0], Path(d) / "codeseg")
 
     def test_tui_fallback_reasks_on_garbage_and_fit_truncates_by_visible_width(self):
         from hedonic.experiments.overlapping import tui

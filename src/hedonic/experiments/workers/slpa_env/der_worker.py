@@ -1,9 +1,8 @@
 """Run the pinned CDlib DER implementation in the isolated baseline env.
 
 The CoDeSEG paper invokes ``cdlib.algorithms.der(G, 3, 1e-5, 50)`` for DER.
-This worker mirrors that call without importing CDlib into the main
-``lucas-igraph`` process, whose top-level ``igraph`` module is a different
-distribution.
+This worker mirrors that call without importing CDlib, and the dependency
+versions it pins, into the hedonic process.
 """
 
 from __future__ import annotations

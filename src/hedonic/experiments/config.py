@@ -81,6 +81,28 @@ OVERLAPPING_ARTIFACTS_DIR = ARTIFACTS_DIR / "overlapping"
 PAPER_ARTIFACTS_DIR = ARTIFACTS_DIR / "papers" / "overlapping_communities"
 EVIDENCE_DIR = ARTIFACTS_DIR / "evidence"
 SNAP_CACHE_DIR = DATA_ROOT / "cache" / "snap"
+CODESEG_CACHE_DEFAULT = "~/.cache/hedonic/codeseg"
+
+
+def codeseg_cache_dir(cache_dir: str | Path | None = None) -> Path:
+    """Where ``hedonic setup`` builds the external methods and every run looks for them.
+
+    An explicit ``cache_dir`` (a ``--cache-dir`` flag) gives ``cache_dir/codeseg``; otherwise
+    ``HEDONIC_CODESEG_CACHE``, else ``codeseg/`` under the user config's ``cache_dir`` (``hedonic config set
+    cache_dir DIR``), else ``~/.cache/hedonic/codeseg``. Read when called, never at import.
+    """
+    if cache_dir:
+        return expand_path(cache_dir) / "codeseg"
+    configured = os.environ.get("HEDONIC_CODESEG_CACHE")
+    if configured:
+        return expand_path(configured)
+    try:
+        from hedonic.experiments.overlapping import userconfig
+
+        base = userconfig.defaults().get("cache_dir")
+    except Exception:  # noqa: BLE001 - an unreadable user config is reported by the commands that read it
+        base = None
+    return expand_path(base) / "codeseg" if base else expand_path(CODESEG_CACHE_DEFAULT)
 
 
 DEFAULT_NETWORKS_DIR = expand_path(_user_network_root() or DATA_ROOT / "networks")

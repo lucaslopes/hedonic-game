@@ -62,7 +62,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable
 
-from hedonic.experiments.config import expand_path
+from hedonic.experiments.config import RUNS_ROOT, expand_path
 from hedonic.experiments.overlapping import parallel
 from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.runtime import ALGORITHM_IDENTITY, runtime_versions
@@ -167,7 +167,7 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate") -> dict[str, A
         raise ValueError("--cap-minutes must be positive and goes with --budget")
     script = expand_path(args.script).resolve() if args.script else None
     name = qs.parse_name(args.name or "hoc-calibration")
-    root = Path(userconfig.defaults().get("output_dir") or "hedonic-exp-output")
+    root = Path(userconfig.defaults().get("output_dir") or RUNS_ROOT)
     output = expand_path(args.output_dir).resolve() if args.output_dir else expand_path(root / name).resolve()
     return {"script": script, "mode": args.mode, "networks": networks, "methods": methods,
             "factor": float(args.factor), "confirm": qs.parse_seeds(args.confirm_seeds), "python": args.python or sys.executable,

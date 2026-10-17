@@ -25,7 +25,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-from hedonic.experiments.config import NETWORKS_DIR, expand_path
+from hedonic.experiments.config import NETWORKS_DIR, codeseg_cache_dir, expand_path
 from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.overlapping.tui import style
 
@@ -80,8 +80,8 @@ def _tool(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def method_status(cache: Path) -> list[dict]:
-    tools = cache / "codeseg"
+def method_status(tools: Path) -> list[dict]:
+    """Each catalogue method's readiness, from the ``hedonic setup`` folder ``tools`` (``config.codeseg_cache_dir``)."""
     try:
         manifest = json.loads((tools / "setup_manifest.json").read_text()).get("methods", {})
     except (OSError, ValueError):
@@ -306,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
             print(front.render_presets())
         return 0
     if a.what == "methods":
-        rows = method_status(cache)
+        rows = method_status(codeseg_cache_dir(a.cache_dir))
         print(json.dumps(rows, indent=2) if a.json else render_methods(rows))
     elif a.what == "covers":
         from hedonic.experiments.overlapping import gt_spectrum

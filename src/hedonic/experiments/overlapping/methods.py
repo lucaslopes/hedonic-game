@@ -776,7 +776,7 @@ METHODS: dict[str, MethodAdapter] = {
         },
         scalability="Pinned CDlib worker; edge dendrogram cut is selected by partition density.",
         output_kind="Overlapping node cover from edge communities",
-        install_requirement="Run hedonic-exp codeseg-setup --all (the locked CDlib environment); CDlib is never imported in the hedonic process.",
+        install_requirement="Run `hedonic setup --methods link_clustering` (the locked CDlib environment); CDlib is never imported in the hedonic process.",
         runner=_link_clustering,
     ),
     "mmsb": MethodAdapter(
@@ -811,7 +811,7 @@ METHODS: dict[str, MethodAdapter] = {
         parameters={"threshold": 0.6, "min_community_size": 3},
         scalability="Pinned CDlib worker; bounded by the benchmark timeout.",
         output_kind="Overlapping node cover returned by ANGEL",
-        install_requirement="Run hedonic-exp codeseg-setup --all (the locked CDlib environment).",
+        install_requirement="Run `hedonic setup --methods angel` (the locked CDlib environment).",
         runner=_angel,
     ),
 }
@@ -846,13 +846,13 @@ _register_literature_proxy(
     "codeseg",
     family="structural-entropy game / overlapping",
     implementation="SELGroup/CoDeSEG C++ executable",
-    install_requirement="Run codeseg-setup --all --build-native or provide HEDONIC_CODESEG_BIN.",
+    install_requirement="Run `hedonic setup --methods codeseg` or provide HEDONIC_CODESEG_BIN.",
 )
 _register_literature_proxy(
     "slpa",
     family="label propagation / overlapping",
     implementation="isolated CDlib SLPA worker",
-    install_requirement="Run codeseg-setup --all to materialize the locked CDlib worker.",
+    install_requirement="Run `hedonic setup --methods slpa` to materialize the locked CDlib worker.",
     parameters={"iterations": 21, "threshold": 0.01},
 )
 _register_literature_proxy(
@@ -884,7 +884,7 @@ _register_literature_proxy(
     "der",
     family="diffusion entropy reduction / disjoint control",
     implementation="isolated CDlib DER worker",
-    install_requirement="Run codeseg-setup --all to materialize the locked DER worker.",
+    install_requirement="Run `hedonic setup --methods der` to materialize the locked DER worker.",
 )
 _register_literature_proxy(
     "leiden",
@@ -987,7 +987,7 @@ def method_availability() -> dict[str, dict[str, Any]]:
             if not available:
                 reason = (
                     "isolated CDlib 0.4.0 worker is unavailable; "
-                    "run `hedonic-exp codeseg-setup --all` before enabling this adapter"
+                    f"run `hedonic setup --methods {name}` before enabling this adapter"
                 )
         if available and name in EXTERNAL_DISTRIBUTIONS and name not in {"link_clustering", "angel", "infomap"} and (
             not isinstance(dependency, dict)

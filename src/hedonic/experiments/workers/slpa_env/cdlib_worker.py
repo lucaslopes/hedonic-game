@@ -1,9 +1,9 @@
 """Run selected CDlib algorithms in the pinned isolated environment.
 
-This process is deliberately tiny: the main hedonic runtime uses lucas-igraph,
-while CDlib depends on the separate python-igraph distribution.  Requests and
-results are JSON so a bounded benchmark can record the exact external method
-without importing the conflicting dependency in-process.
+This process is deliberately tiny: CDlib and the dependency versions it pins
+live in their own locked environment, never in the hedonic process.  Requests
+and results are JSON so a bounded benchmark can record the exact external
+method without importing CDlib in-process.
 """
 
 from __future__ import annotations

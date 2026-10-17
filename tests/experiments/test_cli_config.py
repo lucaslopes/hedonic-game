@@ -209,5 +209,40 @@ class TestExperimentsConfig(unittest.TestCase):
                 os.chdir(old)
 
 
+class TestCodesegCache(unittest.TestCase):
+    """``hedonic setup``, ``hedonic run exp`` and ``hedonic show methods`` find the external methods in one folder."""
+
+    def resolve(self, env, cache_dir=None):
+        """(config's resolver, hedonic setup's default, hedonic run exp's folder) under ``env``."""
+        from hedonic.experiments.config import codeseg_cache_dir
+        from hedonic.experiments.overlapping import codeseg_setup, userconfig
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        with patch.dict(os.environ, env, clear=False):
+            if "HEDONIC_CODESEG_CACHE" not in env:
+                os.environ.pop("HEDONIC_CODESEG_CACHE", None)
+            cfg = qs.Config()
+            cfg.cache_dir = cache_dir or userconfig.defaults().get("cache_dir") or cfg.cache_dir  # as the front door sets it
+            return codeseg_cache_dir(cache_dir), codeseg_setup.default_cache_dir(), qs.codeseg_tools(cfg)
+
+    def test_the_order_is_environment_then_user_config_then_the_default(self):
+        with tempfile.TemporaryDirectory() as d:
+            user = Path(d) / "config.toml"
+            user.write_text(f'[defaults]\ncache_dir = "{d}/user-cache"\n', encoding="utf-8")
+            absent = str(Path(d) / "absent.toml")
+            default = Path("~/.cache/hedonic/codeseg").expanduser()
+            self.assertEqual(set(self.resolve({"HEDONIC_CONFIG": absent})), {default})
+            self.assertEqual(set(self.resolve({"HEDONIC_CONFIG": str(user)})), {Path(d) / "user-cache" / "codeseg"})
+            self.assertEqual(set(self.resolve({"HEDONIC_CONFIG": str(user), "HEDONIC_CODESEG_CACHE": f"{d}/env"})),
+                             {Path(d) / "env"})
+
+    def test_a_cache_dir_flag_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            explicit, _, run = self.resolve({"HEDONIC_CONFIG": str(Path(d) / "absent.toml"),
+                                             "HEDONIC_CODESEG_CACHE": f"{d}/env"}, cache_dir=f"{d}/flag")
+            self.assertEqual(explicit, Path(d) / "flag" / "codeseg")
+            self.assertEqual(run, Path(d) / "flag" / "codeseg")
+
+
 if __name__ == "__main__":
     unittest.main()

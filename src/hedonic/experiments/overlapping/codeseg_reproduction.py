@@ -752,7 +752,7 @@ def _isolated_worker_python() -> tuple[Path, dict[str, Any]]:
     receipt = slpa_environment_receipt()
     if not receipt.get("ready"):
         raise MethodUnavailable(
-            "locked CDlib environment is unavailable; run `hedonic-exp codeseg-setup --all`"
+            "locked CDlib environment is unavailable; run `hedonic setup --methods angel`"
         )
     _der_worker()
     python = receipt.get("project_python")
@@ -2195,7 +2195,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--auto-download", dest="auto_download", action="store_true", help="allow a preflight to fetch missing SNAP data")
     parser.add_argument("--no-auto-download", dest="auto_download", action="store_false", help="fail instead of lazily downloading a missing SNAP dataset")
     parser.add_argument("--max-download-bytes", type=int, default=None, help="optional bound passed to the SNAP catalogue downloader")
-    parser.add_argument("--setup-manifest", default=None, help="codeseg-setup manifest used to resolve external runtimes")
+    parser.add_argument("--setup-manifest", default=None, help="setup manifest (written by `hedonic setup`) used to resolve external runtimes")
     parser.add_argument("--output-dir", default=str(OVERLAPPING_ARTIFACTS_DIR / "codeseg"))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-nodes", type=int, default=None, help="GT-informed induced-subgraph bound for local tests")

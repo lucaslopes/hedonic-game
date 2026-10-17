@@ -1,9 +1,9 @@
 """Run the pinned CDlib SLPA implementation in an isolated worker.
 
-The main project uses ``lucas-igraph``.  CDlib 0.4.0 declares the unrelated
-``python-igraph`` distribution, so importing it in the project environment
-could overwrite the native ``igraph`` module.  This worker is intentionally
-standalone and is invoked through ``uv run --project tools/slpa_env --locked``.
+CDlib 0.4.0 pins its own dependency versions, so it is never imported in the
+hedonic process.  This worker is intentionally standalone and runs in the
+locked environment that ``hedonic setup`` prepares from the package's
+``workers/slpa_env`` project.
 
 Input is one JSON object on stdin::
 

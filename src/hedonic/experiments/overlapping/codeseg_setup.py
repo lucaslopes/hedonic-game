@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from hedonic.experiments import resources
-from hedonic.experiments.config import NETWORKS_DIR, expand_path
+from hedonic.experiments.config import NETWORKS_DIR, codeseg_cache_dir, expand_path
 from hedonic.experiments.overlapping.cdlib_env import (
     SLPA_DIRECT_PINS,
     environment_root,
@@ -62,25 +62,12 @@ from hedonic.experiments.overlapping.snap import (
 SETUP_SCHEMA_VERSION = 1
 # Parallel compile jobs of a native build (HEDONIC_BUILD_JOBS overrides).
 BUILD_JOBS = max(1, int(os.environ.get("HEDONIC_BUILD_JOBS") or min(6, os.cpu_count() or 1)))
-DEFAULT_CACHE_DIR = expand_path(
-    os.environ.get("HEDONIC_CODESEG_CACHE", "~/.cache/hedonic/codeseg")
-)
-
-
 def default_cache_dir() -> Path:
-    """The runtime cache, read when it is needed: ``HEDONIC_CODESEG_CACHE``, else ``codeseg/`` under the user config's
-    ``cache_dir`` (``hedonic config set cache_dir DIR``), else ``~/.cache/hedonic/codeseg``. ``hedonic run exp`` uses
+    """The runtime cache (:func:`hedonic.experiments.config.codeseg_cache_dir`): ``HEDONIC_CODESEG_CACHE``, else
+    ``codeseg/`` under the user config's ``cache_dir``, else ``~/.cache/hedonic/codeseg``. ``hedonic run exp`` uses
     the same folder, so what ``hedonic setup`` prepares is what the runs find."""
-    configured = os.environ.get("HEDONIC_CODESEG_CACHE")
-    if configured:
-        return expand_path(configured)
-    try:
-        from hedonic.experiments.overlapping import userconfig
+    return codeseg_cache_dir()
 
-        base = userconfig.defaults().get("cache_dir")
-    except Exception:  # noqa: BLE001 - an unreadable user config is reported by the commands that read it
-        base = None
-    return expand_path(base or "~/.cache/hedonic") / "codeseg"
 
 SNAP_DATASETS: tuple[str, ...] = (
     "amazon",

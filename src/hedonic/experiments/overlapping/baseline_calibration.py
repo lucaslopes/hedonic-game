@@ -63,6 +63,8 @@ from typing import Any, Callable, Sequence
 
 import igraph as ig
 
+from hedonic.experiments.config import codeseg_cache_dir
+
 PROTOCOL = "baseline-calibration-v1"
 CRITERION = "heldout-pair-loglik-v1"
 HOLDOUT_FRACTION = 0.2
@@ -956,7 +958,7 @@ def runtime_parameters(manifest_path: str | os.PathLike | None = None) -> dict[s
     """Binaries and the NcGame command, from the environment and the setup manifest (as the benchmark runner reads them)."""
     manifest: dict[str, Any] = {}
     default = Path(os.environ.get("HEDONIC_CODESEG_MANIFEST")
-                   or Path(os.environ.get("HEDONIC_CODESEG_CACHE") or "~/.cache/hedonic/codeseg") / "setup_manifest.json"
+                   or codeseg_cache_dir() / "setup_manifest.json"
                    ).expanduser()
     path = Path(manifest_path).expanduser() if manifest_path else default
     if path.is_file():

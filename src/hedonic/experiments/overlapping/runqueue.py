@@ -463,7 +463,7 @@ def _benchmark_state(run: list[str]) -> tuple[str, str]:
     cfg.output_dir = str(folder)
     progress = _read(folder / "progress.json") or {}
     unavailable = {method: "" for method in progress.get("unavailable") or {}}  # methods this machine cannot run
-    binary = qs.codeseg_binary(qs.expand_path(cfg.cache_dir) / "codeseg") if "codeseg" in cfg.methods else None
+    binary = qs.codeseg_binary(qs.codeseg_tools(cfg)) if "codeseg" in cfg.methods else None
     if binary is not None and not binary.is_file():
         binary = None
     units = qs.build_plan(cfg, unavailable)

@@ -67,7 +67,7 @@ class TestReceiptAndFailClosed(unittest.TestCase):
         self.assertEqual(receipt["direct_pins"], dict(ce.SLPA_DIRECT_PINS))
         self.assertIsNone(receipt["files"]["project"]["sha256"])
         self.assertTrue(receipt["files"]["worker"]["sha256"])  # the worker always ships
-        with self.assertRaisesRegex(ce.MethodUnavailable, "not ready.*codeseg-setup"):
+        with self.assertRaisesRegex(ce.MethodUnavailable, "not ready.*hedonic setup"):
             ce.run_worker("cdlib_worker.py", {"method": "angel"}, receipt=receipt)
         link = ce.link_clustering_environment_receipt()
         self.assertFalse(link["ready"])

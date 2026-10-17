@@ -44,7 +44,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from hedonic.experiments.config import RUNS_ROOT, expand_path
+from hedonic.experiments.config import RUNS_ROOT, codeseg_cache_dir, expand_path
 from hedonic.experiments.overlapping import snap, tui
 from hedonic.experiments.overlapping.tui import style
 
@@ -88,7 +88,7 @@ class Method:
     seconds: float      # Stage-3 detection time on full DBLP (M1 Max) — ETA basis
     f1: float           # Stage-3 score on full DBLP (hint only)
     onmi: float
-    setup: str | None = None      # codeseg-setup method that provides the runtime
+    setup: str | None = None      # `hedonic setup --methods` name that provides the runtime
     threads: bool = False         # accepts a "threads" parameter
     scaled: tuple = ()            # community-count parameters scaled with graph size
 
@@ -713,7 +713,7 @@ def ensure_codeseg(cache: Path, say) -> tuple[Path | None, str | None]:
 
 
 def ensure_runtimes(methods: list[str], cache: Path, say) -> dict[str, str]:
-    """Prepare external runtimes through codeseg-setup; return {method: reason} for unavailable ones."""
+    """Prepare external runtimes through `hedonic setup`; return {method: reason} for unavailable ones."""
     from hedonic.experiments.overlapping import codeseg_setup
 
     manifest_path = cache / "setup_manifest.json"
@@ -845,13 +845,19 @@ class Progress:
             self._out.flush()
 
 
+def codeseg_tools(cfg: Config) -> Path:
+    """The external methods' folder, as ``hedonic setup`` resolves it (``config.codeseg_cache_dir``): a cache_dir set
+    on this run (``--cache-dir`` or a config file) gives ``cache_dir/codeseg``; otherwise ``HEDONIC_CODESEG_CACHE``,
+    else the user config's ``cache_dir/codeseg``, else ``~/.cache/hedonic/codeseg``."""
+    from hedonic.experiments.overlapping import userconfig
+
+    inherited = {Config().cache_dir, userconfig.defaults().get("cache_dir")}
+    return codeseg_cache_dir(None if cfg.cache_dir in inherited else cfg.cache_dir)
+
+
 def prepare(cfg: Config, say) -> tuple[Path | None, dict[str, str]]:
     """Provision runtimes; return (CoDeSEG binary or None, {method: unavailable reason})."""
-    configured = os.environ.get("HEDONIC_CODESEG_CACHE")
-    # An explicit HEDONIC_CODESEG_CACHE (as `hedonic setup` honours it) wins over the default cache_dir, never over a
-    # cache_dir that a flag or the user config chose.
-    tools = (expand_path(configured) if configured and cfg.cache_dir == Config().cache_dir
-             else expand_path(cfg.cache_dir) / "codeseg")
+    tools = codeseg_tools(cfg)
     os.environ["HEDONIC_CODESEG_CACHE"] = str(tools)
     from hedonic.experiments.overlapping import extra_methods
 
@@ -889,7 +895,7 @@ def scan_command(cfg: Config, name: str | None) -> int:
     folder = expand_path(cfg.output_dir)
     cfg.output_dir = str(folder if str(cfg.output_dir).endswith(name) else folder / name)
     plan = build_plan(cfg, {})
-    binary = codeseg_binary(expand_path(cfg.cache_dir) / "codeseg") if "codeseg" in cfg.methods else None
+    binary = codeseg_binary(codeseg_tools(cfg)) if "codeseg" in cfg.methods else None
     if binary is not None and not binary.is_file():
         binary = None
     stage = None
@@ -1374,7 +1380,7 @@ def main(argv: list[str] | None = None) -> int:
         network_root = args.network_root or userconfig.defaults().get("network_root")
         print(info.render_networks(info.network_status(cache, network_root, False), False))
         print()
-        print(info.render_methods(info.method_status(cache)))
+        print(info.render_methods(info.method_status(codeseg_cache_dir(args.cache_dir))))
         return 0
     if args.list_configs:
         from hedonic.experiments.overlapping import userconfig
