@@ -114,7 +114,12 @@ python -m pytest
 `.github/workflows/wheels.yml` runs the C tests (GCC, Clang, MSVC) and builds
 and tests the wheels on Linux, macOS and Windows; every wheel job also runs
 the C tests and `tools/native_tests.py` (HIG_PINNED=1, no skips), and
-publishing needs every job. A `v*` tag publishes them to PyPI.
+publishing needs every job. Branch pushes only build and test; a tag publishes,
+and sets the version (`tools/release_version.py`; `pyproject.toml` holds the
+release): `v2.0.0.devN` goes to TestPyPI, `v2.0.0rcN` (a pre-release) and
+`v2.0.0` to PyPI, all by trusted publishing (environments `testpypi`, `pypi`).
+Try a release as `.devN`, then `rcN`, and tag the release on the commit of the
+last good candidate.
 
 ## Web explainer (`web/`)
 
