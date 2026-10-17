@@ -39,3 +39,5 @@
 #include "cover/start.c"
 #include "cover/cover.c"
 #include "check/check.c"
+
+#include "check/audit.c"

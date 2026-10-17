@@ -106,6 +106,12 @@ static PyMethodDef core_methods[] = {
       METH_VARARGS | METH_KEYWORDS,
       "_verify_cover(n, edges, memberships, max_memberships, ...): the same for a cover\n"
       "(sorted rows of distinct labels). For tests." },
+    { "_audit_prepare", (PyCFunction) (void (*)(void)) py_audit_prepare,
+      METH_VARARGS | METH_KEYWORDS, "Fixed-cover audit prepare (private binding)." },
+    { "_audit_intervals", (PyCFunction) (void (*)(void)) py_audit_intervals,
+      METH_VARARGS | METH_KEYWORDS, "Fixed-cover audit intervals (private binding)." },
+    { "_audit_regrets", (PyCFunction) (void (*)(void)) py_audit_regrets,
+      METH_VARARGS | METH_KEYWORDS, "Fixed-cover audit regrets (private binding)." },
     { NULL, NULL, 0, NULL }
 };
 

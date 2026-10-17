@@ -50,6 +50,11 @@
 #define hig_cover_traced HIG_VARIANT(cover_traced)
 #define hig_verify_partition HIG_VARIANT(verify_partition)
 #define hig_verify_cover HIG_VARIANT(verify_cover)
+#define hig_audit_prepare HIG_VARIANT(audit_prepare)
+#define hig_audit_free HIG_VARIANT(audit_free)
+#define hig_audit_intervals HIG_VARIANT(audit_intervals)
+#define hig_audit_intervals_free HIG_VARIANT(audit_intervals_free)
+#define hig_audit_regrets HIG_VARIANT(audit_regrets)
 #endif
 
 #include "hedonic_core.h"

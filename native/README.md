@@ -25,7 +25,7 @@ core/cover/              the overlapping engine (unit-l2 memberships)
   visit.c                candidates, bounds, the best set; the run, the slack
   start.c                the start and the setup
   cover.c                the result, the quality, the entry points
-core/check/              tests only
+core/check/              fixed-cover audit and independent test verifier
   check.c                the independent verifier
   hedonic_check.h        traced runs and the verifier (not the API)
 unity.c                  the core as one translation unit (the extension's build)
@@ -439,3 +439,91 @@ C portability) are released under the same MIT licence, which is compatible
 with the GPL. The binding's `binding/random.c` implements the MT19937 step
 (Matsumoto and Nishimura) as CPython's `Modules/_randommodule.c` does, to
 reproduce `random.Random` draws.
+
+## Fixed-cover stability audit
+
+`hig_audit_prepare`, `hig_audit_intervals` and `hig_audit_regrets` in
+`core/check/audit.c` are public APIs declared in `include/hedonic_core.h`.
+They audit an existing labelled cover, without changing it or running the
+detector. In Python, use `Game.stable_intervals` and `Game.regrets`; the
+module `hedonic.stability` supplies grid fractions, linear/log measures and
+the Nash-window intersection. An interval is closed and lies in [0, 1].
+
+The audit follows the overlapping paper's numerical definition of stability:
+`best_utility - current_utility <= atol + rtol * max(1, abs(current_utility))`,
+with defaults `atol=1e-10`, `rtol=1e-9`. This heuristic tolerance is independent
+of the detector's rigorous rounding bounds and `equilibrium_slack`. The word
+"exact" here refers to resolving every affine cell instead of sampling a
+grid; it does not assert an exact-arithmetic equilibrium certificate.
+
+Preparation copies and sorts each row, removes repeated labels, computes
+`1.0 / sqrt(row_length)`, sums masses in vertex order, and orders labels by
+(mass, label). C labels must be contiguous non-negative integers; the Python
+facade also renumbers gaps in numeric label order, as detector starts do.
+Rows must be non-empty. Duplicate community bodies remain distinct labels.
+Callers must explicitly complete uncovered vertices, for example with private
+labels. The cap defaults to the largest row and may exceed it, but cannot be
+smaller. Only unit node weights are supported: the C API rejects non-unit
+`graph.node_weights`. Python's audit has no node-weight parameter.
+Undirected loopless graphs, parallel edges, isolated vertices, and zero edge
+weights are supported. Python defaults to an existing `weight` edge attribute,
+then to unit weights. Audits accept finite non-negative edge weights only.
+
+The prepared state is immutable and owns its adjacency, rows, intensities,
+masses and lightest-label order; it borrows no input memory. Release it with
+`hig_audit_free`. A query selects a range through `hig_audit_selection_t` or
+an ordered array of vertex indices (repeats allowed). Interval output is CSR
+(`offset` plus `hig_interval_t` pairs), released with
+`hig_audit_intervals_free`. Regret and tolerance outputs are caller-owned,
+row-major arrays with one row per selected vertex. Initialize options with
+`HIG_AUDIT_OPTIONS_INIT`; `prune=0` selects the paper's larger candidate
+superset for cross-checks. Prepared state can be shared by concurrent readers
+or inherited by forked processes; each query owns its scratch space.
+
+There is no global (vertex, label) support table. At each visit, the adjacency
+is traversed in edge-id order, skipping zero-weight edges. Each contribution
+is `weight * neighbor_intensity`, added to a sparse accumulator. For loopless
+graphs this is exactly the paper's contribution order: an edge contributes in
+only one direction to any given vertex. Own labels, labels with positive
+support, the lightest remaining label, and optionally a fresh zero-score
+label are sorted by numeric label (fresh first). A private label held alone
+has zero crowding through the ordinary mass subtraction.
+
+**Arithmetic contract.** Masses, supports, cell prefix coefficients, and grid
+score prefixes use sequential binary64 additions. Utilities divide by
+`sqrt(k)`; they never multiply by its reciprocal. No audit expression uses
+FMA, and contraction remains disabled. The supplied paper reference runs on
+CPython 3.12, whose built-in `sum` uses compensation: *only* `vertex_affine`'s
+`cur_a` and `cur_b` use that sum. The C audit reproduces those two compensated
+sums explicitly, independently of the host Python version. This is a narrow
+exception to sequential summation, needed for bit-identical interval endpoints
+with that reference. A Python 3.11 execution of the paper code can therefore
+produce different endpoint bits. Grid regrets still sum evaluated scores
+sequentially, as the numba kernel does.
+
+Intervals enumerate all pairwise score crossings and current-utility
+crossings of +1 and -1, sort the cuts, and visit every nonempty cell. Score
+ties use ascending candidate index. Each prefix supplies the reference's
+linear inequality, with its original operation order; surviving pieces are
+merged with the absolute gap `1e-15`. Grid regrets evaluate scores first,
+then take the best prefix, and clamp differences at most `1e-15` to zero.
+The two paths may disagree within rounding of an interval endpoint.
+
+With n vertices, m edges, I membership incidences and K occupied labels,
+preparation uses O(n + m + I) storage. Query scratch uses O(K + B_max), where
+B_max is the largest visited vertex's breakpoint count (at most quadratic in
+its candidate count), plus the returned output. Accumulators are cleared only
+at touched labels. Support work for vertex v is the sum of its neighbors' row
+lengths. For L candidates and B cuts, generating cuts costs O(L²), sorting
+costs O(B log B), and cells scan L scores and at most cap prefix constraints;
+carried insertion order additionally costs the number of score-order
+inversions. The usual cell cost is cubic in L. Counts and offsets are 64-bit,
+allocation products are checked, and out-of-range input or arithmetic that
+could overflow returns a core error. Signal callbacks run throughout queries,
+including breakpoint generation and sorting; the binding uses the detector's
+`PyErr_CheckSignals` callback.
+
+`tests/test_audit.c` checks the C API under all three native test targets.
+`tests/test_stability_audit.py` compares interval tuples and regret/tolerance
+bits with an independent Python/NumPy port in `tests/_audit_reference.py`,
+and checks the labelled detector equilibrium without changing detector pins.
