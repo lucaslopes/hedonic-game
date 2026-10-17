@@ -17,6 +17,7 @@ export function Hero() {
     ['#metagraph', t.chapters.metagraph],
     ['#walk', t.chapters.walk],
     ['#explore', t.chapters.explore],
+    ['#tool', t.chapters.tool],
   ];
   return (
     <section id="top" className={styles.hero} aria-labelledby="hero-title">

@@ -1,0 +1,252 @@
+"""The public surface of hedonic 2.0.
+
+``Game.community_hedonic`` always runs local moving until no vertex can
+improve, so it takes no iteration budget and no other detector's options;
+seeded calls replay; importing the package runs no check on igraph's version;
+results carry a fixed provenance record; ``hedonic.metrics`` scores results.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import subprocess
+import sys
+import textwrap
+import unittest
+
+import igraph as ig
+
+import hedonic
+from hedonic import Game
+
+REMOVED_KEYWORDS = {
+    "n_iterations": -1,
+    "local_move_only": True,
+    "beta": 0.01,
+    "debug_trace": True,
+    "phase_policy": "direct",
+}
+
+PROVENANCE_KEYS = {
+    "versions", "resolution", "count_constraint", "max_total_communities", "n_communities", "max_communities",
+    "max_communities_effect", "initialization", "occupied_communities",
+    "allow_isolation", "edge_weighted", "node_weighted", "total_edge_weight", "seed",
+    "rng", "equilibrium_notion", "equilibrium_slack",
+}
+
+
+def _karate() -> Game:
+    return Game(ig.Graph.Famous("Zachary"))
+
+
+def _two_cliques() -> Game:
+    """Two 5-cliques joined by one edge; the cliques are the reference."""
+    graph = ig.Graph.Full(5) + ig.Graph.Full(5)
+    graph.add_edge(0, 5)
+    return Game(graph)
+
+
+TWO_CLIQUES_TRUTH = [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]]
+
+
+class TestRemovedKeywords(unittest.TestCase):
+    def test_each_removed_keyword_raises_type_error(self):
+        for name, value in REMOVED_KEYWORDS.items():
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(TypeError, name):
+                    _karate().community_hedonic(**{name: value})
+
+    def test_removed_names_are_gone(self):
+        game_module = sys.modules["hedonic.Game"]
+        for name in ("HEDONIC_ALGORITHM_IDENTITY", "HISTORICAL_ALGORITHM_IDENTITIES",
+                     "seeded_igraph_rng"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(game_module, name))
+                self.assertFalse(hasattr(hedonic, name))
+        self.assertEqual(hedonic.__all__, ["Game"])
+
+    def test_results_carry_no_removed_attributes(self):
+        result = _karate().community_hedonic(seed=0)
+        for name in ("_hedonic_raw_memberships", "_hedonic_algorithm_identity",
+                     "_hedonic_token_preflight", "_hedonic_disjoint_stage"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(result, name))
+        self.assertNotIn("debug_trace", getattr(result, "_params", None) or {})
+
+
+class TestSeedReplay(unittest.TestCase):
+    def test_same_seed_same_result(self):
+        cases = [
+            dict(),
+            dict(resolution=0.05, allow_isolation=True),
+            dict(max_communities=4),
+            dict(n_communities=3, resolution=0.05),
+        ]
+        for kwargs in cases:
+            for seed in (0, 1, 12345):
+                with self.subTest(seed=seed, **{k: v for k, v in kwargs.items()
+                                                if k != "node_weights"}):
+                    a = _karate().community_hedonic(initial_membership=None, seed=seed,
+                                                    **kwargs)
+                    b = _karate().community_hedonic(initial_membership=None, seed=seed,
+                                                    **kwargs)
+                    self.assertEqual(a.membership, b.membership)
+                    self.assertEqual(a.quality, b.quality)
+
+    def test_different_seeds_can_differ(self):
+        results = {
+            tuple(_karate().community_hedonic(initial_membership=None, seed=s,
+                                              resolution=0.05).membership)
+            for s in range(10)
+        }
+        self.assertGreater(len(results), 1)
+
+
+class TestNoVersionCheckOnImport(unittest.TestCase):
+    def test_there_is_no_runtime_pin_module(self):
+        self.assertIsNone(importlib.util.find_spec("hedonic._runtime_pin"))
+        self.assertFalse(hasattr(hedonic, "_runtime_pin"))
+
+    def test_import_succeeds_whatever_igraph_reports(self):
+        # An unexpected igraph version, and the variable that used to pin
+        # one, must both leave the import alone.
+        script = textwrap.dedent(
+            """
+            import igraph, igraph._igraph as core
+            igraph.__version__ = "0.0.1"
+            core.__igraph_version__ = "0.0.1"
+            import hedonic
+            from hedonic import Game
+            g = Game(igraph.Graph.Famous("Zachary"))
+            print(len(set(g.community_hedonic(seed=0).membership)))
+            """
+        )
+        env = {"HEDONIC_REQUIRE_IGRAPH_C": "9.9.9-not-a-version", "PATH": ""}
+        out = subprocess.run([sys.executable, "-c", script], check=True,
+                             capture_output=True, text=True, env=env)
+        self.assertGreater(int(out.stdout), 1)
+
+
+class TestProvenance(unittest.TestCase):
+    def test_keys(self):
+        for kwargs in (dict(), dict(n_communities=3)):
+            with self.subTest(**kwargs):
+                result = _karate().community_hedonic(**kwargs)
+                provenance = result._hedonic_provenance
+                self.assertEqual(set(provenance), PROVENANCE_KEYS)
+                self.assertEqual(set(provenance["versions"]),
+                                 {"hedonic", "hedonic_core", "python_igraph"})
+
+    def test_values_follow_the_call(self):
+        game = _karate()
+        game.vs["w"] = [1.0] * 34
+        partition = game.community_hedonic(
+            initial_membership=None, resolution=0.1, seed=4,
+            allow_isolation=True, node_weights="w", max_total_communities=8,
+        )
+        provenance = partition._hedonic_provenance
+        self.assertEqual(provenance["count_constraint"], "at_most")
+        self.assertEqual(provenance["max_total_communities"], 8)
+        self.assertIsNone(provenance["n_communities"])
+        self.assertIsNone(provenance["max_communities"])
+        self.assertEqual(provenance["initialization"], "default")
+        self.assertTrue(provenance["allow_isolation"])
+        self.assertFalse(provenance["edge_weighted"])
+        self.assertTrue(provenance["node_weighted"])
+        self.assertEqual(provenance["total_edge_weight"], 78.0)
+        self.assertEqual(provenance["seed"], 4)
+        self.assertEqual(provenance["rng"], "seeded")
+        self.assertEqual(provenance["equilibrium_notion"], "count_constrained")
+        self.assertEqual(provenance["occupied_communities"], len(set(partition.membership)))
+        self.assertEqual(partition._hedonic_native_quality, partition.quality)
+
+
+class TestMetrics(unittest.TestCase):
+    def test_detector_recovers_two_cliques(self):
+        game = _two_cliques()
+        part = game.community_hedonic(initial_membership=None, seed=0)
+        self.assertEqual(part.membership, [0] * 5 + [1] * 5)
+        for method in ("f1", "jaccard", "omega", "one_to_one_f1"):
+            with self.subTest(method=method):
+                self.assertEqual(game.evaluate_against(TWO_CLIQUES_TRUTH, method), 1.0)
+        # A flat vector and an igraph clustering are accepted as the reference.
+        self.assertEqual(game.evaluate_against([0] * 5 + [1] * 5, "f1"), 1.0)
+        self.assertEqual(game.evaluate_against(part, "one_to_one_f1"), 1.0)
+
+    def test_evaluate_cover_perfect_and_singleton(self):
+        from hedonic.metrics import evaluate_cover
+
+        perfect = evaluate_cover(TWO_CLIQUES_TRUTH, TWO_CLIQUES_TRUTH, 10)
+        for key in ("f1", "jaccard", "omega", "matching_f1"):
+            with self.subTest(key=key):
+                self.assertEqual(perfect[key], 1.0)
+        # Each singleton's best match is its clique (F1 = 2*1*0.2/1.2 = 1/3),
+        # and each clique's best match is one of its singletons (also 1/3).
+        singletons = evaluate_cover([[v] for v in range(10)], TWO_CLIQUES_TRUTH, 10)
+        self.assertAlmostEqual(singletons["f1"], 1 / 3)
+        self.assertAlmostEqual(singletons["jaccard"], 1 / 5)
+        self.assertLess(singletons["matching_f1"], 1.0)
+
+    def test_partition_against_an_overlapping_reference(self):
+        game = _two_cliques()
+        truth = [[0, 1, 2, 3, 4, 5], [5, 6, 7, 8, 9]]
+        game.memberships = [0] * 5 + [1] * 5
+        self.assertLess(game.evaluate_against(truth, "f1"), 1.0)
+
+    def test_metrics_import_does_not_load_scipy(self):
+        script = "import sys, hedonic.metrics; print('scipy' in sys.modules)"
+        out = subprocess.run([sys.executable, "-c", script], check=True,
+                             capture_output=True, text=True)
+        self.assertEqual(out.stdout.strip(), "False")
+
+
+class TestMaxCommunitiesStart(unittest.TestCase):
+    """``max_communities`` draws a random start; a draw may miss labels."""
+
+    N, K = 11, 6
+
+    def _starts(self, seed):
+        from unittest.mock import patch
+
+        from hedonic import _native
+
+        seen = {}
+        real = _native.community_hedonic
+
+        def spy(game, **kwargs):
+            seen["start"] = list(kwargs["initial_membership"])
+            return real(game, **kwargs)
+
+        with patch.object(_native, "community_hedonic", spy):
+            result = Game.Ring(self.N).community_hedonic(
+                initial_membership=None, max_communities=self.K, seed=seed
+            )
+        return seen["start"], result
+
+    def _draws(self):
+        from hedonic.utils import sample_uniform_ints
+
+        return {s: sample_uniform_ints(self.N, self.K - 1, s).tolist() for s in range(200)}
+
+    def test_a_draw_that_misses_labels_is_renumbered_in_order(self):
+        gappy = {s: d for s, d in self._draws().items() if len(set(d)) < self.K}
+        self.assertTrue(gappy)
+        for seed, drawn in list(gappy.items())[:10]:
+            start, result = self._starts(seed)
+            labels = sorted(set(drawn))
+            self.assertEqual(start, [labels.index(label) for label in drawn])
+            self.assertEqual(
+                result._hedonic_provenance["max_communities_effect"],
+                "random disjoint start",
+            )
+
+    def test_a_complete_draw_is_used_as_drawn(self):
+        complete = {s: d for s, d in self._draws().items() if len(set(d)) == self.K}
+        self.assertTrue(complete)
+        for seed, drawn in list(complete.items())[:10]:
+            start, _ = self._starts(seed)
+            self.assertEqual(start, drawn)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -22,7 +22,7 @@ export function SiteFooter() {
           <a href={`${base}#dilemma`}>{t.header.story}</a>
           <a href={`${base}#explore`}>{t.header.explore}</a>
           <a href={`${base}docs/`}>{t.header.docs}</a>
-          <a href={`${base}docs/#references`}>{t.footer.references}</a>
+          <a href={`${base}docs/#references`}>{t.tool.cards.references.title}</a>
           <a href={site.repositoryUrl}>GitHub</a>
           <a href="https://arxiv.org/abs/2509.03834">arXiv:2509.03834</a>
         </nav>

@@ -8,6 +8,12 @@
  * Extensions:
  *   $…$ and $$…$$          KaTeX math (fails the build on invalid TeX)
  *   [@key]                  citation linking to the reference cards
+ *   ```api Game.member```   generated API block from src/generated/api.json
+ *   ```api function```      the same for a module function (hedonic.utils, hedonic.metrics)
+ *   ```api-members```       table of the public `Game` members
+ *   ```api-functions mod``` table of the public functions of a module
+ *   ```api-constants [mod]``` public module constants (optionally of one module)
+ *   ```package-info```      version, Python and dependency requirements
  *   ```references```        citation cards from src/generated/references.json
  *   repo:path#L1            link to a file in the GitHub repository
  *   story:#anchor           link to a section of the explainer page
@@ -28,9 +34,50 @@ const RESOLVED_ID = `\0${DOCS_MODULE_ID}`;
 // Generated data shapes (subset of what the generators write)
 // ---------------------------------------------------------------------------
 
-export interface SiteData {
-  repositoryUrl: string;
-  sourceRef: string;
+interface ApiParameter {
+  name: string;
+  kind: string;
+  annotation: string | null;
+  default: string | null;
+  description?: string;
+  docType?: string;
+}
+
+interface ApiDoc {
+  summary: string;
+  description: string;
+  sections: Record<string, string>;
+}
+
+interface ApiMember {
+  kind: 'method' | 'property' | 'alias' | 'function';
+  name: string;
+  qualname: string;
+  signature?: string;
+  parameters?: ApiParameter[];
+  returns?: string | null;
+  doc?: ApiDoc | null;
+  aliasOf?: string;
+  settable?: boolean;
+  path: string;
+  line: number;
+  endLine: number;
+  module?: string;
+}
+
+export interface ApiData {
+  repository: { url: string; ref: string };
+  package: {
+    version: string | null;
+    requiresPython: string | null;
+    dependencies: string[];
+    optionalDependencies: Record<string, string[]>;
+    graphDependency: string | null;
+  };
+  exports: string[];
+  classes: { name: string; qualname: string; bases: string[]; doc: ApiDoc | null; path: string; line: number; endLine: number; members: ApiMember[] }[];
+  functions: ApiMember[];
+  constants: { name: string; module: string; value: unknown; path: string; line: number }[];
 }
 
 interface Reference {
@@ -72,6 +119,14 @@ export function slugify(text: string): string {
 
 function renderMath(tex: string, displayMode: boolean): string {
   return katex.renderToString(tex, { displayMode, throwOnError: true, output: 'htmlAndMathml', strict: 'ignore' });
+}
+
+/** Convert the reStructuredText idioms used in the Python docstrings to Markdown. */
+export function rstToMarkdown(text: string): string {
+  return text
+    .replace(/:(?:meth|func|class|mod|attr|data):`~?([^`]+)`/g, '`$1`')
+    .replace(/``([^`]+)``/g, '`$1`')
+    .replace(/::\s*$/gm, ':');
 }
 
 interface FrontMatter {
@@ -164,10 +219,152 @@ function mathPlugin(md: Markdown): void {
 // ---------------------------------------------------------------------------
 
 interface RenderContext {
-  site: SiteData;
+  api: ApiData;
   references: ReferencesData;
   base: string;
   md: Markdown;
+}
+
+function sourceHref(ctx: RenderContext, path: string, line?: number, endLine?: number): string {
+  const anchor = line ? `#L${line}${endLine && endLine !== line ? `-L${endLine}` : ''}` : '';
+  return `${ctx.api.repository.url}/blob/${ctx.api.repository.ref}/${path}${anchor}`;
+}
+
+function sourceLink(ctx: RenderContext, path: string, line?: number, endLine?: number): string {
+  return `<a class="api-source" href="${escapeHtml(sourceHref(ctx, path, line, endLine))}">${escapeHtml(path)}${line ? `:${line}` : ''}</a>`;
+}
+
+function findMember(ctx: RenderContext, qualname: string): ApiMember {
+  const [owner, name] = qualname.includes('.') ? qualname.split('.') : [null, qualname];
+  if (owner) {
+    const cls = ctx.api.classes.find((c) => c.name === owner);
+    const member = cls?.members.find((m) => m.name === name);
+    if (member) return member;
+  } else {
+    const fn = ctx.api.functions.find((f) => f.name === name);
+    if (fn) return { ...fn, kind: 'function' };
+  }
+  throw new Error(`docs: unknown API member "${qualname}" (run npm run docs:generate?)`);
+}
+
+function renderSignature(member: ApiMember, owner: string | null): string {
+  const params = member.parameters ?? [];
+  const call = owner ? `${owner}.${member.name}` : member.name;
+  if (member.kind === 'property') {
+    return `${call}: ${member.returns ?? 'object'}`;
+  }
+  const parts: string[] = [];
+  let starEmitted = false;
+  for (const p of params) {
+    let text = p.name;
+    if (p.kind === 'var-positional') {
+      text = `*${text}`;
+      starEmitted = true;
+    } else if (p.kind === 'var-keyword') {
+      text = `**${text}`;
+    } else if (p.kind === 'keyword-only' && !starEmitted) {
+      parts.push('*');
+      starEmitted = true;
+    }
+    if (p.annotation) text += `: ${p.annotation}`;
+    if (p.default !== null) text += p.annotation ? ` = ${p.default}` : `=${p.default}`;
+    parts.push(text);
+  }
+  const returns = member.returns ? ` -> ${member.returns}` : '';
+  const oneLine = `${call}(${parts.join(', ')})${returns}`;
+  if (oneLine.length <= 72) return oneLine;
+  return `${call}(\n${parts.map((part) => `    ${part},`).join('\n')}\n)${returns}`;
+}
+
+function renderApiBlock(ctx: RenderContext, qualname: string): string {
+  const member = findMember(ctx, qualname);
+  const owner = qualname.includes('.') ? qualname.split('.')[0] : null;
+  const id = `api-${slugify(qualname)}`;
+  const shown = member.kind === 'function' && member.module ? `${member.module}.${member.name}` : qualname;
+  if (member.kind === 'alias') {
+    return `<section class="api-block" id="${id}"><div class="api-head"><code class="api-name">${escapeHtml(qualname)}</code><span class="api-kind">alias</span>${sourceLink(ctx, member.path, member.line)}</div><p>Alias of <a href="#api-${slugify(`${owner}.${member.aliasOf}`)}"><code>${escapeHtml(`${owner}.${member.aliasOf}`)}</code></a>; both names share one implementation.</p></section>\n`;
+  }
+  const doc = member.doc;
+  const kindLabel = member.kind === 'property' ? (member.settable ? 'property · settable' : 'property') : member.kind;
+  let html = `<section class="api-block" id="${id}">`;
+  html += `<div class="api-head"><code class="api-name">${escapeHtml(shown)}</code><span class="api-kind">${escapeHtml(kindLabel)}</span>${sourceLink(ctx, member.path, member.line, member.endLine)}</div>`;
+  html += `<pre class="api-signature"><code class="language-python">${escapeHtml(renderSignature(member, owner))}</code></pre>`;
+  if (doc?.summary) html += ctx.md.render(rstToMarkdown(doc.summary));
+  if (doc?.description) html += `<div class="api-description">${ctx.md.render(rstToMarkdown(doc.description))}</div>`;
+  const params = (member.parameters ?? []).filter((p) => !['args', 'kwargs'].includes(p.name) || p.description);
+  if (params.length && member.kind !== 'property') {
+    html += '<div class="table-scroll"><table class="api-params"><thead><tr><th scope="col">Parameter</th><th scope="col">Type</th><th scope="col">Default</th><th scope="col">Description</th></tr></thead><tbody>';
+    for (const p of params) {
+      const type = p.annotation ?? p.docType ?? '';
+      const prefix = p.kind === 'var-positional' ? '*' : p.kind === 'var-keyword' ? '**' : '';
+      const defaultCell =
+        p.default === null
+          ? '<span class="api-required">—</span>'
+          : p.default === '_UNSET'
+            ? '<span title="Omitted: reuse Game.memberships when valid">omitted</span>'
+            : `<code>${escapeHtml(p.default)}</code>`;
+      const description = p.description ? ctx.md.render(rstToMarkdown(p.description)) : '';
+      html += `<tr><th scope="row"><code>${prefix}${escapeHtml(p.name).replace(/_/g, '_<wbr>')}</code>${p.kind === 'keyword-only' ? ' <span class="api-badge">keyword</span>' : ''}</th><td>${type ? `<code>${escapeHtml(type)}</code>` : ''}</td><td>${defaultCell}</td><td>${description}</td></tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+  const returns = doc?.sections?.Returns;
+  if (returns) html += `<div class="api-returns"><h4>Returns</h4>${ctx.md.render(rstToMarkdown(returns))}</div>`;
+  const notes = doc?.sections?.Notes;
+  if (notes) html += `<div class="api-notes"><h4>Notes</h4>${ctx.md.render(rstToMarkdown(notes))}</div>`;
+  html += '</section>\n';
+  return html;
+}
+
+function renderApiMembers(ctx: RenderContext): string {
+  const game = ctx.api.classes.find((c) => c.name === 'Game');
+  if (!game) throw new Error('docs: Game class missing from api.json');
+  const rows = game.members
+    .map((m) => {
+      const summary = m.kind === 'alias' ? `Alias of <code>${escapeHtml(m.aliasOf ?? '')}</code>.` : ctx.md.renderInline(rstToMarkdown(m.doc?.summary ?? ''));
+      return `<tr><th scope="row"><a href="#api-${slugify(`Game.${m.name}`)}"><code>${escapeHtml(m.name)}</code></a></th><td>${escapeHtml(m.kind)}</td><td>${summary}</td></tr>`;
+    })
+    .join('');
+  return `<div class="table-scroll"><table class="api-members"><thead><tr><th scope="col">Member</th><th scope="col">Kind</th><th scope="col">Summary</th></tr></thead><tbody>${rows}</tbody></table></div>\n`;
+}
+
+function renderApiFunctions(ctx: RenderContext, module: string): string {
+  const functions = ctx.api.functions.filter((f) => f.module === module);
+  if (!functions.length) throw new Error(`docs: no public functions of "${module}" in api.json`);
+  const rows = functions
+    .map(
+      (f) =>
+        `<tr><th scope="row"><code>${escapeHtml(f.name).replace(/_/g, '_<wbr>')}</code></th><td>${ctx.md.renderInline(rstToMarkdown(f.doc?.summary ?? ''))}</td><td>${sourceLink(ctx, f.path, f.line, f.endLine)}</td></tr>`,
+    )
+    .join('');
+  return `<div class="table-scroll"><table class="api-members"><thead><tr><th scope="col">Function</th><th scope="col">Summary</th><th scope="col">Source</th></tr></thead><tbody>${rows}</tbody></table></div>\n`;
+}
+
+function renderConstants(ctx: RenderContext, module: string): string {
+  const constants = ctx.api.constants.filter((c) => !module || c.module === module);
+  if (!constants.length) throw new Error(`docs: no public constants${module ? ` of "${module}"` : ''} in api.json`);
+  const rows = constants
+    .map(
+      (c) =>
+        `<tr><th scope="row"><code>${escapeHtml(c.name)}</code></th><td><code>${escapeHtml(JSON.stringify(c.value))}</code></td><td>${sourceLink(ctx, c.path, c.line)}</td></tr>`,
+    )
+    .join('');
+  return `<div class="table-scroll"><table><thead><tr><th scope="col">Constant</th><th scope="col">Value</th><th scope="col">Source</th></tr></thead><tbody>${rows}</tbody></table></div>\n`;
+}
+
+function renderPackageInfo(ctx: RenderContext): string {
+  const pkg = ctx.api.package;
+  const rows: [string, string][] = [
+    ['Package version', pkg.version ?? 'unknown'],
+    ['Python', pkg.requiresPython ?? 'unknown'],
+    ['Dependencies', pkg.dependencies.join(', ') || 'none'],
+    ...Object.entries(pkg.optionalDependencies).map(([extra, deps]): [string, string] => [`Extra [${extra}]`, deps.join(', ')]),
+    ['Public exports', ctx.api.exports.join(', ')],
+    ['Source reference', ctx.api.repository.ref],
+  ];
+  return `<div class="table-scroll"><table><tbody>${rows
+    .map(([key, value]) => `<tr><th scope="row">${escapeHtml(key)}</th><td><code>${escapeHtml(value)}</code></td></tr>`)
+    .join('')}</tbody></table></div><p class="api-caption">Generated from <code>pyproject.toml</code> and <code>src/hedonic/__init__.py</code>.</p>\n`;
 }
 
 const REFERENCE_GROUPS: [string, string][] = [
@@ -251,7 +448,7 @@ function createMarkdown(ctx: Omit<RenderContext, 'md'>, slug: string, headings: 
     const href = String(token.attrGet('href') ?? '');
     if (href.startsWith('repo:')) {
       const [path, anchor] = href.slice(5).split('#');
-      token.attrSet('href', `${ctx.site.repositoryUrl}/blob/${ctx.site.sourceRef}/${path}${anchor ? `#${anchor}` : ''}`);
+      token.attrSet('href', `${ctx.api.repository.url}/blob/${ctx.api.repository.ref}/${path}${anchor ? `#${anchor}` : ''}`);
     } else if (href.startsWith('story:')) {
       token.attrSet('href', `${ctx.base}${href.slice(6)}`);
     } else if (href.startsWith('docs:')) {
@@ -267,8 +464,18 @@ function createMarkdown(ctx: Omit<RenderContext, 'md'>, slug: string, headings: 
   const defaultFence = md.renderer.rules.fence ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
   md.renderer.rules.fence = (tokens, idx, options, env, self) => {
     const token = tokens[idx];
-    const [kind] = token.info.trim().split(/\s+/);
+    const [kind, ...args] = token.info.trim().split(/\s+/);
     switch (kind) {
+      case 'api':
+        return renderApiBlock(full, args[0] ?? '');
+      case 'api-members':
+        return renderApiMembers(full);
+      case 'api-functions':
+        return renderApiFunctions(full, args[0] ?? '');
+      case 'api-constants':
+        return renderConstants(full, args[0] ?? '');
+      case 'package-info':
+        return renderPackageInfo(full);
       case 'references':
         return renderReferences(full);
       case 'math':
@@ -290,17 +497,17 @@ function resolveCitations(body: string, references: ReferencesData): string {
 
 export interface RenderInput {
   files: { path: string; source: string }[];
-  site: SiteData;
+  api: ApiData;
   references: ReferencesData;
   base: string;
 }
 
-export function renderDocs({ files, site, references, base }: RenderInput): DocsBundle {
+export function renderDocs({ files, api, references, base }: RenderInput): DocsBundle {
   const pages: DocPage[] = files.map(({ path, source }) => {
     const { data, body } = splitFrontMatter(source);
     const slug = data.slug ?? slugify(basename(path, '.md').replace(/^\d+-/, ''));
     const headings: DocHeading[] = [];
-    const md = createMarkdown({ site, references, base }, slug, headings);
+    const md = createMarkdown({ api, references, base }, slug, headings);
     const html = md.render(resolveCitations(body, references));
     return {
       slug,
@@ -321,13 +528,15 @@ export function renderDocs({ files, site, references, base }: RenderInput): Docs
   }
   return {
     pages,
-    repository: { url: site.repositoryUrl, ref: site.sourceRef },
+    repository: api.repository,
+    packageVersion: api.package.version,
+    graphDependency: api.package.graphDependency,
   };
 }
 
 export interface MarkdownDocsOptions {
   contentDir: string;
-  siteFile: string;
+  apiFile: string;
   referencesFile: string;
 }
 
@@ -340,15 +549,15 @@ export function loadDocs(options: MarkdownDocsOptions, base: string): DocsBundle
       const full = join(options.contentDir, name);
       return { path: relative(repoRoot, full).split(sep).join('/'), source: readFileSync(full, 'utf8') };
     });
-  const site = JSON.parse(readFileSync(options.siteFile, 'utf8')) as SiteData;
+  const api = JSON.parse(readFileSync(options.apiFile, 'utf8')) as ApiData;
   const references = JSON.parse(readFileSync(options.referencesFile, 'utf8')) as ReferencesData;
-  return renderDocs({ files, site, references, base });
+  return renderDocs({ files, api, references, base });
 }
 
 export function markdownDocs(options: MarkdownDocsOptions): Plugin {
   let base = '/';
   const watched = (file: string) =>
-    (file.startsWith(options.contentDir) && file.endsWith('.md')) || file === options.siteFile || file === options.referencesFile;
+    (file.startsWith(options.contentDir) && file.endsWith('.md')) || file === options.apiFile || file === options.referencesFile;
   return {
     name: 'hedonic-markdown-docs',
     configResolved(config) {
@@ -359,14 +568,14 @@ export function markdownDocs(options: MarkdownDocsOptions): Plugin {
     },
     load(id) {
       if (id !== RESOLVED_ID) return undefined;
-      this.addWatchFile(options.siteFile);
+      this.addWatchFile(options.apiFile);
       this.addWatchFile(options.referencesFile);
       const bundle = loadDocs(options, base);
       bundle.pages.forEach((page) => this.addWatchFile(resolve(options.contentDir, basename(page.sourcePath))));
       return `export default ${JSON.stringify(bundle)};`;
     },
     configureServer(server) {
-      server.watcher.add([options.contentDir, options.siteFile, options.referencesFile]);
+      server.watcher.add([options.contentDir, options.apiFile, options.referencesFile]);
       const refresh = (file: string) => {
         if (!watched(file)) return;
         const mod = server.moduleGraph.getModuleById(RESOLVED_ID);

@@ -42,3 +42,7 @@ The SRC abstract writes the CPM Hamiltonian over ordered pairs, $\mathcal{H}_{\t
 - **$\gamma = 1$.** Friends are worth nothing and every stranger pair costs one point: $\Phi^1 = -N_{\text{in}} \le 0$. Every partition whose communities are cliques reaches the maximum $0$, and the singleton partition is always one of them. In the example seven partitions tie, which is why the explainer says singleton-*like* partitions win.
 
 In between, $\gamma$ acts as a zoom knob: lower values merge denser groups into larger communities, higher values split them. Because the comparison only involves the communities being compared, CPM is *resolution-limit-free* [@traag2011cpm].
+
+## In the package
+
+`community_hedonic(resolution=None)` uses the graph density $2m / (n(n-1))$ as $\gamma$. Any finite value is accepted; the mathematical statements on this site are scoped to $0 \le \gamma \le 1$.

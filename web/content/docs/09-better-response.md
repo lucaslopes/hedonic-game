@@ -41,3 +41,7 @@ The walk restarts from its start whenever $\gamma$, the rule, the seed or the st
 | $\gamma = 1$ | seven partitions into cliques: {0,1,2}{3}, {0,1}{2}{3}, {0,2}{1}{3}, {0,3}{1,2}, {0}{1,2}{3}, {0,3}{1}{2}, {0}{1}{2}{3} |
 
 From the grand coalition at $\gamma = 1/2$ the walk takes a single step: vertex 3 has one friend and two strangers, $F = 1/3 < \gamma$, so it leaves. From the singleton partition it takes two steps, {0,1}{2}{3} then {0,1,2}{3}.
+
+## Relation to the package's detector
+
+`community_hedonic` runs the same dynamic on real graphs: it visits the vertices in a random order, moves each one to its best community, revisits the neighbours of every vertex that moved, and stops when no vertex can improve. Louvain and Leiden start from the same local-moving step [@blondel2008fast] [@traag2019leiden] and then aggregate; the package stops at the equilibrium, so its result is always an equilibrium of the game. The explainer's walk is a teaching model on an exhaustively enumerated state space, not a re-implementation of the detector. The cross-check on [community_hedonic](docs:#community-hedonic) confirms that the detector lands on the same sinks for the example graph.

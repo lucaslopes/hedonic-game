@@ -80,6 +80,7 @@ export const en = {
     metagraph: 'The metagraph',
     walk: 'The walk',
     explore: 'Explore',
+    tool: 'Use the package',
   },
   dilemma: {
     kicker: '1 · The dilemma',
@@ -356,7 +357,7 @@ export const en = {
     certificateNone: 'no alternative',
     tieNote: 'A gain of exactly zero is a tie: it would not improve the vertex, so the walk does not take it.',
     restarted: 'γ or the rule changed, so the walk restarted from its start.',
-    disclaimer: 'An educational simulation on a four-vertex graph.',
+    disclaimer: 'An educational simulation on a four-vertex graph — not the package’s detector.',
     announceStep: (n: number, label: string, gain: string) => `Step ${n}: now at ${label}, gain ${gain}.`,
     announceSink: (label: string) => `Stable equilibrium reached at ${label}.`,
     preview: 'Predicted path',
@@ -397,24 +398,42 @@ export const en = {
     filters: 'Show',
     walkTitle: 'Replay a walk',
   },
+  tool: {
+    kicker: '6 · From toy to tool',
+    title: 'Use the game on real networks',
+    body: 'This page simulates a four-vertex graph in your browser. The `hedonic` Python package plays the same game on real graphs with its own compiled C core: one method, `Game.community_hedonic`, finds disjoint partitions.',
+    scope:
+      'The browser model is an educational simplification: it enumerates every partition of a tiny graph and moves one vertex at a time. Results on real graphs come from the package and its native detector, not from this page.',
+    cards: {
+      start: { title: 'Getting started', body: 'Install the package and detect communities in a few lines.' },
+      api: { title: 'Game API', body: 'Every public member of `Game`, generated from the source.' },
+      method: { title: 'community_hedonic', body: 'Parameters, defaults and return types of the detector.' },
+      resolution: { title: 'Resolution & Familiarity Index', body: 'The formulas behind the scale, with every edge case.' },
+      dynamics: { title: 'Better-response dynamics', body: 'Potential games, sinks and the tie-breaking rules used here.' },
+      references: { title: 'References', body: 'CPM, Leiden, hedonic games and the project’s papers.' },
+    },
+    install: 'Install',
+    example: 'Example',
+  },
   footer: {
     tagline: 'Community detection as a hedonic game — an educational explainer.',
     basedOn:
       'Based on L. L. Felipe, “Community Detection as a Hedonic Game” (student research competition extended abstract), and on Felipe, Avrachenkov and Menasché, arXiv:2509.03834.',
     disclaimer:
-      'The simulator is a browser-side educational model of a four-vertex graph: it enumerates every partition, which is only possible for tiny graphs.',
+      'The simulator is a browser-side educational model of a four-vertex graph. It does not replace the `hedonic` package or its native C detector.',
     license: 'Code released under the GNU GPL, version 3 or later.',
     links: 'Links',
-    references: 'References',
   },
   docs: {
     title: 'Documentation',
-    intro: 'Guides to the ideas behind this explainer: the model, the resolution, the Familiarity Index, the metagraph and better-response dynamics.',
+    intro: 'Guides and generated API reference for the `hedonic` Python package and the ideas behind this explainer.',
     pages: 'Pages',
     onThisPage: 'On this page',
     edit: 'Edit this page',
     back: 'Back to the explainer',
+    version: (version: string, graph: string) => `hedonic ${version} · ${graph}`,
     languageNote: '',
+    generated: (ref: string) => `API reference generated from the Python source (${ref}).`,
     menu: 'Documentation menu',
   },
 };

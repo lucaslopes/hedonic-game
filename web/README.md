@@ -1,9 +1,8 @@
 # Hedonic game — interactive explainer
 
 An educational, scrollytelling website for the disjoint hedonic game / Constant
-Potts Model behind the `hedonic` Python package, plus documentation of the
-model. It is a static React + TypeScript + Vite application deployed to GitHub
-Pages.
+Potts Model behind the `hedonic` Python package, plus its documentation. It is a
+static React + TypeScript + Vite application deployed to GitHub Pages.
 
 ```bash
 # from the repository root
@@ -11,7 +10,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # static site in web/dist/
 npm run test           # Vitest: model, layout, components, docs pipeline
-npm run docs:generate  # regenerate site metadata + citation data
+npm run docs:generate  # regenerate API reference + citation data
 npm run check          # docs:generate, typecheck, lint, test, build
 npm run preview:pages  # build and serve under /hedonic-game/, like GitHub Pages
 ```
@@ -33,8 +32,7 @@ forwards every script, so nothing has to be run from inside `web/`.
 5. **The better-response walk** to a sink, with the quality staircase and a
    stability certificate.
 6. **Explore** — a free, zoomable lab with an inspector and a table view.
-
-The documentation page (`/docs/`) explains the model behind every chapter.
+7. **Use the package** — links into the documentation page (`/docs/`).
 
 The story is available in English and Brazilian Portuguese; the technical
 documentation is in English.
@@ -47,10 +45,12 @@ web/
 ├── content/
 │   ├── docs/*.md                 documentation pages (Markdown + front matter)
 │   └── references.bib            citation data shown on the site
-├── plugins/markdown-docs.ts      build-time Markdown → HTML (KaTeX, citations)
+├── plugins/markdown-docs.ts      build-time Markdown → HTML (KaTeX, API blocks)
 ├── scripts/
-│   ├── generate-docs.mjs         writes site metadata and runs the BibTeX reader
-│   └── bib.mjs                   dependency-free BibTeX reader
+│   ├── extract_api.py            Python AST → src/generated/api.json
+│   ├── generate-docs.mjs         runs the extractor and the BibTeX reader
+│   ├── bib.mjs                   dependency-free BibTeX reader
+│   └── crosscheck_native.py      optional: record the detector's results
 └── src/
     ├── model/                    the mathematics (pure TypeScript, no DOM)
     ├── viz/                      balance scale, decision tree, metagraph (SVG)
@@ -92,16 +92,24 @@ figure), thresholds 1/3, 1/2 and 2/3, and the sinks for every γ.
 
 ## Documentation pipeline
 
-`npm run docs:generate` writes two committed files to `src/generated/`:
+`npm run docs:generate` writes three committed files to `src/generated/`:
 
-- `site.json` — repository URL and source reference for the header, the
-  footer and the "edit this page" links.
+- `api.json` — signatures, defaults, annotations, numpydoc parameter
+  descriptions and line numbers of `Game`, `hedonic.utils` and the public
+  functions and constants of `hedonic.metrics`, plus the version and
+  dependencies from `pyproject.toml`. `extract_api.py` parses the sources with
+  the standard-library `ast` module and never imports the package.
+- `site.json` — package version, igraph requirement and repository URL for
+  the story page.
 - `references.json` — citation cards from `content/references.bib`. Only DOI,
   arXiv and URL fields present in the bibliography become links.
 
 Docs pages are Markdown with a small front matter (`title`, `summary`,
-`group`, `order`). Besides `$…$` math and `[@key]` citations they accept the
-generated block ` ```references``` `. Links can use `repo:path#L1`
+`group`, `order`). Besides `$…$` math and `[@key]` citations they accept
+generated blocks: ` ```api Game.community_hedonic``` ` (or a module function
+such as ` ```api evaluate_cover``` `), ` ```api-members``` `,
+` ```api-functions hedonic.metrics``` `, ` ```api-constants hedonic.metrics``` `,
+` ```package-info``` ` and ` ```references``` `. Links can use `repo:path#L1`
 (GitHub source), `story:#anchor` (explainer section) and `docs:#page`.
 
 ## Conventions

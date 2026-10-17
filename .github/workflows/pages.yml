@@ -9,12 +9,16 @@ on:
     branches: [main]
     paths:
       - 'web/**'
+      - 'src/hedonic/**'
+      - 'pyproject.toml'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/pages.yml'
   pull_request:
     paths:
       - 'web/**'
+      - 'src/hedonic/**'
+      - 'pyproject.toml'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/pages.yml'
@@ -40,16 +44,21 @@ jobs:
           node-version: 24
           cache: npm
 
+      # docs:generate parses the Python sources with the standard library only.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate site metadata and citation data
+      - name: Generate API reference and citation data
         run: npm run docs:generate
 
       - name: Report stale committed generated data
         run: |
           # The build always uses freshly generated data; this only flags a
-          # committed copy that lags behind the bibliography.
+          # committed copy that lags behind the Python source.
           if ! git diff --quiet -- web/src/generated/references.json; then
             echo "::warning::web/src/generated/references.json is stale; run npm run docs:generate and commit it."
           fi

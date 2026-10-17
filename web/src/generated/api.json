@@ -1,0 +1,1112 @@
+{
+  "schemaVersion": 2,
+  "generator": "web/scripts/extract_api.py",
+  "repository": {
+    "url": "https://github.com/lucaslopes/hedonic-game",
+    "ref": "main"
+  },
+  "package": {
+    "name": "hedonic",
+    "version": "2.0.0",
+    "requiresPython": ">=3.12",
+    "dependencies": [
+      "igraph>=1.0",
+      "numpy"
+    ],
+    "optionalDependencies": {
+      "metrics": [
+        "scipy>=1.10"
+      ]
+    },
+    "graphDependency": "igraph>=1.0"
+  },
+  "exports": [
+    "Game"
+  ],
+  "classes": [
+    {
+      "name": "Game",
+      "qualname": "hedonic.Game",
+      "bases": [
+        "Graph"
+      ],
+      "doc": {
+        "summary": "A hedonic game represented as an `igraph.Graph`.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/Game.py",
+      "line": 18,
+      "endLine": 265,
+      "members": [
+        {
+          "name": "__init__",
+          "qualname": "Game.__init__",
+          "signature": "__init__(graph: Graph | None = None, *args, **kwargs) -> None",
+          "parameters": [
+            {
+              "name": "graph",
+              "kind": "positional-or-keyword",
+              "annotation": "Graph | None",
+              "default": "None"
+            },
+            {
+              "name": "args",
+              "kind": "var-positional",
+              "annotation": null,
+              "default": null
+            },
+            {
+              "name": "kwargs",
+              "kind": "var-keyword",
+              "annotation": null,
+              "default": null
+            }
+          ],
+          "returns": "None",
+          "decorators": [],
+          "doc": null,
+          "path": "src/hedonic/Game.py",
+          "line": 25,
+          "endLine": 49,
+          "kind": "method"
+        },
+        {
+          "name": "memberships",
+          "qualname": "Game.memberships",
+          "signature": "memberships() -> list[list[int]] | None",
+          "parameters": [],
+          "returns": "list[list[int]] | None",
+          "decorators": [
+            "property"
+          ],
+          "doc": {
+            "summary": "The stored partition, as per-vertex community labels.",
+            "description": "The state is always represented as a one-label list per vertex\n(``[[c0], [c1], ...]``).  A ``None`` value means that no state has\nbeen configured yet.  The setter accepts the flat partition form\n(``[c0, c1, ...]``) as a convenience, but stores the normalized\nlist-of-lists representation; a row with more than one label is\nrejected.",
+            "sections": {}
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 52,
+          "endLine": 62,
+          "kind": "property",
+          "settable": true
+        },
+        {
+          "name": "evaluate_against",
+          "qualname": "Game.evaluate_against",
+          "signature": "evaluate_against(ground_truth, method: str = 'f1', *, singleton_mode: str = 'all', matching_weight: str = 'f1', omega_sample_size: int = 100000, omega_seed: int = 0) -> float",
+          "parameters": [
+            {
+              "name": "ground_truth",
+              "kind": "positional-or-keyword",
+              "annotation": null,
+              "default": null,
+              "description": "Community lists, or an igraph ``VertexClustering``/``VertexCover``.\nA flat per-vertex partition vector is also accepted."
+            },
+            {
+              "name": "method",
+              "kind": "positional-or-keyword",
+              "annotation": "str",
+              "default": "'f1'",
+              "description": "``f1`` (symmetric best-match), ``one_to_one_f1``, ``jaccard``,\n``omega``, ``node_micro_f1``, or ``size_weighted_community_f1``.\nA few explicit aliases are accepted for compatibility."
+            },
+            {
+              "name": "singleton_mode",
+              "kind": "keyword-only",
+              "annotation": "str",
+              "default": "'all'",
+              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+            },
+            {
+              "name": "matching_weight",
+              "kind": "keyword-only",
+              "annotation": "str",
+              "default": "'f1'",
+              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+            },
+            {
+              "name": "omega_sample_size",
+              "kind": "keyword-only",
+              "annotation": "int",
+              "default": "100000",
+              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+            },
+            {
+              "name": "omega_seed",
+              "kind": "keyword-only",
+              "annotation": "int",
+              "default": "0",
+              "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+            }
+          ],
+          "returns": "float",
+          "decorators": [],
+          "doc": {
+            "summary": "Score the stored partition against an explicit ground truth.",
+            "description": "``community_hedonic`` persists its return value in ``memberships`` as\none community label per vertex.  This convenience facade\nconverts that state to the community-list representation used by the\nexperimental evaluator and returns the selected scalar score.",
+            "sections": {
+              "Parameters": "ground_truth:\n    Community lists, or an igraph ``VertexClustering``/``VertexCover``.\n    A flat per-vertex partition vector is also accepted.\nmethod:\n    ``f1`` (symmetric best-match), ``one_to_one_f1``, ``jaccard``,\n    ``omega``, ``node_micro_f1``, or ``size_weighted_community_f1``.\n    A few explicit aliases are accepted for compatibility.\nsingleton_mode, matching_weight, omega_sample_size, omega_seed:\n    Options forwarded to :func:`hedonic.metrics.evaluate_cover`.",
+              "Returns": "float\n    The selected metric value.",
+              "Notes": "The metrics module is imported only when this method is called.\n``one_to_one_f1`` needs SciPy (``pip install \"hedonic[metrics]\"``)."
+            },
+            "parameters": [
+              {
+                "names": "ground_truth",
+                "type": "",
+                "description": "Community lists, or an igraph ``VertexClustering``/``VertexCover``.\nA flat per-vertex partition vector is also accepted."
+              },
+              {
+                "names": "method",
+                "type": "",
+                "description": "``f1`` (symmetric best-match), ``one_to_one_f1``, ``jaccard``,\n``omega``, ``node_micro_f1``, or ``size_weighted_community_f1``.\nA few explicit aliases are accepted for compatibility."
+              },
+              {
+                "names": "singleton_mode, matching_weight, omega_sample_size, omega_seed",
+                "type": "",
+                "description": "Options forwarded to :func:`hedonic.metrics.evaluate_cover`."
+              }
+            ]
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 82,
+          "endLine": 129,
+          "kind": "method"
+        },
+        {
+          "kind": "alias",
+          "name": "evaluate_accuracy",
+          "qualname": "Game.evaluate_accuracy",
+          "aliasOf": "evaluate_against",
+          "path": "src/hedonic/Game.py",
+          "line": 133,
+          "endLine": 133
+        },
+        {
+          "name": "to_igraph",
+          "qualname": "Game.to_igraph",
+          "signature": "to_igraph() -> Graph",
+          "parameters": [],
+          "returns": "Graph",
+          "decorators": [],
+          "doc": {
+            "summary": "Convert the `Game` object to a standalone `igraph.Graph` instance.",
+            "description": "",
+            "sections": {}
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 135,
+          "endLine": 146,
+          "kind": "method"
+        },
+        {
+          "name": "validate_membership",
+          "qualname": "Game.validate_membership",
+          "signature": "validate_membership(membership: list[int] | list[list[int]]) -> bool",
+          "parameters": [
+            {
+              "name": "membership",
+              "kind": "positional-or-keyword",
+              "annotation": "list[int] | list[list[int]]",
+              "default": null
+            }
+          ],
+          "returns": "bool",
+          "decorators": [],
+          "doc": {
+            "summary": "Validate a partition of this graph's vertices.",
+            "description": "The partition is valid when it has one entry per vertex, each a\nnon-negative integer label (or a one-label list ``[label]``), and the\nlabels are contiguous from 0.",
+            "sections": {}
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 148,
+          "endLine": 155,
+          "kind": "method"
+        },
+        {
+          "name": "community_hedonic",
+          "qualname": "Game.community_hedonic",
+          "signature": "community_hedonic(initial_membership: list[int] | list[list[int]] | None | _UnsetType = _UNSET, max_communities: int | None = None, resolution: float | None = None, allow_isolation: bool = False, *, edge_weights=None, seed: int | None = None, node_weights=None, max_total_communities: int | None = None, n_communities: int | None = None)",
+          "parameters": [
+            {
+              "name": "initial_membership",
+              "kind": "positional-or-keyword",
+              "annotation": "list[int] | list[list[int]] | None | _UnsetType",
+              "default": "_UNSET",
+              "description": "Start partition: a flat list of community ids (length n), or one\none-label list per vertex. ``None`` builds a default start.\nWhen omitted, a valid ``self.memberships`` state is reused;\nexplicit ``None`` requests the default singleton start, or a\nfeasible round-robin start when a community-count limit is set."
+            },
+            {
+              "name": "max_communities",
+              "kind": "positional-or-keyword",
+              "annotation": "int | None",
+              "default": "None",
+              "description": "Initialization only: when ``initial_membership`` is ``None``,\nrandom start over ``[0, max_communities)`` (labels a draw leaves\nunused are dropped and the rest renumbered in order). It has no\neffect with a supplied start, or when community-count limits select a\nfeasible default start;\n``_hedonic_provenance[\"max_communities_effect\"]`` records which\ncase applied. It is *not* an output constraint; see\n``max_total_communities``/``n_communities``."
+            },
+            {
+              "name": "resolution",
+              "kind": "positional-or-keyword",
+              "annotation": "float | None",
+              "default": "None",
+              "description": "CPM resolution γ. Defaults to the graph density. Must be a finite\nreal. Smaller values give larger communities. Zero total edge\nweight is rejected: the normalized potential ``Φ_γ = Φ̃_γ / W`` is\nundefined when ``W=0``."
+            },
+            {
+              "name": "allow_isolation",
+              "kind": "positional-or-keyword",
+              "annotation": "bool",
+              "default": "False",
+              "description": "Allow a vertex to open a new, empty community."
+            },
+            {
+              "name": "edge_weights",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "None",
+              "description": "Optional edge weights (sequence or edge-attribute name); finite."
+            },
+            {
+              "name": "seed",
+              "kind": "keyword-only",
+              "annotation": "int | None",
+              "default": "None",
+              "description": "When given, the visiting order is drawn from\n``random.Random(seed)``, and the same seed drives the random\ndisjoint start. The returned labels are then a function of the\ngraph, weights, parameters, start state and seed. ``None`` draws\nfrom Python's ``random`` module (python-igraph's default\ngenerator), so ``random.seed(...)`` also makes a run repeatable."
+            },
+            {
+              "name": "node_weights",
+              "kind": "keyword-only",
+              "annotation": null,
+              "default": "None",
+              "description": "Optional vertex weights ``w_v`` (sequence or vertex-attribute\nname), finite and non-negative. They enter the crowding term\n``γ w_u w_v``; unit weights are the default."
+            },
+            {
+              "name": "max_total_communities",
+              "kind": "keyword-only",
+              "annotation": "int | None",
+              "default": "None",
+              "description": "Optional upper bound on the number of occupied communities of the\nresult and of every state visited."
+            },
+            {
+              "name": "n_communities",
+              "kind": "keyword-only",
+              "annotation": "int | None",
+              "default": "None",
+              "description": "Optional exact number of occupied communities. Without a start\nstate, a deterministic round-robin start occupies all ``K``\nlabels. A start state that violates either count limit is\nrejected."
+            }
+          ],
+          "returns": null,
+          "decorators": [],
+          "doc": {
+            "summary": "Community detection with the CPM hedonic game.",
+            "description": "Each vertex is an agent that moves to the community it prefers, one\nvertex at a time, until no vertex can improve: every vertex is\nvisited, in a random order, and revisited after a neighbour moves.\nA move is taken only when its computed gain exceeds a rigorous bound\nof its rounding error, so every move raises the exact potential and\nevery call terminates. At return no unilateral deviation raises a\nvertex's exact payoff by more than\n``_hedonic_provenance[\"equilibrium_slack\"]`` times the total edge\nweight; the slack is 0 when the arithmetic is exact (for instance\nunit weights at resolution 0, 1/2 or 1), and the result is then an\nexact Nash equilibrium. The computation runs in this package's C\ncore (``hedonic._core``). Every argument after ``allow_isolation`` is\nkeyword-only.",
+            "sections": {
+              "Parameters": "initial_membership :\n    Start partition: a flat list of community ids (length n), or one\n    one-label list per vertex. ``None`` builds a default start.\n    When omitted, a valid ``self.memberships`` state is reused;\n    explicit ``None`` requests the default singleton start, or a\n    feasible round-robin start when a community-count limit is set.\nmax_communities :\n    Initialization only: when ``initial_membership`` is ``None``,\n    random start over ``[0, max_communities)`` (labels a draw leaves\n    unused are dropped and the rest renumbered in order). It has no\n    effect with a supplied start, or when community-count limits select a\n    feasible default start;\n    ``_hedonic_provenance[\"max_communities_effect\"]`` records which\n    case applied. It is *not* an output constraint; see\n    ``max_total_communities``/``n_communities``.\nresolution :\n    CPM resolution γ. Defaults to the graph density. Must be a finite\n    real. Smaller values give larger communities. Zero total edge\n    weight is rejected: the normalized potential ``Φ_γ = Φ̃_γ / W`` is\n    undefined when ``W=0``.\nallow_isolation :\n    Allow a vertex to open a new, empty community.\nedge_weights :\n    Optional edge weights (sequence or edge-attribute name); finite.\nseed :\n    When given, the visiting order is drawn from\n    ``random.Random(seed)``, and the same seed drives the random\n    disjoint start. The returned labels are then a function of the\n    graph, weights, parameters, start state and seed. ``None`` draws\n    from Python's ``random`` module (python-igraph's default\n    generator), so ``random.seed(...)`` also makes a run repeatable.\nnode_weights :\n    Optional vertex weights ``w_v`` (sequence or vertex-attribute\n    name), finite and non-negative. They enter the crowding term\n    ``γ w_u w_v``; unit weights are the default.\nmax_total_communities :\n    Optional upper bound on the number of occupied communities of the\n    result and of every state visited.\nn_communities :\n    Optional exact number of occupied communities. Without a start\n    state, a deterministic round-robin start occupies all ``K``\n    labels. A start state that violates either count limit is\n    rejected.",
+              "Returns": "VertexClustering\n\nThe result carries ``_hedonic_provenance`` (versions, effective\nparameters, count mode) and ``_hedonic_native_quality`` (the\npotential ``Φ`` of the returned state). The returned memberships are\nalso stored in ``self.memberships``, so a later call without\n``initial_membership`` continues from them."
+            },
+            "parameters": [
+              {
+                "names": "initial_membership",
+                "type": "",
+                "description": "Start partition: a flat list of community ids (length n), or one\none-label list per vertex. ``None`` builds a default start.\nWhen omitted, a valid ``self.memberships`` state is reused;\nexplicit ``None`` requests the default singleton start, or a\nfeasible round-robin start when a community-count limit is set."
+              },
+              {
+                "names": "max_communities",
+                "type": "",
+                "description": "Initialization only: when ``initial_membership`` is ``None``,\nrandom start over ``[0, max_communities)`` (labels a draw leaves\nunused are dropped and the rest renumbered in order). It has no\neffect with a supplied start, or when community-count limits select a\nfeasible default start;\n``_hedonic_provenance[\"max_communities_effect\"]`` records which\ncase applied. It is *not* an output constraint; see\n``max_total_communities``/``n_communities``."
+              },
+              {
+                "names": "resolution",
+                "type": "",
+                "description": "CPM resolution γ. Defaults to the graph density. Must be a finite\nreal. Smaller values give larger communities. Zero total edge\nweight is rejected: the normalized potential ``Φ_γ = Φ̃_γ / W`` is\nundefined when ``W=0``."
+              },
+              {
+                "names": "allow_isolation",
+                "type": "",
+                "description": "Allow a vertex to open a new, empty community."
+              },
+              {
+                "names": "edge_weights",
+                "type": "",
+                "description": "Optional edge weights (sequence or edge-attribute name); finite."
+              },
+              {
+                "names": "seed",
+                "type": "",
+                "description": "When given, the visiting order is drawn from\n``random.Random(seed)``, and the same seed drives the random\ndisjoint start. The returned labels are then a function of the\ngraph, weights, parameters, start state and seed. ``None`` draws\nfrom Python's ``random`` module (python-igraph's default\ngenerator), so ``random.seed(...)`` also makes a run repeatable."
+              },
+              {
+                "names": "node_weights",
+                "type": "",
+                "description": "Optional vertex weights ``w_v`` (sequence or vertex-attribute\nname), finite and non-negative. They enter the crowding term\n``γ w_u w_v``; unit weights are the default."
+              },
+              {
+                "names": "max_total_communities",
+                "type": "",
+                "description": "Optional upper bound on the number of occupied communities of the\nresult and of every state visited."
+              },
+              {
+                "names": "n_communities",
+                "type": "",
+                "description": "Optional exact number of occupied communities. Without a start\nstate, a deterministic round-robin start occupies all ``K``\nlabels. A start state that violates either count limit is\nrejected."
+              }
+            ]
+          },
+          "path": "src/hedonic/Game.py",
+          "line": 169,
+          "endLine": 265,
+          "kind": "method"
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "sample_uniform_ints",
+      "qualname": "sample_uniform_ints",
+      "signature": "sample_uniform_ints(N: int, K: int, seed: int)",
+      "parameters": [
+        {
+          "name": "N",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        },
+        {
+          "name": "K",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        },
+        {
+          "name": "seed",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        }
+      ],
+      "returns": null,
+      "decorators": [],
+      "doc": {
+        "summary": "Sample N uniform integers from [0, K] using a seeded NumPy RNG.",
+        "description": "Uses NumPy's Generator (PCG64) for reproducible, vectorized sampling.",
+        "sections": {}
+      },
+      "path": "src/hedonic/utils.py",
+      "line": 3,
+      "endLine": 9,
+      "module": "hedonic.utils"
+    },
+    {
+      "name": "cover_quality",
+      "qualname": "cover_quality",
+      "signature": "cover_quality(result) -> float | None",
+      "parameters": [
+        {
+          "name": "result",
+          "kind": "positional-or-keyword",
+          "annotation": null,
+          "default": null
+        }
+      ],
+      "returns": "float | None",
+      "decorators": [],
+      "doc": {
+        "summary": "The detector's quality (potential) stored on a VertexClustering or VertexCover.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 56,
+      "endLine": 64,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "partition_to_cover_lists",
+      "qualname": "partition_to_cover_lists",
+      "signature": "partition_to_cover_lists(partition) -> list[list[int]]",
+      "parameters": [
+        {
+          "name": "partition",
+          "kind": "positional-or-keyword",
+          "annotation": null,
+          "default": null
+        }
+      ],
+      "returns": "list[list[int]]",
+      "decorators": [],
+      "doc": {
+        "summary": "Convert a VertexClustering (or flat membership) to community lists.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 67,
+      "endLine": 79,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "flat_membership_to_cover_init",
+      "qualname": "flat_membership_to_cover_init",
+      "signature": "flat_membership_to_cover_init(membership: list[int]) -> list[list[int]]",
+      "parameters": [
+        {
+          "name": "membership",
+          "kind": "positional-or-keyword",
+          "annotation": "list[int]",
+          "default": null
+        }
+      ],
+      "returns": "list[list[int]]",
+      "decorators": [],
+      "doc": {
+        "summary": "Disjoint membership vector → overlapping initial_membership format.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 82,
+      "endLine": 84,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "cover_to_memberships",
+      "qualname": "cover_to_memberships",
+      "signature": "cover_to_memberships(cover: Sequence[Sequence[int]], n_vertices: int) -> list[list[int]]",
+      "parameters": [
+        {
+          "name": "cover",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "n_vertices",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        }
+      ],
+      "returns": "list[list[int]]",
+      "decorators": [],
+      "doc": {
+        "summary": "Convert community lists to the canonical per-vertex Game state.",
+        "description": "Vertices absent from a predicted cover receive deterministic singleton\nlabels.  This is the same representation persisted by\n:meth:`hedonic.Game.community_hedonic`, making the helper convenient for\nnotebooks and experiment adapters that already have a cover in list form.",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 87,
+      "endLine": 109,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "score_cover",
+      "qualname": "score_cover",
+      "signature": "score_cover(graph: Any, ground_truth: Sequence[Sequence[int]], cover: Sequence[Sequence[int]], *, metrics: Sequence[str] = GAME_EVALUATION_METRICS, omega_sample_size: int = 10000, seed: int = 7) -> dict[str, float | None]",
+      "parameters": [
+        {
+          "name": "graph",
+          "kind": "positional-or-keyword",
+          "annotation": "Any",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "cover",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "metrics",
+          "kind": "keyword-only",
+          "annotation": "Sequence[str]",
+          "default": "GAME_EVALUATION_METRICS"
+        },
+        {
+          "name": "omega_sample_size",
+          "kind": "keyword-only",
+          "annotation": "int",
+          "default": "10000"
+        },
+        {
+          "name": "seed",
+          "kind": "keyword-only",
+          "annotation": "int",
+          "default": "7"
+        }
+      ],
+      "returns": "dict[str, float | None]",
+      "decorators": [],
+      "doc": {
+        "summary": "Score a cover through the public :class:`hedonic.Game` facade.",
+        "description": "The import is local so the metrics package remains usable without making\nthe core package eagerly import the optional experiment machinery.",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 112,
+      "endLine": 138,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "singleton_cover",
+      "qualname": "singleton_cover",
+      "signature": "singleton_cover(n: int) -> list[list[int]]",
+      "parameters": [
+        {
+          "name": "n",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        }
+      ],
+      "returns": "list[list[int]]",
+      "decorators": [],
+      "doc": null,
+      "path": "src/hedonic/metrics.py",
+      "line": 141,
+      "endLine": 142,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "grand_coalition_cover",
+      "qualname": "grand_coalition_cover",
+      "signature": "grand_coalition_cover(n: int) -> list[list[int]]",
+      "parameters": [
+        {
+          "name": "n",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        }
+      ],
+      "returns": "list[list[int]]",
+      "decorators": [],
+      "doc": null,
+      "path": "src/hedonic/metrics.py",
+      "line": 145,
+      "endLine": 146,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "total_overlap_cover",
+      "qualname": "total_overlap_cover",
+      "signature": "total_overlap_cover(n: int, n_communities: int) -> list[list[int]]",
+      "parameters": [
+        {
+          "name": "n",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        },
+        {
+          "name": "n_communities",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        }
+      ],
+      "returns": "list[list[int]]",
+      "decorators": [],
+      "doc": null,
+      "path": "src/hedonic/metrics.py",
+      "line": 149,
+      "endLine": 151,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "one_to_one_community_metrics",
+      "qualname": "one_to_one_community_metrics",
+      "signature": "one_to_one_community_metrics(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]], *, matching_weight: MatchingWeight = 'f1', singleton_mode: SingletonMode = 'all') -> dict[str, float | int | str]",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "matching_weight",
+          "kind": "keyword-only",
+          "annotation": "MatchingWeight",
+          "default": "'f1'"
+        },
+        {
+          "name": "singleton_mode",
+          "kind": "keyword-only",
+          "annotation": "SingletonMode",
+          "default": "'all'"
+        }
+      ],
+      "returns": "dict[str, float | int | str]",
+      "decorators": [],
+      "doc": {
+        "summary": "One-to-one community precision/recall/F1 with zero unmatched scores.",
+        "description": "Matched-pair precision is averaged over *all predicted* communities and\nmatched-pair recall over *all GT* communities.  Thus an unmatched predicted\ncommunity contributes zero precision and an unmatched GT community\ncontributes zero recall.  ``matching_f1`` is their harmonic mean.",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 300,
+      "endLine": 319,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "node_membership_multilabel_metrics",
+      "qualname": "node_membership_multilabel_metrics",
+      "signature": "node_membership_multilabel_metrics(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]], *, matching_weight: MatchingWeight = 'f1', singleton_mode: SingletonMode = 'all') -> dict[str, float]",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "matching_weight",
+          "kind": "keyword-only",
+          "annotation": "MatchingWeight",
+          "default": "'f1'"
+        },
+        {
+          "name": "singleton_mode",
+          "kind": "keyword-only",
+          "annotation": "SingletonMode",
+          "default": "'all'"
+        }
+      ],
+      "returns": "dict[str, float]",
+      "decorators": [],
+      "doc": {
+        "summary": "Multilabel membership scores after one-to-one community alignment.",
+        "description": "Micro scores count vertex-community assignments.  Macro F1 is the standard\nlabel-wise multilabel macro average over aligned GT labels plus unmatched\npredicted labels; unmatched labels therefore receive F1 zero.",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 358,
+      "endLine": 374,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "symmetric_best_match_f1",
+      "qualname": "symmetric_best_match_f1",
+      "signature": "symmetric_best_match_f1(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]], *, singleton_mode: SingletonMode = 'all') -> float",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "singleton_mode",
+          "kind": "keyword-only",
+          "annotation": "SingletonMode",
+          "default": "'all'"
+        }
+      ],
+      "returns": "float",
+      "decorators": [],
+      "doc": {
+        "summary": "Historical macro best-match F1, averaged in both directions.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 432,
+      "endLine": 445,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "overlapping_normalized_mutual_information_lfk",
+      "qualname": "overlapping_normalized_mutual_information_lfk",
+      "signature": "overlapping_normalized_mutual_information_lfk(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]], *, n_vertices: int | None = None) -> float",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "n_vertices",
+          "kind": "keyword-only",
+          "annotation": "int | None",
+          "default": "None"
+        }
+      ],
+      "returns": "float",
+      "decorators": [],
+      "doc": {
+        "summary": "Compute the LFK overlapping normalized mutual information (ONMI).",
+        "description": "The CoDeSEG paper delegates ONMI to the LFK/OvpNMI implementation.  This\nexperiment-layer implementation keeps the same pairwise entropy definition\nbut enumerates only positive community intersections, so it remains usable\non the full SNAP covers.  ``n_vertices`` controls the universe used for\nentropy; omit it to reproduce the paper's evaluation convention of using\nthe union of vertices appearing in either cover.",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 569,
+      "endLine": 642,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "symmetric_best_match_metrics",
+      "qualname": "symmetric_best_match_metrics",
+      "signature": "symmetric_best_match_metrics(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]], *, singleton_mode: SingletonMode = 'all') -> dict[str, float | int]",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "singleton_mode",
+          "kind": "keyword-only",
+          "annotation": "SingletonMode",
+          "default": "'all'"
+        }
+      ],
+      "returns": "dict[str, float | int]",
+      "decorators": [],
+      "doc": {
+        "summary": "Historical best-match metrics without computing Hungarian alignment.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 645,
+      "endLine": 663,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "size_weighted_community_f1",
+      "qualname": "size_weighted_community_f1",
+      "signature": "size_weighted_community_f1(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]], *, singleton_mode: SingletonMode = 'all') -> float",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "singleton_mode",
+          "kind": "keyword-only",
+          "annotation": "SingletonMode",
+          "default": "'all'"
+        }
+      ],
+      "returns": "float",
+      "decorators": [],
+      "doc": {
+        "summary": "Symmetric best-match F1 weighted by source-community size.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 694,
+      "endLine": 714,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "cover_diagnostics",
+      "qualname": "cover_diagnostics",
+      "signature": "cover_diagnostics(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]], n_vertices: int, *, singleton_mode: SingletonMode = 'all') -> dict[str, float | int | None]",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "n_vertices",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        },
+        {
+          "name": "singleton_mode",
+          "kind": "keyword-only",
+          "annotation": "SingletonMode",
+          "default": "'all'"
+        }
+      ],
+      "returns": "dict[str, float | int | None]",
+      "decorators": [],
+      "doc": {
+        "summary": "Descriptive cover statistics after applying ``singleton_mode``.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 738,
+      "endLine": 805,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "structural_overlap_metrics",
+      "qualname": "structural_overlap_metrics",
+      "signature": "structural_overlap_metrics(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]], *, singleton_mode: SingletonMode = 'all', max_pair_events: int = 100000) -> dict[str, float | int | bool]",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "singleton_mode",
+          "kind": "keyword-only",
+          "annotation": "SingletonMode",
+          "default": "'all'"
+        },
+        {
+          "name": "max_pair_events",
+          "kind": "keyword-only",
+          "annotation": "int",
+          "default": "100000"
+        }
+      ],
+      "returns": "dict[str, float | int | bool]",
+      "decorators": [],
+      "doc": {
+        "summary": "Bounded structural overlap metrics, separate from recovery accuracy.",
+        "description": "``inclusion_rate`` is the mean fraction of each predicted community covered\nby its best ground-truth match.  ``coverage_rate`` is its inverse\nground-truth direction.  ``overlapping_rate`` is the mean normalized\nintersection (intersection / smaller community) across predicted community\npairs that share a node.  ``distribution_rate`` is the fraction of\npredicted memberships assigned to nodes with multiple memberships.\n\nPair intersections are accumulated from an inverted index and stop after\n``max_pair_events`` events; this deliberately avoids dense community-pair\nmatrices on the largest SNAP covers.  The truncation flag must accompany\ncomparisons where this bound is reached.",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 808,
+      "endLine": 884,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "evaluate_cover",
+      "qualname": "evaluate_cover",
+      "signature": "evaluate_cover(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]], n_vertices: int, compute_omega: bool = True, *, singleton_mode: SingletonMode = 'all', matching_weight: MatchingWeight = 'f1', omega_sample_size: int = 100000, omega_seed: int = 0) -> dict",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "n_vertices",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        },
+        {
+          "name": "compute_omega",
+          "kind": "positional-or-keyword",
+          "annotation": "bool",
+          "default": "True"
+        },
+        {
+          "name": "singleton_mode",
+          "kind": "keyword-only",
+          "annotation": "SingletonMode",
+          "default": "'all'"
+        },
+        {
+          "name": "matching_weight",
+          "kind": "keyword-only",
+          "annotation": "MatchingWeight",
+          "default": "'f1'"
+        },
+        {
+          "name": "omega_sample_size",
+          "kind": "keyword-only",
+          "annotation": "int",
+          "default": "100000"
+        },
+        {
+          "name": "omega_seed",
+          "kind": "keyword-only",
+          "annotation": "int",
+          "default": "0"
+        }
+      ],
+      "returns": "dict",
+      "decorators": [],
+      "doc": {
+        "summary": "Evaluate a cover with legacy and recommended overlap-aware metrics.",
+        "description": "",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 887,
+      "endLine": 959,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "normalized_f1_rossetti",
+      "qualname": "normalized_f1_rossetti",
+      "signature": "normalized_f1_rossetti(predicted: Sequence[Sequence[int]], ground_truth: Sequence[Sequence[int]]) -> float",
+      "parameters": [
+        {
+          "name": "predicted",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "ground_truth",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        }
+      ],
+      "returns": "float",
+      "decorators": [],
+      "doc": {
+        "summary": "NF1 of Rossetti, Pappalardo & Rinzivillo (2016), as used by ANGEL.",
+        "description": "A faithful port of the reference implementation (``NF1`` in CDlib 0.4.0,\n``cdlib/evaluation/internal/NF1.py``), including its conventions: each\ndetected community is matched to the reference communities with the largest\nmember count among its vertices (ties give several matches); a vertex is\ncounted only in the first detected community in which it appears; each\nmatch's F1 is rounded to two decimals. NF1 = mean F1 x coverage / redundancy,\nwhere coverage is the fraction of reference communities matched and\nredundancy is the number of detected communities per matched reference\ncommunity.",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 962,
+      "endLine": 1008,
+      "module": "hedonic.metrics"
+    },
+    {
+      "name": "omega_index",
+      "qualname": "omega_index",
+      "signature": "omega_index(pred: Sequence[Sequence[int]], gt: Sequence[Sequence[int]], n: int, *, sample_size: int = 100000, seed: int = 0) -> float",
+      "parameters": [
+        {
+          "name": "pred",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "gt",
+          "kind": "positional-or-keyword",
+          "annotation": "Sequence[Sequence[int]]",
+          "default": null
+        },
+        {
+          "name": "n",
+          "kind": "positional-or-keyword",
+          "annotation": "int",
+          "default": null
+        },
+        {
+          "name": "sample_size",
+          "kind": "keyword-only",
+          "annotation": "int",
+          "default": "100000"
+        },
+        {
+          "name": "seed",
+          "kind": "keyword-only",
+          "annotation": "int",
+          "default": "0"
+        }
+      ],
+      "returns": "float",
+      "decorators": [],
+      "doc": {
+        "summary": "Sampled Omega approximation with no dense ``n × n`` allocation.",
+        "description": "``sample_size`` unordered vertex pairs are drawn uniformly with replacement.\nMemory is O(total memberships + n + sample_size), making the metric safe for\nfull DBLP.  Use a fixed ``seed`` for reproducible rescoring.",
+        "sections": {}
+      },
+      "path": "src/hedonic/metrics.py",
+      "line": 1011,
+      "endLine": 1064,
+      "module": "hedonic.metrics"
+    }
+  ],
+  "constants": [
+    {
+      "name": "SCORE_DEFINITION_VERSION",
+      "module": "hedonic.metrics",
+      "value": "canonical_unique_vertex_set_cover_v1",
+      "path": "src/hedonic/metrics.py",
+      "line": 20
+    },
+    {
+      "name": "MAX_DENSE_MATCHING_CELLS",
+      "module": "hedonic.metrics",
+      "value": 5000000,
+      "path": "src/hedonic/metrics.py",
+      "line": 40
+    },
+    {
+      "name": "GAME_EVALUATION_METRICS",
+      "module": "hedonic.metrics",
+      "value": [
+        "f1",
+        "one_to_one_f1",
+        "jaccard",
+        "omega",
+        "node_micro_f1",
+        "size_weighted_community_f1"
+      ],
+      "path": "src/hedonic/metrics.py",
+      "line": 46
+    }
+  ],
+  "sources": [
+    "pyproject.toml",
+    "src/hedonic/Game.py",
+    "src/hedonic/__init__.py",
+    "src/hedonic/metrics.py",
+    "src/hedonic/utils.py"
+  ]
+}

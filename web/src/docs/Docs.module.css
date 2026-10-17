@@ -120,6 +120,12 @@
   font-size: 0.86rem;
 }
 
+.generated {
+  margin-top: 24px;
+  font-size: 0.82rem;
+  color: var(--ink-3);
+}
+
 @media (max-width: 1180px) {
   .layout {
     grid-template-columns: 200px minmax(0, 1fr);

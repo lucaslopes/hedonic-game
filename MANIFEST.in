@@ -1,0 +1,4 @@
+# The C core and its binding are compiled into hedonic._core (setup.py); the
+# sdist carries them, the wheel only the built extension.
+recursive-include native *.c *.h *.py Makefile README.md
+include setup.py

@@ -76,6 +76,7 @@ export const pt: Dictionary = {
     metagraph: 'O metagrafo',
     walk: 'A caminhada',
     explore: 'Explorar',
+    tool: 'Usar o pacote',
   },
   dilemma: {
     kicker: '1 · O dilema',
@@ -350,7 +351,7 @@ export const pt: Dictionary = {
     certificateNone: 'nenhuma alternativa',
     tieNote: 'Um ganho exatamente zero é um empate: não melhoraria o vértice, então a caminhada não o executa.',
     restarted: 'γ ou a regra mudou, então a caminhada recomeçou do início.',
-    disclaimer: 'Uma simulação educacional em um grafo de quatro vértices.',
+    disclaimer: 'Uma simulação educacional em um grafo de quatro vértices — não o detector do pacote.',
     announceStep: (n, label, gain) => `Passo ${n}: agora em ${label}, ganho ${gain}.`,
     announceSink: (label) => `Equilíbrio estável alcançado em ${label}.`,
     preview: 'Caminho previsto',
@@ -391,24 +392,42 @@ export const pt: Dictionary = {
     filters: 'Mostrar',
     walkTitle: 'Repetir uma caminhada',
   },
+  tool: {
+    kicker: '6 · Do brinquedo à ferramenta',
+    title: 'Use o jogo em redes reais',
+    body: 'Esta página simula um grafo de quatro vértices no seu navegador. O pacote Python `hedonic` joga o mesmo jogo em grafos reais com seu próprio núcleo compilado em C: um único método, `Game.community_hedonic`, encontra partições disjuntas.',
+    scope:
+      'O modelo do navegador é uma simplificação educacional: enumera todas as partições de um grafo minúsculo e move um vértice por vez. Resultados em grafos reais vêm do pacote e do seu detector nativo, não desta página.',
+    cards: {
+      start: { title: 'Primeiros passos', body: 'Instale o pacote e detecte comunidades em poucas linhas.' },
+      api: { title: 'API do Game', body: 'Todos os membros públicos de `Game`, gerados a partir do código-fonte.' },
+      method: { title: 'community_hedonic', body: 'Parâmetros, valores padrão e tipos de retorno do detector.' },
+      resolution: { title: 'Resolução e Índice de Familiaridade', body: 'As fórmulas por trás da balança, com todos os casos extremos.' },
+      dynamics: { title: 'Dinâmica de melhoria', body: 'Jogos potenciais, sumidouros e as regras de desempate usadas aqui.' },
+      references: { title: 'Referências', body: 'CPM, Leiden, jogos hedônicos e os artigos do projeto.' },
+    },
+    install: 'Instalar',
+    example: 'Exemplo',
+  },
   footer: {
     tagline: 'Detecção de comunidades como um jogo hedônico — uma explicação educacional.',
     basedOn:
       'Baseado em L. L. Felipe, “Community Detection as a Hedonic Game” (resumo estendido de competição de pesquisa estudantil), e em Felipe, Avrachenkov e Menasché, arXiv:2509.03834.',
     disclaimer:
-      'O simulador é um modelo educacional, executado no navegador, de um grafo de quatro vértices: ele enumera todas as partições, o que só é possível em grafos minúsculos.',
+      'O simulador é um modelo educacional, executado no navegador, de um grafo de quatro vértices. Ele não substitui o pacote `hedonic` nem seu detector nativo em C.',
     license: 'Código distribuído sob a GNU GPL, versão 3 ou posterior.',
     links: 'Links',
-    references: 'Referências',
   },
   docs: {
     title: 'Documentação',
-    intro: 'Guias das ideias por trás desta explicação: o modelo, a resolução, o Índice de Familiaridade, o metagrafo e a dinâmica de melhoria.',
+    intro: 'Guias e referência de API gerada para o pacote Python `hedonic` e para as ideias por trás desta explicação.',
     pages: 'Páginas',
     onThisPage: 'Nesta página',
     edit: 'Editar esta página',
     back: 'Voltar à explicação',
+    version: (version, graph) => `hedonic ${version} · ${graph}`,
     languageNote: 'A documentação técnica está disponível em inglês.',
+    generated: (ref) => `Referência de API gerada a partir do código Python (${ref}).`,
     menu: 'Menu da documentação',
   },
 };

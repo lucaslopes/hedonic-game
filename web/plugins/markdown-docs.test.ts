@@ -1,12 +1,12 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadDocs, slugify, splitFrontMatter } from './markdown-docs';
+import { loadDocs, rstToMarkdown, slugify, splitFrontMatter } from './markdown-docs';
 
 const root = resolve(__dirname, '..');
 const bundle = loadDocs(
   {
     contentDir: resolve(root, 'content/docs'),
-    siteFile: resolve(root, 'src/generated/site.json'),
+    apiFile: resolve(root, 'src/generated/api.json'),
     referencesFile: resolve(root, 'src/generated/references.json'),
   },
   '/hedonic-game/',
@@ -21,7 +21,10 @@ describe('documentation bundle', () => {
   it('renders every Markdown page in order with unique slugs', () => {
     const slugs = bundle.pages.map((p) => p.slug);
     expect(slugs).toEqual([
+      'getting-started',
       'concepts',
+      'game-api',
+      'community-hedonic',
       'resolution',
       'familiarity-index',
       'metagraph',
@@ -37,12 +40,26 @@ describe('documentation bundle', () => {
     });
   });
 
+  it('generates the API reference from the Python source', () => {
+    const html = page('community-hedonic').html;
+    expect(html).toContain('id="api-game-community-hedonic"');
+    for (const parameter of ['initial_<wbr>membership', 'max_<wbr>communities', 'resolution', 'allow_<wbr>isolation', 'seed', 'max_<wbr>total_<wbr>communities', 'n_<wbr>communities']) {
+      expect(html).toContain(parameter);
+    }
+    expect(html).toContain('src/hedonic/Game.py');
+    expect(page('game-api').html).toContain('id="api-game-to-igraph"');
+    expect(page('game-api').html).toContain('id="api-evaluate-cover"');
+    expect(page('game-api').html).toContain('hedonic.metrics.evaluate_cover');
+    expect(page('game-api').html).toContain('src/hedonic/metrics.py');
+  });
+
   it('renders math with KaTeX and resolves citations and links', () => {
     const html = page('familiarity-index').html;
     expect(html).toContain('class="katex"');
     expect(html).not.toMatch(/\$\\Delta/);
     expect(page('concepts').html).toContain('href="#ref-traag2011cpm"');
     expect(page('concepts').html).toContain('href="/hedonic-game/#dilemma"');
+    expect(page('game-api').html).toMatch(/href="https:\/\/github\.com\/[^"]+\/blob\/[^"]+\/src\/hedonic\/Game\.py"/);
   });
 
   it('builds reference cards without inventing links', () => {
@@ -65,5 +82,9 @@ describe('helpers', () => {
   it('parses front matter and slugs', () => {
     expect(splitFrontMatter('---\ntitle: A title\norder: 3\n---\nBody')).toEqual({ data: { title: 'A title', order: '3' }, body: 'Body' });
     expect(slugify('Sinks of the example (γ ≤ 1)')).toBe('sinks-of-the-example-1');
+  });
+
+  it('converts docstring reStructuredText to Markdown', () => {
+    expect(rstToMarkdown('Use ``max_total_communities`` and :meth:`community_hedonic`.')).toBe('Use `max_total_communities` and `community_hedonic`.');
   });
 });

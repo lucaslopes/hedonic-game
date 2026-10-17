@@ -1,0 +1,93 @@
+.section {
+  padding: clamp(64px, 10vw, 120px) 0 24px;
+}
+
+.header {
+  max-width: 48rem;
+  margin-bottom: 28px;
+}
+
+.version {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.code {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.scope {
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 3px solid var(--clear);
+  background: var(--clear-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.92rem;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: grid;
+  gap: 6px;
+  height: 100%;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--rule);
+  background: var(--card);
+  color: var(--ink);
+  text-decoration: none;
+  box-shadow: var(--shadow);
+  transition:
+    border-color 160ms var(--ease),
+    transform 160ms var(--ease);
+}
+
+.card:hover {
+  border-color: var(--ink-3);
+  transform: translateY(-2px);
+}
+
+.cardTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-weight: 650;
+  font-size: 1.05rem;
+}
+
+.cardBody {
+  font-size: 0.88rem;
+  color: var(--ink-2);
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}

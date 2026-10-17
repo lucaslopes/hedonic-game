@@ -7,6 +7,7 @@ import { DilemmaChapter } from './DilemmaChapter';
 import { ExploreSection } from './ExploreSection';
 import { Hero } from './Hero';
 import { MetagraphChapter } from './MetagraphChapter';
+import { ToolSection } from './ToolSection';
 import { TreeChapter } from './TreeChapter';
 import { WalkChapter } from './WalkChapter';
 
@@ -34,6 +35,7 @@ export function StoryApp() {
         <MetagraphChapter gamma={gamma} setGamma={setGamma} />
         <WalkChapter gamma={gamma} setGamma={setGamma} />
         <ExploreSection gamma={gamma} setGamma={setGamma} />
+        <ToolSection />
       </main>
       <SiteFooter />
     </>

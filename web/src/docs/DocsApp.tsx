@@ -130,6 +130,9 @@ export function DocsApp() {
             <h1>{t.docs.title}</h1>
             <Rich as="p" className="lede" text={t.docs.intro} />
             <p className={styles.meta}>
+              {bundle.packageVersion && (
+                <span className="chip">{t.docs.version(bundle.packageVersion, bundle.graphDependency ?? '')}</span>
+              )}
               <a className="btn btn-small" href={import.meta.env.BASE_URL}>
                 <Icon name="arrowRight" size={15} style={{ transform: 'rotate(180deg)' }} />
                 {t.docs.back}
@@ -159,6 +162,7 @@ export function DocsApp() {
               </section>
             ))}
           </div>
+          <p className={styles.generated}>{t.docs.generated(`${bundle.repository.ref}`)}</p>
         </div>
         <aside className={styles.toc} aria-label={t.docs.onThisPage}>
           {activePage && activePage.headings.length > 0 && (

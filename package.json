@@ -1,7 +1,7 @@
 {
   "name": "hedonic-game-site",
   "private": true,
-  "description": "Interactive explainer of community detection as a hedonic game. The frontend lives in web/.",
+  "description": "Interactive explainer and documentation site for the hedonic Python package. The frontend lives in web/.",
   "license": "GPL-3.0-or-later",
   "workspaces": [
     "web"

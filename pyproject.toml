@@ -1,14 +1,45 @@
 [project]
 name = "hedonic"
-version = "0.0.5"
-description = "A Python library for hedonic games"
+version = "2.0.0"
+description = "Community detection with hedonic games: best-response local moving to an equilibrium in a purpose-built C core"
 readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [
     { name = "Lucas Lopes Felipe" }
 ]
 requires-python = ">=3.12"
-dependencies = ["igraph @ git+https://github.com/igraph/python-igraph.git@0.11.9"]
+dependencies = [
+    "igraph>=1.0",
+    "numpy",
+]
+keywords = ["community detection", "hedonic games", "graphs", "networks"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+[project.optional-dependencies]
+# One-to-one matching in hedonic.metrics (Game.evaluate_against "one_to_one_f1").
+metrics = ["scipy>=1.10"]
+
+[project.urls]
+Homepage = "https://github.com/lucaslopes/hedonic-game"
+Documentation = "https://lucaslopes.github.io/hedonic-game/"
 
 [build-system]
-requires = ["uv_build>=0.8.11,<0.9.0"]
-build-backend = "uv_build"
+# setuptools: the package compiles its C core (native/, see setup.py) into the
+# extension hedonic._core.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hedonic = ["py.typed"]

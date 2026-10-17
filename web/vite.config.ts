@@ -22,7 +22,7 @@ function basePath(): string {
 
 export default defineConfig({
   base: basePath(),
-  plugins: [react(), markdownDocs({ contentDir: resolve(root, 'content/docs'), siteFile: resolve(root, 'src/generated/site.json'), referencesFile: resolve(root, 'src/generated/references.json') })],
+  plugins: [react(), markdownDocs({ contentDir: resolve(root, 'content/docs'), apiFile: resolve(root, 'src/generated/api.json'), referencesFile: resolve(root, 'src/generated/references.json') })],
   build: {
     target: 'es2022',
     rolldownOptions: {

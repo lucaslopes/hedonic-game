@@ -7,7 +7,7 @@ export interface DocHeading {
 }
 
 export interface DocPage {
-  /** Anchor of the page section, e.g. "resolution". */
+  /** Anchor of the page section, e.g. "game-api". */
   readonly slug: string;
   readonly title: string;
   readonly summary: string;
@@ -23,4 +23,7 @@ export interface DocPage {
 export interface DocsBundle {
   readonly pages: readonly DocPage[];
   readonly repository: { readonly url: string; readonly ref: string };
+  readonly packageVersion: string | null;
+  /** The igraph requirement of the package, e.g. "igraph>=1.0". */
+  readonly graphDependency: string | null;
 }

@@ -2,7 +2,9 @@
  * Simple undirected graphs for the educational simulator.
  *
  * The explainer works on tiny graphs so that every partition can be
- * enumerated. Nothing in this module is meant for real networks.
+ * enumerated. The Python package (`hedonic.Game`) works on arbitrary
+ * igraph graphs through its own native C detector (`hedonic._core`);
+ * nothing in this module is a substitute for it.
  */
 
 export type Edge = readonly [number, number];

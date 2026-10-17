@@ -2,7 +2,7 @@
   "name": "hedonic-web",
   "private": true,
   "version": "0.1.0",
-  "description": "Educational scrollytelling explainer and documentation of community detection as a hedonic game.",
+  "description": "Educational scrollytelling explainer and documentation for the hedonic community-detection package.",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
