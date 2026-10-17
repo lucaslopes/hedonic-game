@@ -1,0 +1,164 @@
+.figure {
+  margin: 0;
+  width: 100%;
+}
+
+.svg {
+  width: 100%;
+  height: auto;
+  font-family: var(--font-body);
+}
+
+.edge path {
+  fill: none;
+  stroke: var(--rule-strong);
+  stroke-width: 1.6;
+  transition: stroke 240ms var(--ease);
+}
+
+.edgeActive path {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 3;
+}
+
+.edgeLabel {
+  font-size: 14px;
+  font-weight: 600;
+  fill: var(--ink-3);
+}
+
+.edgeActive .edgeLabel {
+  fill: var(--ink);
+}
+
+.node rect {
+  stroke-width: 1.5;
+  transition:
+    opacity 240ms var(--ease),
+    stroke-width 240ms var(--ease);
+}
+
+.node text {
+  font-size: 14.5px;
+  fill: var(--ink);
+}
+
+.question rect {
+  fill: var(--card);
+  stroke: var(--rule-strong);
+}
+
+.clear rect {
+  fill: var(--clear-soft);
+  stroke: var(--clear);
+}
+
+.neutral rect {
+  fill: var(--tie-soft);
+  stroke: var(--tie);
+}
+
+.frustrated rect {
+  fill: var(--stranger);
+  stroke: var(--friend);
+  stroke-width: 5;
+}
+
+.frustrated text {
+  fill: #fff;
+  font-weight: 650;
+}
+
+.nodeIdle {
+  opacity: 0.42;
+}
+
+.nodeActive rect {
+  stroke: var(--ink);
+  stroke-width: 3;
+}
+
+.nodeActive.frustrated rect {
+  stroke: var(--friend);
+  stroke-width: 6;
+}
+
+.nodeActive.question text,
+.nodeActive text {
+  font-weight: 650;
+}
+
+.outline {
+  display: none;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.92rem;
+}
+
+.outline ul {
+  list-style: none;
+  margin: 6px 0 0 12px;
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--rule);
+}
+
+.outline li {
+  margin: 6px 0;
+}
+
+.outlineBox {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1.5px solid var(--rule-strong);
+  background: var(--card);
+}
+
+.outlineBox.clear {
+  background: var(--clear-soft);
+  border-color: var(--clear);
+}
+
+.outlineBox.neutral {
+  background: var(--tie-soft);
+  border-color: var(--tie);
+}
+
+.outlineBox.frustrated {
+  background: var(--stranger);
+  border: 4px solid var(--friend);
+  color: #fff;
+  font-weight: 650;
+}
+
+.answer {
+  font-weight: 700;
+  color: var(--ink-3);
+}
+
+.onPath > .outlineBox {
+  border-color: var(--ink);
+  border-width: 2.5px;
+  font-weight: 600;
+}
+
+.onPath > .outlineBox.frustrated {
+  border-color: var(--friend);
+  border-width: 5px;
+}
+
+.offPath > .outlineBox {
+  opacity: 0.45;
+}
+
+@media (max-width: 700px) {
+  .svg {
+    display: none;
+  }
+
+  .outline {
+    display: block;
+  }
+}

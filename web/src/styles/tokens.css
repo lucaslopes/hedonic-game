@@ -1,0 +1,119 @@
+/*
+ * Design tokens.
+ *
+ * Semantic colours carry meaning across every visual, always paired with a
+ * shape or label so nothing relies on colour alone:
+ *   friend     blue   — friends, "more friends" branch, grand coalition
+ *   stranger   coral  — strangers, "fewer strangers" branch, singleton partition
+ *   threshold  teal   — Familiarity Index markers, focus, the current walk
+ *   clear      purple — clear (unambiguous) choices
+ *   mid        green  — intermediate partitions
+ *   tie        grey   — ties and indifference
+ */
+
+:root {
+  color-scheme: light;
+
+  --paper: #f6f2ea;
+  --paper-2: #eee8dc;
+  --card: #fffdf9;
+  --card-2: #faf6ee;
+  --ink: #1b2130;
+  --ink-2: #434b5d;
+  --ink-3: #6a7285;
+  --rule: #ded6c7;
+  --rule-strong: #c7bca8;
+  --shadow: 0 1px 2px rgb(27 33 48 / 6%), 0 8px 24px rgb(27 33 48 / 7%);
+  --shadow-strong: 0 2px 6px rgb(27 33 48 / 10%), 0 18px 40px rgb(27 33 48 / 14%);
+
+  --friend: #2a62c9;
+  --friend-ink: #1d4ea8;
+  --friend-soft: #dce7fb;
+  --stranger: #d4513f;
+  --stranger-ink: #ad3627;
+  --stranger-soft: #fae0da;
+  --threshold: #0e8a7e;
+  --threshold-ink: #0a6c63;
+  --threshold-soft: #d3eeea;
+  --clear: #7c5cc2;
+  --clear-ink: #5f449c;
+  --clear-soft: #ebe3f8;
+  --mid: #4d8a5d;
+  --mid-ink: #3a6c47;
+  --mid-soft: #deefe1;
+  --tie: #7b8393;
+  --tie-soft: #e7e6e2;
+  --metal: #a08a5c;
+  --metal-2: #cdb98c;
+
+  --block-0: #c3862a;
+  --block-1: #2f8f84;
+  --block-2: #8f55a8;
+  --block-3: #4f6a9e;
+
+  --font-display: 'Source Serif 4 Variable', 'Source Serif Pro', Georgia, 'Times New Roman', serif;
+  --font-body: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --header-h: 60px;
+  --gutter: clamp(16px, 4vw, 40px);
+  --content: 1240px;
+  --prose: 38rem;
+
+  --ease: cubic-bezier(0.22, 0.8, 0.3, 1);
+  --dur: 420ms;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --paper: #0e1522;
+  --paper-2: #0a101a;
+  --card: #141d2e;
+  --card-2: #182236;
+  --ink: #e9edf4;
+  --ink-2: #b8c1d0;
+  --ink-3: #8691a6;
+  --rule: #243149;
+  --rule-strong: #34445f;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 28%);
+  --shadow-strong: 0 2px 6px rgb(0 0 0 / 35%), 0 18px 40px rgb(0 0 0 / 40%);
+
+  --friend: #74a8ff;
+  --friend-ink: #a3c4ff;
+  --friend-soft: #1a2b4c;
+  --stranger: #ff8a78;
+  --stranger-ink: #ffb0a3;
+  --stranger-soft: #3f2023;
+  --threshold: #44d2c2;
+  --threshold-ink: #86e6da;
+  --threshold-soft: #113a3b;
+  --clear: #b79cf3;
+  --clear-ink: #d0bdf8;
+  --clear-soft: #2b2247;
+  --mid: #86c796;
+  --mid-ink: #a9dbb5;
+  --mid-soft: #183326;
+  --tie: #8e97a8;
+  --tie-soft: #232c3d;
+  --metal: #b59e6d;
+  --metal-2: #7d6c49;
+
+  --block-0: #e0a24a;
+  --block-1: #49b8aa;
+  --block-2: #b47ccc;
+  --block-3: #7d97cf;
+}
+
+/* Before the settings script runs, follow the operating system. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --paper: #0e1522;
+    --card: #141d2e;
+    --ink: #e9edf4;
+  }
+}

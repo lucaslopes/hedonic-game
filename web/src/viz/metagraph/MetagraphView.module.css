@@ -1,0 +1,347 @@
+.container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  font-family: var(--font-mono);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.zoomable {
+  cursor: grab;
+  touch-action: pan-y;
+}
+
+.zoomable:active {
+  cursor: grabbing;
+}
+
+/* Edges */
+.edges {
+  opacity: 0;
+  transition: opacity 500ms var(--ease) 150ms;
+}
+
+.edgesShown {
+  opacity: 1;
+}
+
+.edge path {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  transition:
+    opacity 260ms var(--ease),
+    stroke 260ms var(--ease),
+    stroke-width 200ms var(--ease);
+}
+
+.edgeNeutral path {
+  stroke: var(--rule-strong);
+  stroke-width: 1.6;
+}
+
+.edgeClear path {
+  stroke: var(--clear);
+  opacity: 0.75;
+}
+
+.edgeTie path {
+  stroke: var(--tie);
+  stroke-dasharray: 5 4;
+  opacity: 0.8;
+}
+
+.friendPart {
+  stroke: var(--friend);
+  stroke-width: 2.4 !important;
+}
+
+.strangerPart {
+  stroke: var(--stranger);
+  stroke-width: 2.4 !important;
+}
+
+.edgeFrustratedTie .friendPart,
+.edgeFrustratedTie .strangerPart {
+  stroke-dasharray: 5 4;
+  opacity: 0.85;
+}
+
+.splitDot {
+  fill: var(--card);
+  stroke: var(--ink);
+  stroke-width: 1.4;
+}
+
+.cursorFriend {
+  fill: var(--friend);
+  stroke: var(--card);
+  stroke-width: 2;
+}
+
+.cursorStranger {
+  fill: var(--stranger);
+  stroke: var(--card);
+  stroke-width: 2;
+}
+
+.cursorTie {
+  fill: var(--card);
+  stroke: var(--threshold);
+  stroke-width: 2.4;
+}
+
+.fLabel {
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 700;
+  fill: var(--threshold-ink);
+  paint-order: stroke;
+  stroke: var(--paper);
+  stroke-width: 4px;
+}
+
+.edgeDim {
+  opacity: 0.16;
+}
+
+.edgeStrong path {
+  stroke-width: 3.2;
+  opacity: 1;
+}
+
+.edgeStrong .friendPart,
+.edgeStrong .strangerPart {
+  stroke-width: 3.4 !important;
+}
+
+.edgeSelected path:not(.edgeHit) {
+  stroke-width: 4;
+  opacity: 1;
+}
+
+.edgeHit {
+  stroke: transparent !important;
+  stroke-width: 14 !important;
+  fill: none;
+  cursor: pointer;
+  pointer-events: stroke;
+}
+
+/* Walk overlay */
+.walkEdge {
+  fill: none;
+  stroke: var(--threshold);
+  stroke-width: 4.2;
+  stroke-linecap: round;
+}
+
+.previewEdge {
+  fill: none;
+  stroke: var(--threshold);
+  stroke-width: 2;
+  stroke-dasharray: 3 5;
+  opacity: 0.75;
+}
+
+.token {
+  fill: var(--threshold);
+  stroke: var(--card);
+  stroke-width: 2.5;
+  pointer-events: none;
+}
+
+/* Nodes */
+.node {
+  transition:
+    transform 700ms var(--ease),
+    opacity 420ms var(--ease),
+    visibility 0s linear 0s;
+  outline: none;
+}
+
+.node[role='button'] {
+  cursor: pointer;
+}
+
+.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 700ms var(--ease),
+    opacity 420ms var(--ease),
+    visibility 0s linear 420ms;
+}
+
+.card {
+  stroke-width: 1.5;
+  transition:
+    fill 240ms var(--ease),
+    stroke 240ms var(--ease);
+}
+
+.grand .card {
+  fill: var(--friend-soft);
+  stroke: var(--friend);
+}
+
+.singletons .card {
+  fill: var(--stranger-soft);
+  stroke: var(--stranger);
+}
+
+.mid .card {
+  fill: var(--mid-soft);
+  stroke: var(--mid);
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 560;
+  fill: var(--ink);
+  pointer-events: none;
+}
+
+.phi {
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  font-weight: 600;
+  fill: var(--ink-2);
+  paint-order: stroke;
+  stroke: var(--paper);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+
+.pairNote {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--ink-2);
+}
+
+.focusRing {
+  fill: none;
+  stroke: var(--threshold);
+  stroke-width: 3;
+  opacity: 0;
+}
+
+.node:focus-visible .focusRing {
+  opacity: 1;
+}
+
+.sinkRing {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2.2;
+}
+
+.sinkBadge circle {
+  fill: var(--ink);
+}
+
+.sinkBadge path {
+  fill: none;
+  stroke: var(--paper);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.selected .card {
+  stroke: var(--threshold);
+  stroke-width: 3;
+}
+
+.visited .card {
+  stroke: var(--threshold);
+  stroke-width: 2.2;
+}
+
+.current .card {
+  stroke: var(--threshold);
+  stroke-width: 3.4;
+  fill: var(--threshold-soft);
+}
+
+.current .focusRing {
+  opacity: 0.9;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.nodeDim {
+  opacity: 0.45;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    stroke-width: 2;
+    opacity: 0.35;
+  }
+  50% {
+    stroke-width: 5;
+    opacity: 0.95;
+  }
+}
+
+.zoomControls {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.hoverCard {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 180px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-strong);
+  pointer-events: none;
+  font-size: 0.82rem;
+}
+
+.hoverTitle {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.hoverLine {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.hoverSink {
+  margin: 2px 0 0;
+  font-weight: 650;
+  color: var(--threshold-ink);
+}
+
+.halfLabel {
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 600;
+  fill: currentColor;
+  paint-order: stroke;
+  stroke: var(--card-2);
+  stroke-width: 3px;
+}

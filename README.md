@@ -18,6 +18,23 @@ g = ig.Graph.Famous("Zachary")  # sample graph: Zachary's karate club
 h = Game(g)
 ```
 
+## Interactive explainer
+
+The `web/` folder holds an educational website that explains community
+detection as a hedonic game on a four-vertex example: friends and strangers,
+the resolution parameter, the Familiarity Index, the metagraph of partitions
+and better-response dynamics, with documentation pages for each idea. It is a
+static React + TypeScript site deployed to GitHub Pages by
+`.github/workflows/pages.yml`. From the repository root:
+
+```bash
+npm install
+npm run dev     # story at /, documentation at /docs/
+npm run check   # docs:generate, typecheck, lint, test, build
+```
+
+See [web/README.md](web/README.md) for the layout and conventions.
+
 ## Development
 
 This project uses `uv` for dependency management and building.

@@ -1,0 +1,311 @@
+.control {
+  --thumb: 24px;
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.head {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: end;
+  gap: 8px;
+  font-size: 0.86rem;
+}
+
+.headLabel {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.reward {
+  color: var(--friend-ink);
+}
+
+.cost {
+  color: var(--stranger-ink);
+  text-align: right;
+}
+
+.value {
+  display: grid;
+  justify-items: center;
+  gap: 0;
+}
+
+.valueLabel {
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+}
+
+.valueOut {
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.split {
+  display: flex;
+  height: 18px;
+  border-radius: 999px;
+  overflow: hidden;
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 18px;
+  text-align: center;
+}
+
+.splitCost {
+  background: var(--stranger-soft);
+  color: var(--stranger-ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--stranger) 35%, transparent);
+  border-radius: 999px 0 0 999px;
+  transition: flex-grow 180ms var(--ease);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.splitReward {
+  background: var(--friend-soft);
+  color: var(--friend-ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--friend) 35%, transparent);
+  border-radius: 0 999px 999px 0;
+  transition: flex-grow 180ms var(--ease);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.trackWrap {
+  position: relative;
+  height: 32px;
+}
+
+.track {
+  position: absolute;
+  inset: 12px 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--rule-strong), var(--rule-strong));
+}
+
+.trackClear {
+  background: var(--clear);
+  opacity: 0.8;
+}
+
+.trackTie {
+  background: repeating-linear-gradient(90deg, var(--tie) 0 8px, transparent 8px 13px);
+}
+
+.marker {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: var(--threshold);
+  border: 2px solid var(--card);
+  box-shadow: 0 0 0 1px var(--threshold);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.markerActive {
+  width: 18px;
+  height: 18px;
+  background: var(--card);
+  border: 3px solid var(--threshold);
+}
+
+.range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.range::-webkit-slider-runnable-track {
+  height: 32px;
+  background: transparent;
+}
+
+.range::-moz-range-track {
+  height: 32px;
+  background: transparent;
+}
+
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 3px solid var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.range::-moz-range-thumb {
+  width: calc(var(--thumb) - 6px);
+  height: calc(var(--thumb) - 6px);
+  border-radius: 50%;
+  background: var(--card);
+  border: 3px solid var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.range:focus-visible {
+  outline: none;
+}
+
+.range:focus-visible::-webkit-slider-thumb {
+  outline: 3px solid var(--threshold);
+  outline-offset: 2px;
+}
+
+.range:focus-visible::-moz-range-thumb {
+  outline: 3px solid var(--threshold);
+  outline-offset: 2px;
+}
+
+.scale {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
+.scaleMarker {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: var(--threshold-ink);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.regions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.trackCaption {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--clear-ink);
+  text-align: center;
+}
+
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preset {
+  min-width: 38px;
+  font-variant-numeric: tabular-nums;
+}
+
+.threshold {
+  border-color: color-mix(in srgb, var(--threshold) 55%, var(--rule));
+  color: var(--threshold-ink);
+}
+
+.inputRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  flex: 1 1 260px;
+}
+
+.snap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.inputLabel {
+  display: inline-flex;
+}
+
+.input {
+  width: 5.2rem;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--rule-strong);
+  background: var(--card);
+  text-align: center;
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--stranger);
+  box-shadow: 0 0 0 2px var(--stranger-soft);
+}
+
+.help {
+  font-size: 0.76rem;
+  color: var(--ink-3);
+  flex: 1 1 160px;
+}
+
+.extreme {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--threshold);
+  background: var(--threshold-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+
+.compact {
+  gap: 4px;
+}
+
+.compact .head {
+  grid-template-columns: 1fr;
+  justify-items: start;
+}
+
+.compact .value {
+  grid-auto-flow: column;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.compact .valueOut {
+  font-size: 1.15rem;
+}
+
+.compact .tools {
+  gap: 6px 10px;
+}
