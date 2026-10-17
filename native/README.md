@@ -10,12 +10,24 @@ core/internal.h          what the engines share, certified arithmetic, hig_fma
 core/softfma.h           a correctly rounded fma in integer arithmetic (from musl;
                          MIT licence)
 core/dispatch.h          which builds a target compiles (x86_64: two)
-core/common.c            errors, input checks, adjacency, random order and queue,
-                         heap of communities by mass
-core/partition.c         the disjoint engine
-core/cover.c             the overlapping engine (unit-l2 memberships)
-core/check.c             the independent verifier (tests only)
-core/hedonic_check.h     traced runs and the verifier (tests only, not the API)
+core/shared/             what both engines share (declared in internal.h):
+  inputs.c               errors and memory, input checks, adjacency, start labels
+  random.c               random numbers; which fma the build runs
+  queue.c                the random visiting order and the queue
+  heap.c                 the heap of communities by mass
+core/partition/          the disjoint engine
+  partition.h            its state and what its files share
+  visit.c                masses, payoff bounds, a visit, the run
+  partition.c            the start, the quality, the entry points
+core/cover/              the overlapping engine (unit-l2 memberships)
+  cover.h                its state and what its files share
+  rows.c                 labels and rows
+  visit.c                candidates, bounds, the best set; the run, the slack
+  start.c                the start and the setup
+  cover.c                the result, the quality, the entry points
+core/check/              tests only
+  check.c                the independent verifier
+  hedonic_check.h        traced runs and the verifier (not the API)
 unity.c                  the core as one translation unit (the extension's build)
 unity_fma.c, dispatch.c  x86_64 only: the core again with the FMA instruction, and
                          the entry points that choose a build from CPUID (empty
@@ -266,8 +278,8 @@ random rationals.
 
 ## Verifying a result
 
-`core/check.c` (`hig_verify_partition`, `hig_verify_cover`; tests only,
-declared in `core/hedonic_check.h`) checks a result independently of the
+`core/check/check.c` (`hig_verify_partition`, `hig_verify_cover`; tests only,
+declared in `core/check/hedonic_check.h`) checks a result independently of the
 engines: no queue, no record of past visits, masses summed afresh, and every
 feasible deviation of every vertex scored with its own bound (every
 neighbour community or label, an empty community or fresh label, and the
@@ -387,7 +399,7 @@ speed. `setup.py` lists the same three files on every platform: elsewhere
 `unity_fma.c` and `dispatch.c` compile to nothing, so a cross or universal2
 build decides per target in the preprocessor. `HIG_FORCE_SOFT_FMA` builds
 the soft fma everywhere (tests); `hig_fma_path()` and `hig_fma_select()`
-(`core/hedonic_check.h`, tests only) report and force the build.
+(`core/check/hedonic_check.h`, tests only) report and force the build.
 
 **Tests.** `tests/test_core.c` compares `hig_soft_fma` with the instruction
 (arm64; x86_64 when the CPU has FMA) on 10^6 adversarial cases (random bit

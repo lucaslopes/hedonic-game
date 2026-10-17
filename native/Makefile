@@ -15,8 +15,8 @@ CFLAGS_COMMON = -std=c11 -Wall -Wextra -Wpedantic -Wvla -ffp-contract=off -Iincl
 SANITIZE = -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined \
   -fno-sanitize-recover=undefined
 RELEASE = -O3 -DNDEBUG
-SOURCES = $(wildcard core/*.c)
-HEADERS = include/hedonic_core.h $(wildcard core/*.h)
+SOURCES = $(wildcard core/*/*.c)
+HEADERS = include/hedonic_core.h $(wildcard core/*.h core/*/*.h)
 # The second build and the entry points of an x86_64 dispatch target.
 DISPATCH = unity_fma.c dispatch.c
 BUILD = build/c

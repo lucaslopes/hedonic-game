@@ -17,7 +17,7 @@
 */
 
 #include "binding.h"
-#include "hedonic_check.h"
+#include "check/hedonic_check.h"
 
 #include <string.h>
 

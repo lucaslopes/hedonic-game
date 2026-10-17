@@ -31,8 +31,8 @@
  */
 
 #include "hedonic_core.h"
-#include "hedonic_check.h"   /* the traced entry points and the verifier */
-#include "softfma.h"         /* the core's soft fma, compared with the instruction */
+#include "check/hedonic_check.h"   /* the traced entry points and the verifier */
+#include "softfma.h"               /* the core's soft fma, compared with the instruction */
 
 #include <float.h>
 #include <math.h>

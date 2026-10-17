@@ -100,7 +100,7 @@ static PyMethodDef core_methods[] = {
       "_verify_partition(n, edges, membership, edge_weights=None, node_weights=None,\n"
       "resolution=1.0, max_total_communities=None, n_communities=None,\n"
       "allow_isolation=True) -> {'vertices', 'improvable', 'max_certified', 'max_bound'}\n\n"
-      "The independent verifier (native/core/check.c): every deviation of every vertex\n"
+      "The independent verifier (native/core/check/check.c): every deviation of every vertex\n"
       "scored afresh with certified bounds. For tests." },
     { "_verify_cover", (PyCFunction) (void (*)(void)) py_verify_cover,
       METH_VARARGS | METH_KEYWORDS,

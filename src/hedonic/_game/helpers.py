@@ -12,7 +12,7 @@ from igraph import Graph
 
 
 # Every sum of payoff terms must stay below this (HIG_ARITHMETIC_BOUND in
-# native/core/common.c), so no payoff or error bound overflows.
+# native/core/shared/inputs.c), so no payoff or error bound overflows.
 ARITHMETIC_BOUND = sys.float_info.max / 4096.0
 
 # Values that float() would read but that are not real numbers.
