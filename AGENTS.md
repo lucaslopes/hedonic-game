@@ -1,17 +1,20 @@
 # AGENTS.md — Working on `hedonic`
 
 Guidance for humans and coding agents editing this repository. `hedonic` is a
-small library: one public class (`Game`), one detector
-(`Game.community_hedonic`), and a C core compiled into `hedonic._core`.
+small library (one public class, `Game`, one detector,
+`Game.community_hedonic`, and a fixed-cover stability audit, all in a C core
+compiled into `hedonic._core`) plus the experiment command line that ships
+with it (`hedonic`, `hedonic-exp`).
 
 ## Public `main` and private `paper`
 
 - `main` tracks `origin/main`, the public GitHub repository. Only
   public-ready code and documentation belong there.
-- `paper` is a local private research branch (manuscripts, experiments,
-  evidence). It is never pushed to `origin` and never merged into `main`.
-  Bring public changes into it with `git merge origin/main` while on `paper`;
-  move a change the other way by recreating it on `main`.
+- `paper` is a local private branch. It is never pushed to `origin` and never
+  merged into `main`. Bring public changes into it with `git merge
+  origin/main` while on `paper`; move a change the other way by recreating it
+  on `main`. Nothing on `main` may name or require a file that exists only
+  on `paper`.
 
 ## Layout
 
@@ -39,8 +42,9 @@ native/                  # the C core (no igraph dependency), built into hedonic
 │   │   ├── visit.c      # candidates, bounds, best set; the run, the slack
 │   │   ├── start.c      # start and setup
 │   │   └── cover.c      # result, quality, entry points
-│   └── check/           # tests only
-│       ├── check.c      # the independent verifier
+│   └── check/
+│       ├── audit.c      # the fixed-cover stability audit (Game.stable_intervals, Game.regrets)
+│       ├── check.c      # the independent verifier (tests only)
 │       └── hedonic_check.h  # traced runs and the verifier (not the API)
 ├── unity.c              # the core as one translation unit (how the extension builds it;
 │                        #   HIG_SHARED is static there, `make test` compiles each file alone)
@@ -60,8 +64,21 @@ src/hedonic/
 ├── Game.py              # Game(igraph.Graph) + community_hedonic
 ├── _native.py           # argument buffers + VertexClustering/VertexCover around hedonic._core
 ├── _game/               # detection, membership state, evaluation bridge, helpers
-├── metrics.py           # scores against a reference cover (SciPy optional, extra `metrics`)
-└── utils.py             # seeded sampling for the random disjoint start
+├── _audit.py            # argument buffers of the C audit
+├── stability.py         # aggregates of stable intervals (stable fraction, measures, Nash window)
+├── metrics.py           # scores against a reference cover
+├── utils.py             # seeded sampling for the random disjoint start
+└── experiments/         # the command line: see "Experiments" below
+    ├── CLI.py           # `hedonic` and `hedonic-exp`; COMMANDS is the registry
+    ├── config.py        # DATA_ROOT, RUNS_ROOT, NETWORKS_DIR, codeseg_cache_dir()
+    ├── resources.py     # shipped configs and worker scripts (package data)
+    ├── runtime.py       # the identity every record carries (version, SHA-256 of the core)
+    ├── configs/         # run configs and the paper queue (queue-paper.toml)
+    ├── workers/         # scripts external methods run in their own environments
+    ├── disjoint/        # SBM sweep, Parquet result store, `hedonic run disjoint`
+    ├── plots/           # figures
+    └── overlapping/     # SNAP loading, methods, studies, durable runs and queues
+tests/                   # library tests; tests/experiments/ for the command line
 web/                     # educational site (React + Vite), see below
 ```
 
@@ -96,8 +113,10 @@ Invariants:
 2. The detector is this package's purpose-built C core; no pure-Python port
    and no other backend. The core never reads an igraph graph; the binding
    passes it the edge list.
-3. Dependencies stay `igraph>=1.0` and NumPy. Nothing checks igraph's
-   version at import.
+3. The library's modules import only igraph (`>=1.0`) and NumPy, and SciPy
+   inside `hedonic.metrics` for one-to-one matching; the other dependencies
+   (pandas, Matplotlib, NetworkX, PyArrow, DuckDB, tqdm) serve the command
+   line. Nothing checks igraph's version at import.
 4. Results are bit-identical across platforms: rounding is fixed by the
    source (`-ffp-contract=off`, `/fp:strict`, every fused multiply-add an
    explicit `hig_fma`: the instruction or the core's soft fma, never libm's;
@@ -119,14 +138,86 @@ Invariants:
    MSVC builds it with `/fp:strict`.
 6. Scoring logic lives in `hedonic.metrics` only.
 
+## The stability audit
+
+`Game.stable_intervals` and `Game.regrets` audit a fixed cover over
+resolution [0, 1] (`native/core/check/audit.c`, `native/README.md`); the
+tolerance is the paper's `1e-10 + 1e-9 * max(1, |utility|)`, not the
+detector's certified slack. Every experiment that audits a cover (cover
+audits and the benchmark's `--robustness` stage, the post-hoc analysis, the
+ground-truth spectrum, the calibration's label-free audit) goes through
+`hedonic.experiments.overlapping.stability`: `prepare()` builds the C state
+(engine `"c"`, the default) or the pure-Python reference (`"python"`,
+`robustness.FractionalState`, for tests); both return the same floats, bit
+for bit, and `tests/experiments/test_studies_audit_engines.py` checks every
+consumer on both. `--workers` forks processes that split vertex ranges over
+the read-only C state. The reference spells out CPython 3.12's compensated
+`sum` for the two current-utility coefficients, so it does not depend on the
+interpreter. Do not add a second audit implementation.
+
+## Experiments
+
+```bash
+hedonic guide                          # state-aware tour of the commands
+hedonic setup --all [--dry-run]        # SNAP pairs and the eight baselines' runtimes
+hedonic run exp [--dry-run]            # benchmark front door (wizard in a terminal)
+hedonic run queue paper --root DIR     # the paper's queue, pair by pair; --dry-run, --report
+hedonic run list|status|attach|logs|stop|resume|check
+hedonic show methods|networks|covers|metrics
+hedonic-exp list                       # analysis and utility commands
+```
+
+- **Everything comes from the package.** Configs resolve through
+  `resources.config_path` (a path that exists wins, then
+  `hedonic/experiments/configs/`), worker scripts through
+  `resources.worker_path`. Never reach the repository with
+  `Path(__file__).parents[N]`, and never require a file outside the package.
+- **Paths.** Data defaults to `~/hedonic-data` (`HEDONIC_DATA_DIR`; SNAP
+  files under `networks/` or `HEDONIC_NETWORKS_DIR`), runs to
+  `~/hedonic-runs` (`config.RUNS_ROOT`, `HEDONIC_OUTPUT_DIR`). External
+  runtimes live in `config.codeseg_cache_dir()`: a `--cache-dir` flag, else
+  `HEDONIC_CODESEG_CACHE`, else the user config's `cache_dir/codeseg`, else
+  `~/.cache/hedonic/codeseg`. Machine settings are in
+  `~/.config/hedonic/config.toml` (`hedonic config`). Never hard-code a home
+  path.
+- **Runtimes.** `hedonic setup` downloads pairs and builds or installs the
+  baselines; an unavailable method's message names `hedonic setup --methods
+  NAME`. CoDeSEG has no licence file and is never vendored; CDlib runs only
+  in its locked environment, never in the hedonic process.
+- **Identity.** Records carry `runtime.runtime_versions()` (hedonic version,
+  SHA-256 of the compiled core); resume checks refuse another build's
+  records. There is no igraph version pin and no protocol lock file.
+- **Durable runs.** Every `hedonic run` kind runs detached (tmux, else a
+  detached process), writes `progress.json`, survives a closed terminal, and
+  resumes from its files. A queue judges each item, and each pair of a
+  by-pair item, from the files on disk; never reorder queue items to change
+  the pair order (that is `pairs` in the queue file).
+- **Memory.** Detector runs whose time or memory is a result run one at a
+  time; parallel steps use `overlapping/parallel.py` (forked workers, a
+  free-memory floor) and plan their workers with `overlapping/capacity.py`.
+  Check a new heavy step under a memory guard before running it for real.
+- **CLI registry.** Every runnable `main(argv=None)` is registered in
+  `CLI.COMMANDS` (import-safe, `--help` works, a test names it). Commands
+  that `hedonic run` performs durably stay registered in `hedonic-exp` with a
+  deprecation notice (`RUN_EQUIVALENTS`). `overlapping/guide.py` (`TOPICS`) is
+  user documentation: change it with any flag or verb it names. No help
+  text advertises a removed feature.
+- **Hedonic only through `Game.community_hedonic`.** The method's key is
+  `hedonic` (runner `hedonic_local`). The 1.x multilevel phase and the
+  multi-phase variants are refused with a message saying they are not
+  available in hedonic 2.0; full CPM Leiden for comparison is
+  `hedonic.experiments.leiden.leiden` (stock igraph).
+- **Tests.** `tests/experiments/` runs without the SNAP data; an autouse
+  fixture undoes `extra_methods.install()` after every test.
+
 ## Checks
 
 ```bash
-python -m pip install -e ".[metrics]" pytest   # or: uv pip install -e ".[metrics]" pytest
+python -m pip install -e . pytest              # or: uv pip install -e . pytest
 python setup.py build_ext --inplace            # after editing native/
 make -C native test test-release test-soft-fma test-x86_64   # C tests, libm check, x86_64 (Rosetta)
 python tools/native_tests.py                   # pinned Python tests (fails on any skip)
-python -m pytest
+python -m pytest                               # library and tests/experiments
 ```
 
 `.github/workflows/wheels.yml` runs the C tests (GCC, Clang, MSVC) and builds

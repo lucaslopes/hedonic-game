@@ -97,9 +97,11 @@ Wheels are built for Linux (x86_64, aarch64), macOS (x86_64, arm64) and
 Windows (AMD64, ARM64). Elsewhere pip builds the C core from the source
 distribution, which needs a C11 compiler.
 
-`Game.evaluate_against` with `method="one_to_one_f1"` or `"node_micro_f1"`
-uses SciPy; install it with the `metrics` extra:
-`pip install "hedonic[metrics]"`.
+The package also installs the experiment command line (`hedonic` and
+`hedonic-exp`, see [Command line](#command-line-reproducing-the-experiments))
+and its dependencies (SciPy, pandas, Matplotlib, NetworkX, PyArrow, DuckDB and
+tqdm). The experiments' robustness audits run on the same C audit as
+`Game.stable_intervals` and `Game.regrets`, so they need nothing more.
 
 ## Tutorial
 
@@ -296,6 +298,57 @@ print(f"overlapping communities: {len(cover)}")
 print(f"memberships of the first five vertices: {cover.membership[:5]}")
 ```
 
+## Command line: reproducing the experiments
+
+`pip install hedonic` installs two commands. `hedonic` is the front door for
+runs; `hedonic-exp list` names the analysis and utility commands.
+
+```bash
+hedonic guide                    # where you are, what to do next, and the topics
+hedonic show methods             # the nine overlapping methods and whether each can run here
+hedonic run exp                  # a one-minute benchmark (a wizard in a terminal; --dry-run plans)
+```
+
+The disjoint (stochastic block model) paper:
+
+```bash
+hedonic run disjoint --preset smoke             # the whole pipeline in seconds
+hedonic run disjoint --preset paper --dry-run   # the paper's plan, time and disk
+hedonic run disjoint --preset paper             # durable and resumable, about a day on 8 cores
+```
+
+The overlapping-communities paper is one queue of six runs: the Hedonic
+calibration, the baseline calibration, the synthetic networks, then, pair by
+pair, the ground-truth start curve, the robustness spectrum and the benchmark,
+on eight SNAP graph/cover pairs (DBLP, Amazon, YouTube and LiveJournal, each
+with its `top5000` and `all` covers):
+
+```bash
+hedonic setup --all --dry-run    # the pairs, the eight baselines and the system tools they need
+hedonic setup --all              # download the pairs; build and install the baselines
+hedonic run queue paper --dry-run
+hedonic run queue paper          # detached and resumable; days on a laptop
+hedonic run attach paper-queue   # live view (q or Ctrl-C closes the view, never the run)
+hedonic run queue paper --report # what is done, run by run and pair by pair
+```
+
+`hedonic setup` needs git, a C and C++ compiler, CMake and make, a C++
+compiler with OpenMP for FOX (Homebrew `g++` on macOS) and
+[`uv`](https://docs.astral.sh/uv/) for the locked CDlib environment of ANGEL
+and Ego-Splitting; `--dry-run` says which are missing. Starting the queue
+again continues it: every run decides from its files what is already done.
+The queue writes under `--root DIR` (default `~/hedonic-runs/paper-queue`).
+
+Runs execute detached (tmux when available), so closing the terminal does not
+stop them: `hedonic run list`, `status`, `attach`, `logs`, `stop NAME` and
+`resume NAME` manage them. Data goes to `~/hedonic-data` (`HEDONIC_DATA_DIR`;
+SNAP files under `networks/`, or `HEDONIC_NETWORKS_DIR`), runs to
+`~/hedonic-runs` (`HEDONIC_OUTPUT_DIR`), and built method runtimes to
+`~/.cache/hedonic/codeseg` (`HEDONIC_CODESEG_CACHE`, or `hedonic config set
+cache_dir PATH`). `hedonic config set output_dir PATH` and
+`hedonic config set network_root PATH` change them for every run;
+`hedonic config example` prints every setting.
+
 ## Interactive explainer
 
 The `web/` directory contains an educational website that explains the
@@ -349,7 +402,7 @@ See [the core arithmetic contract](native/README.md#fixed-cover-stability-audit)
 ```bash
 git clone https://github.com/lucaslopes/hedonic.git
 cd hedonic
-python -m pip install -e ".[metrics]" pytest
+python -m pip install -e . pytest
 python -m pytest
 make -C native test            # the C core's own tests (sanitizers)
 python tools/native_tests.py   # bit-level pins, as the wheel builds run them

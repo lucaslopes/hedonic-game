@@ -2,3 +2,9 @@
 # sdist carries them, the wheel only the built extension.
 recursive-include native *.c *.h *.py Makefile README.md
 include setup.py
+
+# Package data of the experiment CLI (also listed in pyproject.toml's package-data).
+recursive-include src/hedonic/experiments/configs *.toml
+recursive-include src/hedonic/experiments/workers *.py *.md *.toml uv.lock
+global-exclude __pycache__ *.py[co]
+prune src/hedonic/experiments/workers/slpa_env/.venv
