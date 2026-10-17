@@ -29,11 +29,14 @@
  * weight of S. In a cover, v holds k_v labels with intensity f_v = 1/sqrt(k_v)
  * on each and earns U_v(sigma) = sum_{c in sigma} g_c(v) / sqrt(|sigma|),
  * g_c(v) = sum_{u ~ v holding c} w_uv f_u - gamma n_v sum_{u != v holding c}
- * n_u f_u. Both games have an exact potential; the returned quality is that
- * potential divided by W.
+ * n_u f_u. Both games have an exact potential Phi (a sum over pairs of
+ * vertices); the returned quality is (Phi - gamma sum_v n_v^2 / 2) / W, the
+ * constant being each vertex's own crowding.
  *
  * THE DYNAMICS. Vertices are visited from a queue, at first all of them in a
- * random order (one shuffle: the only use of the random source). A visit
+ * random order, and again, in a fresh random order, the vertices not
+ * settled when the queue runs dry (shuffles: the only use of the random
+ * source). A visit
  * computes the vertex's best response over every feasible action and adopts
  * it only when the move certainly raises the vertex's exact payoff: the
  * computed improvement exceeds a rigorous bound of its rounding error, built

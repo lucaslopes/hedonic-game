@@ -421,6 +421,7 @@ HIG_SHARED hig_error_t hig_queue_init(hig_queue_t *queue, hig_id n, const hig_rn
 
     queue->n = n;
     queue->head = queue->count = queue->moves = queue->visits = 0;
+    queue->rng = rng;
     queue->interrupt = interrupt;
     HIG_TRY(hig_alloc(&queue->ring, n, sizeof(hig_id), false));
     HIG_TRY(hig_alloc(&queue->queued, n, sizeof(uint8_t), true));
@@ -449,6 +450,10 @@ done:
 
 HIG_SHARED hig_error_t hig_queue_next(hig_queue_t *queue, hig_id *v, bool *done) {
     if (queue->count == 0) {
+        /* The unsettled vertices, in a fresh random order (Fisher-Yates
+         * over them only; native/README.md, "The equilibrium certificate
+         * and its slack", on why one fixed order is slow). */
+        queue->head = 0;
         for (hig_id i = 0; i < queue->n; i++) {
             const hig_id u = queue->order[i];
             if (queue->settled[u].at != queue->moves) {
@@ -458,6 +463,17 @@ HIG_SHARED hig_error_t hig_queue_next(hig_queue_t *queue, hig_id *v, bool *done)
         if (queue->count == 0) {
             *done = true;
             return HIG_SUCCESS;
+        }
+        for (int64_t i = queue->count - 1; i > 0; i--) {
+            uint32_t j = 0;
+            hig_id swap;
+            hig_error_t status = hig_random_below(queue->rng, (uint32_t) i + 1, &j);
+            if (status != HIG_SUCCESS) {
+                return status;
+            }
+            swap = queue->ring[i];
+            queue->ring[i] = queue->ring[j];
+            queue->ring[j] = swap;
         }
     }
     *done = false;

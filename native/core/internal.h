@@ -164,13 +164,14 @@ HIG_SHARED hig_error_t hig_compact_labels(const hig_int *in, int64_t count, hig_
 /* ---- The visiting queue -------------------------------------------------- */
 
 /* A FIFO of vertices (each at most once, `queued` marks them), the random
- * order they were first queued in, and the settlement record: settled[v].at
+ * order they were first queued in, the random source, and the settlement
+ * record: settled[v].at
  * is the number of moves made when a visit of v last found no improving move
  * (-1 if v has moved since, or was never visited), settled[v].bound what
  * that visit recorded (cover.c: a bound of v's gain; together, because both
  * are written at every visit and the run is bound by memory latency). A
  * vertex is settled when settled[v].at equals the move count. When the FIFO runs dry, the unsettled
- * vertices are queued again in the random order; when none is left, every
+ * vertices are queued again in a fresh random order; when none is left, every
  * vertex is a best response to the others and the run stops. */
 typedef struct {
     int64_t at;
@@ -186,6 +187,7 @@ typedef struct {
     int64_t head, count;
     int64_t moves;
     int64_t visits;
+    const hig_rng_t *rng;
     const hig_interrupt_t *interrupt;
 } hig_queue_t;
 

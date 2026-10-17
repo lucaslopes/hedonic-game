@@ -154,15 +154,28 @@ so that nothing overflows: `sum |w| <= DBL_MAX / 4096` and
 
 ## The equilibrium certificate and its slack
 
-All vertices are queued once in a random order (one Fisher-Yates shuffle with
-unbiased bounded draws: the only use of the random source). The queue is a
+All vertices are queued once in a random order (a Fisher-Yates shuffle with
+unbiased bounded draws). The queue is a
 FIFO ring, each vertex in it at most once. After a move, the vertex's
 neighbours are queued (for partitions, those outside its new community; see
 "Requeueing" below). Each visit that does not move stamps the vertex with the
 current number of moves. When the FIFO empties, every vertex whose stamp is
-older than the last move is queued again, in the original random order; when
-none is, every vertex has been visited, without moving, after the last move,
-in the final state, and the call returns.
+older than the last move is queued again, in a fresh random order (a
+Fisher-Yates shuffle of those vertices only; these shuffles and the first are
+the only uses of the random source); when none is, every vertex has been
+visited, without moving, after the last move, in the final state, and the
+call returns.
+
+A fresh order at each rescan matters. A community can sit at the edge of its
+threshold: on complete YouTube at its density (1,134,890 vertices), one
+community of about 156,750 members holds many members with exactly two edges
+inside it, for whom staying and leaving differ by a few units of `gamma`, so
+each member that joins makes one of them leave and each that leaves lets an
+outsider join. These are effects of a mass, not of an edge, so only a rescan
+finds them. Rescanning in one fixed order advanced this exchange by a few
+moves per rescan, over hundreds of rescans of every vertex (1,100 s for the
+call); a fresh order at each rescan settles it in a few (4.3 s, as for the
+same game played by lucas-igraph's local moving, which shuffles every pass).
 
 A visit that does not move records an upper bound of the exact gain of every
 feasible deviation (with a count limit, every deviation the limit allows):
