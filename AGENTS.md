@@ -141,6 +141,28 @@ every platform and run the pinned tests and the test suite. Try a release as
 `.devN`, then `rcN`, and tag the release on the commit of the last good
 candidate.
 
+## Timing and memory of the experiments
+
+One clock serves every method of the overlap benchmark (`hedonic.experiments.timing`,
+`timing_scope = "detector-compute-v1"`). It starts after the graph is loaded and converted, the input files are
+written, the imports are done and the temporary folders exist, and stops when the detector returns its raw result.
+Validation, canonicalisation, scoring, audits and saving come after it.
+
+- Executables (CoDeSEG, BigCLAM, FOX, NEO-K-Means, OSLOM, SVI, template commands) are timed exec-to-exit by
+  `DetectorClock.process`; their own file read and write are counted (inseparable). Harness-shipped or generated code
+  (the CDlib/DER/SLPA/link workers, the NcGame wrapper, the Octave and R scripts) times itself around the detector
+  call and reports `detector_seconds`; start-up, imports and JSON transport are recorded as
+  `isolation_overhead_seconds` and never counted. A worker that reports nothing is a failed record, not a guess.
+- Peak memory: `detector_peak_rss_bytes` is the detector process's own `ru_maxrss` (`wait4`, never `RUSAGE_CHILDREN`,
+  which keeps the largest child ever waited for). An in-process detector can only report the harness peak when the
+  clock stopped (`detector_peak_rss_scope = "harness_process_lifetime"`), comparable only under `--isolate`. A
+  worker's peak includes its interpreter and CDlib baseline (about 200 MB).
+- A new adapter times its detector through `timing.active()` and spawns nothing with `subprocess.run`
+  (`tests/experiments/test_timing_fairness.py` checks both). `unit_seconds` is the whole unit, for bookkeeping.
+- The disjoint store's `duration` is the detector call only (`store.TIMING_SCOPE = "detector-call-v1"`, part of the
+  spec, so a store timed another way is refused). Hedonic-only studies and calibration probes keep their own
+  wall-clock for budget accounting; they are not method comparisons.
+
 ## Web explainer (`web/`)
 
 An educational React + TypeScript + Vite site for the disjoint model, deployed
