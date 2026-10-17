@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import math
 import random as _random
+from numbers import Integral, Real
+
+import numpy as np
 
 from .. import _native
 from ..utils import sample_uniform_ints
 from .helpers import (
-    _UNSET,
-    _UnsetType,
     check_start_counts,
     node_weight_values as _node_weight_values,
     runtime_versions,
@@ -22,21 +23,83 @@ from .helpers import (
 )
 
 
-def _positive_or_none(name: str, value) -> None:
-    if value is not None and (
-        not isinstance(value, int) or isinstance(value, bool) or value < 1
-    ):
+def _integer(value) -> bool:
+    """Whether ``value`` is an integer (Python or NumPy), not a bool."""
+    return isinstance(value, Integral) and not isinstance(value, (bool, np.bool_))
+
+
+def _positive_or_none(name: str, value) -> int | None:
+    if value is None:
+        return None
+    if not _integer(value) or value < 1:
         raise ValueError(f"{name} must be a positive integer or None")
+    return int(value)
+
+
+def _preferred_labels(game, rows, cap, resolution, edge_weights, node_weights):
+    """Project a start to the cap: each vertex keeps its ``cap`` preferred labels.
+
+    A vertex with more than ``cap`` labels ranks them by the payoff of
+    belonging to each one alone, evaluated on the start as given: the weight
+    of its edges to the label's other members less ``resolution`` times its
+    weight times their total weight (the CPM payoff of that community in the
+    disjoint game). Ties go to the larger community, then the smaller label.
+    Every vertex chooses against the same start, so two neighbours can keep
+    different labels of a community they shared; the detector then moves
+    from the projected state to an equilibrium. Labels nobody keeps are
+    dropped and the rest renumbered in order. Returns the rows and the number
+    of vertices that had to choose.
+    """
+    weights = node_weights or [1.0] * game.vcount()
+    mass: dict[int, float] = {}
+    size: dict[int, int] = {}
+    for vertex, row in enumerate(rows):
+        for label in row:
+            mass[label] = mass.get(label, 0.0) + weights[vertex]
+            size[label] = size.get(label, 0) + 1
+    shared: dict[int, dict[int, float]] = {
+        vertex: dict.fromkeys(row, 0.0)
+        for vertex, row in enumerate(rows)
+        if len(row) > cap
+    }
+    if isinstance(edge_weights, str):
+        edge_weights = game.es[edge_weights]
+    for index, (a, b) in enumerate(game.get_edgelist()):
+        weight = 1.0 if edge_weights is None else float(edge_weights[index])
+        for x, y in ((a, b), (b, a)):
+            gains = shared.get(x)
+            if gains is not None:
+                for label in rows[y]:
+                    if label in gains:
+                        gains[label] += weight
+    kept_rows = []
+    for vertex, row in enumerate(rows):
+        gains = shared.get(vertex)
+        if gains is None:
+            kept_rows.append(row)
+            continue
+        own = weights[vertex]
+        ranked = sorted(
+            row,
+            key=lambda label: (
+                -(gains[label] - resolution * own * (mass[label] - own)),
+                -size[label],
+                label,
+            ),
+        )
+        kept_rows.append(ranked[:cap])
+    kept = {label: i for i, label in enumerate(sorted({l for row in kept_rows for l in row}))}
+    return [[kept[label] for label in row] for row in kept_rows], len(shared)
 
 
 def community_hedonic(
     game,
-    initial_membership: list[int] | list[list[int]] | None | _UnsetType = _UNSET,
+    initial_membership: list[int] | list[list[int]] | None = None,
+    *,
     max_communities: int | None = None,
     max_memberships: int = 1,
     resolution: float | None = None,
     allow_isolation: bool = False,
-    *,
     edge_weights=None,
     seed: int | None = None,
     node_weights=None,
@@ -51,17 +114,22 @@ def community_hedonic(
             "community_hedonic requires an undirected graph; "
             "project directed data before calling the detector"
         )
-    if (
-        not isinstance(max_memberships, int)
-        or isinstance(max_memberships, bool)
-        or (max_memberships < 1 and max_memberships != -1)
-    ):
+    if game.ecount() and any(game.is_loop()):
+        raise ValueError(
+            "community_hedonic requires a graph without self-loops (a loop "
+            "ties a vertex to no one else); remove them with "
+            "g.simplify(multiple=False, loops=True)"
+        )
+    if not _integer(max_memberships) or (max_memberships < 1 and max_memberships != -1):
         raise ValueError("max_memberships must be an integer >= 1, or -1")
-    requested_max_memberships = max_memberships
-    if max_memberships == -1:
+    requested_max_memberships = max_memberships = int(max_memberships)
+    if max_memberships == -1 or max_memberships > game.vcount():
+        # No vertex can hold more labels than there are vertices.
         max_memberships = game.vcount()
-    _positive_or_none("max_total_communities", max_total_communities)
-    _positive_or_none("n_communities", n_communities)
+    max_total_communities = _positive_or_none("max_total_communities", max_total_communities)
+    n_communities = _positive_or_none("n_communities", n_communities)
+    if max_communities is not None:
+        max_communities = _positive_or_none("max_communities", max_communities)
     if (
         max_total_communities is not None
         and n_communities is not None
@@ -69,14 +137,28 @@ def community_hedonic(
     ):
         raise ValueError("n_communities must not exceed max_total_communities")
     count_constrained = max_total_communities is not None or n_communities is not None
-    if seed is not None and (not isinstance(seed, int) or isinstance(seed, bool)):
-        raise ValueError("seed must be an integer or None")
+    if seed is not None:
+        if not _integer(seed):
+            raise ValueError("seed must be an integer or None")
+        seed = int(seed)
+    if not isinstance(allow_isolation, (bool, np.bool_)):
+        raise ValueError("allow_isolation must be True or False")
+    allow_isolation = bool(allow_isolation)
+    if isinstance(edge_weights, str):
+        if edge_weights not in game.es.attributes():
+            raise ValueError(f"edge_weights: the graph has no edge attribute {edge_weights!r}")
+    elif edge_weights is not None:
+        # Read once: an iterator would be empty the second time.
+        edge_weights = (
+            edge_weights.tolist() if isinstance(edge_weights, np.ndarray) else list(edge_weights)
+        )
 
     weight_total = total_edge_weight(game, edge_weights)
     if weight_total <= 0:
         raise ValueError(
-            "community_hedonic requires positive total edge weight; "
-            "the normalized potential is undefined when W=0"
+            "community_hedonic requires a positive total edge weight W "
+            f"(here W = {weight_total:g}); the quality, the potential divided "
+            "by W, is undefined otherwise"
         )
     node_weight_values = _node_weight_values(game, node_weights)
 
@@ -91,38 +173,33 @@ def community_hedonic(
                 + f" ({capacity}) with max_memberships={requested_max_memberships}"
             )
     if resolution is None:
-        res = game.density()
+        # The weighted density: W over the number of vertex pairs (the
+        # density of a simple unweighted graph).
+        n = game.vcount()
+        res = weight_total / (n * (n - 1) / 2) if n > 1 else 0.0
         if not math.isfinite(res):
             raise ValueError(
-                "graph density is not a finite resolution; "
+                "the weighted density is not a finite resolution; "
                 "pass resolution= explicitly"
             )
     else:
+        if not isinstance(resolution, Real) or isinstance(resolution, (bool, np.bool_)):
+            raise ValueError("resolution must be a finite real number or None")
         res = float(resolution)
         if not math.isfinite(res):
             raise ValueError("resolution must be a finite real number")
 
-    # Omitted and explicit ``None`` are intentionally different.  An
-    # omitted argument reuses a valid persistent state; explicit ``None``
-    # always requests the default singleton initialization.
-    use_loaded = initial_membership is _UNSET
-    candidate = game.memberships if use_loaded else initial_membership
-    if use_loaded and candidate == []:
-        candidate = None
-
+    projected = None
+    candidate = initial_membership
     if candidate is not None:
-        source = "memberships" if use_loaded else "initial_membership"
+        source = "initial_membership"
         try:
-            rows = game._normalize_membership(
-                candidate,
-                max_memberships=max_memberships,
-                collapse_duplicate_labels=overlapping,
-            )
+            rows = game._normalize_membership(candidate, collapse_duplicate_labels=True)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid {source}: {exc}") from exc
-        if not overlapping and any(len(row) != 1 for row in rows):
-            raise ValueError(
-                f"Invalid {source}: overlapping rows require max_memberships > 1"
+        if any(len(row) > max_memberships for row in rows):
+            rows, projected = _preferred_labels(
+                game, rows, max_memberships, res, edge_weights, node_weight_values
             )
         check_start_counts(rows, source, max_total_communities, n_communities)
         membership_vector = rows if overlapping else [row[0] for row in rows]
@@ -139,12 +216,15 @@ def community_hedonic(
         membership_vector = list(range(game.vcount()))
         max_communities_effect = "none: disjoint singleton start"
     else:
-        if not isinstance(max_communities, int) or max_communities <= 0:
-            raise ValueError(
-                "max_communities must be a positive integer when provided"
-            )
+        # The start is drawn from the call's seed (its absolute value, as
+        # random.Random reads an integer seed), or, without one, from a
+        # seed drawn from the generator the visiting order uses.
+        start_seed = (
+            abs(seed) if seed is not None
+            else _native.default_rng().randint(0, 2**63 - 1)
+        )
         membership_vector = sample_uniform_ints(
-            game.vcount(), max_communities - 1, 42 if seed is None else seed
+            game.vcount(), max_communities - 1, start_seed
         ).tolist()
         # A draw can leave labels unused, and the detector takes labels
         # contiguous from 0: renumber the drawn labels in order (the
@@ -207,10 +287,12 @@ def community_hedonic(
             "max_communities": max_communities,
             "max_communities_effect": max_communities_effect,
             "initialization": (
-                "loaded memberships" if use_loaded and candidate is not None
+                "initial_membership, projected to max_memberships"
+                if projected is not None
                 else "initial_membership" if candidate is not None
                 else "default"
             ),
+            "projected_vertices": projected,
             "occupied_communities": occupied,
             "allow_isolation": bool(allow_isolation),
             "edge_weighted": edge_weights is not None,
@@ -238,9 +320,8 @@ def community_hedonic(
         },
     )
 
-    # Persist the returned state in the canonical representation so a
-    # subsequent call without ``initial_membership`` continues from this
-    # equilibrium.
+    # Keep the returned state in the canonical representation; a later call
+    # continues from it when given initial_membership=game.memberships.
     game._memberships = returned_rows
 
     return result

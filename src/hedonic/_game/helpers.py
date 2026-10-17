@@ -8,17 +8,6 @@ import igraph
 from igraph import Graph
 
 
-# ``None`` is a meaningful explicit value for ``community_hedonic`` (it asks
-# for the default singleton start), so the omitted argument needs its own
-# sentinel.  Keeping this private avoids exposing an implementation detail in
-# the public API while still allowing a persistent ``Game.memberships`` state.
-class _UnsetType:
-    __slots__ = ()
-
-
-_UNSET = _UnsetType()
-
-
 def total_edge_weight(graph: Graph, edge_weights=None) -> float:
     """Return the undirected total edge weight ``W`` used by ``Φ_γ = Φ̃_γ / W``.
 
@@ -50,7 +39,12 @@ def node_weight_values(graph: Graph, node_weights) -> list[float] | None:
     """Validate vertex weights (finite, >= 0)."""
     if node_weights is None:
         return None
-    values = graph.vs[node_weights] if isinstance(node_weights, str) else list(node_weights)
+    if isinstance(node_weights, str):
+        if node_weights not in graph.vs.attributes():
+            raise ValueError(f"node_weights: the graph has no vertex attribute {node_weights!r}")
+        values = graph.vs[node_weights]
+    else:
+        values = list(node_weights)
     if len(values) != graph.vcount():
         raise ValueError("node_weights must have one value per vertex")
     weights = []

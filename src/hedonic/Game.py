@@ -7,13 +7,32 @@ from ._game.evaluation import (
     EVALUATION_METHODS as _EVALUATION_METHODS_TABLE,
     evaluate_against as _evaluate_against,
 )
-from ._game.helpers import _UNSET, _UnsetType
 from ._game.memberships import (
     as_overlapping_init as _as_overlapping_init_impl,
     memberships_as_cover as _memberships_as_cover,
     normalize_membership as _normalize_membership_impl,
     validate_membership as _validate_membership,
 )
+
+
+# Keywords of hedonic 1.x that 2.0 removed, and what replaces them.
+_REMOVED_ARGUMENTS = {
+    "n_iterations": "every call runs until no vertex can improve (the 1.x n_iterations=-1)",
+    "local_move_only": "every call is local moving; for full Leiden use igraph's Graph.community_leiden",
+    "beta": "Leiden's refinement is not part of hedonic 2.0",
+    "debug_trace": "traces are not part of hedonic 2.0",
+    "phase_policy": "pass a partition as initial_membership to warm-start a cover",
+    "ensure_equilibrium": "every call returns an equilibrium",
+}
+
+
+def _removed_arguments(removed: dict) -> str:
+    names = sorted(removed)
+    known = [name for name in names if name in _REMOVED_ARGUMENTS]
+    if not known:
+        return f"community_hedonic() got an unexpected keyword argument {names[0]!r}"
+    notes = "; ".join(f"{name}: {_REMOVED_ARGUMENTS[name]}" for name in known)
+    return f"community_hedonic() no longer takes {', '.join(known)} (removed in 2.0; {notes})"
 
 
 class Game(Graph):
@@ -24,6 +43,11 @@ class Game(Graph):
     _EVALUATION_METHODS = _EVALUATION_METHODS_TABLE
 
     def __init__(self, graph: Graph | None = None, *args, **kwargs) -> None:
+        if graph is not None and not isinstance(graph, Graph):
+            # Graph's own arguments (n, edges, directed, ...), positionally.
+            super().__init__(graph, *args, **kwargs)
+            self._memberships = None
+            return
         if isinstance(graph, Graph):
             if args or kwargs:
                 raise TypeError(
@@ -49,29 +73,27 @@ class Game(Graph):
         super().__init__(*args, **kwargs)
         self._memberships: list[list[int]] | None = None
 
+    def copy(self) -> "Game":
+        """A copy of the graph, its attributes and its stored memberships."""
+        return Game(self)
+
     @property
     def memberships(self) -> list[list[int]] | None:
         """Canonical per-vertex community memberships.
 
-        The state is always represented as one (non-empty) list of integer
-        community labels per vertex.  A ``None`` value means that no state has
-        been configured yet.  The setter accepts the flat partition form as a
-        convenience, but stores the normalized list-of-lists representation.
-        Validation against a membership cap is performed by
-        :meth:`community_hedonic`, where the cap is known.
+        One (non-empty) list of integer community labels per vertex: the
+        last result of :meth:`community_hedonic`, or what was assigned.
+        ``None`` means no state. The setter accepts the flat partition form
+        (and tuples or NumPy arrays) and stores the normalized
+        list-of-lists. A call starts from this state only when it is passed
+        as ``initial_membership``.
         """
         return self._memberships
 
     @memberships.setter
     def memberships(self, value: list[int] | list[list[int]] | None) -> None:
-        if value is None:
-            self._memberships = None
-            return
-        # An empty value is retained as an explicit "unconfigured" state.  It
-        # is treated like ``None`` only when the detector's argument is
-        # omitted; an explicitly passed empty value still raises ValueError.
-        if value == []:
-            self._memberships = []
+        if value is None or (isinstance(value, (list, tuple)) and len(value) == 0):
+            self._memberships = None   # no state
             return
         self._memberships = self._normalize_membership(value)
 
@@ -206,17 +228,18 @@ class Game(Graph):
 
     def community_hedonic(
         self,
-        initial_membership: list[int] | list[list[int]] | None | _UnsetType = _UNSET,
+        initial_membership: list[int] | list[list[int]] | None = None,
+        *positional,
         max_communities: int | None = None,
         max_memberships: int = 1,
         resolution: float | None = None,
         allow_isolation: bool = False,
-        *,
         edge_weights=None,
         seed: int | None = None,
         node_weights=None,
         max_total_communities: int | None = None,
         n_communities: int | None = None,
+        **removed,
     ):
         """Community detection with the CPM hedonic game, disjoint or overlapping.
 
@@ -229,23 +252,40 @@ class Game(Graph):
         every call terminates. At return no unilateral deviation raises a
         vertex's exact payoff by more than
         ``_hedonic_provenance["equilibrium_slack"]`` times the total edge
-        weight; the slack is 0 when the arithmetic is exact (for instance
-        unit weights at resolution 0, 1/2 or 1), and the result is then an
-        exact Nash equilibrium. The computation runs in this package's C
-        core (``hedonic._core``). Every argument after ``allow_isolation`` is
-        keyword-only.
+        weight; the slack is 0 when the arithmetic is exact (for instance a
+        partition with unit weights at resolution 0, 1/2 or 1), and the
+        result is then an exact Nash equilibrium. Covers, whose payoffs
+        divide by square roots, usually keep a slack near 1e-16. The result
+        is an equilibrium reached from the start, not the best partition or
+        cover: from singletons at resolution 0, for instance, a connected
+        graph need not end as one community. The computation runs in this
+        package's C core (``hedonic._core``). Every argument after
+        ``initial_membership`` is keyword-only.
+
+        The graph must be undirected and free of self-loops (a loop ties a
+        vertex to no one else; ``g.simplify(multiple=False, loops=True)``
+        removes them). Parallel edges count as one edge whose weight is
+        their sum.
 
         Parameters
         ----------
         initial_membership :
-            Disjoint: flat list of community ids (length n).
-            Overlapping (``max_memberships > 1``): flat list or list-of-lists
-            (one community-id list per vertex). ``None`` builds a default start.
-            When omitted, a valid ``self.memberships`` state is reused;
-            explicit ``None`` requests the default singleton start, or a
-            feasible round-robin start when a community-count limit is set.
-            Flat and nested overlapping starts with the same labels are
-            equivalent after normalization.
+            The start. ``None`` (the default) is the singleton start, a
+            random start with ``max_communities``, or a feasible round-robin
+            start when a community-count limit is set. Otherwise one entry
+            per vertex: a community label (a partition) or a list of labels
+            (a cover); labels are non-negative integers contiguous from 0,
+            and a list, tuple or NumPy array is accepted. To continue from
+            the previous result, pass ``initial_membership=g.memberships``.
+            A vertex with more labels than ``max_memberships`` keeps the
+            ``max_memberships`` it prefers, ranked by the payoff of belonging
+            to each community alone, evaluated on the start as given (ties
+            to the larger community, then the smaller label); the detector
+            then moves from there to an equilibrium. A cover passed to a
+            partition call (``max_memberships=1``) thus becomes the partition
+            in which every vertex keeps its preferred community.
+            ``_hedonic_provenance["projected_vertices"]`` counts the vertices
+            that had to choose.
         max_communities :
             Initialization only: when ``initial_membership`` is ``None`` and
             ``max_memberships == 1``, random start over ``[0, max_communities)``
@@ -254,8 +294,10 @@ class Game(Graph):
             It has no effect with a supplied start, with overlapping defaults,
             or when community-count limits select a feasible default start;
             ``_hedonic_provenance["max_communities_effect"]`` records which
-            case applied. It is *not* an output constraint; see
-            ``max_total_communities``/``n_communities``.
+            case applied. It is not an output constraint (see
+            ``max_total_communities``/``n_communities``), but without
+            ``allow_isolation`` no vertex can open a new community, so the
+            result then has at most ``max_communities`` communities.
         max_memberships :
             Per-vertex cap. ``1`` (default) gives a partition
             (``VertexClustering``); ``> 1`` gives an overlapping cover
@@ -264,15 +306,19 @@ class Game(Graph):
             effective cap is the vertex count, recorded in
             ``_hedonic_provenance``).
         resolution :
-            CPM resolution γ. Defaults to the graph density. Must be a finite
-            real. Smaller values give larger communities. Zero total edge
-            weight is rejected: the normalized potential ``Φ_γ = Φ̃_γ / W`` is
-            undefined when ``W=0``.
+            CPM resolution γ. Defaults to the weighted density, the total
+            edge weight ``W`` over the number of vertex pairs (the density of
+            a simple unweighted graph). Must be a finite real. Smaller values
+            give larger communities. A total edge weight ``W <= 0`` is
+            rejected: the quality, the potential divided by ``W``, is
+            undefined.
         allow_isolation :
             Allow a vertex to open a new, empty community.
         edge_weights :
-            Optional edge weights (sequence or edge-attribute name); finite
-            and non-negative for covers.
+            Optional edge weights (sequence or edge-attribute name), finite;
+            non-negative for covers. A partition accepts negative weights as
+            long as ``W > 0``. An edge attribute named ``"weight"`` is not
+            used unless named here.
         seed :
             When given, the visiting order is drawn from
             ``random.Random(seed)``, and the same seed drives the random
@@ -298,18 +344,30 @@ class Game(Graph):
         VertexClustering if ``max_memberships == 1``, else VertexCover.
 
         The result carries ``_hedonic_provenance`` (versions, effective
-        parameters, count mode) and ``_hedonic_native_quality`` (the
-        potential ``Φ`` of the returned state). The returned memberships are
-        also stored in ``self.memberships``, so a later call without
-        ``initial_membership`` continues from them.
+        parameters, count mode) and ``_hedonic_native_quality``:
+        ``(Φ - γ Σ_v n_v² / 2) / W`` for the exact potential ``Φ`` of the
+        returned state (a sum over pairs of vertices; the constant term is
+        each vertex's own crowding, the same for every state). The returned
+        memberships are also stored in ``self.memberships``; pass
+        ``initial_membership=g.memberships`` to continue from them.
         """
+        if positional:
+            raise TypeError(
+                "community_hedonic() takes initial_membership as its only "
+                f"positional argument ({len(positional)} more given); pass "
+                "the others by keyword. In 2.0 they are keyword-only (in 1.x "
+                "the fourth positional argument was n_iterations, which 2.0 "
+                "removed)"
+            )
+        if removed:
+            raise TypeError(_removed_arguments(removed))
         return _community_hedonic(
             self,
             initial_membership,
-            max_communities,
-            max_memberships,
-            resolution,
-            allow_isolation,
+            max_communities=max_communities,
+            max_memberships=max_memberships,
+            resolution=resolution,
+            allow_isolation=allow_isolation,
             edge_weights=edge_weights,
             seed=seed,
             node_weights=node_weights,

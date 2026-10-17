@@ -7,7 +7,7 @@ from numbers import Integral
 
 def memberships_as_cover(game) -> list[list[int]]:
     """Convert stored per-vertex memberships to community lists."""
-    if game.memberships is None or game.memberships == []:
+    if not game.memberships:
         raise ValueError(
             "Game has no memberships; run community_hedonic or assign "
             "Game.memberships before evaluating it"
@@ -59,11 +59,18 @@ def normalize_membership(
     detector call. Detector initialization may opt to collapse repeated labels
     within a row; ordinary stored-state validation remains strict.
     """
-    if not isinstance(membership, list):
-        raise TypeError("memberships must be a list")
+    if hasattr(membership, "tolist") and not isinstance(membership, (list, tuple)):
+        membership = membership.tolist()   # a NumPy array
+    if not isinstance(membership, (list, tuple)):
+        raise TypeError(
+            "memberships must be a list (or tuple or NumPy array) with one "
+            "entry per vertex"
+        )
     if len(membership) != game.vcount():
         raise ValueError(
-            f"memberships must contain one row per vertex ({game.vcount()})"
+            f"memberships must contain one row per vertex ({game.vcount()}), "
+            f"got {len(membership)}: give each vertex its label (or its list "
+            "of labels), not a list of communities"
         )
     if not membership:
         raise ValueError("memberships cannot be empty")
@@ -110,10 +117,10 @@ def normalize_membership(
         rows.append(labels)
         all_labels.update(labels)
 
-    if all_labels:
-        max_label = max(all_labels)
-        if all_labels != set(range(max_label + 1)):
-            raise ValueError("membership labels must be contiguous from 0")
+    if all_labels and max(all_labels) != len(all_labels) - 1:
+        # Labels are non-negative and distinct, so they are 0 .. k-1
+        # exactly when the largest is k - 1.
+        raise ValueError("membership labels must be contiguous from 0")
     return rows
 
 

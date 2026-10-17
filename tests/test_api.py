@@ -30,7 +30,7 @@ REMOVED_KEYWORDS = {
 PROVENANCE_KEYS = {
     "versions", "resolution", "max_memberships", "effective_max_memberships",
     "count_constraint", "max_total_communities", "n_communities", "max_communities",
-    "max_communities_effect", "initialization", "occupied_communities",
+    "max_communities_effect", "initialization", "occupied_communities", "projected_vertices",
     "allow_isolation", "edge_weighted", "node_weighted", "total_edge_weight", "seed",
     "rng", "equilibrium_notion", "equilibrium_slack",
 }

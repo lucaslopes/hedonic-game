@@ -64,19 +64,38 @@ def cover_quality(result) -> float | None:
     return None
 
 
+def _is_label(value) -> bool:
+    """A flat label, as opposed to a community or a row of labels."""
+    return not isinstance(value, (list, tuple, set, frozenset, np.ndarray))
+
+
+def flat_labels_to_cover(labels) -> list[list[int]]:
+    """Group a flat label vector (one hashable label per vertex) into
+    communities, ordered by label when the labels sort, else by first
+    appearance."""
+    groups: dict = {}
+    for vertex, label in enumerate(labels):
+        groups.setdefault(label.item() if isinstance(label, np.generic) else label, []).append(vertex)
+    try:
+        keys = sorted(groups)
+    except TypeError:
+        keys = list(groups)
+    return [groups[key] for key in keys]
+
+
 def partition_to_cover_lists(partition) -> list[list[int]]:
-    """Convert a VertexClustering (or flat membership) to community lists."""
+    """Convert a VertexClustering, VertexCover or flat membership vector to
+    community lists."""
     if hasattr(partition, "membership") and partition.membership is not None:
         mem = partition.membership
         # Overlapping VertexCover: membership is list[list[int]]
         if mem and isinstance(mem[0], (list, tuple)):
             return [list(c) for c in partition]
-        n_comms = max(mem) + 1 if mem else 0
-        return [
-            [v for v, c in enumerate(mem) if c == ci]
-            for ci in range(n_comms)
-        ]
-    return [list(c) for c in partition]
+        return flat_labels_to_cover(mem)
+    values = list(partition)
+    if values and all(_is_label(value) for value in values):
+        return flat_labels_to_cover(values)
+    return [list(c) for c in values]
 
 
 def flat_membership_to_cover_init(membership: list[int]) -> list[list[int]]:
@@ -214,7 +233,12 @@ def _one_to_one_matches(
     one zero-score dummy prediction per GT community. Both paths solve the same
     optional maximum-weight one-to-one assignment.
     """
-    from scipy.optimize import linear_sum_assignment
+    try:
+        from scipy.optimize import linear_sum_assignment
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise ImportError(
+            "one-to-one matching needs SciPy: pip install 'hedonic[metrics]'"
+        ) from exc
 
     scores, intersections = (
         pair_data if pair_data is not None else _pair_scores(pred_sets, gt_sets, weight)
@@ -884,6 +908,21 @@ def structural_overlap_metrics(
     }
 
 
+def _check_vertices(cover, n_vertices: int, name: str) -> None:
+    """Every vertex of ``cover`` is an integer in ``range(n_vertices)``."""
+    for community in cover:
+        for vertex in community:
+            if (
+                isinstance(vertex, (bool, np.bool_))
+                or not isinstance(vertex, (int, np.integer))
+                or not 0 <= vertex < n_vertices
+            ):
+                raise ValueError(
+                    f"{name}: vertex {vertex!r} is not an integer in "
+                    f"range({n_vertices})"
+                )
+
+
 def evaluate_cover(
     predicted: Sequence[Sequence[int]],
     ground_truth: Sequence[Sequence[int]],
@@ -894,8 +933,16 @@ def evaluate_cover(
     matching_weight: MatchingWeight = "f1",
     omega_sample_size: int = 100_000,
     omega_seed: int = 0,
+    one_to_one: bool = True,
 ) -> dict:
-    """Evaluate a cover with legacy and recommended overlap-aware metrics."""
+    """Evaluate a cover with legacy and recommended overlap-aware metrics.
+
+    Vertices are integers in ``range(n_vertices)``. ``one_to_one=False``
+    skips the one-to-one matching (and the metrics built on it, which are
+    then absent), the only part that needs SciPy.
+    """
+    _check_vertices(predicted, n_vertices, "predicted")
+    _check_vertices(ground_truth, n_vertices, "ground_truth")
     pred_sets = _cover_sets(predicted, singleton_mode)
     gt_sets = _cover_sets(ground_truth, singleton_mode)
     pair_data = _pair_scores(pred_sets, gt_sets, matching_weight)
@@ -909,11 +956,15 @@ def evaluate_cover(
     legacy = _symmetric_metrics_from_scores(
         pred_scores, gt_scores, len(pred_sets), len(gt_sets)
     )
-    matches = _one_to_one_matches(
-        pred_sets,
-        gt_sets,
-        weight=matching_weight,
-        pair_data=pair_data,
+    matches = (
+        _one_to_one_matches(
+            pred_sets,
+            gt_sets,
+            weight=matching_weight,
+            pair_data=pair_data,
+        )
+        if one_to_one
+        else None
     )
 
     omega = (
@@ -944,12 +995,13 @@ def evaluate_cover(
         "detected_to_reference_f1": (sum(sc[0] for sc in pred_scores) / len(pred_scores)) if pred_scores else 0.0,
         "nf1": normalized_f1_rossetti(predicted, ground_truth),
     }
-    result.update(
-        _one_to_one_metrics_from_matches(
-            pred_sets, gt_sets, matches, matching_weight
+    if matches is not None:
+        result.update(
+            _one_to_one_metrics_from_matches(
+                pred_sets, gt_sets, matches, matching_weight
+            )
         )
-    )
-    result.update(_node_metrics_from_matches(pred_sets, gt_sets, matches))
+        result.update(_node_metrics_from_matches(pred_sets, gt_sets, matches))
     result.update(cover_diagnostics(pred_sets, gt_sets, n_vertices))
     result.update(
         structural_overlap_metrics(

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from numbers import Integral
-
 EVALUATION_METHODS = {
     "f1": "f1",
     "symmetric_f1": "f1",
@@ -44,7 +42,9 @@ def evaluate_against(
 
     # A local import: the one-to-one matcher needs SciPy, which is optional.
     from ..metrics import (
+        _is_label,
         evaluate_cover,
+        flat_labels_to_cover,
         partition_to_cover_lists,
     )
 
@@ -59,25 +59,16 @@ def evaluate_against(
                 "ground_truth must be a community cover, partition vector, "
                 "or VertexClustering/VertexCover"
             ) from exc
-        # A flat vector is unambiguous; nested rows are already interpreted
-        # as the list-of-communities cover expected by evaluate_cover.
-        if truth_values and all(
-            isinstance(value, Integral) and not isinstance(value, bool)
-            for value in truth_values
-        ):
+        # A flat vector (one label per vertex, any hashable labels) is
+        # unambiguous; nested entries are communities (lists of vertices).
+        if truth_values and all(_is_label(value) for value in truth_values):
             if len(truth_values) != game.vcount():
                 raise ValueError(
                     "flat ground_truth must contain one label per vertex "
-                    f"({game.vcount()})"
+                    f"({game.vcount()}); a cover is a list of communities, "
+                    "each a list of vertices"
                 )
-            try:
-                truth_rows = game._normalize_membership(truth_values)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"Invalid ground_truth partition: {exc}") from exc
-            by_label: dict[int, list[int]] = {}
-            for vertex, row in enumerate(truth_rows):
-                by_label.setdefault(row[0], []).append(vertex)
-            truth = [by_label[label] for label in sorted(by_label)]
+            truth = flat_labels_to_cover(truth_values)
         else:
             truth = [list(community) for community in truth_values]
 
@@ -90,5 +81,6 @@ def evaluate_against(
         matching_weight=matching_weight,
         omega_sample_size=omega_sample_size,
         omega_seed=omega_seed,
+        one_to_one=metric_key in ("matching_f1", "node_micro_f1"),
     )
     return float(scores[metric_key])

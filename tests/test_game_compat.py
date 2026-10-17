@@ -91,9 +91,9 @@ class TestModeParityMatrix(unittest.TestCase):
 
                 # The run ends at an equilibrium, so continuing from
                 # the stored state returns it unchanged.
-                resumed = game.community_hedonic(**kwargs)
+                resumed = game.community_hedonic(game.memberships, **kwargs)
                 self.assertEqual(
-                    resumed._hedonic_provenance["initialization"], "loaded memberships"
+                    resumed._hedonic_provenance["initialization"], "initial_membership"
                 )
                 self.assertEqual(
                     _canonical(resumed.membership, overlapping),
@@ -125,9 +125,11 @@ class TestMessagesNameTheConflictingOption(unittest.TestCase):
                 max_memberships=2, initial_membership=[[v] for v in range(34)],
                 n_communities=3),
              "initial_membership.*n_communities=3"),
-            (lambda: game.community_hedonic(
-                initial_membership=[[0, 1]] + [[0]] * 33),
-             "initial_membership.*max_memberships"),
+            (lambda: game.community_hedonic(max_memberships=2, resolution="0.1"),
+             "resolution must be a finite real number"),
+            (lambda: game.community_hedonic(allow_isolation="False"), "allow_isolation"),
+            (lambda: game.community_hedonic(edge_weights="missing"),
+             "no edge attribute 'missing'"),
             (lambda: game.community_hedonic(resolution=float("nan")), "resolution"),
             (lambda: game.community_hedonic(node_weights=[-1.0] * 34), "node_weights"),
         ]
@@ -178,8 +180,8 @@ class TestWarmStart(unittest.TestCase):
                     initial_membership=[[c] for c in partition.membership],
                     max_memberships=3, **common,
                 )
-                # Continuing on the same Game reuses the stored partition.
-                loaded = game.community_hedonic(max_memberships=3, **common)
+                # Continuing from the Game's stored partition.
+                loaded = game.community_hedonic(game.memberships, max_memberships=3, **common)
                 self.assertEqual(flat.membership, nested.membership)
                 self.assertEqual(flat.membership, loaded.membership)
                 self.assertEqual(
