@@ -9,14 +9,16 @@ import styles from './SiteHeader.module.css';
 const THEME_ORDER: ThemePreference[] = ['system', 'light', 'dark'];
 const MOTION_ORDER: MotionPreference[] = ['system', 'reduce', 'allow'];
 
-export function SiteHeader({ page }: { page: 'story' | 'docs' }) {
+export type SitePage = 'story' | 'overlap' | 'docs';
+
+export function SiteHeader({ page }: { page: SitePage }) {
   const t = useT();
   const settings = useSettings();
   const progress = useRef<HTMLDivElement>(null);
   const base = import.meta.env.BASE_URL;
 
   useEffect(() => {
-    if (page !== 'story') return undefined;
+    if (page === 'docs') return undefined;
     let frame = 0;
     const update = () => {
       frame = 0;
@@ -55,17 +57,24 @@ export function SiteHeader({ page }: { page: 'story' | 'docs' }) {
         {t.a11y.skip}
       </a>
       <div className={styles.inner}>
-        <a className={styles.brand} href={page === 'story' ? '#top' : base} aria-label={t.header.home}>
+        <a className={styles.brand} href={page === 'docs' ? base : '#top'} aria-label={t.header.home}>
           <LogoMark size={30} />
           <span className={styles.brandText}>Hedonic&nbsp;Game</span>
         </a>
         <nav className={styles.nav} aria-label="Primary">
-          <a href={page === 'story' ? '#dilemma' : `${base}#dilemma`} className={styles.link} aria-current={page === 'story' ? 'page' : undefined}>
-            {t.header.story}
-          </a>
-          <a href={page === 'story' ? '#explore' : `${base}#explore`} className={`${styles.link} ${styles.optional}`}>
-            {t.header.explore}
-          </a>
+          <div className={styles.modes} role="group" aria-label={t.header.modes}>
+            <a href={page === 'story' ? '#top' : base} className={styles.mode} aria-current={page === 'story' ? 'page' : undefined}>
+              {t.header.disjoint}
+            </a>
+            <a href={page === 'overlap' ? '#top' : `${base}overlap/`} className={styles.mode} aria-current={page === 'overlap' ? 'page' : undefined}>
+              {t.header.overlap}
+            </a>
+          </div>
+          {page !== 'docs' && (
+            <a href={page === 'story' ? '#explore' : '#converge'} className={`${styles.link} ${styles.optional}`}>
+              {page === 'story' ? t.header.explore : t.header.converge}
+            </a>
+          )}
           <a href={`${base}docs/`} className={styles.link} aria-current={page === 'docs' ? 'page' : undefined}>
             {t.header.docs}
           </a>
@@ -92,7 +101,7 @@ export function SiteHeader({ page }: { page: 'story' | 'docs' }) {
           </button>
           <button
             type="button"
-            className="btn btn-small btn-icon"
+            className={`btn btn-small btn-icon ${styles.narrowOptional}`}
             onClick={() => settings.setMotionPreference(cycle(MOTION_ORDER, settings.motionPreference))}
             aria-label={motionLabel}
             title={motionLabel}
@@ -104,7 +113,7 @@ export function SiteHeader({ page }: { page: 'story' | 'docs' }) {
           </a>
         </div>
       </div>
-      {page === 'story' && <div ref={progress} className={styles.progress} aria-hidden="true" />}
+      {page !== 'docs' && <div ref={progress} className={styles.progress} aria-hidden="true" />}
     </header>
   );
 }

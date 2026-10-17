@@ -5,6 +5,8 @@
  */
 
 const r = String.raw;
+/** A backtick inside String.raw templates, for `code` spans. */
+const BT = '`';
 
 export const en = {
   meta: {
@@ -18,7 +20,10 @@ export const en = {
   },
   header: {
     home: 'Hedonic game — home',
-    story: 'Story',
+    modes: 'Explainer',
+    disjoint: 'Disjoint',
+    overlap: 'Overlap',
+    converge: 'Converge',
     explore: 'Explore',
     docs: 'Docs',
     github: 'Source on GitHub',
@@ -419,6 +424,8 @@ export const en = {
     tagline: 'Community detection as a hedonic game — an educational explainer.',
     basedOn:
       'Based on L. L. Felipe, “Community Detection as a Hedonic Game” (student research competition extended abstract), and on Felipe, Avrachenkov and Menasché, arXiv:2509.03834.',
+    disclaimerOverlap:
+      'The overlap simulator is a browser port of the native cover engine on a six-vertex graph, checked against the package. It does not replace the `hedonic` package.',
     disclaimer:
       'The simulator is a browser-side educational model of a four-vertex graph. It does not replace the `hedonic` package or its native C detector.',
     license: 'Code released under the GNU GPL, version 3 or later.',
@@ -435,6 +442,169 @@ export const en = {
     languageNote: '',
     generated: (ref: string) => `API reference generated from the Python source (${ref}).`,
     menu: 'Documentation menu',
+  },
+  overlap: {
+    title: 'Overlapping communities as a hedonic game',
+    hero: {
+      kicker: 'An interactive explainer · overlapping communities',
+      title: 'When an agent may join several communities',
+      lede:
+        'In the disjoint story every agent joins exactly one community. Here an agent may hold up to M labels at once, but it splits one budget of attention among them: with k labels it gives each 1/√k. Friends still pull it in and strangers still push it away, label by label. Follow one vertex as it picks its best set, find the resolutions at which that set stays best, and watch the whole graph settle into an overlapping equilibrium.',
+      cta: 'Start with one vertex',
+      disjointCta: 'The disjoint story',
+      stats: '6 agents · 11 friendships · two cliques that share an edge',
+      figureCaption: 'Two cliques of four that share the edge 2–3, coloured by the equilibrium the package finds at γ = 0.5 and M = 2.',
+      pickAgent: 'Pick an agent',
+      focus: (v: number, row: string, friends: string, strangers: string) =>
+        `Agent ${v} holds ${row}. Friends: ${friends}. Strangers: ${strangers}.`,
+      agentButton: (v: number) => `Show the labels of agent ${v}`,
+      roadmap: 'The story',
+    },
+    chapters: {
+      sees: 'What one vertex sees',
+      intervals: 'Stable intervals',
+      converge: 'Convergence',
+      tool: 'Use the package',
+    },
+    graph: {
+      label: (description: string) => `The six-vertex graph. ${description}`,
+      vertex: (v: number, row: string) => `Vertex ${v}, holds ${row}`,
+      select: (v: number, row: string) => `Look through the eyes of vertex ${v} (holds ${row})`,
+      communities: (list: string) => `Communities: ${list}.`,
+    },
+    controls: {
+      presets: 'Cover',
+      presetNames: {
+        natural: 'Shared edge',
+        halves: 'Halves',
+        together: 'Together',
+        singletons: 'Alone',
+      },
+      presetTitles: {
+        natural: 'Vertices 2 and 3 hold both labels: the equilibrium at γ = 0.5, M = 2',
+        halves: 'Vertices 0, 1, 2 hold A; vertices 3, 4, 5 hold B',
+        together: 'Every vertex holds A',
+        singletons: 'Every vertex holds a label of its own',
+      },
+      edited: 'Edited',
+      cap: 'Cap M (max_memberships)',
+      capTooSmall: (k: number) => `A vertex holds ${k} labels, so M cannot be smaller than ${k} for this cover.`,
+      isolation: 'Open labels (allow_isolation)',
+      focus: 'Vertex',
+    },
+    sees: {
+      kicker: '1 · What one vertex sees',
+      title: 'One vertex weighs every label',
+      stage: 'What the selected vertex sees',
+      steps: [
+        {
+          title: 'A budget of attention',
+          body: r`A vertex $v$ holds a set $\sigma_v$ of labels, at most $M$ of them (${BT}max_memberships${BT}). With $k$ labels it gives each the intensity $f_v = 1/\sqrt{k}$, so the squares always add up to 1: one label gets all of its attention, two labels get $1/\sqrt{2} \approx 0.71$ each. Click a vertex to look through its eyes, and pick a cover to start from.`,
+        },
+        {
+          title: 'Friends and crowd, label by label',
+          body: r`For a label $c$ the vertex adds up the intensities of the friends who hold it, the **support**, and of everyone else who holds it, the **crowd**. The label's gain is $g_c = \text{support} - \gamma\cdot\text{crowd}$: a friend's intensity is worth $1-\gamma$, a stranger's costs $\gamma$. A label the vertex holds alone is worth exactly 0. Drag γ and watch the gains move.`,
+        },
+        {
+          title: 'The best set is a prefix',
+          body: r`The vertex's utility is $U_v(\sigma) = \frac{1}{\sqrt{|\sigma|}}\sum_{c\in\sigma} g_c$. Sort the labels by gain: among sets of $j$ labels the best is the top $j$, so the vertex only compares the prefixes $\{g_1\}, \{g_1, g_2\}, \dots$ of positive gains, up to $M$ of them. It moves when the best prefix beats its current set. Press **Play the best response** to let it move.`,
+        },
+        {
+          title: 'Fixed or open labels',
+          body: r`When no label it can reach has a positive gain, the vertex settles for the single label with the highest gain, even a negative one. With **open labels** (${BT}allow_isolation=True${BT}) it may instead open a fresh label nobody holds, worth 0, whenever every reachable label scores below 0. Labels held only by strangers count too: their gain is $-\gamma\cdot\text{crowd}$, so only the lightest of them can matter.`,
+        },
+      ],
+      table: {
+        caption: (v: number, gamma: string) => `Every label vertex ${v} can reach, ranked by gain at γ = ${gamma}`,
+        label: 'Label',
+        friends: 'Friends',
+        strangers: 'Others',
+        support: 'Support',
+        crowd: 'Crowd',
+        gain: 'Gain',
+        best: 'Best',
+        held: 'held',
+        alone: 'held alone',
+        fresh: 'fresh label',
+        nobody: '—',
+        inBest: 'in the best set',
+      },
+      holds: (v: number, row: string, k: number, f: string, u: string) =>
+        k === 1 ? `Vertex ${v} holds ${row} at intensity 1: U = ${u}.` : `Vertex ${v} holds ${row}, each at intensity ${f}: U = ${u}.`,
+      prefixes: 'Prefixes',
+      noPositive: 'No positive gain: the prefix rule has nothing to add.',
+      stay: (row: string) => `${row} is a best response: the vertex stays.`,
+      move: (row: string, gain: string) => `It would switch to ${row} and gain ${gain}.`,
+      apply: 'Play the best response',
+      applied: (v: number, row: string) => `Vertex ${v} now holds ${row}.`,
+      undo: 'Reset the cover',
+      reset: 'Reset',
+    },
+    intervals: {
+      kicker: '2 · Stable intervals',
+      title: 'For which γ does a set stay best?',
+      lede: r`Freeze the cover. Every label's gain $a_c - \gamma\, b_c$ is a straight line in γ, and so is the utility of every set. The current set of a vertex is stable wherever no other set lies above it, which happens on a union of closed intervals. The package computes them exactly (${BT}Game.stable_intervals${BT}); their intersection over all vertices is the **Nash window**, the resolutions at which the whole cover is an equilibrium.`,
+      chart: (v: number) => `Utility of vertex ${v}: its current set against its best response, for γ from 0 to 1`,
+      current: 'Current set',
+      best: 'Best response',
+      gains: 'Gain of each label',
+      stable: 'Stable',
+      clickHint: 'Click the chart to set γ.',
+      regret: (value: string) => `Regret at this γ (best − current): ${value}`,
+      intervalsOf: (v: number, text: string) => `Vertex ${v} is stable for γ in ${text}.`,
+      never: 'no γ',
+      all: 'Every vertex',
+      window: 'Nash window',
+      windowText: (text: string) => `The cover is an equilibrium for γ in ${text}.`,
+      windowEmpty: 'Empty: no single γ makes this cover an equilibrium.',
+      note: 'With M and open labels from the controls. The chart is drawn from the same port of the core that the table above uses; the intervals come from the exact audit.',
+    },
+    converge: {
+      kicker: '3 · Convergence',
+      title: 'Selfish moves settle into an overlapping equilibrium',
+      lede: r`Now every vertex plays. The package visits vertices from a queue: a random order first, then the neighbours of every vertex that moves. A move raises the mover's utility and the potential $\Phi = \sum_{a<b} |\sigma_a\cap\sigma_b|\, f_a f_b\,(A_{ab}-\gamma)$ by exactly the same amount, so the walk cannot cycle. It stops when a full pass finds no vertex that can improve. This replays, visit for visit, what ${BT}community_hedonic(max_memberships=M, seed=…)${BT} does.`,
+      stage: 'The cover during the run',
+      start: 'Start',
+      startNames: { singletons: 'Alone', together: 'Together', halves: 'Halves' },
+      seed: 'Seed',
+      seedDown: 'Previous seed',
+      seedUp: 'Next seed',
+      step: 'Step',
+      play: 'Play',
+      pause: 'Pause',
+      reset: 'Reset',
+      finish: 'Run to the end',
+      status: (visits: number, moves: number) => `${visits} ${visits === 1 ? 'visit' : 'visits'} · ${moves} ${moves === 1 ? 'move' : 'moves'}`,
+      queue: 'Queue',
+      queueEmpty: 'empty',
+      waiting: 'Press Step or Play to visit the first vertex in the queue.',
+      rescan: 'The queue ran empty: a new pass over the vertices that have not settled.',
+      moved: (v: number, from: string, to: string, gain: string) =>
+        `Vertex ${v} switched from ${from} to ${to}: its utility and Φ both rose by ${gain}.`,
+      stayed: (v: number, row: string) => `Vertex ${v} kept ${row}: no set is better.`,
+      fresh: (label: string) => `It opened the fresh label ${label}.`,
+      equilibrium: (visits: number, moves: number) =>
+        `Equilibrium after ${visits} visits and ${moves} moves: no vertex can improve.`,
+      result: 'The package returns',
+      window: (text: string) => `This cover is stable for γ in ${text}.`,
+      potential: 'Potential Φ after each visit',
+      potentialAxis: 'visit',
+      log: 'Visits',
+      settings: (gamma: string, cap: number, open: boolean) => `γ = ${gamma}, M = ${cap}, ${open ? 'open labels' : 'fixed labels'}`,
+    },
+    tool: {
+      kicker: '4 · From toy to tool',
+      title: 'Overlapping covers with the package',
+      body: r`The same rules run in the package's C core (${BT}hedonic_core.h${BT}, ${BT}hig_cover${BT}). ${BT}Game.community_hedonic${BT} with ${BT}max_memberships${BT} above 1 returns a cover, and ${BT}Game.stable_intervals${BT} and ${BT}Game.regrets${BT} audit any fixed cover exactly.`,
+      scope:
+        'This page runs a port of the core’s cover engine and audit for unweighted graphs, checked visit for visit against the package on this graph. Results on real graphs come from the package, not from this page.',
+      cards: {
+        overlap: { title: 'The overlapping game', body: 'Intensities, gains, the prefix rule and the audit, with formulas.' },
+        method: { title: 'community_hedonic', body: 'Parameters, defaults and return types of the detector.' },
+        api: { title: 'Game API', body: '`stable_intervals`, `regrets` and every other public member.' },
+        disjoint: { title: 'The disjoint story', body: 'One label per agent: the dilemma, the Familiarity Index and the metagraph.' },
+      },
+    },
   },
 };
 

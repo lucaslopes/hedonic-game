@@ -1,0 +1,112 @@
+.svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  overflow: visible;
+}
+
+.hull {
+  opacity: 0.2;
+}
+
+.hull path {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.edge {
+  stroke: var(--rule-strong);
+  stroke-width: 2.5;
+}
+
+.edgeFocus {
+  stroke: var(--friend);
+  stroke-width: 4;
+}
+
+.vertex {
+  outline: none;
+}
+
+.interactive {
+  cursor: pointer;
+}
+
+.ring {
+  fill: none;
+  stroke: var(--card);
+  stroke-width: 1.5;
+}
+
+.ringFocus {
+  fill: none;
+  stroke: var(--threshold);
+  stroke-width: 3.5;
+}
+
+.ringFriend {
+  fill: none;
+  stroke: var(--friend);
+  stroke-width: 3;
+}
+
+.ringStranger {
+  fill: none;
+  stroke: var(--stranger);
+  stroke-width: 3;
+  stroke-dasharray: 4 3;
+}
+
+.halo {
+  fill: none;
+  stroke: var(--threshold);
+  stroke-width: 3;
+  opacity: 0.55;
+}
+
+.core {
+  fill: var(--card);
+}
+
+.number {
+  fill: var(--ink);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 15px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.row {
+  fill: var(--ink-2);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12.5px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.queued {
+  fill: var(--threshold);
+  stroke: var(--card);
+  stroke-width: 1.5;
+}
+
+.vertex:focus-visible .ringFriend,
+.vertex:focus-visible .ringStranger,
+.vertex:focus-visible .ringFocus {
+  stroke: var(--threshold);
+  stroke-width: 5;
+}
+
+.vertex:focus-visible .core {
+  stroke: var(--threshold);
+  stroke-width: 3;
+}
+
+.interactive:hover .core {
+  fill: var(--paper-2);
+}

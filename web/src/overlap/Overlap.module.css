@@ -1,0 +1,673 @@
+/* Layout and figures of the overlap explainer. */
+
+.heroTitle {
+  max-width: 16ch;
+}
+
+.heroGraph {
+  width: min(100%, 380px);
+  aspect-ratio: 6 / 5;
+  margin: 0 auto;
+}
+
+.caption {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-3);
+}
+
+/* Sections that are not scrollytelling. */
+.section {
+  padding: clamp(64px, 10vw, 120px) 0 24px;
+  /* KaTeX's hidden MathML is absolutely positioned; keep it from widening the page. */
+  overflow-x: clip;
+}
+
+.header {
+  max-width: 48rem;
+  margin-bottom: 24px;
+}
+
+.twoColumn {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.card {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+}
+
+.smallGraph,
+.runGraph {
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 6 / 5;
+  margin: 0 auto;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--rule) 70%, transparent) 1px, transparent 0) 0 0 / 22px 22px,
+    var(--card-2);
+  border: 1px solid var(--rule);
+  padding: 6px;
+}
+
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 22px;
+}
+
+.control {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
+.cardControls {
+  display: grid;
+  gap: 14px;
+  margin: 8px 0 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--rule-strong);
+}
+
+/* Chapter 1 stage. */
+.seesStage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.graphBox {
+  flex: 1 1 40%;
+  min-height: 150px;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--rule) 70%, transparent) 1px, transparent 0) 0 0 / 22px 22px,
+    var(--card-2);
+  border: 1px solid var(--rule);
+  padding: 4px;
+  overflow: hidden;
+}
+
+.seesPanel {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  flex: 0 1 auto;
+  max-height: 58%;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.summary {
+  display: grid;
+  gap: 6px;
+}
+
+.holds,
+.verdict {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.verdict {
+  font-weight: 600;
+}
+
+.verdict[data-moves='true'] {
+  color: var(--threshold-ink);
+}
+
+.prefixes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 0.82rem;
+}
+
+.prefixLabel {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.prefix {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--card-2);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.prefix[data-best='true'] {
+  border-color: var(--threshold);
+  background: var(--threshold-soft);
+  font-weight: 700;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.table th,
+.table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table thead th {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.table :global(.num) {
+  text-align: right;
+}
+
+.table tbody tr[data-best='true'] {
+  background: color-mix(in srgb, var(--threshold-soft) 70%, transparent);
+}
+
+.table td svg {
+  color: var(--threshold);
+  vertical-align: -3px;
+}
+
+.labelChip {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: var(--label);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.freshChip {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1.5px dashed var(--ink-3);
+  font-weight: 700;
+}
+
+.tag {
+  margin-left: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.holder sub {
+  font-size: 0.68rem;
+  color: var(--ink-3);
+}
+
+.gain[data-sign='pos'] {
+  color: var(--friend-ink);
+  font-weight: 700;
+}
+
+.gain[data-sign='neg'] {
+  color: var(--stranger-ink);
+  font-weight: 700;
+}
+
+/* Chapter 2. */
+.chartFigure {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  cursor: crosshair;
+  user-select: none;
+}
+
+.stableBand {
+  fill: var(--mid-soft);
+}
+
+.gridLine {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+
+.axisZero {
+  stroke: var(--rule-strong);
+  stroke-width: 1.5;
+}
+
+.tickY,
+.tickX,
+.axisName {
+  fill: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.tickY {
+  text-anchor: end;
+}
+
+.tickX {
+  text-anchor: middle;
+}
+
+.axisName {
+  font-style: italic;
+  font-size: 13px;
+}
+
+.gainLine {
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-dasharray: 4 3;
+  opacity: 0.9;
+}
+
+.gainLine[data-own='true'] {
+  stroke-dasharray: none;
+}
+
+.gainName {
+  fill: currentColor;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.currentLine {
+  stroke: var(--ink);
+  stroke-width: 3;
+  fill: none;
+}
+
+.bestLine {
+  stroke: var(--threshold);
+  stroke-width: 3;
+  stroke-dasharray: 7 4;
+  fill: none;
+}
+
+.marker {
+  stroke: var(--threshold);
+  stroke-width: 1.5;
+  opacity: 0.7;
+}
+
+.bestDot {
+  fill: var(--threshold);
+}
+
+.currentDot {
+  fill: var(--ink);
+  stroke: var(--card);
+  stroke-width: 1.5;
+}
+
+.chartLegend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  font-size: 0.8rem;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stableSwatch {
+  display: inline-block;
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--mid-soft);
+  border: 1px solid var(--mid);
+}
+
+.readout {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.note {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--ink-3);
+}
+
+.bars {
+  display: grid;
+  gap: 6px;
+}
+
+.barsTitle {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.barList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.barRow {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.barVertex {
+  justify-self: start;
+  min-width: 30px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--card-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.barRow[data-focus='true'] .barVertex {
+  border-color: var(--threshold);
+  background: var(--threshold-soft);
+}
+
+.windowRow .barVertex {
+  white-space: nowrap;
+  cursor: default;
+  border-color: transparent;
+  background: none;
+  padding-left: 0;
+  font-weight: 700;
+}
+
+.track {
+  position: relative;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  overflow: hidden;
+}
+
+.segment {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 3px;
+  background: var(--mid);
+  opacity: 0.75;
+}
+
+.track[data-kind='window'] .segment {
+  background: var(--threshold);
+  opacity: 1;
+}
+
+.trackMarker {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+}
+
+.windowText {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+/* Chapter 3. */
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.queueLine {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.queueItem {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.queueItem[data-head='true'] {
+  border-color: var(--threshold);
+  background: var(--threshold-soft);
+}
+
+.transport {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.log p {
+  margin: 0;
+  font-size: 0.9rem;
+  min-height: 2.6em;
+}
+
+.rescan {
+  color: var(--ink-3);
+}
+
+.equilibrium {
+  margin-top: 6px !important;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--threshold);
+  background: var(--threshold-soft);
+  font-weight: 600;
+}
+
+.equilibrium svg {
+  display: inline;
+  vertical-align: -3px;
+  color: var(--threshold);
+}
+
+.seed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.seed legend {
+  float: left;
+  margin-right: 4px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.seed output {
+  min-width: 2ch;
+  text-align: center;
+  font-weight: 700;
+}
+
+.potential {
+  margin: 0;
+}
+
+.potential svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.potentialTitle {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.potentialLine {
+  fill: none;
+  stroke: var(--threshold);
+  stroke-width: 2.5;
+}
+
+.potentialDot {
+  fill: var(--threshold);
+}
+
+.result {
+  display: grid;
+  gap: 6px;
+}
+
+.resultTitle {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.visits summary {
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.visits ol {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 6px 0 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 0.82rem;
+}
+
+.visits li[data-moved='true'] {
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .twoColumn {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 999px) {
+  .seesPanel {
+    max-height: 62%;
+  }
+}
+
+@media (max-width: 520px) {
+  .barRow {
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+  }
+
+  .card {
+    padding: 12px;
+  }
+}
+
+.potentialText {
+  fill: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.end {
+  text-anchor: end;
+}
+
+/* Keeps the visually hidden cells inside the scrolling box. */
+.tableWrap {
+  position: relative;
+}
+
+/* Long call signatures in the prose may wrap on phones. */
+.header :global(.lede) code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

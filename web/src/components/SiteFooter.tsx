@@ -4,7 +4,7 @@ import { LogoMark } from './LogoMark';
 import { Rich } from './Rich';
 import styles from './SiteFooter.module.css';
 
-export function SiteFooter() {
+export function SiteFooter({ page = 'story' }: { page?: 'story' | 'overlap' | 'docs' }) {
   const t = useT();
   const base = import.meta.env.BASE_URL;
   return (
@@ -15,12 +15,12 @@ export function SiteFooter() {
             <LogoMark size={26} /> {t.footer.tagline}
           </p>
           <p className={styles.small}>{t.footer.basedOn}</p>
-          <Rich as="p" className={styles.small} text={t.footer.disclaimer} />
+          <Rich as="p" className={styles.small} text={page === 'overlap' ? t.footer.disclaimerOverlap : t.footer.disclaimer} />
           <p className={styles.small}>{t.footer.license}</p>
         </div>
         <nav aria-label={t.footer.links} className={styles.links}>
-          <a href={`${base}#dilemma`}>{t.header.story}</a>
-          <a href={`${base}#explore`}>{t.header.explore}</a>
+          <a href={`${base}#dilemma`}>{t.header.disjoint}</a>
+          <a href={`${base}overlap/#sees`}>{t.header.overlap}</a>
           <a href={`${base}docs/`}>{t.header.docs}</a>
           <a href={`${base}docs/#references`}>{t.tool.cards.references.title}</a>
           <a href={site.repositoryUrl}>GitHub</a>

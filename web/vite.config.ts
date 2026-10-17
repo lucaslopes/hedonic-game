@@ -29,6 +29,7 @@ export default defineConfig({
       input: {
         main: resolve(root, 'index.html'),
         docs: resolve(root, 'docs/index.html'),
+        overlap: resolve(root, 'overlap/index.html'),
       },
       output: {
         // Long-lived vendor chunks cache well across deployments of the content.
