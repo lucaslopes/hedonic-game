@@ -38,16 +38,13 @@ def test_memberships_are_canonical_list_of_lists_and_flat_assignment_normalizes(
     assert game.memberships is None
     game.memberships = [0, 0, 1]
     assert game.memberships == [[0], [0], [1]]
-    game.memberships = [[0], [1], [1]]
-    assert game.memberships == [[0], [1], [1]]
-    with pytest.raises(ValueError, match="one label per vertex"):
-        game.memberships = [[0], [0, 1], [1]]
-    assert game.memberships == [[0], [1], [1]]
+    game.memberships = [[0], [0, 1], [1]]
+    assert game.memberships == [[0], [0, 1], [1]]
 
 
 def test_copying_a_game_preserves_membership_state_without_aliasing_rows():
     game = _game()
-    game.memberships = [[0], [1], [1]]
+    game.memberships = [[0], [0, 1], [1]]
     copied = Game(game)
     assert copied.memberships == game.memberships
     assert copied.memberships is not game.memberships
@@ -56,23 +53,23 @@ def test_copying_a_game_preserves_membership_state_without_aliasing_rows():
 
 def test_omitted_initialization_reuses_loaded_state():
     game = _game()
-    game.memberships = [[0], [1], [1]]
+    game.memberships = [[0], [0, 1], [1]]
     calls = []
 
     with patch(NATIVE, side_effect=_fake_native(calls)):
-        game.community_hedonic(resolution=0.5)
-    assert calls == [[0, 1, 1]]
-    assert game.memberships == [[0], [1], [1]]
+        game.community_hedonic(max_memberships=2, resolution=0.5)
+    assert calls == [[[0], [0, 1], [1]]]
+    assert game.memberships == [[0], [0, 1], [1]]
 
 
 def test_explicit_none_overrides_loaded_state_with_singletons():
     game = _game()
-    game.memberships = [[0], [1], [1]]
+    game.memberships = [[0], [0, 1], [1]]
     calls = []
 
     with patch(NATIVE, side_effect=_fake_native(calls)):
-        game.community_hedonic(initial_membership=None, resolution=0.5)
-    assert calls == [[0, 1, 2]]
+        game.community_hedonic(initial_membership=None, max_memberships=2, resolution=0.5)
+    assert calls == [[[0], [1], [2]]]
 
 
 def test_empty_or_unconfigured_state_uses_singleton_default():
@@ -81,7 +78,7 @@ def test_empty_or_unconfigured_state_uses_singleton_default():
     calls = []
 
     with patch(NATIVE, side_effect=_fake_native(calls)):
-        game.community_hedonic(resolution=0.5)
+        game.community_hedonic(max_memberships=1, resolution=0.5)
     assert calls == [[0, 1, 2]]
 
 
@@ -92,7 +89,7 @@ def test_empty_or_unconfigured_state_uses_singleton_default():
         [[0], [], [1]],  # empty row
         [[0], [0, 2], [2]],  # non-contiguous labels
         [[0], [0, "x"], [1]],  # non-integer label
-        [[0], [0, 1], [1]],  # more than one label per vertex
+        [[0], [0, 1], [1]],  # exceeds cap when loaded
     ],
 )
 def test_invalid_loaded_state_never_falls_back_to_default(value):
@@ -101,7 +98,7 @@ def test_invalid_loaded_state_never_falls_back_to_default(value):
     game._memberships = value
     with patch(NATIVE) as native:
         with pytest.raises(ValueError):
-            game.community_hedonic(resolution=0.5)
+            game.community_hedonic(max_memberships=1, resolution=0.5)
     native.assert_not_called()
 
 
@@ -111,7 +108,9 @@ def test_explicit_initialization_has_precedence_over_loaded_state():
     calls = []
 
     with patch(NATIVE, side_effect=_fake_native(calls)):
-        game.community_hedonic(initial_membership=[0, 1, 1], resolution=0.5)
+        game.community_hedonic(
+            initial_membership=[0, 1, 1], max_memberships=1, resolution=0.5
+        )
     assert calls == [[0, 1, 1]]
     assert game.memberships == [[0], [1], [1]]
 
@@ -125,10 +124,10 @@ def test_evaluate_against_scores_disjoint_state_and_accepts_partition_vector():
     assert game.evaluate_accuracy([[0, 1], [2]], method="one_to_one_f1") == 1.0
 
 
-def test_evaluate_against_selects_metrics():
+def test_evaluate_against_scores_overlap_state_and_selects_metrics():
     game = _game()
-    game.memberships = [[0], [0], [1]]
-    truth = [[0, 1], [2]]
+    game.memberships = [[0], [0, 1], [1]]
+    truth = [[0, 1], [1, 2]]
 
     assert game.evaluate_against(truth, method="f1") == 1.0
     assert game.evaluate_against(truth, method="node_micro_f1") == 1.0

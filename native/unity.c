@@ -18,7 +18,7 @@
 
 /*
  * The extension compiles the core as one unit, so the helpers of common.c
- * (static here, see HIG_SHARED) inline into the engine's loops. Floating-point
+ * (static here, see HIG_SHARED) inline into the engines' loops. Floating-point
  * contraction is off and every fma is an explicit hig_fma, so this changes no
  * result. On an x86_64 dispatch target (core/dispatch.h) this is the build
  * with the soft fma, its entry points named hig_x86soft_*; unity_fma.c
@@ -29,4 +29,5 @@
 
 #include "common.c"
 #include "partition.c"
+#include "cover.c"
 #include "check.c"

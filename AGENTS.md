@@ -18,20 +18,21 @@ small library: one public class (`Game`), one detector
 ```
 native/                  # the C core (no igraph dependency), built into hedonic._core
 ├── README.md            # the design: game, visits, certified moves, termination, slack,
-│                        #   verifier, queue, determinism and platforms
-├── include/hedonic_core.h  # C API: hig_partition, options, errors
+│                        #   prefix lemma, verifier, queue, determinism and platforms
+├── include/hedonic_core.h  # C API: hig_partition, hig_cover, options, errors
 ├── core/
-│   ├── internal.h       # what the engine shares, certified (upward-rounded) arithmetic, hig_fma
+│   ├── internal.h       # what the engines share, certified (upward-rounded) arithmetic, hig_fma
 │   ├── softfma.h        # correctly rounded fma in integer arithmetic (from musl, MIT licence)
 │   ├── dispatch.h       # x86_64 without baseline FMA: two builds, chosen from CPUID
 │   ├── common.c         # errors, input checks, adjacency, random order + queue, mass heap
-│   ├── partition.c      # the engine (hig_partition)
+│   ├── partition.c      # the disjoint engine (hig_partition)
+│   ├── cover.c          # the overlapping engine (hig_cover)
 │   ├── check.c          # the independent verifier (tests only)
 │   └── hedonic_check.h  # traced runs and the verifier (tests only, not the API)
 ├── unity.c              # the core as one translation unit (how the extension builds it)
 ├── unity_fma.c, dispatch.c  # x86_64: the core again with the FMA instruction, and the entry
 │                        #   points that pick a build from CPUID (empty on other targets)
-├── binding/             # CPython binding: detect() for Game, partition() over plain
+├── binding/             # CPython binding: detect() for Game, partition()/cover() over plain
 │                        #   buffers, an exact random.Random bridge
 ├── tests/test_core.c    # `make -C native test` (ASan/UBSan + libm check), `test-release` (-O3),
 │                        #   `test-soft-fma`, `test-x86_64` (Rosetta); C bit pins from
@@ -43,9 +44,9 @@ tools/native_tests.py    # the pinned Python tests with HIG_PINNED=1 (what the w
 src/hedonic/
 ├── __init__.py          # public API: Game
 ├── Game.py              # Game(igraph.Graph) + community_hedonic
-├── _native.py           # argument buffers + VertexClustering around hedonic._core
+├── _native.py           # argument buffers + VertexClustering/VertexCover around hedonic._core
 ├── _game/               # detection, membership state, evaluation bridge, helpers
-├── metrics.py           # scores against a reference partition or cover (SciPy optional, extra `metrics`)
+├── metrics.py           # scores against a reference cover (SciPy optional, extra `metrics`)
 └── utils.py             # seeded sampling for the random disjoint start
 web/                     # educational site (React + Vite), see below
 ```
@@ -56,20 +57,24 @@ web/                     # educational site (React + Vite), see below
 game until every vertex has been visited without a certainly improving move
 since the last move (a move's computed gain must beat a rigorous bound of its
 rounding error, which makes every move raise the exact potential and every
-call terminate; results report `equilibrium_slack`, see `native/README.md`),
-and returns the partition as a `VertexClustering`.
+call terminate; results report `equilibrium_slack`, see `native/README.md`):
+
+| Goal | Call | Returns |
+|---|---|---|
+| Partition | `max_memberships=1` (default) | `VertexClustering` |
+| Overlapping cover | `max_memberships > 1` (`-1`: no practical cap) | `VertexCover` |
 
 Parameters: `initial_membership`, `max_communities` (random disjoint start
-only), `resolution` (default: density), `allow_isolation`, and keyword-only
-`edge_weights`, `seed`, `node_weights`, `max_total_communities`,
-`n_communities`. There is no iteration budget, round cap, refinement,
-aggregation or multilevel phase; do not add them. Results carry
+only), `max_memberships`, `resolution` (default: density), `allow_isolation`,
+and keyword-only `edge_weights`, `seed`, `node_weights`,
+`max_total_communities`, `n_communities`. There is no iteration budget, round
+cap, refinement, aggregation or multilevel phase; do not add them. Results carry
 `_hedonic_provenance` and `_hedonic_native_quality`, and the returned state is
 stored in `Game.memberships`.
 
 Invariants:
 
-1. One public detector API, `Game.community_hedonic`.
+1. One public detector API, `Game.community_hedonic`, for both modes.
 2. The detector is this package's purpose-built C core; no pure-Python port
    and no other backend. The core never reads an igraph graph; the binding
    passes it the edge list.
@@ -88,11 +93,12 @@ Invariants:
    replays traced runs in exact arithmetic (every accepted move raises the
    exact potential; no deviation beats the reported slack; the slack is 0 in
    exact arithmetic) and runs the C verifier; keep it passing, and keep the
-   bounds and the termination argument of `native/README.md` true when
-   touching the move rule. C code stays plain C11: no VLAs, `long double`,
-   `_Atomic`, `complex.h` or `stdatomic.h`, and GNU builtins only behind
-   compiler checks with an MSVC or portable equivalent (the FMA instruction,
-   clz, CPUID, the dispatcher's atomics). MSVC builds it with `/fp:strict`.
+   bounds, the termination argument and the prefix lemma of
+   `native/README.md` true when touching the move rule. C code stays plain
+   C11: no VLAs, `long double`, `_Atomic`, `complex.h` or `stdatomic.h`, and
+   GNU builtins only behind compiler checks with an MSVC or portable
+   equivalent (the FMA instruction, clz, CPUID, the dispatcher's atomics).
+   MSVC builds it with `/fp:strict`.
 6. Scoring logic lives in `hedonic.metrics` only.
 
 ## Checks

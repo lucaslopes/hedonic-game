@@ -25,6 +25,7 @@ describe('documentation bundle', () => {
       'concepts',
       'game-api',
       'community-hedonic',
+      'disjoint-vs-overlapping',
       'resolution',
       'familiarity-index',
       'metagraph',
@@ -43,7 +44,7 @@ describe('documentation bundle', () => {
   it('generates the API reference from the Python source', () => {
     const html = page('community-hedonic').html;
     expect(html).toContain('id="api-game-community-hedonic"');
-    for (const parameter of ['initial_<wbr>membership', 'max_<wbr>communities', 'resolution', 'allow_<wbr>isolation', 'seed', 'max_<wbr>total_<wbr>communities', 'n_<wbr>communities']) {
+    for (const parameter of ['initial_<wbr>membership', 'max_<wbr>memberships', 'resolution', 'allow_<wbr>isolation', 'seed', 'max_<wbr>total_<wbr>communities', 'n_<wbr>communities']) {
       expect(html).toContain(parameter);
     }
     expect(html).toContain('src/hedonic/Game.py');
@@ -85,6 +86,6 @@ describe('helpers', () => {
   });
 
   it('converts docstring reStructuredText to Markdown', () => {
-    expect(rstToMarkdown('Use ``max_total_communities`` and :meth:`community_hedonic`.')).toBe('Use `max_total_communities` and `community_hedonic`.');
+    expect(rstToMarkdown('Use ``max_memberships`` and :meth:`community_hedonic`.')).toBe('Use `max_memberships` and `community_hedonic`.');
   });
 });

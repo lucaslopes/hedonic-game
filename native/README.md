@@ -1,18 +1,19 @@
 # The C core
 
 `native/` is the detector of `hedonic`: best-response local moving for the
-CPM hedonic game, written for this package. It has no dependency beyond the C
-library and is compiled into `hedonic._core`.
+CPM hedonic game, disjoint and overlapping, written for this package. It has
+no dependency beyond the C library and is compiled into `hedonic._core`.
 
 ```
-include/hedonic_core.h   the API: hig_partition, options, errors
-core/internal.h          what the engine shares, certified arithmetic, hig_fma
+include/hedonic_core.h   the API: hig_partition, hig_cover, options, errors
+core/internal.h          what the engines share, certified arithmetic, hig_fma
 core/softfma.h           a correctly rounded fma in integer arithmetic (from musl;
                          MIT licence)
 core/dispatch.h          which builds a target compiles (x86_64: two)
 core/common.c            errors, input checks, adjacency, random order and queue,
                          heap of communities by mass
-core/partition.c         the engine
+core/partition.c         the disjoint engine
+core/cover.c             the overlapping engine (unit-l2 memberships)
 core/check.c             the independent verifier (tests only)
 core/hedonic_check.h     traced runs and the verifier (tests only, not the API)
 unity.c                  the core as one translation unit (the extension's build)
@@ -29,19 +30,38 @@ tests/check_libm.py      make check-libm: no libm call but sqrt
 
 Vertex `v` has weight `n_v >= 0`, `gamma` is the resolution and `W` the total
 edge weight. In a partition, `v` in community `C` earns
-`w(v, C \ v) - gamma n_v N(C \ v)`, where `N` sums vertex weights. The game
-is an exact potential game; the returned quality is the potential divided by
-`W`: `(2 sum_internal w - gamma sum_C N(C)^2) / 2W`.
+`w(v, C \ v) - gamma n_v N(C \ v)`, where `N` sums vertex weights. In a cover,
+`v` holds a set `sigma_v` of at most `M` labels with intensity
+`f_v = 1/sqrt(|sigma_v|)` on each; label `c` has mass `S_c` (the sum of
+`n_u f_u` over its holders) and is worth
+
+    g_c(v) = sum_{u ~ v holding c} w_uv f_u  -  gamma n_v (S_c - n_v f_v [c in sigma_v])
+
+to `v`, which earns `U_v(sigma) = sum_{c in sigma} g_c(v) / sqrt(|sigma|)`.
+Both games are exact potential games; the returned quality is the potential
+divided by `W` (partitions: `(2 sum_internal w - gamma sum_C N(C)^2) / 2W`;
+covers: `(sum_edges 2 w |sigma_a & sigma_b| f_a f_b - gamma sum_c S_c^2) / 2W`).
 
 ## A visit
 
 A visit computes the vertex's exact best response over every feasible action.
-It removes `v` from its community, gathers `w(v, c)` for the communities of
-its neighbours in a sparse accumulator (a slot field on each community), and
-scores staying, each of them, an empty community (when isolation is allowed
-and the count limits permit one more), and the best community `v` has no edge
-to, whose payoff is `-gamma n_v N(c)`: the heaviest when `gamma n_v < 0`, else
-the lightest, needed only when every other action loses.
+
+* **Partition.** Remove `v` from its community, gather `w(v, c)` for the
+  communities of its neighbours in a sparse accumulator (a slot field on each
+  community), and score staying, each of them, an empty community (when
+  isolation is allowed and the count limits permit one more), and the best
+  community `v` has no edge to, whose payoff is `-gamma n_v N(c)`: the
+  heaviest when `gamma n_v < 0`, else the lightest, needed only when every
+  other action loses.
+* **Cover.** Score `v`'s own labels and its neighbours' labels the same way.
+  The best set of at most `M` labels is a prefix of the labels sorted by
+  `g_c`: the best `j` positive gains (`j` maximizing their sum over
+  `sqrt(j)`), or, if no gain is positive, the single best label, where a
+  fresh label (payoff 0) competes when isolation and the count limits allow.
+  Labels `v` has no support from enter only when they can win: the `M`
+  heaviest when `gamma n_v < 0`, the lightest when nothing else reaches 0.
+  A label `v` holds alone is worth exactly 0; under `n_communities` it is
+  kept, so the count never changes.
 
 The communities "with no edge to `v`" come from a binary heap of occupied
 communities ordered by mass (heaviest first when `gamma < 0`), walked
@@ -67,18 +87,23 @@ rounded upward (`core/internal.h`: `hig_up(x) = fma(x, 4u, x) >= x (1 + u)^2`,
 `hig_add_up`, `hig_mul_up`), so it is never below the quantity it bounds,
 and it is exactly 0 when every input to it is 0. The ingredients:
 
-* *Edge weights to a community* `w(v, C)`: a sum of at most `d_v` terms, off
-  by `gamma_{d_v + 2}` times the sum of their absolute values
+* *Edge weights to a community* (`w(v, C)` of a partition, a label's
+  support `sum w_uv f_u` in a cover): a sum of at most `d_v` terms, off by
+  `gamma_{d_v + 2}` times the sum of their absolute values
   (`gamma_k = k 1.125 u`, an upper bound of `(1 + u)^k - 1`). With unit
-  weights these sums are integers below `2^53`: exact, bound 0.
-* *Masses.* Community masses (the sum of `n_u`) are double-double sums
-  `hi + lo`, updated with TwoSum, which is exact except for one rounding per
-  update; each mass carries `err`, the sum of those roundings (exact when
-  they are 0, so unit vertex weights never accumulate any). `theta` is a
-  running maximum of `(err + |lo|) / hi` over all masses. When a mass's
-  error exceeds `16 u` of it (which only cancellation does: a heavy member
-  leaves and light ones remain), every mass is summed afresh from the
-  members (`hig_partition_rebuild`, O(n)), and `theta` restarts.
+  weights a partition's sums are integers below `2^53`: exact, bound 0.
+* *Masses.* Community masses (partitions: the sum of `n_u`; covers: of
+  `n_u f_u`) are double-double sums `hi + lo`, updated with TwoSum, which is
+  exact except for one rounding per update; each mass carries `err`, the sum
+  of those roundings (exact when they are 0, so unit-weight partitions never
+  accumulate any). `theta` is a running maximum of `(err + |lo|) / hi` over
+  all masses. When a mass's error exceeds `16 u` of it (which only
+  cancellation does: a heavy member leaves and light ones remain), every mass
+  is summed afresh from the members (`hig_*_rebuild`, O(n + incidences)),
+  and `theta` restarts. A cover's terms `n_u f_u` are themselves
+  approximations of `n_u / sqrt(|sigma_u|)` (relative error at most
+  `kappa = 5u`); when a term or a support term can underflow, `n eta` and
+  `d_v eta` are added.
 * *The crowding product* `gamma n_v M`: `gamma n_v` is a product (its error
   is computed exactly with `fma` when the product is not tiny), `M` has the
   error above. A payoff `r = fl(w - gamma n_v M)` gets the bound
@@ -86,6 +111,12 @@ and it is exactly 0 when every input to it is 0. The ingredients:
   `gamma n_v M` is not tiny, `w - gamma n_v M` is known exactly as a sum of
   doubles (`fma` residual and TwoSum), so a payoff that was computed exactly
   gets the bound 0.
+* *Covers.* `v`'s own labels get individual bounds; the other candidate
+  labels share one bound `b_max` computed from the largest support, mass and
+  `|gain|` among them. The value of a prefix of `j` labels is off by at most
+  `(j b_max) / sqrt(j)` plus `(cap + 6) 1.125 u` of the value (the prefix
+  sum's roundings and `1/sqrt(j)`); `v`'s current payoff likewise from its
+  labels' bounds.
 * *The difference* `a - b` of two computed payoffs is formed with TwoSum
   (`d` plus an exact residual); `e` = (bound of `a`) + (bound of `b`) +
   |residual|, rounded up. Both `d` and `e` are doubles, so `d > e` decides
@@ -97,91 +128,144 @@ largest `|payoff|`, weight sum, mass and mass error of its candidates, and
 `theta`): every term of the full bounds is replaced by one that dominates it
 and the sum is doubled, which covers the upward roundings of the full bounds
 and the roundings and underflows of computing `coarse` itself (all terms are
-non-negative). `coarse` is at least four times every payoff's bound. A
-computed improvement above `3 coarse` is then certainly above the full `e`,
-and the vertex moves without computing it; a deviation below `-3 coarse`
-certainly loses and records nothing. Only the rest (well under 1% of the
-visits on DBLP and Amazon) computes the full bounds, in an out-of-line
-function, and decides exactly as above. The decisions are those of the full
-bounds in every case, so the trajectory and the result are the same as
-computing them always (a trace computes them always).
+non-negative). For partitions `coarse` is at least four times every payoff's
+bound, for covers at least the full bounds of the move and of the gain,
+including the difference's residual. A computed improvement above `coarse`
+(partitions: `3 coarse`) is then certainly above the full `e`, and the
+vertex moves without computing it; a deviation below `-coarse`
+(`-3 coarse`) certainly loses and records nothing. Only the rest (well
+under 1% of the visits on DBLP and Amazon) computes the full bounds, in an
+out-of-line function, and decides exactly as above. The decisions are those
+of the full bounds in every case, so the trajectory and the result are the
+same as computing them always (a trace computes them always).
 
-**Termination.** The game is an exact potential game: a unilateral move
-changes the potential `Phi = sum_internal w - (gamma / 2) sum_C N(C)^2` by
-exactly the mover's change in payoff. Every accepted move has an exact
-improvement of at least `d - e > 0`, so the exact potential strictly
-increases with every move, no state is ever visited twice, and since there
-are finitely many states (at most `n^n` partitions) the run stops.
-Rebuilding masses changes no state. There is no cap on rounds or visits, no
-tolerance parameter and no divergence error. Inputs are bounded so that
-nothing overflows: `sum |w| <= DBL_MAX / 4096` and
-`|gamma| max(N, 1)^2 <= DBL_MAX / 4096` (otherwise `HIG_EOVERFLOW`).
+**Termination.** Both games are exact potential games: a unilateral move
+changes the potential by exactly the mover's change in payoff (partitions:
+`Phi = sum_internal w - (gamma / 2) sum_C N(C)^2`; covers:
+`Phi = sum_edges w |sigma_a & sigma_b| f_a f_b - (gamma / 2) sum_c S_c^2`).
+Every accepted move has an exact improvement of at least `d - e > 0`, so the
+exact potential strictly increases with every move, no state is ever
+visited twice, and since the states are finite (at most `n^n` partitions,
+finitely many covers with at most `M` of `n M` labels per vertex) the run
+stops. Rebuilding masses changes no state. There is no cap on rounds or
+visits, no tolerance parameter and no divergence error. Inputs are bounded
+so that nothing overflows: `sum |w| <= DBL_MAX / 4096` and
+`|gamma| max(N, 1)^2 M <= DBL_MAX / 4096` (otherwise `HIG_EOVERFLOW`).
 
 ## The equilibrium certificate and its slack
 
 All vertices are queued once in a random order (one Fisher-Yates shuffle with
 unbiased bounded draws: the only use of the random source). The queue is a
 FIFO ring, each vertex in it at most once. After a move, the vertex's
-neighbours outside its new community are queued (see "Requeueing" below).
-Each visit that does not move stamps the vertex with the current number of
-moves. When the FIFO empties, every vertex whose stamp is older than the last
-move is queued again, in the original random order; when none is, every
-vertex has been visited, without moving, after the last move, in the final
-state, and the call returns.
+neighbours are queued (for partitions, those outside its new community; see
+"Requeueing" below). Each visit that does not move stamps the vertex with the
+current number of moves. When the FIFO empties, every vertex whose stamp is
+older than the last move is queued again, in the original random order; when
+none is, every vertex has been visited, without moving, after the last move,
+in the final state, and the call returns.
 
 A visit that does not move records an upper bound of the exact gain of every
 feasible deviation (with a count limit, every deviation the limit allows):
 for a deviation with computed improvement `d` and error bound `e`, the exact
 gain is at most `d + e`, rounded up (0 when `d + e <= 0`); the visit keeps
-the largest. Deviations that certainly lose are discarded by the coarse bound
-first; the ones a visit does not score are dominated by one that it does: the
-communities `v` has no edge to are worth `-gamma n_v M`, so the heaviest
-(`gamma n_v < 0`) or lightest one, found by the heap walk and bounded with
-`theta M` (every other one's mass is within `theta` of its computed value,
-and the heap orders computed values), stands for all of them; when there is
-no walk, `gamma n_v >= 0` and they are all worth at most 0, which is scored.
+the largest. Deviations that certainly lose are discarded by a coarse bound
+first; the ones a visit does not score are dominated by one that it does:
 
-The run's slack is the largest recorded bound since the last move (a move
-resets it to 0), i.e. over the visits of the final sweep, all made in the
-final state. **Claim:** at return, no feasible unilateral deviation raises
-any vertex's exact payoff by more than the slack, and each recorded bound is
-at most twice the error bound of the comparison it came from (a deviation
-the core did not take has `d <= e`, so `d + e <= 2e`). The slack is exactly
-0 when the arithmetic is exact (for instance unit weights at resolution 0,
-1/2 or 1, or integer weights at dyadic resolutions): the result is then an
-exact Nash equilibrium. `hig_partition` returns it divided by `|W|`
-(normalized like the quality, rounded up, plus `eta`; NaN if `W = 0`), and
-the Python layer reports it as `equilibrium_slack` in `_hedonic_provenance`.
-On complete DBLP and Amazon (seeds 0-2) it is about `1e-21` (normalized) at
-the density and at 0.1462; the verifier finds no certainly improving
-deviation in any of these results.
+* partitions: the communities `v` has no edge to are worth `-gamma n_v M`,
+  so the heaviest (`gamma n_v < 0`) or lightest one, found by the heap walk
+  and bounded with `theta M` (every other one's mass is within `theta` of
+  its computed value, and the heap orders computed values), stands for all
+  of them; when there is no walk, `gamma n_v >= 0` and they are all worth
+  at most 0, which is scored;
+* covers: by the prefix lemma below, every set of labels is worth at most
+  the best prefix value of the computed gains plus `e_pre` plus
+  `sqrt(cap) b_max`, which the visit bounds; labels without support enter as
+  the walk's proxies like a partition's communities (with `gamma n_v < 0`,
+  the `cap` heaviest: a set of unscored labels is worth no more than the
+  same number of the heaviest).
+
+The run's raw slack is the largest recorded bound since the last move (a
+move resets it to 0), i.e. over the visits of the final sweep, all made in
+the final state. Partitions keep it as they go. A cover visit records its
+bound with the vertex's stamp (the queue's settlement record), in full or,
+when the vertex's best set is its own row (most visits), as the coarse upper
+bound `d + coarse`. At the end the slack is the largest full bound; then the
+coarse ones above it are replaced by full ones, largest first (by visiting
+the vertex again without moving it: the state is the one its last visit
+saw), until the next coarse one is not above the running maximum. This is
+the same value as recording every full bound (bit for bit), for a few dozen
+extra visits on DBLP and Amazon. **Claim:** at return, no feasible unilateral deviation
+raises any vertex's exact payoff by more than the slack, and each recorded
+bound is at most twice the error bound of the comparison it came from (a
+deviation the core did not take has `d <= e`, so `d + e <= 2e`). The slack is
+exactly 0 when the arithmetic is exact (for instance unit weights at
+resolution 0, 1/2 or 1, or integer weights at dyadic resolutions): the
+result is then an exact Nash equilibrium. `hig_partition` and `hig_cover`
+return it divided by `|W|` (normalized like the quality, rounded up, plus
+`eta`; NaN if `W = 0`), and the Python layer reports it as
+`equilibrium_slack` in `_hedonic_provenance`. On complete DBLP and Amazon
+(seeds 0-2) it is about `1e-21` (normalized) for partitions at the density
+and at 0.1462, and `3e-18` to `1e-17` for covers with `M = 8` at 0.1462; the
+verifier finds no certainly improving deviation in any of these results.
+
+## The best set is a prefix
+
+**Lemma.** Let `g_1 >= g_2 >= ... >= g_L` be real numbers and
+`1 <= cap <= L`. Then
+
+    max { sum_{i in S} g_i / sqrt(|S|) : S non-empty, |S| <= cap }
+        = max { (g_1 + ... + g_k) / sqrt(k) : 1 <= k <= cap }.
+
+*Proof (exchange).* Fix `k = |S|`. If `S` is not `{1, ..., k}`, it contains
+some `i > k` and misses some `j <= k`; replacing `i` by `j` changes the sum
+by `g_j - g_i >= 0` and keeps the size. At most `k` exchanges reach the
+prefix, so among sets of size `k` the prefix has the largest sum, and,
+dividing by the same `sqrt(k) > 0`, the largest value. Maximizing over `k`
+gives the claim. []
+
+How the cover engine uses it. Ties in the order are broken by label id, so
+the prefix is a definite set. Only positive gains extend a positive prefix
+(adding `g <= 0` to a positive sum lowers its value), and when no gain is
+positive the single best label is optimal (`sum_S g <= |S| g_1 <=
+sqrt(|S|) g_1` for `g_1 <= 0`). A fresh label is a gain of exactly 0 and a
+label `v` must keep under `n_communities` is a fixed member worth 0; the same
+exchange applies to the remaining labels with sizes shifted. With errors:
+if every computed gain is within `b_max` of the exact one, every set of
+`j <= cap` labels is worth at most its computed value plus `sqrt(j) b_max`,
+hence at most the best computed prefix value plus `sqrt(cap) b_max`; this is
+the bound the slack uses. `tests/test_equilibrium.py` checks the lemma
+exhaustively in exact arithmetic (every multiset of up to 6 gains from
+`{-3, -2, -1, -1/2, 0, 1/2, 1, 2, 3}` and every cap: 27,027 cases) and on
+random rationals.
 
 ## Verifying a result
 
-`core/check.c` (`hig_verify_partition`; tests only, declared in
-`core/hedonic_check.h`) checks a result independently of the engine: no
-queue, no record of past visits, masses summed afresh, and every feasible
-deviation of every vertex scored with its own bound (every neighbour
-community, an empty community, and the proxy of the rest as above), giving
-the largest certified lower bound and the largest upper bound of a
-deviation's gain. `make test` runs it on every random game of
-`tests/test_core.c` and requires its certified gain to stay at or below the
-slack the engine reported. The Python tests reach it as
-`hedonic._core._verify_partition`, next to the traced run `_trace_partition`
-(start state, every accepted move with its improvement and bound, raw slack)
-that `tests/test_equilibrium.py` replays in exact arithmetic (Fractions).
+`core/check.c` (`hig_verify_partition`, `hig_verify_cover`; tests only,
+declared in `core/hedonic_check.h`) checks a result independently of the
+engines: no queue, no record of past visits, masses summed afresh, and every
+feasible deviation of every vertex scored with its own bound (every
+neighbour community or label, an empty community or fresh label, and the
+proxies of the rest as above), giving the largest certified lower bound and
+the largest upper bound of a deviation's gain. `make test` runs it on every
+random game of `tests/test_core.c` and requires its certified gain to stay
+at or below the slack the engine reported. The Python tests reach it as
+`hedonic._core._verify_partition` / `_verify_cover`, next to the traced runs
+`_trace_partition` / `_trace_cover` (start state, every accepted move with
+its improvement and bound, raw slack) that `tests/test_equilibrium.py`
+replays in exact arithmetic (Fractions for partitions, Decimal with at least
+80 significant digits and a rigorous margin for covers).
 
 ## Requeueing
 
-After a move of `v` to community `C`, the engine queues the neighbours of `v`
-outside `C`. Those inside `C` may also have changed their mind (their payoff
-for staying moved by `w_uv - gamma n_u n_v`); the final sweep still visits
-them, so either rule gives a certified equilibrium. The alternative,
-queueing every neighbour, was measured on complete DBLP and Amazon and on
-two synthetic graphs (an SBM with 10,000 vertices and 93,892 edges, an
-Erdos-Renyi graph with 100,000 vertices and 509,965 edges): the C core
-alone, seeds 0-2 summed, the best of three interleaved rounds, Apple M1 Max
-under background load:
+After a move of `v` to community `C`, the partition engine queues the
+neighbours of `v` outside `C`. Those inside `C` may also have changed their
+mind (their payoff for staying moved by `w_uv - gamma n_u n_v`); the final
+sweep still visits them, so either rule gives a certified equilibrium. The
+alternative, queueing every neighbour, was measured on complete DBLP and
+Amazon and on two synthetic graphs (an SBM with 10,000 vertices and 93,892
+edges, an Erdos-Renyi graph with 100,000 vertices and 509,965 edges): the C
+core alone, seeds 0-2 summed, the best of three interleaved rounds, Apple M1
+Max under background load:
 
 | Graph, resolution | neighbours outside `C` (kept) | every neighbour |
 |-------------------|------------------------------:|----------------:|
@@ -206,7 +290,11 @@ adjacency keeps edge order within each vertex and stores weights only when
 some weight differs from 1. A community is 16 bytes (mass, members, slot)
 plus the low half of its mass and the bound of its accumulated error (16
 bytes, in their own array: a move reads both); empty ids are reused from a
-stack.
+stack. A vertex's settlement stamp and recorded bound sit together (16
+bytes), because every visit writes both and the runs are bound by memory
+latency. A cover's
+rows live in one pool with power-of-two capacities (at most `M`), relocated
+when they grow and compacted when the pool's waste exceeds its live size.
 
 ## Determinism and platforms
 
@@ -287,7 +375,7 @@ the tests run once dispatched to the soft build and once to the instruction.
 `test_core.c` pins results bit for bit from the seeded order of Python's
 `random.Random(seed)` (an MT19937 equivalent), and the same results are
 pinned in the Python tests. Sorts break every tie by id. The result is
-relabelled `0, 1, ...` in order of first appearance.
+relabelled `0, 1, ...` in order of first appearance; cover rows are sorted.
 
 ## Licence
 

@@ -24,11 +24,21 @@ def memberships_as_cover(game) -> list[list[int]]:
     return [communities[label] for label in sorted(communities)]
 
 
-def validate_membership(game, membership: list[int] | list[list[int]]) -> bool:
-    """Return whether a partition is valid for ``game``."""
+def validate_membership(
+    game,
+    membership: list[int] | list[list[int]],
+    *,
+    overlapping: bool = False,
+    max_memberships: int | None = None,
+) -> bool:
+    """Return whether a partition or overlapping cover is valid for ``game``."""
     try:
-        game._normalize_membership(membership)
+        rows = game._normalize_membership(
+            membership, max_memberships=max_memberships
+        )
     except (TypeError, ValueError):
+        return False
+    if not overlapping and any(len(row) != 1 for row in rows):
         return False
     return True
 
@@ -36,13 +46,18 @@ def validate_membership(game, membership: list[int] | list[list[int]]) -> bool:
 def normalize_membership(
     game,
     membership: list[int] | list[list[int]],
+    *,
+    max_memberships: int | None = None,
+    collapse_duplicate_labels: bool = False,
 ) -> list[list[int]]:
-    """Validate and normalize a partition to per-vertex rows of one label.
+    """Validate and normalize a partition or cover to per-vertex rows.
 
-    A partition is given as flat labels (one per vertex) or as one-label rows.
     Labels are required to be non-negative integers and contiguous from zero,
-    matching igraph's membership convention. Every row must hold exactly one
-    label; duplicate labels within a row are rejected.
+    matching igraph's membership convention. Every row must be non-empty and
+    duplicate labels within a vertex are rejected. The optional cap is checked
+    here so persisted state cannot silently be accepted for an incompatible
+    detector call. Detector initialization may opt to collapse repeated labels
+    within a row; ordinary stored-state validation remains strict.
     """
     if not isinstance(membership, list):
         raise TypeError("memberships must be a list")
@@ -52,6 +67,10 @@ def normalize_membership(
         )
     if not membership:
         raise ValueError("memberships cannot be empty")
+    if max_memberships is not None and (
+        not isinstance(max_memberships, int) or max_memberships < 1
+    ):
+        raise ValueError("max_memberships must be an integer >= 1")
 
     first_nested = isinstance(membership[0], (list, tuple))
     rows: list[list[int]] = []
@@ -70,12 +89,10 @@ def normalize_membership(
                 if value < 0:
                     raise ValueError("membership labels must be non-negative")
                 labels.append(value)
-            if len(labels) != len(set(labels)):
+            if len(labels) != len(set(labels)) and not collapse_duplicate_labels:
                 raise ValueError("duplicate labels in a membership row")
-            if len(labels) > 1:
-                raise ValueError(
-                    f"a partition has one label per vertex (a row holds {len(labels)})"
-                )
+            if collapse_duplicate_labels:
+                labels = list(dict.fromkeys(labels))
         else:
             if isinstance(entry, (list, tuple)):
                 raise ValueError("membership cannot mix flat and nested rows")
@@ -85,6 +102,11 @@ def normalize_membership(
             if value < 0:
                 raise ValueError("membership labels must be non-negative")
             labels = [value]
+        if max_memberships is not None and len(labels) > max_memberships:
+            raise ValueError(
+                "a vertex exceeds max_memberships "
+                f"({len(labels)} > {max_memberships})"
+            )
         rows.append(labels)
         all_labels.update(labels)
 
@@ -94,3 +116,11 @@ def normalize_membership(
             raise ValueError("membership labels must be contiguous from 0")
     return rows
 
+
+def as_overlapping_init(
+    membership: list[int] | list[list[int]],
+) -> list[list[int]]:
+    """Normalize flat or nested membership to per-vertex lists."""
+    if membership and isinstance(membership[0], (list, tuple)):
+        return [list(map(int, entry)) for entry in membership]
+    return [[int(community)] for community in membership]

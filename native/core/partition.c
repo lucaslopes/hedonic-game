@@ -659,7 +659,7 @@ hig_error_t hig_partition_traced(const hig_graph_t *graph, const hig_options_t *
 
     memset(&s, 0, sizeof(s));
     s.trace = trace;
-    HIG_TRY(hig_check_input(graph, &options));
+    HIG_TRY(hig_check_input(graph, &options, false));
     if (graph->vertex_count > 0 && !membership) {
         HIG_TRY(hig_error(HIG_EINVAL, "The membership array is missing."));
     }

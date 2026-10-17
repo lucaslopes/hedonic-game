@@ -1,5 +1,5 @@
 /*
-   hedonic -- detect(): an igraph.Graph in, the result list out.
+   hedonic -- detect(): an igraph.Graph in, result lists out.
    Copyright (C) 2025-2026  Lucas Lopes Felipe
 
    This program is free software: you can redistribute it and/or modify
@@ -19,12 +19,13 @@
 #include "binding.h"
 
 PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds) {
-    static char *kwlist[] = { "graph", "rng", "resolution", "start",
+    static char *kwlist[] = { "graph", "rng", "resolution", "max_memberships", "start",
                               "allow_isolation", "edge_weights", "node_weights",
                               "max_total_communities", "n_communities", NULL };
     PyObject *graph_obj, *rng, *start_obj = Py_None, *edge_weights = Py_None;
     PyObject *node_weights = Py_None, *max_total_obj = Py_None, *n_communities_obj = Py_None;
     double resolution;
+    long long max_memberships = 1;
     int allow_isolation = 0;
     Py_ssize_t n = 0, m = 0;
     graph_edges_t edges = { NULL, NULL, NULL, NULL };
@@ -37,19 +38,25 @@ PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds) {
     start_rows_t start = { NULL, NULL, -1 };
     int have_start = 0;
     hig_int *membership = NULL, nb_clusters = 0;
+    hig_cover_t start_cover = { 0, NULL, NULL }, cover = { 0, NULL, NULL };
     double quality = 0.0, slack = 0.0;
     hig_error_t status;
-    PyObject *result = NULL, *list;
+    PyObject *result = NULL;
 
     (void) self;
     memset(&buffers, 0, sizeof(buffers));
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOd|$OpOOOO", kwlist, &graph_obj, &rng,
-                                     &resolution, &start_obj, &allow_isolation, &edge_weights,
-                                     &node_weights, &max_total_obj, &n_communities_obj)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOd|$LOpOOOO", kwlist, &graph_obj, &rng,
+                                     &resolution, &max_memberships, &start_obj, &allow_isolation, &edge_weights, &node_weights,
+                                     &max_total_obj, &n_communities_obj)) {
+        return NULL;
+    }
+    if (max_memberships < 1) {
+        PyErr_SetString(PyExc_ValueError, "max_memberships must be an integer >= 1, or -1");
         return NULL;
     }
     options = (hig_options_t) {
         .resolution = resolution,
+        .max_memberships = max_memberships,
         .allow_isolation = allow_isolation,
         .interrupt = &interrupt
     };
@@ -82,7 +89,7 @@ PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds) {
         .edge_second = edges.second
     };
     if (start_obj != Py_None) {
-        have_start = read_start_rows(start_obj, n, &start);
+        have_start = read_start_rows(start_obj, n, max_memberships, &start);
         if (have_start < 0) {
             goto done;
         }
@@ -93,29 +100,50 @@ PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds) {
     hig_rng = rng_callbacks(&rng_state);
     options.rng = &hig_rng;
 
-    membership = PyMem_Calloc(n > 0 ? (size_t) n : 1, sizeof(hig_int));
-    if (!membership) {
-        PyErr_NoMemory();
-        goto done;
-    }
-    if (have_start) {
-        for (Py_ssize_t v = 0; v < n; v++) {
-            membership[v] = start.labels[start.offset[v]];
+    if (max_memberships == 1) {
+        PyObject *list;
+        membership = PyMem_Calloc(n > 0 ? (size_t) n : 1, sizeof(hig_int));
+        if (!membership) {
+            PyErr_NoMemory();
+            goto done;
         }
+        if (have_start) {
+            for (Py_ssize_t v = 0; v < n; v++) {
+                membership[v] = start.labels[start.offset[v]];
+            }
+            start_rows_release(&start);
+        }
+        status = hig_partition(&graph, &options, have_start, membership, &nb_clusters, &quality,
+                               &slack);
+        if (status != HIG_SUCCESS) {
+            raise_error(status);
+            goto done;
+        }
+        graph_edges_release(&edges);
+        list = int_list(membership, n);
+        if (list) {
+            result = Py_BuildValue("(NLdd)", list, (long long) nb_clusters, quality, slack);
+        }
+    } else {
+        PyObject *rows, *clusters;
+        if (have_start) {
+            start_cover = (hig_cover_t) { n, start.offset, start.labels };
+        }
+        status = hig_cover(&graph, &options, have_start ? &start_cover : NULL, &cover,
+                           &nb_clusters, &quality, &slack);
         start_rows_release(&start);
-    }
-    status = hig_partition(&graph, &options, have_start, membership, &nb_clusters, &quality,
-                           &slack);
-    if (status != HIG_SUCCESS) {
-        raise_error(status);
-        goto done;
-    }
-    graph_edges_release(&edges);
-    list = int_list(membership, n);
-    if (list) {
-        result = Py_BuildValue("(NLdd)", list, (long long) nb_clusters, quality, slack);
+        if (status != HIG_SUCCESS) {
+            raise_error(status);
+            goto done;
+        }
+        graph_edges_release(&edges);
+        if (cover_lists(&cover, nb_clusters, &rows, &clusters) == 0) {
+            result = Py_BuildValue("(NNLdd)", rows, clusters, (long long) nb_clusters, quality,
+                                   slack);
+        }
     }
 done:
+    hig_cover_free(&cover);
     PyMem_Free(membership);
     start_rows_release(&start);
     if (rng_release(&rng_state) < 0) {

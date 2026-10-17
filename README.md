@@ -1,8 +1,8 @@
 # Hedonic
 
 `hedonic` detects communities in [`igraph`](https://igraph.org/) graphs as a
-hedonic game: wrap a graph in `Game` and call `community_hedonic()` to get a
-partition of its vertices into communities.
+hedonic game: wrap a graph in `Game` and call `community_hedonic()`. One
+method returns either a **disjoint** partition or an **overlapping** cover.
 
 The detector is a small C core compiled into the package (`hedonic._core`).
 The only dependencies are the standard [`igraph`](https://pypi.org/project/igraph/)
@@ -19,12 +19,15 @@ pip install hedonic
 from hedonic import Game
 
 h = Game(g)  # g: an igraph graph (convert NetworkX, edge lists, ... through igraph)
-partition = h.community_hedonic()
+partition = h.community_hedonic(max_memberships=1)                        # disjoint
+cover = h.community_hedonic(max_memberships=3, initial_membership=None)  # overlapping
 ```
 
 - `from hedonic import Game` is the public API.
-- `community_hedonic()` puts each vertex in exactly one community and returns
-  an `igraph.VertexClustering`.
+- `max_memberships=1` puts each vertex in exactly one community and returns an
+  `igraph.VertexClustering`.
+- `max_memberships>1` lets each vertex join up to that many communities and
+  returns an `igraph.VertexCover`.
 - Every call runs until no vertex can certainly improve by moving: the result
   is an equilibrium of the game, with a certified bound on what any vertex
   could still gain (`equilibrium_slack`, 0 when the arithmetic is exact).
@@ -42,10 +45,12 @@ at a resolution γ (by default, the graph density): a vertex gains from its
 neighbours inside a community and pays γ for every member.
 
 `community_hedonic()` visits the vertices in random order and lets each one
-take its **best response**: move to the community it prefers. After a move it
-revisits the vertex's neighbours, and it stops only when every vertex has been
-visited, without moving, since the last move. That is a Nash equilibrium: no
-vertex can improve its payoff alone.
+take its **best response**: move to the community it prefers (disjoint), or
+choose the set of at most `max_memberships` communities it prefers
+(overlapping, where a vertex's weight is split evenly over its communities).
+After a move it revisits the vertex's neighbours, and it stops only when
+every vertex has been visited, without moving, since the last move. That is a
+Nash equilibrium: no vertex can improve its payoff alone.
 
 The computation is in floating point, so the core proves each step instead
 of trusting it: every payoff it compares carries a rigorous bound of its
@@ -56,9 +61,11 @@ always stops. The result reports `equilibrium_slack` in
 than the slack times the total edge weight (normalized like the quality).
 It is exactly 0 when the arithmetic is exact (for instance unit weights at
 resolution 0, 1/2 or 1), so the result is then an exact Nash equilibrium; on
-complete DBLP and Amazon at other resolutions it is about `1e-21`.
-[`native/README.md`](native/README.md) gives the bounds and the termination
-argument.
+complete DBLP and Amazon at other resolutions it is about `1e-21` for
+partitions and `1e-17` for covers.
+[`native/README.md`](native/README.md) gives the bounds, the termination
+argument and the proof that the best set of communities is a prefix of the
+sorted gains.
 
 `Game` is an `igraph.Graph` subclass: after wrapping, the usual igraph API
 (`h.vcount()`, `h.density()`, shortest paths, and so on) is still available.
@@ -121,51 +128,63 @@ rather than silently converted.
 ```python
 h = Game.Famous("Zachary")
 
-# Each vertex has one community id
-partition = h.community_hedonic(seed=0)
+# Disjoint: each vertex has one community id
+partition = h.community_hedonic(max_memberships=1, seed=0)
 print(partition.membership[:8])
 print(partition.sizes())         # community sizes
+
+# Overlapping: each vertex has a list of community ids (length <= max_memberships)
+cover = h.community_hedonic(max_memberships=3, initial_membership=None, seed=0)
+print(cover.membership[:4])
 ```
 
 Iterate communities as lists of vertex ids:
 
 ```python
-for community in partition:
+for community in partition:          # disjoint clusters
+    print(list(community))
+
+for community in cover:              # overlapping clusters
     print(list(community))
 ```
 
-To start a run from a known partition, pass it as the start (one label per
-vertex, contiguous from 0):
+To start an overlapping run from a disjoint partition, pass the partition as
+the start:
 
 ```python
-start = [0] * 17 + [1] * 17
-partition = h.community_hedonic(initial_membership=start, seed=0)
+partition = h.community_hedonic(max_memberships=1, initial_membership=None)
+cover = h.community_hedonic(
+    max_memberships=3,
+    initial_membership=list(partition.membership),
+)
 ```
 
 ### Continuing from the last result
 
-Every call stores its result in `h.memberships`, one single-label list per
-vertex (`[[c0], [c1], ...]`). When `initial_membership` is omitted, the next
-call starts from that state, so repeated calls continue from the previous
-equilibrium:
+Every call stores its result in `h.memberships`, one list of labels per
+vertex. When `initial_membership` is omitted, the next call starts from that
+state, so repeated calls continue from the previous equilibrium:
 
 | `initial_membership` | Start state |
 |---|---|
 | omitted | the stored `h.memberships`, or singletons if nothing is stored |
 | `None` | a fresh default start (singletons, or a feasible start under count limits) |
-| a list | that partition |
+| a list | that partition or cover |
 
-You can also assign `h.memberships` yourself, as flat labels or as one-label
-lists.
+Because the stored state is reused, switching from an overlapping call back to
+`max_memberships=1` without `initial_membership=None` fails: the stored cover
+has vertices in several communities. You can also assign `h.memberships`
+yourself.
 
 ### 3. Parameters
 
 | Parameter | Default | Role |
 |---|---|---|
+| `max_memberships` | `1` | `1` = partition; `>1` = cover with that per-vertex cap; `-1` = no practical per-vertex cap |
 | `resolution` | graph density | CPM γ. Smaller γ gives larger communities |
 | `allow_isolation` | `False` | Allow a vertex to open a new, empty community |
 | `initial_membership` | stored state | See [Continuing from the last result](#continuing-from-the-last-result) |
-| `max_communities` | `None` | Random start over `[0, max_communities)` when no start is given; not an output limit |
+| `max_communities` | `None` | Random disjoint start over `[0, max_communities)` when no start is given; not an output limit |
 | `edge_weights` | unweighted | Edge weights (sequence or edge-attribute name) |
 | `node_weights` | unweighted | Vertex weights (sequence or vertex-attribute name) in the crowding term `γ w_u w_v` |
 | `max_total_communities` | `None` | At most `K` occupied communities, in the result and in every state visited |
@@ -193,7 +212,8 @@ occupied communities at most `K`, and `n_communities=K` keeps it exactly `K`:
 
 ```python
 partition = h.community_hedonic(initial_membership=None, n_communities=2)
-bounded = h.community_hedonic(initial_membership=None, max_total_communities=4)
+cover = h.community_hedonic(initial_membership=None, max_memberships=3,
+                            max_total_communities=4)
 ```
 
 Both must be positive integers, and `n_communities` must not exceed
@@ -208,8 +228,8 @@ returned state.
 
 ### 4. Scoring against a reference
 
-`evaluate_against` scores the stored partition against a known partition or
-cover (a reference may let communities overlap):
+`evaluate_against` scores the stored result against a known cover or
+partition:
 
 ```python
 h = Game.Famous("Zachary")
@@ -230,19 +250,19 @@ from hedonic import Game
 
 h = Game(ig.Graph.Famous("Zachary"))
 
-partition = h.community_hedonic(seed=0)
+partition = h.community_hedonic(max_memberships=1, seed=0)
 print(f"{h.vcount()} vertices, {h.ecount()} edges")
-print(f"communities: {len(partition)}, sizes {partition.sizes()}")
-print(f"quality: {partition.quality:.4f}")
+print(f"disjoint communities: {len(partition)}, sizes {partition.sizes()}")
 
-truth = [0] * 17 + [1] * 17
-print(f"F1 against a two-block reference: {h.evaluate_against(truth):.3f}")
+cover = h.community_hedonic(max_memberships=3, initial_membership=None, seed=0)
+print(f"overlapping communities: {len(cover)}")
+print(f"memberships of the first five vertices: {cover.membership[:5]}")
 ```
 
 ## Interactive explainer
 
 The `web/` directory contains an educational website that explains the
-hedonic game visually: friends and strangers on a balance scale, the
+disjoint hedonic game visually: friends and strangers on a balance scale, the
 resolution parameter, the Familiarity Index, the decision tree, the metagraph
 of all partitions of a four-vertex graph, and better-response walks to a
 stable equilibrium. It also hosts documentation generated from this package's

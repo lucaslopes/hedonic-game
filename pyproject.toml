@@ -1,7 +1,7 @@
 [project]
 name = "hedonic"
 version = "2.0.0"
-description = "Community detection with hedonic games: best-response local moving to an equilibrium in a purpose-built C core"
+description = "Community detection with hedonic games: best-response local moving to an equilibrium, disjoint and overlapping, in a purpose-built C core"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
@@ -13,7 +13,7 @@ dependencies = [
     "igraph>=1.0",
     "numpy",
 ]
-keywords = ["community detection", "hedonic games", "graphs", "networks"]
+keywords = ["community detection", "hedonic games", "graphs", "networks", "overlapping communities"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: C",

@@ -1,7 +1,8 @@
 """Detector orchestration for :class:`hedonic.Game`.
 
 Every call runs best-response local moving in this package's C core
-(:mod:`hedonic._native`) until no vertex has an improving move.
+(:mod:`hedonic._native`) until no vertex has an improving move, for partitions
+and covers alike.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ def community_hedonic(
     game,
     initial_membership: list[int] | list[list[int]] | None | _UnsetType = _UNSET,
     max_communities: int | None = None,
+    max_memberships: int = 1,
     resolution: float | None = None,
     allow_isolation: bool = False,
     *,
@@ -49,6 +51,15 @@ def community_hedonic(
             "community_hedonic requires an undirected graph; "
             "project directed data before calling the detector"
         )
+    if (
+        not isinstance(max_memberships, int)
+        or isinstance(max_memberships, bool)
+        or (max_memberships < 1 and max_memberships != -1)
+    ):
+        raise ValueError("max_memberships must be an integer >= 1, or -1")
+    requested_max_memberships = max_memberships
+    if max_memberships == -1:
+        max_memberships = game.vcount()
     _positive_or_none("max_total_communities", max_total_communities)
     _positive_or_none("n_communities", n_communities)
     if (
@@ -69,10 +80,16 @@ def community_hedonic(
         )
     node_weight_values = _node_weight_values(game, node_weights)
 
-    if n_communities is not None and n_communities > game.vcount():
-        raise ValueError(
-            f"n_communities={n_communities} exceeds the vertex count ({game.vcount()})"
-        )
+    overlapping = max_memberships > 1
+    if n_communities is not None:
+        capacity = game.vcount() * max_memberships
+        if n_communities > capacity:
+            raise ValueError(
+                f"n_communities={n_communities} exceeds the "
+                + ("vertex count" if not overlapping else
+                   "vertex count times max_memberships")
+                + f" ({capacity}) with max_memberships={requested_max_memberships}"
+            )
     if resolution is None:
         res = game.density()
         if not math.isfinite(res):
@@ -96,17 +113,28 @@ def community_hedonic(
     if candidate is not None:
         source = "memberships" if use_loaded else "initial_membership"
         try:
-            rows = game._normalize_membership(candidate)
+            rows = game._normalize_membership(
+                candidate,
+                max_memberships=max_memberships,
+                collapse_duplicate_labels=overlapping,
+            )
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid {source}: {exc}") from exc
+        if not overlapping and any(len(row) != 1 for row in rows):
+            raise ValueError(
+                f"Invalid {source}: overlapping rows require max_memberships > 1"
+            )
         check_start_counts(rows, source, max_total_communities, n_communities)
-        membership_vector = [row[0] for row in rows]
+        membership_vector = rows if overlapping else [row[0] for row in rows]
         max_communities_effect = "none: a start state was supplied"
     elif count_constrained:
         # The native layer builds the deterministic feasible start
         # (vertex v in community v mod K) for count-constrained calls.
         membership_vector = None
         max_communities_effect = "none: count limits select the default start"
+    elif overlapping:
+        membership_vector = [[v] for v in range(game.vcount())]
+        max_communities_effect = "none: overlapping singleton start"
     elif max_communities is None:
         membership_vector = list(range(game.vcount()))
         max_communities_effect = "none: disjoint singleton start"
@@ -130,6 +158,7 @@ def community_hedonic(
     result = _native.community_hedonic(
         game,
         resolution=res,
+        max_memberships=max_memberships,
         initial_membership=membership_vector,
         allow_isolation=allow_isolation,
         edge_weights=edge_weights,
@@ -140,11 +169,24 @@ def community_hedonic(
     )
 
     # A partition carries its quality as an attribute (igraph copies the
-    # params of a VertexClustering), and its equilibrium slack likewise.
-    if getattr(result, "quality", None) is not None:
-        setattr(result, "_hedonic_native_quality", result.quality)
-    slack = getattr(result, "equilibrium_slack", None)
-    returned_rows = [[label] for label in result.membership]
+    # params of a VertexClustering); a cover keeps it in ``_params``.
+    params = getattr(result, "_params", None)
+    if isinstance(params, dict) and "quality" in params:
+        setattr(result, "_hedonic_native_quality", params["quality"])
+        slack = params.get("equilibrium_slack")
+    else:
+        if getattr(result, "quality", None) is not None:
+            setattr(result, "_hedonic_native_quality", result.quality)
+        slack = getattr(result, "equilibrium_slack", None)
+    # The native cover carries its per-vertex rows; taking them saves
+    # rebuilding them from the clusters (result.membership).
+    native_rows = result.__dict__.pop("_hedonic_rows", None)
+    if not overlapping:
+        returned_rows = [[label] for label in result.membership]
+    elif native_rows is not None:
+        returned_rows = native_rows
+    else:
+        returned_rows = [[int(label) for label in labels] for labels in result.membership]
 
     occupied = len({label for row in returned_rows for label in row})
     setattr(
@@ -153,6 +195,8 @@ def community_hedonic(
         {
             "versions": runtime_versions(),
             "resolution": res,
+            "max_memberships": requested_max_memberships,
+            "effective_max_memberships": max_memberships,
             "count_constraint": (
                 "exact" if n_communities is not None
                 else "at_most" if max_total_communities is not None
@@ -187,6 +231,7 @@ def community_hedonic(
             # exact, and NaN when W = 0).
             "equilibrium_notion": (
                 "count_constrained" if count_constrained
+                else "cap_constrained" if overlapping
                 else "unconstrained_partition"
             ),
             "equilibrium_slack": slack,

@@ -17,15 +17,19 @@
 */
 
 /*
- * The public interface of the C core: one entry point over plain arrays,
- * hig_partition, which puts each vertex in one community. The core links
- * against nothing but the C library. native/README.md explains the design;
- * in short:
+ * The public interface of the C core: two entry points over plain arrays,
+ * hig_partition (each vertex in one community) and hig_cover (each vertex in
+ * at most max_memberships communities: the unit-l2 overlapping game). The
+ * core links against nothing but the C library. native/README.md explains
+ * the design; in short:
  *
  * THE GAME. Vertex v has weight n_v >= 0 (1 by default), gamma is the
  * resolution and W the total edge weight. In a partition, v in community C
  * earns u_v(C) = w(v, C \ v) - gamma n_v N(C \ v), with N(S) the total
- * weight of S. The game has an exact potential; the returned quality is that
+ * weight of S. In a cover, v holds k_v labels with intensity f_v = 1/sqrt(k_v)
+ * on each and earns U_v(sigma) = sum_{c in sigma} g_c(v) / sqrt(|sigma|),
+ * g_c(v) = sum_{u ~ v holding c} w_uv f_u - gamma n_v sum_{u != v holding c}
+ * n_u f_u. Both games have an exact potential; the returned quality is that
  * potential divided by W.
  *
  * THE DYNAMICS. Vertices are visited from a queue, at first all of them in a
@@ -102,9 +106,10 @@ typedef struct {
 
 /* An undirected graph: edge e joins edges[2e] and edges[2e + 1], or, when
  * edges is NULL, edge_first[e] and edge_second[e] (two arrays, read without a
- * copy). Multi-edges and self-loops are allowed (a self-loop adds a constant
- * to the potential). NULL weights mean all ones. Edge weights are finite;
- * node weights are finite and non-negative. */
+ * copy). Multi-edges are allowed; self-loops are allowed for partitions (they
+ * add a constant to the potential) and rejected for covers. NULL weights mean
+ * all ones. Edge weights are finite (and non-negative for covers); node
+ * weights are finite and non-negative. */
 typedef struct {
     hig_int vertex_count;
     hig_int edge_count;
@@ -117,12 +122,23 @@ typedef struct {
 
 typedef struct {
     double resolution;              /* gamma, finite */
+    hig_int max_memberships;        /* labels per vertex at most: 1 for partitions */
     hig_int max_total_communities;  /* occupied communities at most; <= 0: no limit */
     hig_int n_communities;          /* exactly this many communities; <= 0: no limit */
     int allow_isolation;            /* may a vertex move to an empty community */
     const hig_rng_t *rng;           /* required */
     const hig_interrupt_t *interrupt; /* NULL: never interrupted */
 } hig_options_t;
+
+/* A cover: row v is labels[offset[v] .. offset[v + 1] - 1]. */
+typedef struct {
+    hig_int vertex_count;
+    hig_int *offset;   /* vertex_count + 1 entries */
+    hig_int *labels;
+} hig_cover_t;
+
+/* Releases a cover returned by hig_cover (arrays from malloc). */
+void hig_cover_free(hig_cover_t *cover);
 
 /* Local moving of a partition. With `start`, membership[] (vertex_count
  * non-negative labels) is the start partition; otherwise singletons, or,
@@ -133,6 +149,17 @@ typedef struct {
 hig_error_t hig_partition(const hig_graph_t *graph, const hig_options_t *options, int start,
                           hig_int *membership, hig_int *nb_communities, double *quality,
                           double *equilibrium_slack);
+
+/* Local moving of a cover. `start` (NULL: singletons, or, under a count
+ * limit, a round-robin start that occupies K labels) gives each vertex a
+ * non-empty row of non-negative labels; a repeated label counts once. On
+ * success *result holds sorted rows with labels 0 .. *nb_communities - 1 in
+ * order of first appearance (release it with hig_cover_free), *quality
+ * (if not NULL) the potential divided by W and *equilibrium_slack (if not
+ * NULL) the equilibrium slack. */
+hig_error_t hig_cover(const hig_graph_t *graph, const hig_options_t *options,
+                      const hig_cover_t *start, hig_cover_t *result, hig_int *nb_communities,
+                      double *quality, double *equilibrium_slack);
 
 /* The message of the last error raised on this thread. */
 const char *hig_error_message(void);

@@ -1,5 +1,5 @@
 /*
-   hedonic -- partition() over plain Python data.
+   hedonic -- partition() and cover() over plain Python data.
    Copyright (C) 2025-2026  Lucas Lopes Felipe
 
    This program is free software: you can redistribute it and/or modify
@@ -146,6 +146,7 @@ static PyObject *run_partition(PyObject *args, PyObject *kwds, int traced) {
     }
     options = (hig_options_t) {
         .resolution = resolution,
+        .max_memberships = 1,
         .allow_isolation = allow_isolation,
         .interrupt = &interrupt
     };
@@ -242,4 +243,175 @@ PyObject *py_partition(PyObject *self, PyObject *args, PyObject *kwds) {
 PyObject *py_trace_partition(PyObject *self, PyObject *args, PyObject *kwds) {
     (void) self;
     return run_partition(args, kwds, 1);
+}
+
+/* ---- cover() --------------------------------------------------------------- */
+
+static PyObject *run_cover(PyObject *args, PyObject *kwds, int traced) {
+    static char *kwlist[] = { "n", "edges", "rng", "edge_weights", "node_weights",
+                              "memberships", "max_memberships", "resolution",
+                              "max_total_communities", "n_communities", "allow_isolation",
+                              NULL };
+    Py_ssize_t n;
+    PyObject *edges, *rng, *edge_weights = Py_None, *node_weights = Py_None;
+    PyObject *memberships_obj = Py_None, *max_total_obj = Py_None, *n_communities_obj = Py_None;
+    long long max_memberships = 2;
+    double resolution = 1.0;
+    int allow_isolation = 1;
+    hig_graph_t graph;
+    buffers_t buffers;
+    py_rng_state_t rng_state = { 0 };
+    hig_rng_t hig_rng;
+    hig_interrupt_t interrupt = { py_check_signals, NULL };
+    hig_options_t options;
+    hig_cover_t start = { 0, NULL, NULL }, cover = { 0, NULL, NULL };
+    hig_int nb_clusters = 0;
+    double quality = 0.0;
+    hig_error_t status;
+    PyObject *result = NULL, *rows = NULL;
+    tracer_t tracer;
+    hig_trace_t trace;
+    double raw_slack = 0.0;
+
+    memset(&tracer, 0, sizeof(tracer));
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "nOO|OOOLdOOp", kwlist, &n, &edges, &rng,
+                                     &edge_weights, &node_weights, &memberships_obj,
+                                     &max_memberships, &resolution, &max_total_obj,
+                                     &n_communities_obj, &allow_isolation)) {
+        return NULL;
+    }
+    options = (hig_options_t) {
+        .resolution = resolution,
+        .max_memberships = max_memberships,
+        .allow_isolation = allow_isolation,
+        .interrupt = &interrupt
+    };
+    if (optional_limit(max_total_obj, &options.max_total_communities, "max_total_communities") < 0 ||
+        optional_limit(n_communities_obj, &options.n_communities, "n_communities") < 0) {
+        return NULL;
+    }
+    if (make_graph(n, edges, edge_weights, node_weights, &graph, &buffers) < 0) {
+        return NULL;
+    }
+    if (make_rng(rng, &rng_state) < 0) {
+        goto done;
+    }
+    hig_rng = rng_callbacks(&rng_state);
+    options.rng = &hig_rng;
+
+    if (memberships_obj != Py_None) {
+        /* The rows as one CSR array; the core checks them. */
+        PyObject *seq = PySequence_Fast(memberships_obj, "memberships must be a sequence");
+        Py_ssize_t count, total = 0;
+        if (!seq) {
+            goto done;
+        }
+        count = PySequence_Fast_GET_SIZE(seq);
+        start.vertex_count = count;
+        start.offset = PyMem_Malloc((size_t) (count + 1) * sizeof(hig_int));
+        if (!start.offset) {
+            Py_DECREF(seq);
+            PyErr_NoMemory();
+            goto done;
+        }
+        start.offset[0] = 0;
+        for (Py_ssize_t v = 0; v < count; v++) {
+            const Py_ssize_t size = PySequence_Size(PySequence_Fast_GET_ITEM(seq, v));
+            if (size < 0) {
+                PyErr_Clear();
+                PyErr_SetString(PyExc_TypeError, "every membership row must be a sequence");
+                Py_DECREF(seq);
+                goto done;
+            }
+            total += size;
+            start.offset[v + 1] = total;
+        }
+        start.labels = PyMem_Malloc(total > 0 ? (size_t) total * sizeof(hig_int) : 1);
+        if (!start.labels) {
+            Py_DECREF(seq);
+            PyErr_NoMemory();
+            goto done;
+        }
+        for (Py_ssize_t v = 0; v < count; v++) {
+            PyObject *row = PySequence_Fast(PySequence_Fast_GET_ITEM(seq, v),
+                                            "every membership row must be a sequence");
+            if (!row || PySequence_Fast_GET_SIZE(row) != start.offset[v + 1] - start.offset[v]) {
+                if (row) {
+                    PyErr_SetString(PyExc_ValueError, "a membership row changed size");
+                    Py_DECREF(row);
+                }
+                Py_DECREF(seq);
+                goto done;
+            }
+            for (Py_ssize_t i = 0; i < PySequence_Fast_GET_SIZE(row); i++) {
+                hig_int *label = start.labels + start.offset[v] + i;
+                *label = PyLong_AsLongLong(PySequence_Fast_GET_ITEM(row, i));
+                if (*label == -1 && PyErr_Occurred()) {
+                    Py_DECREF(row);
+                    Py_DECREF(seq);
+                    goto done;
+                }
+            }
+            Py_DECREF(row);
+        }
+        Py_DECREF(seq);
+    }
+
+    if (traced) {
+        if (tracer_init(&tracer, &trace) < 0) {
+            goto done;
+        }
+        status = hig_cover_traced(&graph, &options, memberships_obj != Py_None ? &start : NULL,
+                                  &cover, &nb_clusters, &quality, &raw_slack, &trace);
+    } else {
+        status = hig_cover(&graph, &options, memberships_obj != Py_None ? &start : NULL, &cover,
+                           &nb_clusters, &quality, NULL);
+    }
+    if (status != HIG_SUCCESS) {
+        raise_error(status);
+        goto done;
+    }
+    rows = PyList_New(cover.vertex_count);
+    if (!rows) {
+        goto done;
+    }
+    for (hig_int v = 0; v < cover.vertex_count; v++) {
+        const hig_int begin = cover.offset[v], end = cover.offset[v + 1];
+        PyObject *row = int_list(cover.labels + begin, end - begin);
+        if (!row) {
+            Py_CLEAR(rows);
+            goto done;
+        }
+        PyList_SET_ITEM(rows, v, row);
+    }
+    if (traced) {
+        PyObject *record = tracer_result(&tracer, raw_slack);
+        if (!record) {
+            Py_CLEAR(rows);
+            goto done;
+        }
+        result = Py_BuildValue("(NLdN)", rows, (long long) nb_clusters, quality, record);
+    } else {
+        result = Py_BuildValue("(NLd)", rows, (long long) nb_clusters, quality);
+    }
+done:
+    tracer_release(&tracer);
+    PyMem_Free(start.offset);
+    PyMem_Free(start.labels);
+    hig_cover_free(&cover);
+    if (rng_release(&rng_state) < 0) {
+        Py_CLEAR(result);
+    }
+    buffers_release(&buffers);
+    return result;
+}
+
+PyObject *py_cover(PyObject *self, PyObject *args, PyObject *kwds) {
+    (void) self;
+    return run_cover(args, kwds, 0);
+}
+
+PyObject *py_trace_cover(PyObject *self, PyObject *args, PyObject *kwds) {
+    (void) self;
+    return run_cover(args, kwds, 1);
 }

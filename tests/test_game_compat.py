@@ -1,7 +1,8 @@
-"""Option matrix of ``Game.community_hedonic``.
+"""Mode parity of ``Game.community_hedonic``.
 
-Every combination is exercised: both values of ``allow_isolation``, default
-and supplied starts, and unconstrained, at-most and exact community counts. Each returned state is a
+Every option with a shared meaning is exercised for partitions and covers:
+both values of ``allow_isolation``, default and supplied starts, and
+unconstrained, at-most and exact community counts. Each returned state is a
 fixed point (continuing from it moves nothing) and a seeded call replays.
 Invalid combinations raise errors that name the conflicting option.
 """
@@ -22,13 +23,26 @@ def _karate() -> Game:
     return Game(graph)
 
 
-class TestOptionMatrix(unittest.TestCase):
+def _occupied(rows, overlapping: bool) -> int:
+    if overlapping:
+        return len({label for row in rows for label in row})
+    return len(set(rows))
+
+
+def _canonical(rows, overlapping: bool):
+    return [sorted(row) for row in rows] if overlapping else list(rows)
+
+
+class TestModeParityMatrix(unittest.TestCase):
     def test_matrix(self):
         n = 34
         cells = 0
-        for allow_isolation, supplied, count in itertools.product(
-            (False, True), (False, True), ("none", "at_most", "exact"),
+        for (
+            max_memberships, allow_isolation, supplied, count,
+        ) in itertools.product(
+            (1, 3), (False, True), (False, True), ("none", "at_most", "exact"),
         ):
+            overlapping = max_memberships > 1
             limits = {}
             if count == "at_most":
                 limits["max_total_communities"] = 5
@@ -37,17 +51,23 @@ class TestOptionMatrix(unittest.TestCase):
             start = None
             if supplied:
                 k = 4 if count != "none" else 6
-                start = [v % k for v in range(n)]
+                start = (
+                    [sorted({v % k, (v + 1) % k}) if v % 2 == 0 else [v % k]
+                     for v in range(n)]
+                    if overlapping else [v % k for v in range(n)]
+                )
             kwargs = dict(
-                allow_isolation=allow_isolation, resolution=0.08, edge_weights="weight",
-                seed=100 + cells, **limits,
+                max_memberships=max_memberships, allow_isolation=allow_isolation,
+                resolution=0.08, edge_weights="weight", seed=100 + cells, **limits,
             )
             with self.subTest(supplied=supplied, **kwargs):
                 game = _karate()
                 plain = game.community_hedonic(initial_membership=start, **kwargs)
                 again = _karate().community_hedonic(initial_membership=start, **kwargs)
                 self.assertEqual(plain.membership, again.membership)
-                self.assertIsInstance(plain, ig.VertexClustering)
+                self.assertIsInstance(
+                    plain, ig.VertexCover if overlapping else ig.VertexClustering
+                )
 
                 provenance = plain._hedonic_provenance
                 self.assertEqual(provenance["count_constraint"], count)
@@ -58,12 +78,16 @@ class TestOptionMatrix(unittest.TestCase):
                 )
                 self.assertTrue(provenance["edge_weighted"])
 
-                occupied = len(set(plain.membership))
+                occupied = _occupied(plain.membership, overlapping)
                 self.assertEqual(provenance["occupied_communities"], occupied)
                 if count == "at_most":
                     self.assertLessEqual(occupied, 5)
                 elif count == "exact":
                     self.assertEqual(occupied, 4)
+                if overlapping:
+                    self.assertTrue(all(
+                        1 <= len(row) <= max_memberships for row in plain.membership
+                    ))
 
                 # The run ends at an equilibrium, so continuing from
                 # the stored state returns it unchanged.
@@ -71,9 +95,12 @@ class TestOptionMatrix(unittest.TestCase):
                 self.assertEqual(
                     resumed._hedonic_provenance["initialization"], "loaded memberships"
                 )
-                self.assertEqual(resumed.membership, plain.membership)
+                self.assertEqual(
+                    _canonical(resumed.membership, overlapping),
+                    _canonical(plain.membership, overlapping),
+                )
                 cells += 1
-        self.assertEqual(cells, 2 * 2 * 3)
+        self.assertEqual(cells, 2 * 2 * 2 * 3)
 
 
 class TestMessagesNameTheConflictingOption(unittest.TestCase):
@@ -81,9 +108,12 @@ class TestMessagesNameTheConflictingOption(unittest.TestCase):
         directed = Game(ig.Graph([(0, 1), (1, 2)], directed=True))
         game = _karate()
         cases = [
-            (lambda: directed.community_hedonic(), "undirected"),
+            (lambda: directed.community_hedonic(max_memberships=2), "undirected"),
+            (lambda: game.community_hedonic(max_memberships=0), "max_memberships"),
             (lambda: game.community_hedonic(n_communities=35),
              "n_communities=35 exceeds the vertex count"),
+            (lambda: game.community_hedonic(max_memberships=2, n_communities=69),
+             "n_communities=69 exceeds the vertex count times max_memberships"),
             (lambda: game.community_hedonic(max_total_communities=2, n_communities=3),
              "n_communities must not exceed max_total_communities"),
             (lambda: game.community_hedonic(max_total_communities=0),
@@ -92,11 +122,12 @@ class TestMessagesNameTheConflictingOption(unittest.TestCase):
                 initial_membership=list(range(34)), max_total_communities=3),
              "initial_membership.*max_total_communities=3"),
             (lambda: game.community_hedonic(
-                initial_membership=[[v] for v in range(34)], n_communities=3),
+                max_memberships=2, initial_membership=[[v] for v in range(34)],
+                n_communities=3),
              "initial_membership.*n_communities=3"),
             (lambda: game.community_hedonic(
                 initial_membership=[[0, 1]] + [[0]] * 33),
-             "initial_membership.*one label per vertex"),
+             "initial_membership.*max_memberships"),
             (lambda: game.community_hedonic(resolution=float("nan")), "resolution"),
             (lambda: game.community_hedonic(node_weights=[-1.0] * 34), "node_weights"),
         ]
@@ -111,12 +142,12 @@ class TestMessagesNameTheConflictingOption(unittest.TestCase):
         self.assertEqual(
             disjoint._hedonic_provenance["max_communities_effect"], "random disjoint start"
         )
-        bounded = game.community_hedonic(
-            initial_membership=None, max_communities=3, max_total_communities=4
+        cover = game.community_hedonic(
+            initial_membership=None, max_communities=3, max_memberships=2
         )
         self.assertEqual(
-            bounded._hedonic_provenance["max_communities_effect"],
-            "none: count limits select the default start",
+            cover._hedonic_provenance["max_communities_effect"],
+            "none: overlapping singleton start",
         )
         supplied = game.community_hedonic(
             initial_membership=[v % 2 for v in range(34)], max_communities=3
@@ -124,6 +155,47 @@ class TestMessagesNameTheConflictingOption(unittest.TestCase):
         self.assertEqual(
             supplied._hedonic_provenance["max_communities_effect"],
             "none: a start state was supplied",
+        )
+
+
+class TestWarmStart(unittest.TestCase):
+    def test_cover_from_a_partition_equals_the_flat_start(self):
+        for limits in ({}, {"max_total_communities": 6}, {"n_communities": 4}):
+            with self.subTest(**limits):
+                common = dict(
+                    resolution=0.08, edge_weights="weight", seed=7,
+                    allow_isolation=False, **limits,
+                )
+                game = _karate()
+                partition = game.community_hedonic(
+                    initial_membership=None, max_memberships=1, **common
+                )
+                flat = _karate().community_hedonic(
+                    initial_membership=list(partition.membership),
+                    max_memberships=3, **common,
+                )
+                nested = _karate().community_hedonic(
+                    initial_membership=[[c] for c in partition.membership],
+                    max_memberships=3, **common,
+                )
+                # Continuing on the same Game reuses the stored partition.
+                loaded = game.community_hedonic(max_memberships=3, **common)
+                self.assertEqual(flat.membership, nested.membership)
+                self.assertEqual(flat.membership, loaded.membership)
+                self.assertEqual(
+                    flat._hedonic_provenance["initialization"], "initial_membership"
+                )
+                if "n_communities" in limits:
+                    self.assertEqual(_occupied(flat.membership, True), 4)
+
+    def test_default_start_is_recorded(self):
+        cover = _karate().community_hedonic(
+            initial_membership=None, max_memberships=2, resolution=0.08, seed=1
+        )
+        self.assertEqual(cover._hedonic_provenance["initialization"], "default")
+        self.assertEqual(
+            cover._hedonic_provenance["max_communities_effect"],
+            "none: overlapping singleton start",
         )
 
 

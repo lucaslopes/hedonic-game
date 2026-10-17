@@ -44,16 +44,27 @@
 #define HIG_DECLARE_BUILD(p)                                                                 \
     void p##pcg32_seed(hig_pcg32_t *pcg, uint64_t seed, uint64_t stream);                    \
     uint32_t p##pcg32_next32(void *pcg, int *failed);                                       \
+    void p##cover_free(hig_cover_t *cover);                                                 \
     hig_error_t p##partition(const hig_graph_t *graph, const hig_options_t *options,         \
                              int start, hig_int *membership, hig_int *nb_communities,       \
                              double *quality, double *equilibrium_slack);                   \
+    hig_error_t p##cover(const hig_graph_t *graph, const hig_options_t *options,             \
+                         const hig_cover_t *start, hig_cover_t *result,                     \
+                         hig_int *nb_communities, double *quality,                          \
+                         double *equilibrium_slack);                                        \
     const char *p##error_message(void);                                                     \
     hig_error_t p##partition_traced(const hig_graph_t *graph, const hig_options_t *options,  \
                                     int start, hig_int *membership,                         \
                                     hig_int *nb_communities, double *quality,               \
                                     double *raw_slack, const hig_trace_t *trace);           \
+    hig_error_t p##cover_traced(const hig_graph_t *graph, const hig_options_t *options,      \
+                                const hig_cover_t *start, hig_cover_t *result,              \
+                                hig_int *nb_communities, double *quality,                   \
+                                double *raw_slack, const hig_trace_t *trace);               \
     hig_error_t p##verify_partition(const hig_graph_t *graph, const hig_options_t *options,  \
-                                    const hig_int *membership, hig_verify_t *report);
+                                    const hig_int *membership, hig_verify_t *report);       \
+    hig_error_t p##verify_cover(const hig_graph_t *graph, const hig_options_t *options,      \
+                                const hig_cover_t *cover, hig_verify_t *report);
 
 HIG_DECLARE_BUILD(hig_x86soft_)
 HIG_DECLARE_BUILD(hig_x86fma_)
@@ -148,6 +159,11 @@ uint32_t hig_pcg32_next32(void *pcg, int *failed) {
     return hig_x86soft_pcg32_next32(pcg, failed);
 }
 
+/* Both builds allocate with the same malloc. */
+void hig_cover_free(hig_cover_t *cover) {
+    hig_x86soft_cover_free(cover);
+}
+
 /* Each build keeps its own message: the one the calls go to. */
 const char *hig_error_message(void) {
     return hig_fma_build() ? hig_x86fma_error_message() : hig_x86soft_error_message();
@@ -163,6 +179,13 @@ hig_error_t hig_partition(const hig_graph_t *graph, const hig_options_t *options
                              quality, equilibrium_slack);
 }
 
+hig_error_t hig_cover(const hig_graph_t *graph, const hig_options_t *options,
+                      const hig_cover_t *start, hig_cover_t *result, hig_int *nb_communities,
+                      double *quality, double *equilibrium_slack) {
+    return HIG_DISPATCH_CALL(cover, graph, options, start, result, nb_communities, quality,
+                             equilibrium_slack);
+}
+
 hig_error_t hig_partition_traced(const hig_graph_t *graph, const hig_options_t *options, int start,
                                  hig_int *membership, hig_int *nb_communities, double *quality,
                                  double *raw_slack, const hig_trace_t *trace) {
@@ -170,9 +193,22 @@ hig_error_t hig_partition_traced(const hig_graph_t *graph, const hig_options_t *
                              nb_communities, quality, raw_slack, trace);
 }
 
+hig_error_t hig_cover_traced(const hig_graph_t *graph, const hig_options_t *options,
+                             const hig_cover_t *start, hig_cover_t *result,
+                             hig_int *nb_communities, double *quality, double *raw_slack,
+                             const hig_trace_t *trace) {
+    return HIG_DISPATCH_CALL(cover_traced, graph, options, start, result, nb_communities,
+                             quality, raw_slack, trace);
+}
+
 hig_error_t hig_verify_partition(const hig_graph_t *graph, const hig_options_t *options,
                                  const hig_int *membership, hig_verify_t *report) {
     return HIG_DISPATCH_CALL(verify_partition, graph, options, membership, report);
+}
+
+hig_error_t hig_verify_cover(const hig_graph_t *graph, const hig_options_t *options,
+                             const hig_cover_t *cover, hig_verify_t *report) {
+    return HIG_DISPATCH_CALL(verify_cover, graph, options, cover, report);
 }
 
 #else

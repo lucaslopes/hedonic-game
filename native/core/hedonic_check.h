@@ -18,17 +18,18 @@
 
 /*
  * Not part of the public interface: what the C tests and the private
- * functions _trace_partition and _verify_partition of hedonic._core use to
- * check the engine against exact arithmetic.
+ * functions _trace_partition, _trace_cover, _verify_partition and
+ * _verify_cover of hedonic._core use to check the engines against exact
+ * arithmetic.
  *
- * A traced run is hig_partition that also reports its start state, every
- * accepted move and the raw (unnormalized) equilibrium slack. Labels are the
- * engine's internal ids: the start's labels compacted in order, then the ids
- * of emptied communities reused (a stack) or new ones.
+ * A traced run is hig_partition / hig_cover that also reports its start
+ * state, every accepted move and the raw (unnormalized) equilibrium slack.
+ * Labels are the engine's internal ids: the start's labels compacted in
+ * order, then the ids of emptied communities reused (a stack) or new ones.
  *
  * The verifier (check.c) takes a result and, with no queue, no settlement
  * record and masses summed afresh, scores every vertex's every feasible
- * deviation with the engine's certified arithmetic (internal.h).
+ * deviation with the engines' certified arithmetic (internal.h).
  */
 
 #ifndef HEDONIC_CHECK_H
@@ -41,8 +42,8 @@ extern "C" {
 #endif
 
 typedef struct {
-    /* Row v of the state (its one label): once per vertex at the start,
-     * then after each accepted move for the vertex that moved. */
+    /* Row v of the state: once per vertex at the start, then after each
+     * accepted move for the vertex that moved. */
     void (*row)(void *state, hig_int v, const int32_t *labels, hig_int size);
     /* An accepted move of v (called before its new row): the computed
      * improvement and the bound of its rounding error (improvement > bound). */
@@ -50,11 +51,15 @@ typedef struct {
     void *state;
 } hig_trace_t;
 
-/* hig_partition with a trace (NULL: none). *raw_slack (if not NULL)
- * receives the slack before it is divided by |W|. */
+/* hig_partition / hig_cover with a trace (NULL: none). *raw_slack (if not
+ * NULL) receives the slack before it is divided by |W|. */
 hig_error_t hig_partition_traced(const hig_graph_t *graph, const hig_options_t *options, int start,
                                  hig_int *membership, hig_int *nb_communities, double *quality,
                                  double *raw_slack, const hig_trace_t *trace);
+hig_error_t hig_cover_traced(const hig_graph_t *graph, const hig_options_t *options,
+                             const hig_cover_t *start, hig_cover_t *result,
+                             hig_int *nb_communities, double *quality, double *raw_slack,
+                             const hig_trace_t *trace);
 
 typedef struct {
     hig_int vertices;      /* vertices checked (a vertex alone under an exact count has no deviation) */
@@ -63,11 +68,13 @@ typedef struct {
     double max_bound;      /* the largest upper bound of a deviation's gain (raw) */
 } hig_verify_t;
 
-/* Checks a partition (membership: vertex_count labels in 0 .. K - 1) under
- * `options` (resolution, count limits, isolation; the random source is not
- * used). */
+/* Checks a partition (membership: vertex_count labels in 0 .. K - 1) or a
+ * cover (rows of distinct labels) under `options` (resolution, cap, count
+ * limits, isolation; the random source is not used). */
 hig_error_t hig_verify_partition(const hig_graph_t *graph, const hig_options_t *options,
                                  const hig_int *membership, hig_verify_t *report);
+hig_error_t hig_verify_cover(const hig_graph_t *graph, const hig_options_t *options,
+                             const hig_cover_t *cover, hig_verify_t *report);
 
 /* The fused multiply-add the core runs (internal.h, hig_fma): "instruction"
  * or "soft" for a build of one kind, and on an x86_64 dispatch target

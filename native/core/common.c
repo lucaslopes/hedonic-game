@@ -1,5 +1,5 @@
 /*
-   hedonic -- what the engine uses: errors, inputs, adjacency, the visiting
+   hedonic -- what both engines share: errors, inputs, adjacency, the visiting
    queue, the heap of communities by mass, random numbers.
    Copyright (C) 2025-2026  Lucas Lopes Felipe
 
@@ -87,10 +87,11 @@ HIG_SHARED hig_error_t hig_grow(void *p, int64_t *capacity, int64_t needed, size
  * none does). */
 #define HIG_ARITHMETIC_BOUND (DBL_MAX / 4096.0)
 
-HIG_SHARED hig_error_t hig_check_input(const hig_graph_t *graph, hig_options_t *options) {
+HIG_SHARED hig_error_t hig_check_input(const hig_graph_t *graph, hig_options_t *options,
+                                       bool cover) {
     const hig_int n = graph->vertex_count, m = graph->edge_count;
-    const char *game = "The hedonic game";
-    double abs_edge_weight = 0.0, total_node_weight = 0.0;
+    const char *game = cover ? "The overlapping game" : "The hedonic game";
+    double abs_edge_weight = 0.0, total_edge_weight = 0.0, total_node_weight = 0.0;
     double scale, cap;
 
     if (n < 0 || m < 0) {
@@ -115,6 +116,9 @@ HIG_SHARED hig_error_t hig_check_input(const hig_graph_t *graph, hig_options_t *
     if (!isfinite(options->resolution)) {
         return hig_error(HIG_EINVAL, "%s resolution must be finite.", game);
     }
+    if (options->max_memberships < 1) {
+        return hig_error(HIG_EINVAL, "max_memberships must be at least 1.");
+    }
     if (options->max_total_communities <= 0) {
         options->max_total_communities = -1;
     }
@@ -125,19 +129,47 @@ HIG_SHARED hig_error_t hig_check_input(const hig_graph_t *graph, hig_options_t *
         options->n_communities > options->max_total_communities) {
         return hig_error(HIG_EINVAL, "n_communities must not exceed max_total_communities.");
     }
-    if (options->n_communities > n) {
-        return hig_error(HIG_EINVAL,
-                         "n_communities must not exceed the number of vertices for a partition.");
+    if (cover) {
+        if (n < 1 || m < 1) {
+            return hig_error(HIG_EINVAL, "%s requires a nonempty graph with at least one edge.",
+                             game);
+        }
+        for (hig_int e = 0; e < m; e++) {
+            if (hig_edge_end(graph, 2 * e) == hig_edge_end(graph, 2 * e + 1)) {
+                return hig_error(HIG_EINVAL, "%s requires a loopless graph.", game);
+            }
+        }
+        if (options->max_memberships > n) {
+            return hig_error(HIG_EINVAL,
+                             "%s max_memberships must not exceed the number of vertices.", game);
+        }
+        if (options->n_communities > n * options->max_memberships) {
+            return hig_error(HIG_EINVAL, "n_communities exceeds n * max_memberships, the largest "
+                                         "number of communities a cover can occupy.");
+        }
+    } else {
+        if (options->max_memberships != 1) {
+            return hig_error(HIG_EINVAL, "A partition has max_memberships = 1; use hig_cover.");
+        }
+        if (options->n_communities > n) {
+            return hig_error(HIG_EINVAL,
+                             "n_communities must not exceed the number of vertices for a partition.");
+        }
     }
     for (hig_int e = 0; e < m; e++) {
         const double w = graph->edge_weights ? graph->edge_weights[e] : 1.0;
-        if (!isfinite(w)) {
-            return hig_error(HIG_EINVAL, "%s edge weights must be finite.", game);
+        if (!isfinite(w) || (cover && w < 0.0)) {
+            return hig_error(HIG_EINVAL, cover ? "%s edge weights must be finite and non-negative."
+                                               : "%s edge weights must be finite.", game);
         }
         abs_edge_weight += fabs(w);
+        total_edge_weight += w;
     }
     if (!(abs_edge_weight <= HIG_ARITHMETIC_BOUND)) {
         return hig_error(HIG_EOVERFLOW, "%s total edge weight would overflow.", game);
+    }
+    if (cover && !(total_edge_weight > 0.0)) {
+        return hig_error(HIG_EINVAL, "%s requires positive finite total edge weight.", game);
     }
     for (hig_int v = 0; v < n; v++) {
         const double w = graph->node_weights ? graph->node_weights[v] : 1.0;
@@ -146,9 +178,9 @@ HIG_SHARED hig_error_t hig_check_input(const hig_graph_t *graph, hig_options_t *
         }
         total_node_weight += w;
     }
-    /* |gamma| N^2 bounds every crowding sum. */
+    /* |gamma| N^2 m bounds every crowding sum (m labels of mass <= N each). */
     scale = total_node_weight > 1.0 ? total_node_weight : 1.0;
-    cap = HIG_ARITHMETIC_BOUND / scale / scale;
+    cap = HIG_ARITHMETIC_BOUND / scale / scale / (double) options->max_memberships;
     if (!isfinite(total_node_weight) || fabs(options->resolution) > cap) {
         return hig_error(HIG_EOVERFLOW, "%s crowding term would overflow.", game);
     }
@@ -377,10 +409,10 @@ HIG_SHARED void hig_queue_free(hig_queue_t *queue) {
     free(queue->ring);
     free(queue->queued);
     free(queue->order);
-    free(queue->settled_at);
+    free(queue->settled);
     queue->ring = queue->order = NULL;
     queue->queued = NULL;
-    queue->settled_at = NULL;
+    queue->settled = NULL;
 }
 
 HIG_SHARED hig_error_t hig_queue_init(hig_queue_t *queue, hig_id n, const hig_rng_t *rng,
@@ -393,10 +425,11 @@ HIG_SHARED hig_error_t hig_queue_init(hig_queue_t *queue, hig_id n, const hig_rn
     HIG_TRY(hig_alloc(&queue->ring, n, sizeof(hig_id), false));
     HIG_TRY(hig_alloc(&queue->queued, n, sizeof(uint8_t), true));
     HIG_TRY(hig_alloc(&queue->order, n, sizeof(hig_id), false));
-    HIG_TRY(hig_alloc(&queue->settled_at, n, sizeof(int64_t), false));
+    HIG_TRY(hig_alloc(&queue->settled, n, sizeof(hig_settled_t), false));
     for (hig_id v = 0; v < n; v++) {
         queue->order[v] = v;
-        queue->settled_at[v] = -1;
+        queue->settled[v].at = -1;
+        queue->settled[v].bound = 0.0;
     }
     /* Fisher-Yates. */
     for (hig_id i = n - 1; i > 0; i--) {
@@ -418,7 +451,7 @@ HIG_SHARED hig_error_t hig_queue_next(hig_queue_t *queue, hig_id *v, bool *done)
     if (queue->count == 0) {
         for (hig_id i = 0; i < queue->n; i++) {
             const hig_id u = queue->order[i];
-            if (queue->settled_at[u] != queue->moves) {
+            if (queue->settled[u].at != queue->moves) {
                 hig_queue_push(queue, u);
             }
         }

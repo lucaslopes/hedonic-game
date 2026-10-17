@@ -1,5 +1,5 @@
 """The C core (``hedonic._core``) through ``hedonic._native``: best-response
-local moving of partitions.
+local moving for partitions and covers.
 
 The pinned values are results recorded on macOS arm64 (Apple clang -O3). The
 core is written to give the same bits on every platform, but the pins are
@@ -24,35 +24,48 @@ ZACHARY_SEED0 = [0, 0, 0, 0, 1, 2, 2, 0, 3, 0, 1, 1, 0, 0, 3, 3, 2, 0, 3, 0, 3, 
 
 
 # The pins of native/tests/test_core.c (test_pins), from the same seeded
-# random.Random order: (seed, resolution or None for the density, isolation,
-# edge-weighted, node-weighted, max_total, exact) -> (k, quality hex,
-# membership in order of first appearance). Edge e weighs 0.5 + 0.25 (e mod 7),
-# vertex v 0.5 (1 + v mod 4).
+# random.Random order: (seed, resolution or None for the density, cap,
+# isolation, edge-weighted, node-weighted, max_total, exact) -> (k, quality
+# hex, membership in order of first appearance or the sorted bit masks of the
+# communities' member sets). Edge e weighs 0.5 + 0.25 (e mod 7), vertex v
+# 0.5 (1 + v mod 4).
 PINS = [
-    ((0, None, False, False, False, None, None), (5, "0x1.b8f407b8f407dp-2", ZACHARY_SEED0)),
-    ((1, 0.2, True, True, False, None, None), (10, "0x1.96f439aec498ep-2", [
+    ((0, None, 1, False, False, False, None, None), (5, "0x1.b8f407b8f407dp-2", ZACHARY_SEED0)),
+    ((0, 0.1, 3, False, False, False, None, None), (9, "0x1.0fc298892fe39p-1", [
+        0x10060, 0x10470, 0x10470, 0x2a388f, 0x10000204, 0x402a318f, 0x8b800000, 0x3f4d4c100,
+        0x3f4d4c100])),
+    ((1, 0.2, 1, True, True, False, None, None), (10, "0x1.96f439aec498ep-2", [
         0, 0, 0, 0, 1, 1, 1, 0, 2, 3, 1, 4, 0, 0, 5, 5, 1, 0, 6, 0, 6, 7, 5, 8, 9, 9, 8, 6, 6, 8,
         2, 6, 5, 6])),
-    ((3, 0.1, False, False, False, None, 3), (3, "0x1.01f81f81f81f8p-1", [
+    ((2, -0.02, 2, False, False, False, None, None), (5, "0x1.c89a7b611699ep-1", [
+        0x10060, 0x2a388f, 0xdb2b3fff, 0x364d4c100, 0x3bfd4c200])),
+    ((3, 0.1, 1, False, False, False, None, 3), (3, "0x1.01f81f81f81f8p-1", [
         0, 0, 0, 0, 1, 1, 1, 0, 2, 0, 1, 0, 0, 0, 2, 2, 1, 0, 2, 0, 2, 0, 2, 2, 1, 1, 2, 2, 1, 2,
         2, 1, 2, 2])),
-    ((7, 0.5, True, False, False, None, None), (19, "0x1.20d20d20d20d2p-4", [
+    ((5, 0.05, 4, True, True, True, 6, None), (6, "0x1.522cd66f80a05p-1", [
+        0x800, 0x10470, 0x2a309f, 0x932334ff, 0x3fcd4c304, 0x3fcd4c304])),
+    ((7, 0.5, 1, True, False, False, None, None), (19, "0x1.20d20d20d20d2p-4", [
         0, 0, 0, 0, 1, 2, 2, 0, 3, 4, 1, 5, 6, 0, 7, 8, 2, 9, 10, 11, 12, 13, 14, 15, 16, 16, 17,
         15, 18, 17, 3, 16, 3, 3])),
 ]
 
 
-def pinned_run(seed, resolution, isolation, weighted, node_weighted, max_total, exact):
-    """(k, quality hex, membership in order of first appearance) of one pinned call."""
+def pinned_run(seed, resolution, cap, isolation, weighted, node_weighted, max_total, exact):
+    """(k, quality hex, canonical result) of one pinned call."""
     g = ig.Graph.Famous("Zachary")
     r = _native.community_hedonic(
-        g, seed=seed, resolution=resolution, allow_isolation=isolation,
+        g, seed=seed, resolution=resolution, max_memberships=cap, allow_isolation=isolation,
         edge_weights=[0.5 + 0.25 * (e % 7) for e in range(78)] if weighted else None,
         node_weights=[0.5 * (1 + v % 4) for v in range(34)] if node_weighted else None,
         max_total_communities=max_total, n_communities=exact)
-    names = {}
-    result = [names.setdefault(c, len(names)) for c in r.membership]
-    return len(r), r.quality.hex(), result
+    if cap == 1:
+        names = {}
+        result = [names.setdefault(c, len(names)) for c in r.membership]
+        quality = r.quality
+    else:
+        result = sorted(sum(1 << v for v in community) for community in r)
+        quality = r._params["quality"]
+    return len(r), quality.hex(), result
 
 
 def partition_regret(graph, membership, gamma, allow_isolation, node_weights=None):
@@ -144,6 +157,8 @@ class TestPartition(unittest.TestCase):
         edges = array("q", [x for e in self.g.get_edgelist() for x in e])
         with self.assertRaises(TypeError):
             _native.partition(34, edges, random.Random(0), n_iterations=0)
+        with self.assertRaises(TypeError):
+            _native.cover(34, edges, random.Random(0), n_iterations=0)
 
     def test_raw_call(self):
         edges = array("q", [x for e in self.g.get_edgelist() for x in e])
@@ -170,6 +185,72 @@ class TestPartition(unittest.TestCase):
         self.assertFalse(hasattr(_native, "DivergedError"))
 
 
+class TestCover(unittest.TestCase):
+    def setUp(self):
+        self.g = ig.Graph.Famous("Zachary")
+
+    @unittest.skipUnless(os.environ.get("HIG_PINNED") == "1", "bit-level pins: HIG_PINNED=1")
+    def test_matches_recorded_pin(self):
+        c = _native.community_hedonic(self.g, seed=0, max_memberships=3, resolution=0.1)
+        self.assertEqual(len(c), 9)
+        self.assertEqual(c._params["quality"].hex(), (0.5307815234627419).hex())
+
+    def test_cover_shape(self):
+        for M in (2, 3, 5):
+            for iso in (False, True):
+                c = _native.community_hedonic(self.g, seed=2, max_memberships=M,
+                                                     resolution=0.1, allow_isolation=iso)
+                self.assertIsInstance(c, ig.VertexCover)
+                counts = [len(c.membership[v]) for v in range(34)]
+                self.assertTrue(all(1 <= k <= M for k in counts))
+
+    def test_flat_and_row_starts(self):
+        flat = [v % 4 for v in range(34)]
+        a = _native.community_hedonic(self.g, seed=0, max_memberships=2,
+                                             initial_membership=flat)
+        b = _native.community_hedonic(self.g, seed=0, max_memberships=2,
+                                             initial_membership=[[x] for x in flat])
+        self.assertEqual(list(a), list(b))
+
+    def test_unbounded_cap(self):
+        c = _native.community_hedonic(self.g, seed=0, max_memberships=-1, resolution=0.1)
+        self.assertIsInstance(c, ig.VertexCover)
+
+    def test_equilibrium_is_a_fixed_point(self):
+        # As for partitions: from an equilibrium cover nothing moves.
+        edges = array("q", [x for e in self.g.get_edgelist() for x in e])
+        for M in (2, 3):
+            for iso in (False, True):
+                first, k, q = _native.cover(34, edges, random.Random(0), max_memberships=M,
+                                            resolution=0.1, allow_isolation=iso)
+                for seed in range(1, 4):
+                    again, k2, q2 = _native.cover(34, edges, random.Random(seed),
+                                                  memberships=first, max_memberships=M,
+                                                  resolution=0.1, allow_isolation=iso)
+                    self.assertEqual(again, first)
+                    self.assertEqual((k2, q2), (k, q))
+
+    def test_rows_are_sorted_and_labels_contiguous(self):
+        edges = array("q", [x for e in self.g.get_edgelist() for x in e])
+        start = [[v % 4, (v + 1) % 4] if v % 2 == 0 else [v % 4] for v in range(34)]
+        rows, k, _ = _native.cover(34, edges, random.Random(0), memberships=start,
+                                   max_memberships=2, resolution=0.1, allow_isolation=False)
+        self.assertTrue(all(r == sorted(set(r)) and 1 <= len(r) <= 2 for r in rows))
+        self.assertEqual({c for r in rows for c in r}, set(range(k)))
+
+    def test_exact_count_start_on_a_small_ring(self):
+        # Six labels on four vertices with two memberships each: the default
+        # start under an exact count must spread the extra labels over rows.
+        ring = ig.Graph.Ring(4)
+        edges = array("q", [x for e in ring.get_edgelist() for x in e])
+        for seed in range(5):
+            rows, k, _ = _native.cover(4, edges, random.Random(seed), max_memberships=2,
+                                       n_communities=6)
+            self.assertEqual(k, 6)
+            self.assertEqual({c for r in rows for c in r}, set(range(6)))
+            self.assertTrue(all(1 <= len(r) <= 2 for r in rows))
+
+
 class TestRemovedOptions(unittest.TestCase):
     def test_native_call_rejects_removed_keywords(self):
         g = ig.Graph.Famous("Zachary")
@@ -194,7 +275,8 @@ class TestGeneratorBridge(unittest.TestCase):
         rng = random.Random(4)
         g = ig.Graph(n=3000, edges=[(rng.randrange(3000), rng.randrange(3000))
                                     for _ in range(12000)]).simplify()
-        runs = [dict(), dict(allow_isolation=False, resolution=0.001)]
+        runs = [dict(), dict(max_memberships=3, resolution=0.002),
+                dict(allow_isolation=False, resolution=0.001)]
         for kw in runs:
             for seed in range(3):
                 native, called = random.Random(seed), self.Called(seed)
@@ -236,13 +318,14 @@ class TestErrors(unittest.TestCase):
     def test_rejections(self):
         self.check(ValueError, resolution=math.nan)
         self.check(ValueError, resolution=math.inf)
+        self.check(ValueError, max_memberships=0)
         self.check(ValueError, n_communities=35)
         self.check(ValueError, initial_membership=[5 * v for v in range(34)])
         self.check(ValueError, initial_membership=[-1] + [0] * 33)
         self.check(ValueError, initial_membership=[[0, 1]] + [[0]] * 33)
         self.check(ValueError, node_weights=[-1.0] + [1.0] * 33)
         self.check(ValueError, edge_weights=[math.nan] + [1.0] * 77)
-        self.check(ValueError, initial_membership=[[]] + [[0]] * 33)
+        self.check(ValueError, max_memberships=3, initial_membership=[[]] + [[0]] * 33)
         with self.assertRaises(ValueError):
             _native.community_hedonic(ig.Graph(directed=True, n=3, edges=[(0, 1)]))
         with self.assertRaises(ValueError):

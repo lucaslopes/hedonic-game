@@ -17,12 +17,12 @@
 */
 
 /*
- * What the engine (partition.c) shares with common.c: errors and checked
- * allocation, input checks, the adjacency, the random visiting order and the
- * queue that decides when every vertex is settled, the mass-ordered heap of
- * communities, the double-double masses and the certified arithmetic of the
- * move rule. check.c is the independent verifier of a result
- * (hedonic_check.h). Conventions: a function that can fail returns
+ * What both engines share (common.c): errors and checked allocation, input
+ * checks, the adjacency, the random visiting order and the queue that decides
+ * when every vertex is settled, the mass-ordered heap of communities, the
+ * double-double masses and the certified arithmetic of the move rule.
+ * partition.c and cover.c are the two engines, check.c the independent
+ * verifier of a result (hedonic_check.h). Conventions: a function that can fail returns
  * hig_error_t; a workspace is zero-initialized and released by one call
  * whatever step failed.
  */
@@ -42,10 +42,14 @@
 #endif
 #define hig_pcg32_seed HIG_VARIANT(pcg32_seed)
 #define hig_pcg32_next32 HIG_VARIANT(pcg32_next32)
+#define hig_cover_free HIG_VARIANT(cover_free)
 #define hig_partition HIG_VARIANT(partition)
+#define hig_cover HIG_VARIANT(cover)
 #define hig_error_message HIG_VARIANT(error_message)
 #define hig_partition_traced HIG_VARIANT(partition_traced)
+#define hig_cover_traced HIG_VARIANT(cover_traced)
 #define hig_verify_partition HIG_VARIANT(verify_partition)
+#define hig_verify_cover HIG_VARIANT(verify_cover)
 #endif
 
 #include "hedonic_core.h"
@@ -58,7 +62,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Vertices and communities. */
+/* Vertices, communities and labels. */
 typedef int32_t hig_id;
 #define HIG_ID_MAX INT32_MAX
 
@@ -126,9 +130,10 @@ static inline hig_int hig_edge_end(const hig_graph_t *graph, int64_t h) {
     return (h & 1 ? graph->edge_second : graph->edge_first)[h >> 1];
 }
 
-/* Checks the graph and the options. Normalizes the count limits (<= 0
- * becomes -1). */
-HIG_SHARED hig_error_t hig_check_input(const hig_graph_t *graph, hig_options_t *options);
+/* Checks the graph and the options both engines share; cover = 1 adds the
+ * cover's domain (non-negative edge weights, no loops, at least one edge).
+ * Normalizes the count limits (<= 0 becomes -1). */
+HIG_SHARED hig_error_t hig_check_input(const hig_graph_t *graph, hig_options_t *options, bool cover);
 
 static inline bool hig_limit_set(hig_int limit) {
     return limit > 0;
@@ -159,18 +164,25 @@ HIG_SHARED hig_error_t hig_compact_labels(const hig_int *in, int64_t count, hig_
 /* ---- The visiting queue -------------------------------------------------- */
 
 /* A FIFO of vertices (each at most once, `queued` marks them), the random
- * order they were first queued in, and the settlement record: settled_at[v]
+ * order they were first queued in, and the settlement record: settled[v].at
  * is the number of moves made when a visit of v last found no improving move
- * (-1 if v has moved since, or was never visited). A vertex is settled when
- * settled_at[v] equals the move count. When the FIFO runs dry, the unsettled
+ * (-1 if v has moved since, or was never visited), settled[v].bound what
+ * that visit recorded (cover.c: a bound of v's gain; together, because both
+ * are written at every visit and the run is bound by memory latency). A
+ * vertex is settled when settled[v].at equals the move count. When the FIFO runs dry, the unsettled
  * vertices are queued again in the random order; when none is left, every
  * vertex is a best response to the others and the run stops. */
+typedef struct {
+    int64_t at;
+    double bound;
+} hig_settled_t;
+
 typedef struct {
     hig_id n;
     hig_id *ring;
     uint8_t *queued;
     hig_id *order;
-    int64_t *settled_at;
+    hig_settled_t *settled;
     int64_t head, count;
     int64_t moves;
     int64_t visits;
@@ -196,12 +208,17 @@ static inline void hig_queue_push(hig_queue_t *queue, hig_id u) {
 }
 
 static inline void hig_queue_settled(hig_queue_t *queue, hig_id v) {
-    queue->settled_at[v] = queue->moves;
+    queue->settled[v].at = queue->moves;
+}
+
+static inline void hig_queue_settled_bound(hig_queue_t *queue, hig_id v, double bound) {
+    queue->settled[v].at = queue->moves;
+    queue->settled[v].bound = bound;
 }
 
 static inline void hig_queue_moved(hig_queue_t *queue, hig_id v) {
     queue->moves++;
-    queue->settled_at[v] = -1;
+    queue->settled[v].at = -1;
 }
 
 /* ---- Certified arithmetic -------------------------------------------------- */
@@ -307,11 +324,11 @@ static inline double hig_product_error(double a, double b, double p) {
     return hig_add_up(hig_mul_up(HIG_U, fabs(p)), HIG_ETA);
 }
 
-/* ---- Communities ------------------------------------------------------------ */
+/* ---- Communities and labels ----------------------------------------------- */
 
-/* One community: its mass (the high half of a double-double sum of member
- * weights), its number of members, and its slot in the current visit's
- * accumulator (-1 outside a visit). */
+/* One community (or label): its mass (the high half of a double-double sum
+ * of member weights, or of n_u f_u for labels), its number of members, and
+ * its slot in the current visit's accumulator (-1 outside a visit). */
 typedef struct {
     double mass;
     hig_id members;

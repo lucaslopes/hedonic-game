@@ -46,6 +46,7 @@ def main() -> int:
                 result = graph.community_hedonic(
                     initial_membership=start,
                     resolution=gamma,
+                    max_memberships=1,
                     allow_isolation=allow_isolation,
                     seed=SEED,
                 )
@@ -60,7 +61,7 @@ def main() -> int:
     payload = {
         "graph": {"n": 4, "edges": [[0, 1], [0, 2], [0, 3], [1, 2]]},
         "versions": {"hedonic": version("hedonic"), "igraph": version("igraph")},
-        "call": f"Game.community_hedonic(initial_membership=start, resolution=gamma, allow_isolation=..., seed={SEED})",
+        "call": f"Game.community_hedonic(initial_membership=start, resolution=gamma, max_memberships=1, allow_isolation=..., seed={SEED})",
         "runs": runs,
     }
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

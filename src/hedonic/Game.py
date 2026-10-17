@@ -9,6 +9,7 @@ from ._game.evaluation import (
 )
 from ._game.helpers import _UNSET, _UnsetType
 from ._game.memberships import (
+    as_overlapping_init as _as_overlapping_init_impl,
     memberships_as_cover as _memberships_as_cover,
     normalize_membership as _normalize_membership_impl,
     validate_membership as _validate_membership,
@@ -50,14 +51,14 @@ class Game(Graph):
 
     @property
     def memberships(self) -> list[list[int]] | None:
-        """The stored partition, as per-vertex community labels.
+        """Canonical per-vertex community memberships.
 
-        The state is always represented as a one-label list per vertex
-        (``[[c0], [c1], ...]``).  A ``None`` value means that no state has
-        been configured yet.  The setter accepts the flat partition form
-        (``[c0, c1, ...]``) as a convenience, but stores the normalized
-        list-of-lists representation; a row with more than one label is
-        rejected.
+        The state is always represented as one (non-empty) list of integer
+        community labels per vertex.  A ``None`` value means that no state has
+        been configured yet.  The setter accepts the flat partition form as a
+        convenience, but stores the normalized list-of-lists representation.
+        Validation against a membership cap is performed by
+        :meth:`community_hedonic`, where the cap is known.
         """
         return self._memberships
 
@@ -89,10 +90,10 @@ class Game(Graph):
         omega_sample_size: int = 100_000,
         omega_seed: int = 0,
     ) -> float:
-        """Score the stored partition against an explicit ground truth.
+        """Score the stored partition/cover against an explicit ground truth.
 
         ``community_hedonic`` persists its return value in ``memberships`` as
-        one community label per vertex.  This convenience facade
+        one list of community labels per vertex.  This convenience facade
         converts that state to the community-list representation used by the
         experimental evaluator and returns the selected scalar score.
 
@@ -145,31 +146,69 @@ class Game(Graph):
             g[attr] = self[attr]
         return g
 
-    def validate_membership(self, membership: list[int] | list[list[int]]) -> bool:
-        """Validate a partition of this graph's vertices.
+    def validate_membership(
+        self,
+        membership: list[int] | list[list[int]],
+        *,
+        overlapping: bool = False,
+        max_memberships: int | None = None,
+    ) -> bool:
+        """Validate a community membership vector or overlapping cover init.
 
-        The partition is valid when it has one entry per vertex, each a
-        non-negative integer label (or a one-label list ``[label]``), and the
-        labels are contiguous from 0.
+        Disjoint (``overlapping=False``):
+          - length == n (flat labels, or nested singleton rows)
+          - non-negative integer labels
+          - labels contiguous from 0
+
+        Overlapping (``overlapping=True``):
+          - length == n
+          - each entry is a non-empty list of non-negative community ids
+            (one membership list per vertex), **or** a flat disjoint vector
+            (accepted and later expanded to singleton lists). Duplicate labels
+            in one row are rejected.
         """
-        return _validate_membership(self, membership)
+        return _validate_membership(
+            self,
+            membership,
+            overlapping=overlapping,
+            max_memberships=max_memberships,
+        )
 
     def _normalize_membership(
         self,
         membership: list[int] | list[list[int]],
+        *,
+        max_memberships: int | None = None,
+        collapse_duplicate_labels: bool = False,
     ) -> list[list[int]]:
-        """Validate and normalize a partition to per-vertex one-label rows.
+        """Validate and normalize a partition or cover to per-vertex rows.
 
         Labels are required to be non-negative integers and contiguous from
-        zero, matching igraph's membership convention.  Every row must hold
-        exactly one label.
+        zero, matching igraph's membership convention.  Every row must be
+        non-empty and duplicate labels within a vertex are rejected unless
+        ``collapse_duplicate_labels`` is set, as detector initialization does
+        for overlapping starts.  The optional cap is checked here so persisted
+        state cannot silently be accepted for an incompatible detector call.
         """
-        return _normalize_membership_impl(self, membership)
+        return _normalize_membership_impl(
+            self,
+            membership,
+            max_memberships=max_memberships,
+            collapse_duplicate_labels=collapse_duplicate_labels,
+        )
+
+    @staticmethod
+    def _as_overlapping_init(
+        membership: list[int] | list[list[int]],
+    ) -> list[list[int]]:
+        """Normalize flat or nested membership to list-of-lists (per vertex)."""
+        return _as_overlapping_init_impl(membership)
 
     def community_hedonic(
         self,
         initial_membership: list[int] | list[list[int]] | None | _UnsetType = _UNSET,
         max_communities: int | None = None,
+        max_memberships: int = 1,
         resolution: float | None = None,
         allow_isolation: bool = False,
         *,
@@ -179,9 +218,10 @@ class Game(Graph):
         max_total_communities: int | None = None,
         n_communities: int | None = None,
     ):
-        """Community detection with the CPM hedonic game.
+        """Community detection with the CPM hedonic game, disjoint or overlapping.
 
-        Each vertex is an agent that moves to the community it prefers, one
+        Each vertex is an agent that moves to the community (or, for covers,
+        the set of at most ``max_memberships`` communities) it prefers, one
         vertex at a time, until no vertex can improve: every vertex is
         visited, in a random order, and revisited after a neighbour moves.
         A move is taken only when its computed gain exceeds a rigorous bound
@@ -198,20 +238,31 @@ class Game(Graph):
         Parameters
         ----------
         initial_membership :
-            Start partition: a flat list of community ids (length n), or one
-            one-label list per vertex. ``None`` builds a default start.
+            Disjoint: flat list of community ids (length n).
+            Overlapping (``max_memberships > 1``): flat list or list-of-lists
+            (one community-id list per vertex). ``None`` builds a default start.
             When omitted, a valid ``self.memberships`` state is reused;
             explicit ``None`` requests the default singleton start, or a
             feasible round-robin start when a community-count limit is set.
+            Flat and nested overlapping starts with the same labels are
+            equivalent after normalization.
         max_communities :
-            Initialization only: when ``initial_membership`` is ``None``,
-            random start over ``[0, max_communities)`` (labels a draw leaves
-            unused are dropped and the rest renumbered in order). It has no
-            effect with a supplied start, or when community-count limits select a
-            feasible default start;
+            Initialization only: when ``initial_membership`` is ``None`` and
+            ``max_memberships == 1``, random start over ``[0, max_communities)``
+            (labels a draw leaves unused are dropped and the rest renumbered
+            in order).
+            It has no effect with a supplied start, with overlapping defaults,
+            or when community-count limits select a feasible default start;
             ``_hedonic_provenance["max_communities_effect"]`` records which
             case applied. It is *not* an output constraint; see
             ``max_total_communities``/``n_communities``.
+        max_memberships :
+            Per-vertex cap. ``1`` (default) gives a partition
+            (``VertexClustering``); ``> 1`` gives an overlapping cover
+            (``VertexCover``) in which each vertex belongs to at most this
+            many communities. ``-1`` removes the practical per-vertex cap (the
+            effective cap is the vertex count, recorded in
+            ``_hedonic_provenance``).
         resolution :
             CPM resolution γ. Defaults to the graph density. Must be a finite
             real. Smaller values give larger communities. Zero total edge
@@ -220,7 +271,8 @@ class Game(Graph):
         allow_isolation :
             Allow a vertex to open a new, empty community.
         edge_weights :
-            Optional edge weights (sequence or edge-attribute name); finite.
+            Optional edge weights (sequence or edge-attribute name); finite
+            and non-negative for covers.
         seed :
             When given, the visiting order is drawn from
             ``random.Random(seed)``, and the same seed drives the random
@@ -243,7 +295,7 @@ class Game(Graph):
 
         Returns
         -------
-        VertexClustering
+        VertexClustering if ``max_memberships == 1``, else VertexCover.
 
         The result carries ``_hedonic_provenance`` (versions, effective
         parameters, count mode) and ``_hedonic_native_quality`` (the
@@ -255,6 +307,7 @@ class Game(Graph):
             self,
             initial_membership,
             max_communities,
+            max_memberships,
             resolution,
             allow_isolation,
             edge_weights=edge_weights,

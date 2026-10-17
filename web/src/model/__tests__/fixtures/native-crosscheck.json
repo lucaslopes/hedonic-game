@@ -24,7 +24,7 @@
     "hedonic": "2.0.0",
     "igraph": "1.0.0"
   },
-  "call": "Game.community_hedonic(initial_membership=start, resolution=gamma, allow_isolation=..., seed=0)",
+  "call": "Game.community_hedonic(initial_membership=start, resolution=gamma, max_memberships=1, allow_isolation=..., seed=0)",
   "runs": [
     {
       "gamma": 0.0,

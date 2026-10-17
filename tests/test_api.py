@@ -3,7 +3,7 @@
 ``Game.community_hedonic`` always runs local moving until no vertex can
 improve, so it takes no iteration budget and no other detector's options;
 seeded calls replay; importing the package runs no check on igraph's version;
-results carry a fixed provenance record; ``hedonic.metrics`` scores results.
+results carry a fixed provenance record; ``hedonic.metrics`` scores covers.
 """
 
 from __future__ import annotations
@@ -28,7 +28,8 @@ REMOVED_KEYWORDS = {
 }
 
 PROVENANCE_KEYS = {
-    "versions", "resolution", "count_constraint", "max_total_communities", "n_communities", "max_communities",
+    "versions", "resolution", "max_memberships", "effective_max_memberships",
+    "count_constraint", "max_total_communities", "n_communities", "max_communities",
     "max_communities_effect", "initialization", "occupied_communities",
     "allow_isolation", "edge_weighted", "node_weighted", "total_edge_weight", "seed",
     "rng", "equilibrium_notion", "equilibrium_slack",
@@ -51,10 +52,13 @@ TWO_CLIQUES_TRUTH = [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]]
 
 class TestRemovedKeywords(unittest.TestCase):
     def test_each_removed_keyword_raises_type_error(self):
-        for name, value in REMOVED_KEYWORDS.items():
-            with self.subTest(name=name):
-                with self.assertRaisesRegex(TypeError, name):
-                    _karate().community_hedonic(**{name: value})
+        for max_memberships in (1, 2):
+            for name, value in REMOVED_KEYWORDS.items():
+                with self.subTest(name=name, max_memberships=max_memberships):
+                    with self.assertRaisesRegex(TypeError, name):
+                        _karate().community_hedonic(
+                            max_memberships=max_memberships, **{name: value}
+                        )
 
     def test_removed_names_are_gone(self):
         game_module = sys.modules["hedonic.Game"]
@@ -66,21 +70,26 @@ class TestRemovedKeywords(unittest.TestCase):
         self.assertEqual(hedonic.__all__, ["Game"])
 
     def test_results_carry_no_removed_attributes(self):
-        result = _karate().community_hedonic(seed=0)
-        for name in ("_hedonic_raw_memberships", "_hedonic_algorithm_identity",
-                     "_hedonic_token_preflight", "_hedonic_disjoint_stage"):
-            with self.subTest(name=name):
-                self.assertFalse(hasattr(result, name))
-        self.assertNotIn("debug_trace", getattr(result, "_params", None) or {})
+        for max_memberships in (1, 3):
+            result = _karate().community_hedonic(max_memberships=max_memberships, seed=0)
+            for name in ("_hedonic_raw_memberships", "_hedonic_algorithm_identity",
+                         "_hedonic_token_preflight", "_hedonic_disjoint_stage"):
+                with self.subTest(name=name, max_memberships=max_memberships):
+                    self.assertFalse(hasattr(result, name))
+            self.assertNotIn("debug_trace", getattr(result, "_params", None) or {})
 
 
 class TestSeedReplay(unittest.TestCase):
     def test_same_seed_same_result(self):
         cases = [
-            dict(),
-            dict(resolution=0.05, allow_isolation=True),
-            dict(max_communities=4),
-            dict(n_communities=3, resolution=0.05),
+            dict(max_memberships=1),
+            dict(max_memberships=1, resolution=0.05, allow_isolation=True),
+            dict(max_memberships=1, max_communities=4),
+            dict(max_memberships=1, n_communities=3, resolution=0.05),
+            dict(max_memberships=3, resolution=0.1),
+            dict(max_memberships=3, resolution=0.1, max_total_communities=5),
+            dict(max_memberships=-1, resolution=0.05,
+                 node_weights=[1.0 + v % 3 for v in range(34)]),
         ]
         for kwargs in cases:
             for seed in (0, 1, 12345):
@@ -91,7 +100,9 @@ class TestSeedReplay(unittest.TestCase):
                     b = _karate().community_hedonic(initial_membership=None, seed=seed,
                                                     **kwargs)
                     self.assertEqual(a.membership, b.membership)
-                    self.assertEqual(a.quality, b.quality)
+                    quality = (lambda r: r.quality if isinstance(r, ig.VertexClustering)
+                               else r._hedonic_native_quality)
+                    self.assertEqual(quality(a), quality(b))
 
     def test_different_seeds_can_differ(self):
         results = {
@@ -129,7 +140,8 @@ class TestNoVersionCheckOnImport(unittest.TestCase):
 
 class TestProvenance(unittest.TestCase):
     def test_keys(self):
-        for kwargs in (dict(), dict(n_communities=3)):
+        for kwargs in (dict(), dict(max_memberships=3, resolution=0.1),
+                       dict(n_communities=3), dict(max_memberships=-1, seed=2)):
             with self.subTest(**kwargs):
                 result = _karate().community_hedonic(**kwargs)
                 provenance = result._hedonic_provenance
@@ -140,11 +152,13 @@ class TestProvenance(unittest.TestCase):
     def test_values_follow_the_call(self):
         game = _karate()
         game.vs["w"] = [1.0] * 34
-        partition = game.community_hedonic(
-            initial_membership=None, resolution=0.1, seed=4,
+        cover = game.community_hedonic(
+            initial_membership=None, max_memberships=-1, resolution=0.1, seed=4,
             allow_isolation=True, node_weights="w", max_total_communities=8,
         )
-        provenance = partition._hedonic_provenance
+        provenance = cover._hedonic_provenance
+        self.assertEqual(provenance["max_memberships"], -1)
+        self.assertEqual(provenance["effective_max_memberships"], 34)
         self.assertEqual(provenance["count_constraint"], "at_most")
         self.assertEqual(provenance["max_total_communities"], 8)
         self.assertIsNone(provenance["n_communities"])
@@ -157,8 +171,9 @@ class TestProvenance(unittest.TestCase):
         self.assertEqual(provenance["seed"], 4)
         self.assertEqual(provenance["rng"], "seeded")
         self.assertEqual(provenance["equilibrium_notion"], "count_constrained")
-        self.assertEqual(provenance["occupied_communities"], len(set(partition.membership)))
-        self.assertEqual(partition._hedonic_native_quality, partition.quality)
+        self.assertEqual(provenance["occupied_communities"],
+                         len({c for row in cover.membership for c in row}))
+        self.assertEqual(cover._hedonic_native_quality, cover._params["quality"])
 
 
 class TestMetrics(unittest.TestCase):
@@ -187,9 +202,13 @@ class TestMetrics(unittest.TestCase):
         self.assertAlmostEqual(singletons["jaccard"], 1 / 5)
         self.assertLess(singletons["matching_f1"], 1.0)
 
-    def test_partition_against_an_overlapping_reference(self):
+    def test_overlapping_state_against_an_overlapping_reference(self):
         game = _two_cliques()
         truth = [[0, 1, 2, 3, 4, 5], [5, 6, 7, 8, 9]]
+        game.memberships = [[0]] * 5 + [[0, 1]] + [[1]] * 4
+        for method in ("f1", "jaccard", "omega", "one_to_one_f1"):
+            with self.subTest(method=method):
+                self.assertEqual(game.evaluate_against(truth, method), 1.0)
         game.memberships = [0] * 5 + [1] * 5
         self.assertLess(game.evaluate_against(truth, "f1"), 1.0)
 

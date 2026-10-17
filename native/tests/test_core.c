@@ -17,10 +17,11 @@
 */
 
 /*
- * The C core alone (no Python): every returned partition of a small game is
- * checked against an independent brute-force best response computed from the
- * definition of the payoffs (every community), together with the count
- * limits, the structure of the result and the returned quality. Then fixed points, determinism, callbacks and error
+ * The C core alone (no Python): every returned partition and cover of a small
+ * game is checked against an independent brute-force best response computed
+ * from the definition of the payoffs (every community, every label set),
+ * together with the count limits, the structure of the result and the
+ * returned quality. Then fixed points, determinism, callbacks and error
  * paths, and first the soft fma (core/softfma.h) against the FMA instruction.
  * Meant to run under ASan/UBSan (make test) and at -O3 (make test-release);
  * an argument multiplies the number of random games, HIG_FMA_CASES sets the
@@ -84,10 +85,18 @@ static hig_int below(hig_int n) {
     return (hig_int) (next64() % (uint64_t) n);
 }
 
-static hig_options_t options(double resolution, int allow_isolation, const hig_rng_t *rng) {
+static int popcount(unsigned x) {
+    int count = 0;
+    for (; x; x &= x - 1) count++;
+    return count;
+}
+
+static hig_options_t options(double resolution, hig_int max_memberships, int allow_isolation,
+                             const hig_rng_t *rng) {
     hig_options_t o;
     memset(&o, 0, sizeof o);
     o.resolution = resolution;
+    o.max_memberships = max_memberships;
     o.max_total_communities = -1;
     o.n_communities = -1;
     o.allow_isolation = allow_isolation;
@@ -241,6 +250,89 @@ static double partition_regret(const hig_graph_t *g, const hig_int *membership, 
     return worst;
 }
 
+static int holds(const hig_cover_t *c, hig_int v, hig_int label) {
+    for (hig_int i = c->offset[v]; i < c->offset[v + 1]; i++) {
+        if (c->labels[i] == label) return 1;
+    }
+    return 0;
+}
+
+#define MAX_ENUMERATED_LABELS 16
+
+/* The same for a cover: every set of at most max_memberships labels among the
+ * k occupied ones, alone or with a fresh label (payoff 0), under the count
+ * limits, with g_c(v) = sum_{u ~ v holding c} w_uv f_u - gamma n_v sum_{u != v
+ * holding c} n_u f_u and U_v(sigma) = sum_{c in sigma} g_c / sqrt(|sigma|).
+ * Returns -1 when k is too large to enumerate. */
+static double cover_regret(const hig_graph_t *g, const hig_cover_t *c, hig_int k,
+                           const hig_options_t *o) {
+    const hig_int n = g->vertex_count;
+    const hig_int cap = o->max_memberships;
+    const int exact = o->n_communities > 0, limited = o->max_total_communities > 0;
+    double gain[MAX_ENUMERATED_LABELS], worst = 0.0;
+
+    if (k > MAX_ENUMERATED_LABELS) {
+        return -1.0;
+    }
+    for (hig_int v = 0; v < n; v++) {
+        const double nv = node_weight(g, v);
+        const hig_int kv = c->offset[v + 1] - c->offset[v];
+        double current = 0.0, best;
+        unsigned mandatory = 0, sole = 0;
+        for (hig_int l = 0; l < k; l++) {
+            double support = 0.0, crowd = 0.0;
+            hig_int holders = 0;
+            for (hig_int u = 0; u < n; u++) {
+                if (holds(c, u, l)) {
+                    holders++;
+                    if (u != v) {
+                        crowd += node_weight(g, u) /
+                                 sqrt((double) (c->offset[u + 1] - c->offset[u]));
+                    }
+                }
+            }
+            for (hig_int e = 0; e < g->edge_count; e++) {
+                const hig_int a = g->edges[2 * e], b = g->edges[2 * e + 1];
+                const hig_int u = a == v ? b : b == v ? a : -1;
+                if (u >= 0 && u != v && holds(c, u, l)) {
+                    support += edge_weight(g, e) /
+                               sqrt((double) (c->offset[u + 1] - c->offset[u]));
+                }
+            }
+            gain[l] = support - o->resolution * nv * crowd;
+            if (holds(c, v, l)) {
+                current += gain[l];
+                if (holders == 1) {
+                    sole |= 1u << l;
+                    if (exact) mandatory |= 1u << l;
+                }
+            }
+        }
+        current /= sqrt((double) kv);
+        best = current;
+        for (unsigned set = 0; set < (1u << k); set++) {
+            const int size = popcount(set);
+            if ((set & mandatory) != mandatory) continue;
+            for (int fresh = 0; fresh <= 1; fresh++) {
+                const hig_int count_after = k - popcount(sole & ~set) + fresh;
+                double sum = 0.0;
+                if (size + fresh < 1 || size + fresh > cap) continue;
+                if (fresh && (!o->allow_isolation || exact)) continue;
+                if (limited && count_after > o->max_total_communities) continue;
+                for (hig_int l = 0; l < k; l++) {
+                    if (set & (1u << l)) sum += gain[l];
+                }
+                sum /= sqrt((double) (size + fresh));
+                if (sum > best) best = sum;
+            }
+        }
+        if ((best - current) / slack(g, v, o->resolution) > worst) {
+            worst = (best - current) / slack(g, v, o->resolution);
+        }
+    }
+    return worst;
+}
+
 /* Potential / W from the definitions. */
 static double partition_potential(const hig_graph_t *g, const hig_int *membership, hig_int k,
                                   double gamma) {
@@ -253,6 +345,31 @@ static double partition_potential(const hig_graph_t *g, const hig_int *membershi
     }
     for (hig_int v = 0; v < g->vertex_count; v++) mass[membership[v]] += node_weight(g, v);
     for (hig_int c = 0; c < k; c++) q -= gamma * mass[c] * mass[c];
+    free(mass);
+    return q / (2.0 * total);
+}
+
+static double cover_potential(const hig_graph_t *g, const hig_cover_t *c, hig_int k,
+                              double gamma) {
+    double q = 0.0, total = 0.0, *mass = calloc((size_t) k, sizeof *mass);
+    for (hig_int e = 0; e < g->edge_count; e++) {
+        const hig_int a = g->edges[2 * e], b = g->edges[2 * e + 1];
+        const double ka = (double) (c->offset[a + 1] - c->offset[a]);
+        const double kb = (double) (c->offset[b + 1] - c->offset[b]);
+        hig_int shared = 0;
+        for (hig_int i = c->offset[a]; i < c->offset[a + 1]; i++) {
+            shared += holds(c, b, c->labels[i]);
+        }
+        total += edge_weight(g, e);
+        q += 2.0 * edge_weight(g, e) * (double) shared / sqrt(ka * kb);
+    }
+    for (hig_int v = 0; v < g->vertex_count; v++) {
+        const double kv = (double) (c->offset[v + 1] - c->offset[v]);
+        for (hig_int i = c->offset[v]; i < c->offset[v + 1]; i++) {
+            mass[c->labels[i]] += node_weight(g, v) / sqrt(kv);
+        }
+    }
+    for (hig_int l = 0; l < k; l++) q -= gamma * mass[l] * mass[l];
     free(mass);
     return q / (2.0 * total);
 }
@@ -271,6 +388,27 @@ static int partition_well_formed(const hig_int *membership, hig_int n, hig_int k
     return next == k;
 }
 
+/* Non-empty sorted rows of at most cap labels, labels 0 .. k-1 all used. */
+static int cover_well_formed(const hig_cover_t *c, hig_int n, hig_int k, hig_int cap) {
+    hig_int used = 0;
+    char *seen = calloc((size_t) k + 1, 1);
+    int ok = c->vertex_count == n && c->offset && c->labels && c->offset[0] == 0;
+    for (hig_int v = 0; ok && v < n; v++) {
+        const hig_int size = c->offset[v + 1] - c->offset[v];
+        ok = size >= 1 && size <= cap;
+        for (hig_int i = c->offset[v]; ok && i < c->offset[v + 1]; i++) {
+            const hig_int l = c->labels[i];
+            ok = l >= 0 && l < k && (i == c->offset[v] || c->labels[i - 1] < l);
+            if (ok && !seen[l]) {
+                seen[l] = 1;
+                used++;
+            }
+        }
+    }
+    free(seen);
+    return ok && used == k;
+}
+
 /* ---- Random small games ------------------------------------------------------ */
 
 #define SMALL_N 10
@@ -285,16 +423,16 @@ typedef struct {
 } small_graph_t;
 
 /* A random graph of 2 .. largest vertices. */
-static void random_graph(small_graph_t *s, hig_int largest) {
+static void random_graph(small_graph_t *s, int cover, hig_int largest) {
     const double p = 0.15 + 0.6 * uniform();
-    const int signed_weights = below(4) == 0;
+    const int signed_weights = !cover && below(4) == 0;
     const int weighted = signed_weights || below(3) == 0, node_weighted = below(3) == 0;
     s->n = 2 + below(largest - 1);
     do {
         s->m = 0;
         for (hig_int a = 0; a < s->n; a++) {
-            /* The odd self-loop. */
-            for (hig_int b = a + (below(8) != 0); b < s->n; b++) {
+            /* Partitions get the odd self-loop. */
+            for (hig_int b = a + (cover || below(8) != 0); b < s->n; b++) {
                 if (uniform() < p && s->m < SMALL_M - 1) {
                     s->edges[2 * s->m] = a;
                     s->edges[2 * s->m + 1] = b;
@@ -331,13 +469,13 @@ static double total_edge_weight(const hig_graph_t *g) {
 
 static const double RESOLUTIONS[] = {-0.7, -0.05, 0.0, 0.02, 0.1, 0.35, 0.8, 2.0};
 
-static void random_limits(hig_options_t *o, hig_int n) {
+static void random_limits(hig_options_t *o, hig_int n, hig_int cap) {
     switch (below(4)) {
     case 0:
         o->max_total_communities = 1 + below(n);
         break;
     case 1:
-        o->n_communities = 1 + below(n);
+        o->n_communities = 1 + below(n * cap);
         break;
     default:
         break;
@@ -355,9 +493,10 @@ static hig_int start_labels(const hig_options_t *o, hig_int n) {
 static hig_int verified = 0, improvable = 0;
 
 static void verify(const hig_graph_t *g, const hig_options_t *o, const hig_int *membership,
-                   double raw_slack, int i) {
+                   const hig_cover_t *cover, double raw_slack, int i) {
     hig_verify_t report;
-    const hig_error_t status = hig_verify_partition(g, o, membership, &report);
+    const hig_error_t status = membership ? hig_verify_partition(g, o, membership, &report)
+                                          : hig_verify_cover(g, o, cover, &report);
     CHECK(status == HIG_SUCCESS, "case %d: verifier: %s", i, hig_error_message());
     if (status != HIG_SUCCESS) return;
     CHECK(report.max_certified <= raw_slack, "case %d: the verifier certifies a gain %a above "
@@ -383,10 +522,10 @@ static void test_random_partitions(int cases) {
         double quality = 0.0, raw_slack = -1.0, regret;
         const int start = below(3) == 0;
         hig_error_t status;
-        random_graph(&s, SMALL_N);
+        random_graph(&s, 0, SMALL_N);
         seed_rng(&r, (uint64_t) i);
-        o = options(RESOLUTIONS[below(8)], (int) below(2), &r.rng);
-        random_limits(&o, s.n);
+        o = options(RESOLUTIONS[below(8)], 1, (int) below(2), &r.rng);
+        random_limits(&o, s.n, 1);
         if (!(total_edge_weight(&s.graph) > 0.0)) continue;
         if (start) {
             const hig_int labels = start_labels(&o, s.n);
@@ -412,10 +551,75 @@ static void test_random_partitions(int cases) {
             exact++;
             CHECK(raw_slack == 0.0, "case %d: slack %a in exact arithmetic", i, raw_slack);
         }
-        verify(&s.graph, &o, membership, raw_slack, i);
+        verify(&s.graph, &o, membership, NULL, raw_slack, i);
     }
     printf("random partitions: %d games checked by brute force, %d not at equilibrium, "
            "%d in exact arithmetic (slack 0)\n", run, not_equilibria, exact);
+}
+
+static void test_random_covers(int cases) {
+    static const hig_int CAPS[] = {1, 2, 3, -1};
+    int run = 0, enumerated = 0, not_equilibria = 0;
+    hig_int labels[SMALL_N * SMALL_N], offset[SMALL_N + 1];
+
+    for (int i = 0; i < cases; i++) {
+        small_graph_t s;
+        test_rng_t r;
+        hig_options_t o;
+        hig_cover_t start, result = {0, NULL, NULL};
+        hig_int k = 0, cap;
+        double quality = 0.0, raw_slack = -1.0, regret;
+        const int use_start = below(3) == 0;
+        hig_error_t status;
+        /* n cap <= MAX_ENUMERATED_LABELS: every result is enumerated. */
+        cap = CAPS[below(4)];
+        random_graph(&s, 1, cap == 2 ? 8 : cap == 3 ? 5 : 4);
+        seed_rng(&r, (uint64_t) i + 1000003);
+        if (cap < 0 || cap > s.n) cap = s.n;
+        o = options(RESOLUTIONS[below(8)], cap, (int) below(2), &r.rng);
+        random_limits(&o, s.n, cap);
+        if (use_start) {
+            /* Row v holds v, v + n, ... below K (every label used, at most
+             * cap of them as K <= n cap), then random extras up to its size. */
+            const hig_int target = start_labels(&o, s.n);
+            offset[0] = 0;
+            for (hig_int v = 0; v < s.n; v++) {
+                const hig_int size = 1 + below(cap);
+                hig_int at = offset[v];
+                labels[at++] = 7 * (v % target);
+                for (hig_int l = v + s.n; l < target; l += s.n) labels[at++] = 7 * l;
+                while (at - offset[v] < size) labels[at++] = 7 * below(target);
+                offset[v + 1] = at;
+            }
+            start.vertex_count = s.n;
+            start.offset = offset;
+            start.labels = labels;
+        }
+        status = hig_cover_traced(&s.graph, &o, use_start ? &start : NULL, &result, &k, &quality,
+                                  &raw_slack, NULL);
+        CHECK(status == HIG_SUCCESS, "case %d: %s", i, hig_error_message());
+        if (status != HIG_SUCCESS) continue;
+        run++;
+        CHECK(cover_well_formed(&result, s.n, k, cap), "case %d", i);
+        CHECK(o.n_communities <= 0 || k == o.n_communities, "case %d: k=%lld", i, (long long) k);
+        CHECK(o.max_total_communities <= 0 || k <= o.max_total_communities, "case %d", i);
+        CHECK(close_to(quality, cover_potential(&s.graph, &result, k, o.resolution)),
+              "case %d: quality %.17g vs %.17g", i, quality,
+              cover_potential(&s.graph, &result, k, o.resolution));
+        regret = cover_regret(&s.graph, &result, k, &o);
+        if (regret >= 0.0) {
+            enumerated++;
+            not_equilibria += regret > 1.0;
+            CHECK(regret <= 1.0, "case %d: cover regret %g slacks (gamma %g, cap %lld, iso %d)",
+                  i, regret, o.resolution, (long long) cap, o.allow_isolation);
+        }
+        CHECK(raw_slack >= 0.0, "case %d: slack %g", i, raw_slack);
+        verify(&s.graph, &o, NULL, &result, raw_slack, i);
+        hig_cover_free(&result);
+    }
+    printf("random covers: %d games, %d checked by brute force, %d not at equilibrium\n", run,
+           enumerated, not_equilibria);
+    CHECK(enumerated == run, "only %d of %d covers enumerated", enumerated, run);
 }
 
 /* ---- Fixed games -------------------------------------------------------------- */
@@ -429,6 +633,12 @@ static hig_graph_t zachary(void) {
     return g;
 }
 
+static int same_cover(const hig_cover_t *a, const hig_cover_t *b) {
+    return a->vertex_count == b->vertex_count &&
+           memcmp(a->offset, b->offset, (size_t) (a->vertex_count + 1) * sizeof(hig_int)) == 0 &&
+           memcmp(a->labels, b->labels, (size_t) a->offset[a->vertex_count] * sizeof(hig_int)) == 0;
+}
+
 static void test_zachary(void) {
     const hig_graph_t g = zachary();
     const double density = 78.0 / (34.0 * 33.0 / 2.0);
@@ -439,7 +649,7 @@ static void test_zachary(void) {
 
     for (int isolation = 0; isolation <= 1; isolation++) {
         seed_rng(&r, 0);
-        o = options(density, isolation, &r.rng);
+        o = options(density, 1, isolation, &r.rng);
         CHECK(hig_partition(&g, &o, 0, membership, &k, &quality, NULL) == HIG_SUCCESS, "%s",
               hig_error_message());
         CHECK(partition_regret(&g, membership, k, &o) <= 1.0, "isolation %d", isolation);
@@ -459,6 +669,30 @@ static void test_zachary(void) {
         CHECK(memcmp(again, membership, sizeof again) == 0 && quality2 == quality,
               "an equilibrium start moved");
     }
+    for (hig_int cap = 2; cap <= 4; cap++) {
+        for (int isolation = 0; isolation <= 1; isolation++) {
+            hig_cover_t c = {0, NULL, NULL}, c2 = {0, NULL, NULL};
+            seed_rng(&r, 0);
+            o = options(density, cap, isolation, &r.rng);
+            CHECK(hig_cover(&g, &o, NULL, &c, &k, &quality, NULL) == HIG_SUCCESS, "%s",
+                  hig_error_message());
+            CHECK(cover_well_formed(&c, 34, k, cap), "cap %lld", (long long) cap);
+            CHECK(close_to(quality, cover_potential(&g, &c, k, density)), "quality");
+            CHECK(quality > 0.3, "quality %g", quality);
+            seed_rng(&r, 0);
+            CHECK(hig_cover(&g, &o, NULL, &c2, &k2, &quality2, NULL) == HIG_SUCCESS, "%s",
+                  hig_error_message());
+            CHECK(same_cover(&c, &c2) && quality2 == quality, "cover not deterministic");
+            hig_cover_free(&c2);
+            seed_rng(&r, 5);
+            CHECK(hig_cover(&g, &o, &c, &c2, &k2, &quality2, NULL) == HIG_SUCCESS, "%s",
+                  hig_error_message());
+            CHECK(k2 == k && quality2 == quality && same_cover(&c, &c2),
+                  "an equilibrium cover start moved");
+            hig_cover_free(&c);
+            hig_cover_free(&c2);
+        }
+    }
 }
 
 /* ---- Bit pins ------------------------------------------------------------------ */
@@ -467,33 +701,51 @@ static void test_zachary(void) {
  * reproduce bit for bit, from the seeded order of random.Random(seed) (the
  * same values are pinned in tests/test_native_core.py and
  * tests/test_native_backend.py). A partition is pinned as its labels in
- * order of first appearance, with the hex of the quality and of the slack.
- * HIG_PRINT_PINS=1 prints the values instead of checking them.
+ * order of first appearance, a cover as the sorted bit masks of its
+ * communities' member sets (Zachary has 34 vertices); both with the hex of
+ * the quality. HIG_PRINT_PINS=1 prints the values instead of checking them.
  */
 
 typedef struct {
     const char *name;
     uint32_t seed;
     double resolution;        /* DENSITY: the graph density */
+    hig_int cap;
     int isolation, weighted, node_weighted;
     hig_int max_total, exact;
     hig_int k;
     double quality, slack;    /* the slack is the raw (unnormalized) one */
-    hig_int membership[34];
+    hig_int membership[34];   /* partitions */
+    uint64_t masks[40];       /* covers: k sorted masks */
 } pin_t;
 
 #define DENSITY 1e300
 
 static const pin_t PINS[] = {
-    {"zachary partition seed 0", 0, DENSITY, 0, 0, 0, -1, -1, 5, 0x1.b8f407b8f407dp-2, 0x0p+0,
-     {0, 0, 0, 0, 1, 2, 2, 0, 3, 0, 1, 1, 0, 0, 3, 3, 2, 0, 3, 0, 3, 0, 3, 3, 4, 4, 3, 4, 4, 3, 3, 4, 3, 3}},
-    {"weighted partition gamma 0.2 isolation seed 1", 1, 0x1.999999999999ap-3, 1, 1, 0, -1, -1, 10, 0x1.96f439aec498ep-2, 0x1.0c0000000000ap-50,
-     {0, 0, 0, 0, 1, 1, 1, 0, 2, 3, 1, 4, 0, 0, 5, 5, 1, 0, 6, 0, 6, 7, 5, 8, 9, 9, 8, 6, 6, 8, 2, 6, 5, 6}},
-    {"exactly 3 communities gamma 0.1 seed 3", 3, 0x1.999999999999ap-4, 0, 0, 0, -1, 3, 3, 0x1.01f81f81f81f8p-1, 0x0p+0,
-     {0, 0, 0, 0, 1, 1, 1, 0, 2, 0, 1, 0, 0, 0, 2, 2, 1, 0, 2, 0, 2, 0, 2, 2, 1, 1, 2, 2, 1, 2, 2, 1, 2, 2}},
-    {"exact arithmetic partition gamma 0.5 isolation seed 7", 7, 0x1p-1, 1, 0, 0, -1, -1, 19, 0x1.20d20d20d20d2p-4, 0x0p+0,
-     {0, 0, 0, 0, 1, 2, 2, 0, 3, 4, 1, 5, 6, 0, 7, 8, 2, 9, 10, 11, 12, 13, 14, 15, 16, 16, 17, 15, 18, 17, 3, 16, 3, 3}},
+    {"zachary partition seed 0", 0, DENSITY, 1, 0, 0, 0, -1, -1, 5, 0x1.b8f407b8f407dp-2, 0x0p+0,
+     {0, 0, 0, 0, 1, 2, 2, 0, 3, 0, 1, 1, 0, 0, 3, 3, 2, 0, 3, 0, 3, 0, 3, 3, 4, 4, 3, 4, 4, 3, 3, 4, 3, 3},
+     {0}},
+    {"zachary cover M=3 gamma 0.1 seed 0", 0, 0x1.999999999999ap-4, 3, 0, 0, 0, -1, -1, 9, 0x1.0fc298892fe39p-1, 0x1.f1d4abc914b81p-44,
+     {0}, {0x10060ULL, 0x10470ULL, 0x10470ULL, 0x2a388fULL, 0x10000204ULL, 0x402a318fULL, 0x8b800000ULL, 0x3f4d4c100ULL, 0x3f4d4c100ULL}},
+    {"weighted partition gamma 0.2 isolation seed 1", 1, 0x1.999999999999ap-3, 1, 1, 1, 0, -1, -1, 10, 0x1.96f439aec498ep-2, 0x1.0c0000000000ap-50,
+     {0, 0, 0, 0, 1, 1, 1, 0, 2, 3, 1, 4, 0, 0, 5, 5, 1, 0, 6, 0, 6, 7, 5, 8, 9, 9, 8, 6, 6, 8, 2, 6, 5, 6},
+     {0}},
+    {"negative resolution cover M=2 gamma -0.02 seed 2", 2, -0x1.47ae147ae147bp-6, 2, 0, 0, 0, -1, -1, 5, 0x1.c89a7b611699ep-1, 0x1.1078050fee7cap-43,
+     {0}, {0x10060ULL, 0x2a388fULL, 0xdb2b3fffULL, 0x364d4c100ULL, 0x3bfd4c200ULL}},
+    {"exactly 3 communities gamma 0.1 seed 3", 3, 0x1.999999999999ap-4, 1, 0, 0, 0, -1, 3, 3, 0x1.01f81f81f81f8p-1, 0x0p+0,
+     {0, 0, 0, 0, 1, 1, 1, 0, 2, 0, 1, 0, 0, 0, 2, 2, 1, 0, 2, 0, 2, 0, 2, 2, 1, 1, 2, 2, 1, 2, 2, 1, 2, 2},
+     {0}},
+    {"weighted cover M=4 gamma 0.05 isolation at most 6 seed 5", 5, 0x1.999999999999ap-5, 4, 1, 1, 1, 6, -1, 6, 0x1.522cd66f80a05p-1, 0x1.7c5aa71afd091p-43,
+     {0}, {0x800ULL, 0x10470ULL, 0x2a309fULL, 0x932334ffULL, 0x3fcd4c304ULL, 0x3fcd4c304ULL}},
+    {"exact arithmetic partition gamma 0.5 isolation seed 7", 7, 0x1p-1, 1, 1, 0, 0, -1, -1, 19, 0x1.20d20d20d20d2p-4, 0x0p+0,
+     {0, 0, 0, 0, 1, 2, 2, 0, 3, 4, 1, 5, 6, 0, 7, 8, 2, 9, 10, 11, 12, 13, 14, 15, 16, 16, 17, 15, 18, 17, 3, 16, 3, 3},
+     {0}},
 };
+
+static int compare_masks(const void *a, const void *b) {
+    const uint64_t x = *(const uint64_t *) a, y = *(const uint64_t *) b;
+    return (x > y) - (x < y);
+}
 
 /* The pins' edge and node weights: dyadic, so the inputs are the same
  * everywhere. */
@@ -517,33 +769,56 @@ static void test_pins(void) {
         hig_options_t o;
         test_mt_t mt;
         hig_int k = 0, membership[34];
-        hig_int names[34], next = 0;
         double quality = 0.0, slack = -1.0;
+        uint64_t masks[64];
         int same = 1;
 
         g.edge_weights = pin->weighted ? ew : NULL;
         g.node_weights = pin->node_weighted ? nw : NULL;
         seed_mt(&mt, pin->seed);
-        o = options(pin->resolution == DENSITY ? 78.0 / 561.0 : pin->resolution, pin->isolation,
-                    &mt.rng);
+        o = options(pin->resolution == DENSITY ? 78.0 / 561.0 : pin->resolution, pin->cap,
+                    pin->isolation, &mt.rng);
         o.max_total_communities = pin->max_total;
         o.n_communities = pin->exact;
-        CHECK(hig_partition_traced(&g, &o, 0, membership, &k, &quality, &slack, NULL) ==
-              HIG_SUCCESS,
-              "%s: %s", pin->name, hig_error_message());
-        for (hig_int c = 0; c < 34; c++) names[c] = -1;
-        for (hig_int v = 0; v < 34; v++) {
-            if (names[membership[v]] < 0) names[membership[v]] = next++;
-            membership[v] = names[membership[v]];
-            same &= membership[v] == pin->membership[v];
+        memset(masks, 0, sizeof masks);
+        if (pin->cap == 1) {
+            hig_int names[34], next = 0;
+            CHECK(hig_partition_traced(&g, &o, 0, membership, &k, &quality, &slack, NULL) ==
+                  HIG_SUCCESS,
+                  "%s: %s", pin->name, hig_error_message());
+            for (hig_int c = 0; c < 34; c++) names[c] = -1;
+            for (hig_int v = 0; v < 34; v++) {
+                if (names[membership[v]] < 0) names[membership[v]] = next++;
+                membership[v] = names[membership[v]];
+                same &= membership[v] == pin->membership[v];
+            }
+        } else {
+            hig_cover_t c = {0, NULL, NULL};
+            CHECK(hig_cover_traced(&g, &o, NULL, &c, &k, &quality, &slack, NULL) == HIG_SUCCESS,
+                  "%s: %s",
+                  pin->name, hig_error_message());
+            for (hig_int v = 0; v < 34 && c.labels; v++) {
+                for (hig_int i = c.offset[v]; i < c.offset[v + 1]; i++) {
+                    if (c.labels[i] < 64) masks[c.labels[i]] |= (uint64_t) 1 << v;
+                }
+            }
+            qsort(masks, (size_t) (k < 64 ? k : 64), sizeof masks[0], compare_masks);
+            for (hig_int l = 0; l < k && l < 40; l++) same &= masks[l] == pin->masks[l];
+            hig_cover_free(&c);
         }
         if (print) {
-            printf("    {\"%s\", %u, %a, %d, %d, %d, %lld, %lld, %lld, %a, %a,\n     {",
-                   pin->name, pin->seed, pin->resolution, pin->isolation, pin->weighted,
-                   pin->node_weighted, (long long) pin->max_total, (long long) pin->exact,
-                   (long long) k, quality, slack);
-            for (hig_int v = 0; v < 34; v++) printf("%s%lld", v ? ", " : "", (long long) membership[v]);
-            printf("}},\n");
+            printf("    {\"%s\", %u, %a, %lld, %d, %d, %d, %lld, %lld, %lld, %a, %a,\n     {",
+                   pin->name, pin->seed, pin->resolution, (long long) pin->cap, pin->isolation,
+                   pin->weighted, pin->node_weighted, (long long) pin->max_total,
+                   (long long) pin->exact, (long long) k, quality, slack);
+            if (pin->cap == 1) {
+                for (hig_int v = 0; v < 34; v++) printf("%s%lld", v ? ", " : "", (long long) membership[v]);
+                printf("}, {0}},\n");
+            } else {
+                printf("0}, {");
+                for (hig_int l = 0; l < k; l++) printf("%s0x%llxULL", l ? ", " : "", (unsigned long long) masks[l]);
+                printf("}},\n");
+            }
             continue;
         }
         CHECK(k == pin->k && quality == pin->quality && slack == pin->slack && same,
@@ -555,6 +830,7 @@ static void test_pins(void) {
 static void test_edge_layouts(void) {
     hig_graph_t g = zachary(), split = zachary();
     hig_int first[78], second[78], a[34], b[34], ka = 0, kb = 0;
+    hig_cover_t ca = {0, NULL, NULL}, cb = {0, NULL, NULL};
     test_rng_t r;
     hig_options_t o;
     double qa = 0.0, qb = 1.0;
@@ -567,11 +843,19 @@ static void test_edge_layouts(void) {
     split.edge_first = first;
     split.edge_second = second;
     seed_rng(&r, 3);
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 1, 0, &r.rng);
     CHECK(hig_partition(&g, &o, 0, a, &ka, &qa, NULL) == HIG_SUCCESS, "%s", hig_error_message());
     seed_rng(&r, 3);
     CHECK(hig_partition(&split, &o, 0, b, &kb, &qb, NULL) == HIG_SUCCESS, "%s", hig_error_message());
     CHECK(ka == kb && qa == qb && memcmp(a, b, sizeof a) == 0, "partition layouts differ");
+    seed_rng(&r, 3);
+    o = options(0.1, 3, 1, &r.rng);
+    CHECK(hig_cover(&g, &o, NULL, &ca, &ka, &qa, NULL) == HIG_SUCCESS, "%s", hig_error_message());
+    seed_rng(&r, 3);
+    CHECK(hig_cover(&split, &o, NULL, &cb, &kb, &qb, NULL) == HIG_SUCCESS, "%s", hig_error_message());
+    CHECK(ka == kb && qa == qb && same_cover(&ca, &cb), "cover layouts differ");
+    hig_cover_free(&ca);
+    hig_cover_free(&cb);
 }
 
 /* A game on which the earlier core cycled between equal-payoff moves: it
@@ -594,7 +878,7 @@ static void test_former_tie_cycle(void) {
     for (uint64_t seed = 0; seed < 50; seed++) {
         for (int isolation = 0; isolation <= 1; isolation++) {
             seed_rng(&r, seed);
-            o = options(0.342, isolation, &r.rng);
+            o = options(0.342, 1, isolation, &r.rng);
             CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_SUCCESS, "%s",
                   hig_error_message());
             CHECK(partition_regret(&g, membership, k, &o) <= 1.0, "seed %llu",
@@ -603,7 +887,8 @@ static void test_former_tie_cycle(void) {
     }
 }
 
-/* Count limits on a ring, from the default starts. */
+/* Count limits on a ring, from the default starts (also with more labels
+ * than vertices for covers). */
 static void test_counts(void) {
     hig_int edges[2 * 12], membership[12], k = 0;
     hig_graph_t g;
@@ -620,12 +905,29 @@ static void test_counts(void) {
     g.edges = edges;
     for (hig_int target = 1; target <= 12; target++) {
         seed_rng(&r, (uint64_t) target);
-        o = options(0.3, 1, &r.rng);
+        o = options(0.3, 1, 1, &r.rng);
         o.n_communities = target;
         CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_SUCCESS, "%s",
               hig_error_message());
         CHECK(k == target, "target %lld gave %lld", (long long) target, (long long) k);
         CHECK(partition_regret(&g, membership, k, &o) <= 1.0, "target %lld", (long long) target);
+        for (hig_int cap = 2; cap <= 3; cap++) {
+            hig_cover_t c = {0, NULL, NULL};
+            o = options(0.3, cap, 1, &r.rng);
+            o.n_communities = target * cap;
+            CHECK(hig_cover(&g, &o, NULL, &c, &k, NULL, NULL) == HIG_SUCCESS, "%s",
+                  hig_error_message());
+            CHECK(k == target * cap && cover_well_formed(&c, 12, k, cap),
+                  "cover target %lld gave %lld", (long long) (target * cap), (long long) k);
+            hig_cover_free(&c);
+            o.n_communities = -1;
+            o.max_total_communities = target;
+            CHECK(hig_cover(&g, &o, NULL, &c, &k, NULL, NULL) == HIG_SUCCESS, "%s",
+                  hig_error_message());
+            CHECK(k <= target && cover_well_formed(&c, 12, k, cap), "cover max %lld gave %lld",
+                  (long long) target, (long long) k);
+            hig_cover_free(&c);
+        }
     }
 }
 
@@ -662,13 +964,27 @@ static void test_planted(void) {
         g.edge_weights = weighted ? weights : NULL;
         for (int isolation = 0; isolation <= 1; isolation++) {
             seed_rng(&r, 11);
-            o = options(0.02, isolation, &r.rng);
+            o = options(0.02, 1, isolation, &r.rng);
             CHECK(hig_partition(&g, &o, 0, membership, &k, &quality, NULL) == HIG_SUCCESS, "%s",
                   hig_error_message());
             CHECK(partition_well_formed(membership, n, k), "planted");
             CHECK(close_to(quality, partition_potential(&g, membership, k, 0.02)), "quality");
             CHECK(partition_regret(&g, membership, k, &o) <= 1.0, "planted regret");
             CHECK(k >= blocks / 2 && k <= 4 * blocks, "planted k = %lld", (long long) k);
+            for (hig_int cap = 2; cap <= 8; cap *= 2) {
+                for (int negative = 0; negative <= 1; negative++) {
+                    hig_cover_t c = {0, NULL, NULL};
+                    seed_rng(&r, 12);
+                    o = options(negative ? -0.001 : 0.02, cap, isolation, &r.rng);
+                    CHECK(hig_cover(&g, &o, NULL, &c, &k, &quality, NULL) == HIG_SUCCESS, "%s",
+                          hig_error_message());
+                    CHECK(cover_well_formed(&c, n, k, cap), "planted cover");
+                    CHECK(close_to(quality, cover_potential(&g, &c, k, o.resolution)),
+                          "cover quality %.17g vs %.17g", quality,
+                          cover_potential(&g, &c, k, o.resolution));
+                    hig_cover_free(&c);
+                }
+            }
         }
     }
     free(edges);
@@ -699,6 +1015,7 @@ static void test_callbacks(void) {
     int calls = 0;
     test_rng_t r;
     hig_options_t o;
+    hig_cover_t c = {0, NULL, NULL};
 
     for (hig_int v = 0; v < n; v++) {
         edges[2 * v] = v;
@@ -708,15 +1025,20 @@ static void test_callbacks(void) {
     g.vertex_count = n;
     g.edge_count = n;
     g.edges = edges;
-    o = options(0.1, 0, &failing);
+    o = options(0.1, 1, 0, &failing);
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_ECALLBACK, "rng failure");
+    o.max_memberships = 2;
+    CHECK(hig_cover(&g, &o, NULL, &c, &k, NULL, NULL) == HIG_ECALLBACK, "rng failure (cover)");
     interrupt.check = interrupt_now;
     interrupt.state = &calls;
     seed_rng(&r, 1);
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 1, 0, &r.rng);
     o.interrupt = &interrupt;
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_INTERRUPTED, "interrupt");
-    CHECK(calls == 1, "interrupt called %d times", calls);
+    o.max_memberships = 2;
+    CHECK(hig_cover(&g, &o, NULL, &c, &k, NULL, NULL) == HIG_INTERRUPTED, "interrupt (cover)");
+    CHECK(calls == 2, "interrupt called %d times", calls);
+    CHECK(c.offset == NULL && c.labels == NULL, "a failed call returned a cover");
     free(edges);
     free(membership);
 }
@@ -728,42 +1050,52 @@ static void test_errors(void) {
     static const double negative[] = {1.0, -1.0};
     const double nan_weight[] = {NAN, 1.0};
     hig_graph_t g = zachary(), bad;
-    hig_int membership[34], k = 0;
+    hig_int membership[34], k = 0, offset[35], labels[34 * 3];
+    hig_cover_t c = {0, NULL, NULL}, start;
     test_rng_t r;
     hig_options_t o;
 
     seed_rng(&r, 0);
-    o = options(NAN, 0, &r.rng);
+    o = options(NAN, 1, 0, &r.rng);
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "NaN resolution");
     CHECK(strstr(hig_error_message(), "resolution must be finite") != NULL, "%s",
           hig_error_message());
-    o = options(0.1, 0, NULL);
+    o = options(0.1, 1, 0, NULL);
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "no rng");
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 2, 0, &r.rng);
+    CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "partition cap 2");
+    o = options(0.1, 35, 0, &r.rng);
+    CHECK(hig_cover(&g, &o, NULL, &c, &k, NULL, NULL) == HIG_EINVAL, "cap above n");
+    o = options(0.1, 1, 0, &r.rng);
     o.n_communities = 35;
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "K above n");
     o.n_communities = 5;
     o.max_total_communities = 4;
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "K above max");
-    o = options(1e305, 0, &r.rng);
-    CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EOVERFLOW,
-          "overflowing resolution");
+    o = options(1e305, 2, 0, &r.rng);
+    CHECK(hig_cover(&g, &o, NULL, &c, &k, NULL, NULL) == HIG_EOVERFLOW, "overflowing resolution");
 
     bad = g;
     bad.vertex_count = 2;
     bad.edge_count = 2;
     bad.edges = loop;
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 2, 0, &r.rng);
+    CHECK(hig_cover(&bad, &o, NULL, &c, &k, NULL, NULL) == HIG_EINVAL, "loop in a cover");
+    CHECK(strstr(hig_error_message(), "loopless") != NULL, "%s", hig_error_message());
+    o = options(0.1, 1, 0, &r.rng);
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_SUCCESS,
-          "a loop is fine: %s", hig_error_message());
+          "a loop is fine in a partition: %s", hig_error_message());
     bad.edge_count = 1;
     bad.edges = outside;
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "end outside");
     bad.edge_count = 2;
     bad.edges = double_edge;
     bad.edge_weights = negative;
+    o = options(0.1, 2, 0, &r.rng);
+    CHECK(hig_cover(&bad, &o, NULL, &c, &k, NULL, NULL) == HIG_EINVAL, "negative cover weight");
+    o = options(0.1, 1, 0, &r.rng);
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_SUCCESS,
-          "signed weights: %s", hig_error_message());
+          "signed partition weights: %s", hig_error_message());
     bad.edge_weights = nan_weight;
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "NaN weight");
     bad.edge_weights = NULL;
@@ -771,7 +1103,7 @@ static void test_errors(void) {
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "negative node weight");
 
     /* Starts. */
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 1, 0, &r.rng);
     for (int v = 0; v < 34; v++) membership[v] = v % 3;
     membership[5] = -1;
     CHECK(hig_partition(&g, &o, 1, membership, &k, NULL, NULL) == HIG_EINVAL, "negative label");
@@ -782,6 +1114,23 @@ static void test_errors(void) {
     o.max_total_communities = -1;
     o.n_communities = 4;
     CHECK(hig_partition(&g, &o, 1, membership, &k, NULL, NULL) == HIG_EINVAL, "start count");
+    o = options(0.1, 2, 1, &r.rng);
+    offset[0] = 0;
+    for (int v = 0; v < 34; v++) offset[v + 1] = offset[v] + 1 + (v == 7) * 2;
+    for (int i = 0; i < offset[34]; i++) labels[i] = i;
+    start.vertex_count = 34;
+    start.offset = offset;
+    start.labels = labels;
+    CHECK(hig_cover(&g, &o, &start, &c, &k, NULL, NULL) == HIG_EINVAL, "row above the cap");
+    CHECK(strstr(hig_error_message(), "exceeds max_memberships") != NULL, "%s",
+          hig_error_message());
+    labels[8] = labels[9] = labels[7];   /* a repeated label counts once */
+    CHECK(hig_cover(&g, &o, &start, &c, &k, NULL, NULL) == HIG_SUCCESS, "%s", hig_error_message());
+    hig_cover_free(&c);
+    offset[8] = offset[7];
+    CHECK(hig_cover(&g, &o, &start, &c, &k, NULL, NULL) == HIG_EINVAL, "empty row");
+    CHECK(strstr(hig_error_message(), "non-empty") != NULL, "%s", hig_error_message());
+    CHECK(c.offset == NULL, "a failed call returned a cover");
 }
 
 /* ---- The soft fma ------------------------------------------------------------- */
@@ -1042,6 +1391,7 @@ int main(int argc, char **argv) {
     test_callbacks();
     test_errors();
     test_random_partitions(1500 * scale);
+    test_random_covers(1500 * scale);
     printf("verifier: %lld vertices of the random games, %lld with a certainly improving "
            "deviation, none above the slack\n", (long long) verified, (long long) improvable);
     CHECK(improvable == 0, "the verifier found %lld improvable vertices", (long long) improvable);

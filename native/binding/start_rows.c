@@ -82,10 +82,11 @@ static int read_label(PyObject *obj, hig_int *label) {
 /* The checks of hedonic._native._start_rows, in the same order and with the
  * same messages: one row per vertex; flat and nested rows not mixed; rows
  * non-empty; labels non-negative integers; a repeated label counts once;
- * one distinct label per row (a partition); labels 0 .. K - 1 all used.
- * Returns 1 with rows filled, 0 for an empty start (no vertices), -1 on
+ * at most max_memberships distinct labels per row; labels 0 .. K - 1 all
+ * used. Returns 1 with rows filled, 0 for an empty start (no vertices), -1 on
  * error. */
-int read_start_rows(PyObject *obj, Py_ssize_t n, start_rows_t *rows) {
+int read_start_rows(PyObject *obj, Py_ssize_t n, hig_int max_memberships,
+                    start_rows_t *rows) {
     PyObject *seq = PySequence_Fast(obj, "initial_membership must be a sequence");
     Py_ssize_t size, used = 0, capacity;
     hig_int *scratch = NULL;
@@ -187,9 +188,9 @@ int read_start_rows(PyObject *obj, Py_ssize_t n, start_rows_t *rows) {
             /* The row order does not matter to the core (it sorts rows). */
             memcpy(row, scratch, (size_t) kept * sizeof(hig_int));
         }
-        if (kept > 1) {
-            PyErr_Format(PyExc_ValueError,
-                         "a partition has one label per vertex (a row holds %zd)", kept);
+        if (kept > max_memberships) {
+            PyErr_Format(PyExc_ValueError, "a vertex exceeds max_memberships (%zd > %lld)", kept,
+                         (long long) max_memberships);
             goto done;
         }
         for (Py_ssize_t i = 0; i < kept; i++) {

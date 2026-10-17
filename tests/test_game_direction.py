@@ -47,13 +47,15 @@ class TestGameDirection(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, r"Game\(graph\) copies"):
             Game(self._directed_path(), directed=False)
 
-    def test_directed_copy_rejects_the_detector(self):
+    def test_directed_copy_rejects_the_detector_in_both_modes(self):
         game = Game(self._directed_path())
 
-        with self.assertRaisesRegex(
-            ValueError, "community_hedonic requires an undirected graph"
-        ):
-            game.community_hedonic(resolution=0.1)
+        for cap in (1, 2):
+            with self.subTest(max_memberships=cap):
+                with self.assertRaisesRegex(
+                    ValueError, "community_hedonic requires an undirected graph"
+                ):
+                    game.community_hedonic(max_memberships=cap, resolution=0.1)
 
 
 if __name__ == "__main__":  # pragma: no cover
