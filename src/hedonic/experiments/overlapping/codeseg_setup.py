@@ -950,7 +950,7 @@ def _ncgame_runtime(
     command = (
         f"{shlex.quote(python)} {shlex.quote(str(worker))} "
         f"--upstream-root {shlex.quote(str(root))} --input {{input}} --ground-truth {{ground_truth}} "
-        f"--output {{output}} --dataset {{dataset}}"
+        f"--output {{output}} --dataset {{dataset}} --timing-output {{timing}}"
     )
     return {
         "status": "ready" if ready else "unavailable",

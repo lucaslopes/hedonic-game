@@ -23,13 +23,13 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import igraph as ig
 
 from hedonic.experiments import resources
+from hedonic.experiments import timing
 from hedonic.experiments.overlapping.robustness import canonicalize_cover
 
 SLPA_PROTOCOL_VERSION = "cdlib-slpa-isolated-v1"
@@ -232,17 +232,15 @@ def run_worker(
     matplotlib_config = Path(tempfile.gettempdir()) / "hedonic-cdlib-matplotlib"
     matplotlib_config.mkdir(parents=True, exist_ok=True)
     environment["MPLCONFIGDIR"] = str(matplotlib_config)
-    started = time.perf_counter()
+    # The request is serialised by the clock before the process exists. The worker times its own detector call and
+    # reports it (``detector_seconds``); the rest of the process (interpreter, CDlib import, graph build, JSON in and
+    # out) is the isolation overhead, recorded but not counted: see ``timing``.
+    clock = timing.active()
     try:
-        process = subprocess.run(
-            command,
-            cwd=str(receipt["root"]),
-            input=json.dumps(dict(request), sort_keys=True),
-            text=True,
-            capture_output=True,
-            env=environment,
+        process = clock.process(
+            command, label=label, cwd=str(receipt["root"]), env=environment, counted=False,
+            stdin_text=json.dumps(dict(request), sort_keys=True),
             timeout=None if timeout_seconds is None else float(timeout_seconds),
-            check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise MethodUnavailable(f"{label} could not complete: {exc}") from exc
@@ -250,8 +248,15 @@ def run_worker(
         detail = (process.stderr or process.stdout).strip().splitlines()
         raise MethodUnavailable(f"{label} exited {process.returncode}: " + (detail[-1] if detail else "no diagnostic"))
     payload = last_json_line(process.stdout, label)
+    try:
+        detector_seconds = clock.adopt(payload.get(timing.REPORT_KEY), process, label=label)
+    except ValueError as exc:
+        raise MethodUnavailable(f"{label}: {exc}") from exc
     return payload, {
-        "worker_seconds": time.perf_counter() - started,
+        "worker_seconds": process.seconds,
+        "detector_seconds": detector_seconds,
+        "isolation_overhead_seconds": process.seconds - detector_seconds,
+        "worker_peak_rss_bytes": process.peak_rss_bytes,
         "worker_command": command,
         "execution_mode": mode,
         "worker_source_identity": {"path": worker.name, "sha256": _sha256_file(worker)},

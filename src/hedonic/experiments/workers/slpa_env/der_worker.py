@@ -15,6 +15,7 @@ import io
 import json
 import platform
 import sys
+import time
 
 import networkx as nx
 
@@ -43,8 +44,11 @@ def main() -> int:
     graph = nx.Graph()
     graph.add_nodes_from(range(n))
     graph.add_edges_from((int(left), int(right)) for left, right in edges)
+    # The detector's clock (``timing_scope`` detector-compute-v1): the algorithm call only.
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        started = time.perf_counter()
         result = algorithms.der(graph, walk_len, threshold, iter_bound)
+        detector_seconds = time.perf_counter() - started
     communities = [
         sorted(int(vertex) for vertex in community)
         for community in result.communities
@@ -53,6 +57,7 @@ def main() -> int:
         json.dumps(
             {
                 "communities": communities,
+                "detector_seconds": detector_seconds,
                 "metadata": {
                     "cdlib_version": _version("cdlib"),
                     "networkx_version": _version("networkx"),
