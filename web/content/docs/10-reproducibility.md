@@ -10,12 +10,12 @@ order: 10
 `community_hedonic` visits the vertices in a random order. Pass `seed` and the whole call runs under `random.Random(seed)`: the returned labels are then a function of the graph, the weights, the parameters, the start state and the seed. Without a seed the order is drawn from Python's `random` module (python-igraph's default generator), so `random.seed(...)` before the call makes it repeatable too.
 
 ```python
-first = graph.community_hedonic(initial_membership=None, resolution=0.1, seed=7)
-again = graph.community_hedonic(initial_membership=None, resolution=0.1, seed=7)
+first = graph.community_hedonic(resolution=0.1, seed=7)
+again = graph.community_hedonic(resolution=0.1, seed=7)
 assert first.membership == again.membership
 ```
 
-Pass `initial_membership=None` explicitly when repeating a call: omitting it continues from the memberships the previous call stored in `Game.memberships`. Each result also carries a `_hedonic_provenance` dictionary with the package and igraph versions and the effective parameters of the call, which is worth saving next to the result.
+Every call starts from singletons unless `initial_membership` is given, so repeating a call on the same `Game` repeats the run. Each result also carries a `_hedonic_provenance` dictionary with the package and igraph versions and the effective parameters of the call, which is worth saving next to the result.
 
 ## The explainer
 

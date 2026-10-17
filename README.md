@@ -19,8 +19,8 @@ pip install hedonic
 from hedonic import Game
 
 h = Game(g)  # g: an igraph graph (convert NetworkX, edge lists, ... through igraph)
-partition = h.community_hedonic(max_memberships=1)                        # disjoint
-cover = h.community_hedonic(max_memberships=3, initial_membership=None)  # overlapping
+partition = h.community_hedonic(max_memberships=1)  # disjoint
+cover = h.community_hedonic(max_memberships=3)      # overlapping
 ```
 
 - `from hedonic import Game` is the public API.
@@ -30,11 +30,12 @@ cover = h.community_hedonic(max_memberships=3, initial_membership=None)  # overl
   returns an `igraph.VertexCover`.
 - Every call runs until no vertex can certainly improve by moving: the result
   is an equilibrium of the game, with a certified bound on what any vertex
-  could still gain (`equilibrium_slack`, 0 when the arithmetic is exact).
-  There is nothing to tune: no iteration budget, no round cap, no tolerance.
-- A `Game` remembers its last result and, when `initial_membership` is
-  omitted, starts the next call from it. Pass `initial_membership=None` for a
-  fresh start (see [Continuing from the last result](#continuing-from-the-last-result)).
+  could still gain (`equilibrium_slack`). There is nothing to tune: no
+  iteration budget, no round cap, no tolerance.
+- Every call starts from singletons unless you pass `initial_membership`. The
+  result is also stored in `h.memberships`; pass
+  `initial_membership=h.memberships` to continue from it (see
+  [Start states](#start-states)).
 
 ## What this is
 
@@ -50,7 +51,9 @@ choose the set of at most `max_memberships` communities it prefers
 (overlapping, where a vertex's weight is split evenly over its communities).
 After a move it revisits the vertex's neighbours, and it stops only when
 every vertex has been visited, without moving, since the last move. That is a
-Nash equilibrium: no vertex can improve its payoff alone.
+Nash equilibrium: no vertex can improve its payoff alone. It is the
+equilibrium this process reaches from its start, not necessarily the
+partition of highest potential, and another seed can reach another one.
 
 The computation is in floating point, so the core proves each step instead
 of trusting it: every payoff it compares carries a rigorous bound of its
@@ -59,10 +62,12 @@ bound. Every move therefore raises the exact CPM potential, and the process
 always stops. The result reports `equilibrium_slack` in
 `result._hedonic_provenance`: no vertex can raise its exact payoff by more
 than the slack times the total edge weight (normalized like the quality).
-It is exactly 0 when the arithmetic is exact (for instance unit weights at
-resolution 0, 1/2 or 1), so the result is then an exact Nash equilibrium; on
-complete DBLP and Amazon at other resolutions it is about `1e-21` for
-partitions and `1e-17` for covers.
+For a partition it is exactly 0 when the arithmetic is exact (for instance
+unit weights at resolution 0, 1/2 or 1), so the result is then an exact Nash
+equilibrium. Covers split a vertex's weight as 1/√k over its k communities,
+which no float holds exactly, so their slack stays a tiny positive number. On
+complete DBLP and Amazon at the density it is about `1e-21` for partitions and
+`1e-17` for covers.
 [`native/README.md`](https://github.com/lucaslopes/hedonic/blob/main/native/README.md) gives the bounds, the termination
 argument and the proof that the best set of communities is a prefix of the
 sorted gains.
@@ -86,8 +91,9 @@ Wheels are built for Linux (x86_64, aarch64), macOS (x86_64, arm64) and
 Windows (AMD64, ARM64). Elsewhere pip builds the C core from the source
 distribution, which needs a C11 compiler.
 
-`Game.evaluate_against(..., method="one_to_one_f1")` uses SciPy; install it
-with the `metrics` extra: `pip install "hedonic[metrics]"`.
+`Game.evaluate_against` with `method="one_to_one_f1"` or `"node_micro_f1"`
+uses SciPy; install it with the `metrics` extra:
+`pip install "hedonic[metrics]"`.
 
 ## Tutorial
 
@@ -120,8 +126,10 @@ h = Game(ig.Graph.from_networkx(nx.karate_club_graph()))
 
 Wrapping preserves the graph's directionality and its vertex, edge and graph
 attributes, and `to_igraph()` preserves them on the way back. The detector
-requires an undirected graph, so a directed input is rejected explicitly
-rather than silently converted.
+requires an undirected graph without self-loops, so a directed input or a
+loop is rejected explicitly rather than silently converted
+(`h.simplify(multiple=False, loops=True)` removes the loops). Parallel edges
+are accepted and count as one edge whose weight is their sum.
 
 ### 2. Detect communities
 
@@ -134,7 +142,7 @@ print(partition.membership[:8])
 print(partition.sizes())         # community sizes
 
 # Overlapping: each vertex has a list of community ids (length <= max_memberships)
-cover = h.community_hedonic(max_memberships=3, initial_membership=None, seed=0)
+cover = h.community_hedonic(max_memberships=3, seed=0)
 print(cover.membership[:4])
 ```
 
@@ -148,58 +156,56 @@ for community in cover:              # overlapping clusters
     print(list(community))
 ```
 
-To start an overlapping run from a disjoint partition, pass the partition as
-the start:
-
-```python
-partition = h.community_hedonic(max_memberships=1, initial_membership=None)
-cover = h.community_hedonic(
-    max_memberships=3,
-    initial_membership=list(partition.membership),
-)
-```
-
-### Continuing from the last result
-
-Every call stores its result in `h.memberships`, one list of labels per
-vertex. When `initial_membership` is omitted, the next call starts from that
-state, so repeated calls continue from the previous equilibrium:
+### Start states
 
 | `initial_membership` | Start state |
 |---|---|
-| omitted | the stored `h.memberships`, or singletons if nothing is stored |
-| `None` | a fresh default start (singletons, or a feasible start under count limits) |
-| a list | that partition or cover |
+| `None` (default) | singletons; a random start with `max_communities`; a feasible start under count limits |
+| one label per vertex | that partition |
+| one list of labels per vertex | that cover |
 
-Because the stored state is reused, switching from an overlapping call back to
-`max_memberships=1` without `initial_membership=None` fails: the stored cover
-has vertices in several communities. You can also assign `h.memberships`
-yourself.
+Every call stores its result in `h.memberships`, one list of labels per
+vertex, and never reads it back by itself. To continue from the last
+equilibrium, pass it:
+
+```python
+h.community_hedonic(max_memberships=1, seed=0)
+cover = h.community_hedonic(max_memberships=3, initial_membership=h.memberships)
+```
+
+A partition is a valid start for a cover. The reverse works too: when a start
+gives a vertex more labels than `max_memberships`, the vertex keeps the ones
+it prefers (ranked by the payoff of each community on the start, ties to the
+larger community, then the smaller label) and the game runs to an equilibrium
+from there. A cover passed to `max_memberships=1` therefore starts from the
+partition in which every vertex keeps its preferred community.
+`_hedonic_provenance["projected_vertices"]` counts the vertices that had to
+choose.
 
 ### 3. Parameters
 
 | Parameter | Default | Role |
 |---|---|---|
+| `initial_membership` | `None` | The start; see [Start states](#start-states) |
 | `max_memberships` | `1` | `1` = partition; `>1` = cover with that per-vertex cap; `-1` = no practical per-vertex cap |
-| `resolution` | graph density | CPM γ. Smaller γ gives larger communities |
+| `resolution` | weighted density | CPM γ: total edge weight over the number of vertex pairs (the density of an unweighted graph). Smaller γ gives larger communities |
 | `allow_isolation` | `False` | Allow a vertex to open a new, empty community |
-| `initial_membership` | stored state | See [Continuing from the last result](#continuing-from-the-last-result) |
-| `max_communities` | `None` | Random disjoint start over `[0, max_communities)` when no start is given; not an output limit |
-| `edge_weights` | unweighted | Edge weights (sequence or edge-attribute name) |
+| `max_communities` | `None` | Random disjoint start over `[0, max_communities)` when no start is given; without isolation the result then has at most that many communities |
+| `edge_weights` | unweighted | Edge weights (sequence or edge-attribute name; an attribute called `weight` is used only when named) |
 | `node_weights` | unweighted | Vertex weights (sequence or vertex-attribute name) in the crowding term `γ w_u w_v` |
 | `max_total_communities` | `None` | At most `K` occupied communities, in the result and in every state visited |
 | `n_communities` | `None` | Exactly `K` occupied communities |
 | `seed` | `None` | Seed of the visiting order (see below) |
 
-Everything after `allow_isolation` is keyword-only.
+Everything after `initial_membership` is keyword-only.
 
 **Reproducible runs.** With `seed=`, the visiting order is drawn from
 `random.Random(seed)`, so the same graph, parameters, start and seed give the
 same result:
 
 ```python
-a = h.community_hedonic(initial_membership=None, seed=7)
-b = h.community_hedonic(initial_membership=None, seed=7)
+a = h.community_hedonic(seed=7)
+b = h.community_hedonic(seed=7)
 assert a.membership == b.membership
 ```
 
@@ -211,9 +217,8 @@ makes it repeatable too.
 occupied communities at most `K`, and `n_communities=K` keeps it exactly `K`:
 
 ```python
-partition = h.community_hedonic(initial_membership=None, n_communities=2)
-cover = h.community_hedonic(initial_membership=None, max_memberships=3,
-                            max_total_communities=4)
+partition = h.community_hedonic(n_communities=2)
+cover = h.community_hedonic(max_memberships=3, max_total_communities=4)
 ```
 
 Both must be positive integers, and `n_communities` must not exceed
@@ -238,8 +243,10 @@ truth = [0] * 17 + [1] * 17          # any flat partition, cover or VertexCluste
 print(h.evaluate_against(truth, method="f1"))
 ```
 
-Methods: `f1` (symmetric best match), `one_to_one_f1` (needs SciPy),
-`jaccard`, `omega`, `node_micro_f1` and `size_weighted_community_f1`. The
+Methods: `f1` (symmetric best match), `one_to_one_f1`, `jaccard`, `omega`,
+`node_micro_f1` and `size_weighted_community_f1`; the two built on a
+one-to-one matching (`one_to_one_f1`, `node_micro_f1`) need SciPy. A flat
+reference may use any labels; a cover must name vertices of the graph. The
 underlying functions are in `hedonic.metrics`.
 
 ### 5. Worked example
@@ -254,7 +261,7 @@ partition = h.community_hedonic(max_memberships=1, seed=0)
 print(f"{h.vcount()} vertices, {h.ecount()} edges")
 print(f"disjoint communities: {len(partition)}, sizes {partition.sizes()}")
 
-cover = h.community_hedonic(max_memberships=3, initial_membership=None, seed=0)
+cover = h.community_hedonic(max_memberships=3, seed=0)
 print(f"overlapping communities: {len(cover)}")
 print(f"memberships of the first five vertices: {cover.membership[:5]}")
 ```

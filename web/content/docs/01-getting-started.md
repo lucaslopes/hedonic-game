@@ -68,7 +68,6 @@ from hedonic import Game
 g = Game(ig.Graph(n=4, edges=[(0, 1), (0, 2), (0, 3), (1, 2)]))
 for gamma in (0.2, 0.5):
     part = g.community_hedonic(
-        initial_membership=None,  # start from singletons (omitting it reuses the last result)
         resolution=gamma,
         max_memberships=1,
         allow_isolation=True,  # allow "leave to found a new community", as in the explainer

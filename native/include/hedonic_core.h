@@ -48,9 +48,10 @@
  * unilateral deviation; the largest bound, divided by |W| as the quality is,
  * is the equilibrium slack: no deviation improves a vertex's exact payoff by
  * more than slack |W|. A gain the arithmetic cannot certify is at most twice
- * its own error bound, and when every computation is exact (unit weights and
- * a resolution whose products are exact, such as 0, 1/2 or 1) the slack is 0
- * and the result is an exact Nash equilibrium.
+ * its own error bound. For a partition with unit weights at a resolution
+ * whose products are exact (such as 0, 1/2 or 1) every bound is 0, so the
+ * slack is 0 and the result is an exact Nash equilibrium; a cover's rounded
+ * intensities 1/sqrt(k) keep its slack positive.
  *
  * DETERMINISM. No threads, fixed summation orders, explicit fused
  * multiply-adds that are the FMA instruction or the core's own correctly

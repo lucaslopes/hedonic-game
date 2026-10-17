@@ -64,13 +64,17 @@ call terminate; results report `equilibrium_slack`, see `native/README.md`):
 | Partition | `max_memberships=1` (default) | `VertexClustering` |
 | Overlapping cover | `max_memberships > 1` (`-1`: no practical cap) | `VertexCover` |
 
-Parameters: `initial_membership`, `max_communities` (random disjoint start
-only), `max_memberships`, `resolution` (default: density), `allow_isolation`,
-and keyword-only `edge_weights`, `seed`, `node_weights`,
-`max_total_communities`, `n_communities`. There is no iteration budget, round
-cap, refinement, aggregation or multilevel phase; do not add them. Results carry
-`_hedonic_provenance` and `_hedonic_native_quality`, and the returned state is
-stored in `Game.memberships`.
+Parameters: `initial_membership` (`None`: the default start; a start with
+more labels per vertex than the cap keeps each vertex's preferred ones), then
+keyword-only `max_communities` (random disjoint start only),
+`max_memberships`, `resolution` (default: weighted density), `allow_isolation`,
+`edge_weights`, `seed`, `node_weights`, `max_total_communities`,
+`n_communities`. The graph must be undirected without self-loops; parallel
+edges add up. There is no iteration budget, round cap, refinement, aggregation
+or multilevel phase; do not add them. Results carry `_hedonic_provenance` and
+`_hedonic_native_quality`. The returned state is stored in `Game.memberships`
+but never read back by itself: a call continues from it only when it is passed
+as `initial_membership`.
 
 Invariants:
 

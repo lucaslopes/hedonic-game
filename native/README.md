@@ -173,9 +173,10 @@ inside it, for whom staying and leaving differ by a few units of `gamma`, so
 each member that joins makes one of them leave and each that leaves lets an
 outsider join. These are effects of a mass, not of an edge, so only a rescan
 finds them. Rescanning in one fixed order advanced this exchange by a few
-moves per rescan, over hundreds of rescans of every vertex (1,100 s for the
-call); a fresh order at each rescan settles it in a few (4.3 s, as for the
-same game played by lucas-igraph's local moving, which shuffles every pass).
+moves per rescan, over hundreds of rescans of every vertex (650 to 1,100 s
+for the call, in two runs); a fresh order at each rescan settles it in a few (4.5 s, against 6 to
+8 s for the same game played by lucas-igraph's local moving, which shuffles
+every pass).
 
 A visit that does not move records an upper bound of the exact gain of every
 feasible deviation (with a count limit, every deviation the limit allows):
@@ -210,10 +211,13 @@ the same value as recording every full bound (bit for bit), for a few dozen
 extra visits on DBLP and Amazon. **Claim:** at return, no feasible unilateral deviation
 raises any vertex's exact payoff by more than the slack, and each recorded
 bound is at most twice the error bound of the comparison it came from (a
-deviation the core did not take has `d <= e`, so `d + e <= 2e`). The slack is
-exactly 0 when the arithmetic is exact (for instance unit weights at
-resolution 0, 1/2 or 1, or integer weights at dyadic resolutions): the
-result is then an exact Nash equilibrium. `hig_partition` and `hig_cover`
+deviation the core did not take has `d <= e`, so `d + e <= 2e`). For a
+partition the slack is exactly 0 when every error bound is 0, as with unit
+weights at resolution 0, 1/2 or 1: the result is then an exact Nash
+equilibrium. Other weights carry nonzero bounds even when they are integers
+(the bound does not test whether a sum was exact), and a cover's intensities
+`1/sqrt(k)` are rounded, so a cover's slack is never 0 (about `1e-16`
+normalized). `hig_partition` and `hig_cover`
 return it divided by `|W|` (normalized like the quality, rounded up, plus
 `eta`; NaN if `W = 0`), and the Python layer reports it as
 `equilibrium_slack` in `_hedonic_provenance`. On complete DBLP and Amazon
