@@ -13,12 +13,12 @@
       "igraph>=1.0",
       "numpy",
       "scipy>=1.10",
-      "pandas>=2.0",
-      "matplotlib>=3.7",
-      "networkx>=3.0",
-      "pyarrow>=14",
-      "duckdb>=1.0",
-      "tqdm>=4.60"
+      "pandas>=2.0; sys_platform != 'win32'",
+      "matplotlib>=3.7; sys_platform != 'win32'",
+      "networkx>=3.0; sys_platform != 'win32'",
+      "pyarrow>=14; sys_platform != 'win32'",
+      "duckdb>=1.0; sys_platform != 'win32'",
+      "tqdm>=4.60; sys_platform != 'win32'"
     ],
     "optionalDependencies": {
       "metrics": [
