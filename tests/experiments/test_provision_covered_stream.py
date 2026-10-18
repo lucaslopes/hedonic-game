@@ -100,6 +100,26 @@ class TestEveryCoveredLoaderStreams(unittest.TestCase):
             self.assertEqual((full.cap, full.prepared.ground_truth_identity),
                              (streamed.cap, streamed.prepared.ground_truth_identity))
 
+    def test_the_start_curve_job_is_the_same_streamed_or_not(self):
+        """The start curve builds its own options for the spectrum's loader; a streamed pair needs its cache folder."""
+        from hedonic.experiments.overlapping import start_quality as sq
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "nets"
+            write_root(root)
+            config = Path(tmp) / "config.toml"
+            config.write_text(f'[defaults]\ncache_dir = "{tmp}/cache"\n')
+            jobs = {}
+            for stream in ("0", "1"):
+                env = {"HEDONIC_SNAP_STREAM_COVERED": stream, "HEDONIC_CONFIG": str(config),
+                       "HEDONIC_NETWORKS_DIR": str(root)}
+                with patch.dict(os.environ, env):
+                    jobs[stream] = sq.load_network_job("orkut:top5000")
+            self.assertTrue(list((Path(tmp) / "cache" / "snap").glob("*covered-stream*.pkl")))  # the runner's cache
+            full, streamed = jobs["0"], jobs["1"]
+            self.assertEqual(edge_multiset(full.graph), edge_multiset(streamed.graph))
+            self.assertEqual(full.memberships, streamed.memberships)
+
     def test_the_cover_audit_graph_is_the_same_streamed_or_not(self):
         from hedonic.experiments.overlapping import cover_audit as ca
 

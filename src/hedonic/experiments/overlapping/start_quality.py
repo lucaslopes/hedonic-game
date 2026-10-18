@@ -656,8 +656,14 @@ def load_network_job(target: str) -> Any:
     A pair missing from the networks folder (``snap.networks_root()``) is downloaded first (``snap.ensure_pair``)."""
     network, cover = qs.split_target(target)
     files = snap.ensure_pair(network, cover or COVER, download=True, say=lambda line: print(f"  {line}", flush=True))
+    from hedonic.experiments.overlapping import userconfig
+
+    # A graph too large to build whole (Friendster) is read as a stream into the runner's cache (<cache_dir>/snap), the
+    # one the benchmark and its cover audit use, so the stream is read once for all of them.
+    cache = expand_path(userconfig.defaults().get("cache_dir") or "~/.cache/hedonic") / "snap"
     options = {"smoke": False, "data_root": str(files.root), "provision": False,
-               "max_download_bytes": None, "policy": "covered-induced", "max_nodes": None}
+               "max_download_bytes": None, "policy": "covered-induced", "max_nodes": None,
+               "snap_cache_dir": str(cache)}
     return gs.load_job(options, {"dataset": files.network, "cover": files.cover, "root_kind": None})
 
 
