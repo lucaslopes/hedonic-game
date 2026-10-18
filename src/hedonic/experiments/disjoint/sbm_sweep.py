@@ -914,8 +914,10 @@ def _graph_store(
     partition_seeds: Iterable[int],
     methods: dict[str, dict],
     resume: bool = False,
+    legacy: dict[str, dict[str, str]] | None = None,
+    carry: dict[str, Any] | None = None,
 ) -> str:
-    """Generate one graph, run every method/cell/restart, write its shard.
+    """Generate one graph, run the methods whose rows are missing, write its shard.
 
     Methods that use ``initial_membership`` run per (noise, partition seed)
     cell; the others (GroundTruth, Spectral) run once per graph and are
@@ -923,7 +925,13 @@ def _graph_store(
     ``is_duplicate`` marks a partition already returned in the same cell, and
     such rows store only ``partition_hash`` (the partition is in the earlier
     row of that cell with the same hash).
-    Returns ``"skipped"`` or ``"written"``.
+
+    With ``resume``, a method whose rows in the shard carry its current identity
+    (``spec["method_identities"]``) and cover the cells is kept as stored, and so are the rows of
+    methods this run does not name; only the rest is computed.  ``carry`` (``root``, ``methods``,
+    ``legacy``) takes a method's rows from another store instead, when that store's shard has them
+    for the same graph fingerprint and cells; the caller has verified them by replay.
+    Returns ``"skipped"``, ``"written"`` or ``"carried"`` (written with no detector run).
     """
     noises = [float(value) for value in noises]
     partition_seeds = [int(value) for value in partition_seeds]
@@ -934,13 +942,21 @@ def _graph_store(
         "difficulty": float(difficulty),
         "network_seed": int(network_seed),
     }
-    if resume and store_mod.shard_is_complete(
-        store_root,
-        spec_digest=spec_digest,
-        noises=noises,
-        partition_seeds=partition_seeds,
-        **keys,
-    ):
+    current = store_mod.method_digests(spec)
+    path = Path(store_root) / store_mod.shard_relative_path(**keys)
+    stored = (store_mod.shard_methods(path, legacy) if path.is_file() else None) or {}
+
+    def complete(entry: dict | None, name: str, identity: str | None) -> bool:
+        if not entry or (identity is not None and entry.get("identity") != identity):
+            return False
+        return not _uses_initial_membership(methods[name]) or store_mod.covers_cells(
+            entry, noises, partition_seeds
+        )
+
+    todo = [
+        name for name in methods if not (resume and complete(stored.get(name), name, current[name]))
+    ]
+    if not todo:
         return "skipped", None
 
     g = generate_graph(
@@ -958,8 +974,39 @@ def _graph_store(
         n_edges=g.ecount(),
     )
     keep_partitions = spec["partitions"] == "full"
-    rows: list[dict[str, Any]] = []
-    for method_name, method_info in methods.items():
+    cells_meta = {"noises": noises, "partition_seeds": partition_seeds}
+    # Rows kept as stored: methods not recomputed (current ones, and those this run does not name).
+    kept = [name for name in stored if name not in todo]
+    rows: list[dict[str, Any]] = store_mod.read_shard_rows(path, kept) if kept else []
+    methods_meta: dict[str, dict[str, Any]] = {name: stored[name] for name in kept}
+    if any(row.get("graph_sha256") != graph_sha for row in rows):
+        raise RuntimeError(f"{path}: stored rows belong to another graph (fingerprint differs)")
+    carried_any = False
+    if carry:
+        source = Path(carry["root"]) / store_mod.shard_relative_path(**keys)
+        offered = (store_mod.shard_methods(source, carry.get("legacy")) if source.is_file() else None) or {}
+        take = [name for name in todo if name in carry["methods"] and complete(offered.get(name), name, None)]
+        if take:
+            taken = store_mod.read_shard_rows(source, take)
+            if any(row.get("graph_sha256") != graph_sha for row in taken):
+                raise RuntimeError(f"{source}: carried rows belong to another graph (fingerprint differs)")
+            for row in taken:
+                if row.get("noise") is not None and (
+                    store_mod.decimal_text(row["noise"]) not in {store_mod.decimal_text(n) for n in noises}
+                    or int(row["partition_seed"]) not in set(partition_seeds)
+                ):
+                    continue  # a cell outside this grid
+                if not keep_partitions:
+                    row["partition"] = None
+                rows.append(row)
+            for name in take:
+                methods_meta[name] = dict(cells_meta, identity=current[name], carried_from=str(carry["root"]))
+            todo = [name for name in todo if name not in take]
+            carried_any = True
+    computed = bool(todo)
+    for method_name in todo:
+        method_info = methods[method_name]
+        methods_meta[method_name] = dict(cells_meta, identity=current[method_name])
         runs = _method_n_runs(method_name, spec["n_runs"])
         if _uses_initial_membership(method_info):
             cells = [(noise, seed) for noise in noises for seed in partition_seeds]
@@ -1018,20 +1065,20 @@ def _graph_store(
             n_edges=g.ecount(),
             noises=noises,
             partition_seeds=partition_seeds,
-            methods=list(methods),
         ),
         spec_digest=spec_digest,
         partitions=spec["partitions"],
+        methods_meta=methods_meta,
     )
     summary: dict[str, dict[str, float]] = {}
     for row in rows:
-        if row["status"] != "ok":
+        if row["status"] != "ok" or row["method"] not in methods:
             continue
         item = summary.setdefault(row["method"], {"n": 0, **{m: 0.0 for m in SUMMARY_METRICS}})
         item["n"] += 1
         for metric in SUMMARY_METRICS:
             item[metric] += float(row[metric])
-    return "written", summary
+    return ("carried" if carried_any and not computed else "written"), summary
 
 
 def _run_graph_store_task(kwargs: dict[str, Any]) -> tuple[dict[str, Any], str, dict | None]:
@@ -1308,10 +1355,13 @@ def preflight_grid(
     layout: str,
     output_root: Path,
     check_graphs: bool = True,
-    spec_digest: str | None = None,
+    spec: dict[str, Any] | None = None,
     max_graph_checks: int | None = None,
 ) -> dict[str, Any]:
     """Validate a selected sweep and return a no-write execution plan.
+
+    With ``spec`` (store layout) the plan reads the store: ``method_graphs`` counts, per method,
+    the graphs whose rows are current, of another build or setting, or missing.
 
     ``check_graphs`` performs the same fixed-size generation used by the real
     run, but never invokes a detector or writes a result.  This catches the
@@ -1360,6 +1410,13 @@ def preflight_grid(
     malformed: list[dict[str, Any]] = []
     complete_cells = 0
     expected_methods = set(methods)
+    # Store layout: per method, how many graphs hold rows of its current identity ("current"),
+    # rows of another build or setting ("other") or none covering the cells ("missing").
+    store_root = output_root / folder_name
+    method_state = {name: Counter() for name in methods}
+    current = store_mod.method_digests(spec) if spec is not None else {}
+    manifest = store_mod.read_manifest(store_root) if layout == "store" else None
+    legacy = store_mod.legacy_shard_digests(manifest) if manifest else {}
     for n_community in communities:
         community_size = max_n_nodes // n_community
         expected_vertices = expected_vertex_count(n_community, community_size)
@@ -1395,17 +1452,28 @@ def preflight_grid(
                                 }
                             )
                     if layout == "store":
-                        if spec_digest and store_mod.shard_is_complete(
-                            output_root / folder_name,
-                            number_of_communities=n_community,
-                            community_size=community_size,
-                            p_in=p_value,
-                            difficulty=difficulty_value,
-                            network_seed=seed,
-                            spec_digest=spec_digest,
-                            noises=noise_values,
-                            partition_seeds=partition_seed_values,
-                        ):
+                        if spec is None:
+                            continue
+                        path = store_root / store_mod.shard_relative_path(
+                            n_community, community_size, p_value, difficulty_value, seed
+                        )
+                        stored = (store_mod.shard_methods(path, legacy) if path.is_file() else None) or {}
+                        all_current = True
+                        for name, info in methods.items():
+                            entry = stored.get(name)
+                            covered = entry is not None and (
+                                not _uses_initial_membership(info)
+                                or store_mod.covers_cells(entry, noise_values, partition_seed_values)
+                            )
+                            if not covered:
+                                state = "missing"
+                            elif entry.get("identity") == current[name]:
+                                state = "current"
+                            else:
+                                state = "other"
+                            method_state[name][state] += 1
+                            all_current &= state == "current"
+                        if all_current:
                             complete_cells += cells_per_graph
                         continue
                     for noise in noise_values:
@@ -1453,6 +1521,12 @@ def preflight_grid(
         "graph_checks": graph_checks,
         "malformed_graphs": malformed,
         "output_root": str(output_root),
+        "method_graphs": {
+            name: {key: int(counter[key]) for key in ("current", "other", "missing")}
+            for name, counter in method_state.items()
+        }
+        if layout == "store" and spec is not None
+        else {},
     }
 
 
@@ -1694,21 +1768,66 @@ def _main_store(
     workers: int,
     resume: bool,
     progress=None,
+    rerun: Iterable[str] = (),
+    reuse: tuple[str, list[str], int] | None = None,
 ) -> int:
     """Run a grid into a columnar store, one shard per graph.
 
     ``progress`` (optional) receives ``{"type": "plan", ...}`` once and
     ``{"type": "graph", "label", "status", "summary"}`` after every graph;
     without it a tqdm bar is shown.
+
+    The store is checked before anything is written: a method whose stored rows have another
+    identity is refused unless named in ``rerun`` or carried.  ``reuse`` = (source store,
+    methods, sample graphs) carries those methods' rows from the source after a replay of a sample
+    of them with this build matched exactly; a mismatch refuses the run.
     """
+    rerun = list(rerun)
+    carry = None
+    carried = None
     try:
+        store_mod.check_store(store_root, spec, rerun=set(rerun) | set(reuse[1] if reuse else ()))
+        if reuse:
+            source, names, sample = reuse
+            source = Path(source).expanduser().resolve()
+            # The source may be this store itself: its rows of another build are then adopted in place.
+            print(f"[disjoint] replaying {sample} graph(s) of {source} for {', '.join(names)} ...")
+            report = store_mod.verify_carry(source, names, sample_shards=sample)
+            if report["clock_differs"]:
+                report["problems"].append(
+                    f"{source} timed its rows under another rule ({report['timing_scope']}; this build: "
+                    f"{spec['timing_scope']}), so their durations do not compare with rows timed now"
+                )
+            if spec["partitions"] == "full" and report["partitions"] != "full":
+                report["problems"].append(
+                    f"{source} keeps partition hashes only; this store keeps partitions"
+                )
+            if report["problems"]:
+                shown = "\n  ".join(report["problems"][:10])
+                raise ValueError(
+                    f"rows of {', '.join(names)} in {source} are not what this build computes:\n  {shown}"
+                )
+            print(f"[disjoint] {report['rows_checked']} replayed row(s) match; carrying them")
+            carry = {"root": str(source), "methods": names, "legacy": report["legacy"]}
+            carried = {
+                "source": str(source),
+                "methods": names,
+                "graphs_replayed": report["graphs_checked"],
+                "rows_replayed": report["rows_checked"],
+            }
         # Held until this process exits (also on kill): one writer per store.
         lock, stale = store_mod.acquire_writer_lock(store_root)
-        store_mod.prepare_store(
-            store_root, spec, grid, store_mod.invocation_environment(workers)
+        manifest = store_mod.prepare_store(
+            store_root,
+            spec,
+            grid,
+            store_mod.invocation_environment(workers),
+            rerun=rerun,
+            carried=carried,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    legacy = store_mod.legacy_shard_digests(manifest)
     if stale:
         print(f"[disjoint] removed {stale} temporary shard file(s) of an interrupted run")
     tasks = [
@@ -1724,7 +1843,11 @@ def _main_store(
             noises=grid["noises"],
             partition_seeds=grid["partition_seeds"],
             methods=methods,
-            resume=resume,
+            # Rows of another identity are never kept: a refused method never gets here, and
+            # a carried or rerun one is recomputed or replaced.
+            resume=resume or bool(carry),
+            legacy=legacy,
+            carry=carry,
         )
         for k in grid["n_communities"]
         for p_in in grid["p_in"]
@@ -1759,6 +1882,7 @@ def _main_store(
         bar.close()
     print(
         f"[disjoint] store {store_root}: {counts['written']} graph(s) written, "
+        f"{counts['carried']} carried, "
         f"{counts['skipped']} already complete (spec {spec_digest[:12]})"
     )
     print(f"[disjoint] inspect: hedonic-exp disjoint-store {store_root}")
@@ -1980,6 +2104,39 @@ def main(argv=None, progress=None):
             "planned cell count, and exit without running detectors or writing files."
         ),
     )
+    parser.add_argument(
+        "--rerun",
+        type=str,
+        default=None,
+        help=(
+            "store layout: comma list of methods whose rows in the store were computed by another "
+            "build or setting and are to be recomputed (a run refuses them otherwise)"
+        ),
+    )
+    parser.add_argument(
+        "--reuse-from",
+        dest="reuse_from",
+        type=str,
+        default=None,
+        help=(
+            "store layout: another store to take the rows of --reuse-methods from, after replaying "
+            "a sample of them with this build (they must match exactly)"
+        ),
+    )
+    parser.add_argument(
+        "--reuse-methods",
+        dest="reuse_methods",
+        type=str,
+        default=None,
+        help="store layout: comma list of methods to take from --reuse-from",
+    )
+    parser.add_argument(
+        "--reuse-sample",
+        dest="reuse_sample",
+        type=int,
+        default=5,
+        help="graphs of --reuse-from replayed before carrying (default 5; 10 rows per method each)",
+    )
     args = parser.parse_args(argv)
 
     # Resolve defaults: named preset > --smoke > small test defaults.
@@ -2058,6 +2215,32 @@ def main(argv=None, progress=None):
         generator_id=SBM_GENERATOR_ID,
     )
     spec_digest = store_mod.spec_hash(spec)
+    by_lower = {name.lower(): name for name in METHODS}
+
+    def named(text: str | None) -> list[str]:  # --rerun/--reuse-methods ignore case
+        out = [by_lower.get(part.strip().lower(), part.strip()) for part in (text or "").split(",")]
+        return list(_parse_methods([part for part in out if part]))
+
+    rerun = named(args.rerun) if args.rerun else []
+    reuse = named(args.reuse_methods) if args.reuse_methods else []
+    if bool(args.reuse_from) != bool(reuse):
+        raise SystemExit("--reuse-from and --reuse-methods go together")
+    if layout != "store" and (rerun or reuse):
+        raise SystemExit("--rerun and --reuse-from need the store layout")
+    if reuse:
+        unknown = sorted(set(reuse) - set(methods))
+        if unknown:
+            raise SystemExit(f"--reuse-methods names methods this run does not: {', '.join(unknown)}")
+    store_state = None
+    if layout == "store":
+        try:
+            store_state = store_mod.check_store(
+                output_root / folder_name, spec, rerun=set(rerun) | set(reuse)
+            )
+        except store_mod.StoreConflict as exc:
+            if not args.preflight:
+                raise SystemExit(str(exc)) from exc
+            store_state = {"refused": str(exc)}
 
     if args.preflight:
         try:
@@ -2075,7 +2258,7 @@ def main(argv=None, progress=None):
                 layout=layout,
                 output_root=output_root,
                 check_graphs=True,
-                spec_digest=spec_digest,
+                spec=spec,
                 # The seeded generator yields k × size vertices by
                 # construction; sample instead of building 50,000 graphs.
                 max_graph_checks=20 if layout == "store" else None,
@@ -2094,6 +2277,19 @@ def main(argv=None, progress=None):
             f"[disjoint] rows_per_graph={plan['rows_per_graph']} "
             f"expected_rows={plan['expected_rows']}"
         )
+        if plan.get("method_graphs"):
+            print(f"[disjoint] store {output_root / folder_name}: graphs per method")
+            for name, counts in plan["method_graphs"].items():
+                print(
+                    f"  {name:<12} current {counts['current']:>6}  "
+                    f"other build/setting {counts['other']:>6}  missing {counts['missing']:>6}"
+                )
+        if store_state and store_state.get("refused"):
+            print(f"[disjoint] a run would be refused: {store_state['refused']}")
+        elif store_state:
+            for key, label in (("changed", "recomputed (--rerun)"), ("new", "new to the store")):
+                if store_state.get(key):
+                    print(f"[disjoint] {label}: {', '.join(store_state[key])}")
         if plan["malformed_graphs"]:
             print("[disjoint] malformed graphs:")
             for item in plan["malformed_graphs"]:
@@ -2130,6 +2326,8 @@ def main(argv=None, progress=None):
             workers=args.workers,
             resume=args.resume,
             progress=progress,
+            rerun=rerun,
+            reuse=(args.reuse_from, reuse, args.reuse_sample) if reuse else None,
         )
 
     for n_community in tqdm(n_communities, desc="n_community", leave=False):

@@ -55,8 +55,8 @@ from hedonic.experiments.config import (
 # ---------------------------------------------------------------------------
 
 METHODS_MAPPING = {
-    "Leiden": "Leiden (full-fledged)",
-    "Hedonic": "Leiden (phase 1)",
+    "Leiden": "Leiden",
+    "Hedonic": "Hedonic",
     "Spectral": "Spectral Clustering",
     "OnePass": "One Pass",
     "Mirror": "Mirror",

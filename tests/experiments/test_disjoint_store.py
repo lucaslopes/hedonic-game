@@ -305,7 +305,9 @@ class TestSbmSmokeStore(unittest.TestCase):
             sbm_sweep.main(
                 ["--preset", "sbm-smoke", "--output_root", str(self.root), "--n_runs", "2"]
             )
-        self.assertIn("different run specification", str(raised.exception))
+        # Only the restarted methods change with n_runs; the store names them and the way out.
+        self.assertIn("holds rows of Hedonic, Leiden", str(raised.exception))
+        self.assertIn("--rerun hedonic,leiden", str(raised.exception))
 
     def test_store_cli(self):
         self.assertEqual(CLI.main(["disjoint-store", str(self.store)]), 0)
@@ -400,7 +402,7 @@ class TestStoreModes(unittest.TestCase):
                 n_runs=2,
                 layout="store",
                 output_root=root,
-                spec_digest=store_mod.read_manifest(root / "s")["spec_hash"],
+                spec=store_mod.read_manifest(root / "s")["spec"],
             )
             # Mirror 4 cells + Hedonic 4 cells × 2 runs + Spectral once.
             self.assertEqual(plan["rows_per_graph"], 4 + 8 + 1)
@@ -533,3 +535,153 @@ class TestStoreCLIRegistry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _other_build(**fields):
+    """runtime_identity of another build (only the named fields differ)."""
+    real = store_mod.runtime_identity
+
+    def fake():
+        return dict(real(), **fields)
+
+    return patch.object(store_mod, "runtime_identity", fake)
+
+
+class TestPerMethodIdentity(unittest.TestCase):
+    """A store keeps each method's rows while that method's identity is unchanged."""
+
+    ARGS = (
+        "--max_n_nodes", "40", "--n_communities", "2", "--seeds", "0", "1",
+        "--p_in", "0.3", "--difficulty", "0.4", "--noises", "0.1", "1.0",
+        "--partition_seeds", "2", "--n_runs", "2", "--layout", "store", "--folder_name", "s",
+    )
+
+    def _run(self, root, methods, *extra):
+        calls: list[str] = []
+        real = sbm_sweep._execute_store_run
+
+        def spy(g, gt, info, **kw):
+            calls.append(info["method_call_name"] + ":" + str(kw.get("initial_membership") is not None))
+            return real(g, gt, info, **kw)
+
+        with patch.object(sbm_sweep, "_execute_store_run", spy):
+            code = sbm_sweep.main(
+                [*self.ARGS, "--methods", methods, "--output_root", str(root), "--resume", *extra]
+            )
+        self.assertEqual(code, 0)
+        return calls
+
+    def _rows(self, store, method):
+        return [row for row in _store_rows(store) if row[0] == method]
+
+    def test_adding_a_method_computes_only_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._run(root, "Mirror,Spectral")
+            mirror = self._rows(root / "s", "Mirror")
+            calls = self._run(root, "Mirror,Spectral,Hedonic")
+            self.assertEqual({c.split(":")[0] for c in calls}, {"community_hedonic"})
+            self.assertEqual(self._rows(root / "s", "Mirror"), mirror)
+            self.assertEqual(len(self._rows(root / "s", "Hedonic")), 2 * 4 * 2)
+            # A run naming fewer methods keeps the others' rows.
+            self.assertEqual(self._run(root, "Hedonic"), [])
+            self.assertEqual(self._rows(root / "s", "Mirror"), mirror)
+            self.assertTrue(store_mod.verify_store(root / "s", sample_shards=None, sample_rows=6)["ok"])
+
+    def test_another_core_build_refuses_hedonic_only_and_reruns_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._run(root, "Mirror,Hedonic,Spectral")
+            mirror = self._rows(root / "s", "Mirror")
+            with _other_build(hedonic_core_sha256="0" * 64):
+                with self.assertRaises(SystemExit) as raised:
+                    self._run(root, "Mirror,Hedonic,Spectral")
+                self.assertIn("holds rows of Hedonic computed", str(raised.exception))
+                plan = sbm_sweep.preflight_grid(
+                    folder_name="s", max_n_nodes=40, n_communities=[2], seeds=[0, 1], p_in=[0.3],
+                    difficulty=[0.4], noises=[0.1, 1.0], partition_seeds=2,
+                    methods=sbm_sweep._parse_methods("Mirror,Hedonic,Spectral"), n_runs=2,
+                    layout="store", output_root=root, check_graphs=False,
+                    spec=store_mod.build_spec(
+                        methods=sbm_sweep._parse_methods("Mirror,Hedonic,Spectral"), n_runs=2,
+                        partitions="full", generator_id=sbm_sweep.SBM_GENERATOR_ID),
+                )
+                self.assertEqual(plan["method_graphs"]["Mirror"], {"current": 2, "other": 0, "missing": 0})
+                self.assertEqual(plan["method_graphs"]["Hedonic"], {"current": 0, "other": 2, "missing": 0})
+                calls = self._run(root, "Mirror,Hedonic,Spectral", "--rerun", "hedonic")
+                self.assertEqual({c.split(":")[0] for c in calls}, {"community_hedonic"})
+                self.assertEqual(self._run(root, "Mirror,Hedonic,Spectral"), [])
+            self.assertEqual(self._rows(root / "s", "Mirror"), mirror)
+
+    def test_reuse_from_carries_replayed_rows_into_a_new_store(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            old = root / "old"
+            self._run(old, "Mirror,Hedonic,Spectral")
+            with _other_build(igraph_c="9.9.9-other"):
+                calls = self._run(
+                    root / "new", "Mirror,Hedonic,Spectral",
+                    "--reuse-from", str(old / "s"), "--reuse-methods", "mirror,spectral",
+                )
+                self.assertIn("community_hedonic:True", calls)
+                new = root / "new" / "s"
+
+                def durations(store, method):
+                    df = store_mod.load_runs(store)
+                    df = df[df["method"] == method].sort_values(list(store_mod.KEY_COLUMNS))
+                    return list(df["duration"])
+
+                # Carried rows are the stored ones (their recorded durations), not recomputed.
+                for method in ("Mirror", "Spectral"):
+                    self.assertEqual(durations(new, method), durations(old / "s", method))
+                self.assertNotEqual(durations(new, "Hedonic"), durations(old / "s", "Hedonic"))
+                for method in ("Mirror", "Spectral", "Hedonic"):
+                    self.assertEqual(self._rows(new, method), self._rows(old / "s", method))
+                manifest = store_mod.read_manifest(new)
+                self.assertEqual(manifest["carried"][0]["methods"], ["Mirror", "Spectral"])
+                self.assertGreater(manifest["carried"][0]["rows_replayed"], 0)
+                self.assertEqual(self._run(root / "new", "Mirror,Hedonic,Spectral"), [])
+
+    def test_reuse_refuses_rows_this_build_does_not_reproduce(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            old = root / "old"
+            self._run(old, "Mirror")
+            for shard in store_mod.shard_paths(old / "s"):
+                table = pq.read_table(shard)
+                meta = table.schema.metadata
+                column = table.schema.get_field_index("adjusted_rand")
+                table = table.set_column(
+                    column, "adjusted_rand", pa.array([0.123] * table.num_rows, pa.float64())
+                ).replace_schema_metadata(meta)
+                pq.write_table(table, shard)
+            with self.assertRaises(SystemExit) as raised:
+                self._run(root / "new", "Mirror", "--reuse-from", str(old / "s"), "--reuse-methods", "mirror")
+            self.assertIn("not what this build computes", str(raised.exception))
+            self.assertFalse((root / "new" / "s" / "manifest.json").exists())
+
+    def test_store_written_before_method_identities_is_resumed(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._run(root, "Mirror,Hedonic")
+            store = root / "s"
+            manifest = store_mod.read_manifest(store)
+            manifest.pop("method_identities")
+            manifest["spec"].pop("method_identities")
+            (store / "manifest.json").write_text(json.dumps(manifest))
+            import pyarrow.parquet as pq
+
+            for shard in store_mod.shard_paths(store):  # shard metadata as the 1.x sweep wrote it
+                table = pq.read_table(shard)
+                meta = json.loads(table.schema.metadata[b"hedonic.disjoint_store"])
+                meta.pop("methods_meta")
+                meta["spec_hash"] = manifest["spec_hash"]
+                table = table.replace_schema_metadata(
+                    {b"hedonic.disjoint_store": json.dumps(meta).encode()}
+                )
+                pq.write_table(table, shard)
+            self.assertEqual(self._run(root, "Mirror,Hedonic"), [])
+            self.assertIn("legacy_shard_identities", store_mod.read_manifest(store))

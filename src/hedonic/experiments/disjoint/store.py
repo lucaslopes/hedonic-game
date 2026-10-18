@@ -257,6 +257,55 @@ def spec_hash(spec: dict[str, Any]) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# What makes a store: rows of different values here never share a folder.
+BASE_SPEC_KEYS = ("schema", "graph_generator", "partitions", "timing_scope")
+# Bump when the code that turns a detector's partition into a row (the metrics, the noisy start,
+# the duplicate rule) changes what a row holds; every method's identity carries it.
+ROW_CODE = "disjoint-row-v1"
+# The binaries each method's rows depend on. Every row is scored by igraph (rand, ARI), so every
+# method carries igraph's; Hedonic also carries the compiled core it runs in.
+_IGRAPH_FIELDS = ("igraph_c", "igraph_extension_sha256")
+METHOD_RUNTIME_FIELDS = {"Hedonic": ("hedonic_core_sha256", *_IGRAPH_FIELDS)}
+# The methods whose restarts are counted by n_runs (the others run once per cell).
+RESTARTED_METHODS = ("Hedonic", "Leiden")
+
+
+def _method_parameters(info: dict) -> dict:
+    return {
+        key: value
+        for key, value in info["parameters"].items()
+        # Filled per graph/cell at run time.
+        if key not in {"initial_membership", "groundtruth", "clusters"}
+    }
+
+
+def method_identity(name: str, info: dict, *, n_runs: int, runtime: dict) -> dict[str, Any]:
+    """Everything that decides one method's rows on a given graph and cell."""
+    fields = METHOD_RUNTIME_FIELDS.get(name, _IGRAPH_FIELDS)
+    identity = {
+        "method": name,
+        "method_call_name": info["method_call_name"],
+        "parameters": _method_parameters(info),
+        "runs": int(n_runs) if name in RESTARTED_METHODS else 1,
+        "row_code": ROW_CODE,
+        "runtime": {key: runtime.get(key) for key in fields},
+    }
+    if info.get("detector_identity"):
+        identity["detector_identity"] = info["detector_identity"]
+    return identity
+
+
+def method_digests(spec: dict[str, Any]) -> dict[str, str]:
+    """Per-method identity digests of a spec (also of a spec written before they existed)."""
+    if "method_identities" in spec:
+        return dict(spec["method_identities"])
+    runtime = spec.get("runtime") or {}
+    return {
+        name: spec_hash(method_identity(name, info, n_runs=spec.get("n_runs", 1), runtime=runtime))
+        for name, info in spec.get("methods", {}).items()
+    }
+
+
 def build_spec(
     *,
     methods: dict[str, dict],
@@ -264,29 +313,96 @@ def build_spec(
     partitions: str,
     generator_id: str,
 ) -> dict[str, Any]:
-    """Everything that changes a row's content, apart from its grid keys."""
+    """Everything that changes a row's content, apart from its grid keys.
+
+    ``method_identities`` holds one digest per method: a store keeps the rows of every method whose
+    digest is unchanged and recomputes only the others.
+    """
     if partitions not in PARTITION_MODES:
         raise ValueError(f"partitions must be one of {PARTITION_MODES}")
-    return {
+    runtime = runtime_identity()
+    spec = {
         "schema": STORE_SCHEMA,
         "graph_generator": generator_id,
         "methods": {
             name: {
                 "method_call_name": info["method_call_name"],
-                "parameters": {
-                    key: value
-                    for key, value in info["parameters"].items()
-                    # Filled per graph/cell at run time.
-                    if key not in {"initial_membership", "groundtruth", "clusters"}
-                },
+                "parameters": _method_parameters(info),
             }
             for name, info in sorted(methods.items())
         },
         "n_runs": int(n_runs),
         "partitions": partitions,
         "timing_scope": TIMING_SCOPE,
-        "runtime": runtime_identity(),
+        "runtime": runtime,
     }
+    spec["method_identities"] = {
+        name: spec_hash(method_identity(name, info, n_runs=n_runs, runtime=runtime))
+        for name, info in sorted(methods.items())
+    }
+    return spec
+
+
+def base_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    return {key: spec.get(key) for key in BASE_SPEC_KEYS}
+
+
+class StoreConflict(ValueError):
+    """The store cannot take this run as it stands (raised before anything is written)."""
+
+
+def check_store(
+    root: str | Path, spec: dict[str, Any], *, rerun: Iterable[str] = ()
+) -> dict[str, list[str]]:
+    """Read-only: can this run write into ``root``?  Returns the methods by state.
+
+    ``same`` keep their rows, ``new`` are not in the store yet, ``changed`` have rows of another
+    identity: the run refuses them (``StoreConflict``) unless they are named in ``rerun`` (their
+    rows are recomputed) or carried from a verified source by the caller.  A different schema,
+    graph generator, partition mode or timing rule is always refused.
+    """
+    manifest = read_manifest(root)
+    wanted = method_digests(spec)
+    if manifest is None:
+        return {"same": [], "new": sorted(wanted), "changed": []}
+    stored_spec = manifest.get("spec", {})
+    if base_spec(stored_spec) != base_spec(spec):
+        diff = [key for key in BASE_SPEC_KEYS if stored_spec.get(key) != spec.get(key)]
+        raise StoreConflict(
+            f"{root} holds a different kind of store ({', '.join(diff)} differ); use a new output folder"
+        )
+    stored = stored_method_digests(manifest)
+    state = {"same": [], "new": [], "changed": []}
+    for name, digest in sorted(wanted.items()):
+        if name not in stored:
+            state["new"].append(name)
+        elif stored[name] == digest:
+            state["same"].append(name)
+        else:
+            state["changed"].append(name)
+    blocked = [name for name in state["changed"] if name not in set(rerun)]
+    if blocked:
+        raise StoreConflict(
+            f"{root} holds rows of {', '.join(blocked)} computed by another build or setting. "
+            "Recompute them with --rerun " + ",".join(m.lower() for m in blocked)
+            + ", carry verified rows with --reuse-from, or use a new output folder."
+        )
+    return state
+
+
+def stored_method_digests(manifest: dict[str, Any]) -> dict[str, str]:
+    """The identity each method's rows in this store were written under."""
+    if "method_identities" in manifest:
+        return dict(manifest["method_identities"])
+    return method_digests(manifest.get("spec", {}))
+
+
+def legacy_shard_digests(manifest: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Shards written before per-method identities: spec hash -> method digests."""
+    table = dict(manifest.get("legacy_shard_identities", {}))
+    if "spec_hash" in manifest and manifest["spec_hash"] not in table and "method_identities" not in manifest:
+        table[manifest["spec_hash"]] = method_digests(manifest.get("spec", {}))
+    return table
 
 
 def _atomic_write_bytes(path: Path, payload: bytes) -> None:
@@ -317,9 +433,19 @@ def prepare_store(
     spec: dict[str, Any],
     grid: dict[str, Any],
     invocation: dict[str, Any] | None = None,
+    *,
+    rerun: Iterable[str] = (),
+    carried: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create or reopen a store; refuse to mix rows from a different spec."""
+    """Create or reopen a store (``check_store`` first, so a refusal writes nothing).
+
+    The manifest's ``method_identities`` become the union of the stored ones and this run's: a
+    method this run does not name keeps its rows and its identity.  Shards written before
+    per-method identities stay readable through ``legacy_shard_identities``.
+    """
     root = Path(root)
+    carried_methods = set((carried or {}).get("methods", ()))
+    check_store(root, spec, rerun=set(rerun) | carried_methods)
     digest = spec_hash(spec)
     manifest = read_manifest(root)
     now = _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
@@ -330,14 +456,26 @@ def prepare_store(
             "spec": spec,
             "grids": [],
             "created": now,
+            "method_identities": method_digests(spec),
         }
-    elif manifest.get("spec_hash") != digest:
-        raise ValueError(
-            f"{root} holds results of a different run specification "
-            f"(spec {manifest.get('spec_hash', '?')[:12]} ≠ {digest[:12]}: "
-            "methods, n_runs, partition mode, graph generator or runtime "
-            "versions changed).  Use a new output folder."
-        )
+    else:
+        legacy = legacy_shard_digests(manifest)
+        if legacy:
+            manifest["legacy_shard_identities"] = legacy
+        identities = stored_method_digests(manifest)
+        identities.update(method_digests(spec))
+        if manifest.get("spec_hash") != digest:
+            manifest.setdefault("spec_history", []).append(
+                {"spec_hash": manifest.get("spec_hash"), "replaced": now}
+            )
+        merged = dict(spec)
+        merged["methods"] = {**manifest.get("spec", {}).get("methods", {}), **spec["methods"]}
+        merged["method_identities"] = identities
+        manifest["spec"] = merged
+        manifest["spec_hash"] = digest
+        manifest["method_identities"] = identities
+    if carried:
+        manifest.setdefault("carried", []).append(dict(carried, at=now))
     if grid not in manifest["grids"]:
         manifest["grids"].append(grid)
     if invocation is not None:
@@ -454,8 +592,13 @@ def write_shard(
     shard_info: dict[str, Any],
     spec_digest: str,
     partitions: str,
+    methods_meta: dict[str, dict[str, Any]] | None = None,
 ) -> Path:
-    """Write one graph's rows atomically; returns the shard path."""
+    """Write one graph's rows atomically; returns the shard path.
+
+    ``methods_meta`` records, per method, the identity its rows were computed under and the cells
+    they cover, so a later run keeps them and recomputes only the methods that changed.
+    """
     pa, pq = _require_pyarrow()
     root = Path(root)
     path = root / shard_relative_path(
@@ -477,6 +620,9 @@ def write_shard(
                 [row.get(field.name) for row in rows], type=field.type
             )
     metadata = dict(shard_info, spec_hash=spec_digest, n_rows=len(rows), complete=True)
+    if methods_meta is not None:
+        metadata["methods_meta"] = methods_meta
+        metadata["methods"] = sorted(methods_meta)
     table = pa.table(columns, schema=schema).replace_schema_metadata(
         {_SHARD_METADATA_KEY: json.dumps(metadata, sort_keys=True).encode("utf-8")}
     )
@@ -543,6 +689,41 @@ def shard_is_complete(
     return wanted_noises <= {decimal_text(n) for n in meta.get("noises", [])} and (
         wanted_seeds <= {int(s) for s in meta.get("partition_seeds", [])}
     )
+
+
+def shard_methods(
+    path: str | Path, legacy: dict[str, dict[str, str]] | None = None
+) -> dict[str, dict[str, Any]] | None:
+    """Per method in a shard: the identity of its rows and the cells they cover.
+
+    A shard written before per-method metadata names one spec hash for all its methods; ``legacy``
+    (``legacy_shard_digests`` of its manifest) maps that hash to method digests.  An unknown hash
+    gives digest ``None`` (the rows are kept but never count as current).
+    """
+    meta = shard_metadata(path)
+    if not meta or not meta.get("complete"):
+        return None
+    if "methods_meta" in meta:
+        return meta["methods_meta"]
+    digests = (legacy or {}).get(meta.get("spec_hash"), {})
+    cells = {"noises": meta.get("noises", []), "partition_seeds": meta.get("partition_seeds", [])}
+    return {name: dict(cells, identity=digests.get(name)) for name in meta.get("methods", [])}
+
+
+def covers_cells(entry: dict[str, Any], noises: Iterable[float], partition_seeds: Iterable[int]) -> bool:
+    return {decimal_text(n) for n in noises} <= {decimal_text(n) for n in entry.get("noises", [])} and (
+        {int(s) for s in partition_seeds} <= {int(s) for s in entry.get("partition_seeds", [])}
+    )
+
+
+def read_shard_rows(path: str | Path, methods: Iterable[str]) -> list[dict[str, Any]]:
+    """The stored rows of the named methods (every column, partitions included)."""
+    _, pq = _require_pyarrow()
+    wanted = set(methods)
+    if not wanted:
+        return []
+    table = pq.read_table(str(path))
+    return [row for row in table.to_pylist() if row["method"] in wanted]
 
 
 def shard_paths(root: str | Path) -> list[Path]:
@@ -793,43 +974,26 @@ def progress(root: str | Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def verify_store(
-    root: str | Path,
+def _replay_shards(
+    paths: list[Path],
+    spec: dict[str, Any],
     *,
-    sample_shards: int | None = 5,
-    sample_rows: int = 10,
-    seed: int = 0,
-) -> dict[str, Any]:
-    """Regenerate sampled graphs and replay sampled rows from their seeds.
-
-    Checks shard metadata against the manifest, graph fingerprints against
-    freshly generated graphs, and, for a sample of rows per shard, that the
-    replayed detector returns the stored partition (hash) and metrics.
-    ``sample_shards=None`` checks every shard.
-    """
+    methods: Iterable[str] | None,
+    sample_rows: int,
+    rng: random.Random,
+) -> tuple[int, int, list[str]]:
+    """Regenerate each shard's graph and replay a sample of its rows (of ``methods``, if given)."""
     import pyarrow.parquet as pq
 
     from hedonic.experiments.disjoint import sbm_sweep
 
-    root = Path(root)
-    manifest = read_manifest(root)
-    if manifest is None:
-        raise FileNotFoundError(f"{root / MANIFEST_NAME} not found")
-    spec = manifest["spec"]
-    problems: list[str] = []
-    if spec.get("runtime") != runtime_identity():
-        problems.append(
-            f"runtime differs from the store: stored {spec.get('runtime')}, "
-            f"current {runtime_identity()} (replay needs the same build)"
-        )
-    paths = shard_paths(root)
-    rng = random.Random(seed)
-    chosen = paths if sample_shards is None else rng.sample(paths, min(sample_shards, len(paths)))
+    wanted = None if methods is None else set(methods)
     graphs_checked = rows_checked = 0
-    for path in chosen:
+    problems: list[str] = []
+    for path in paths:
         meta = shard_metadata(path)
-        if not meta or meta.get("spec_hash") != manifest["spec_hash"]:
-            problems.append(f"{path}: missing or foreign shard metadata")
+        if not meta or not meta.get("complete"):
+            problems.append(f"{path}: missing or incomplete shard metadata")
             continue
         table = pq.read_table(path)
         if table.num_rows != meta["n_rows"]:
@@ -845,14 +1009,18 @@ def verify_store(
         if sbm_sweep.graph_fingerprint(g) != meta["graph_sha256"]:
             problems.append(f"{path}: regenerated graph fingerprint differs")
             continue
-        rows = table.to_pylist()
+        rows = [row for row in table.to_pylist() if wanted is None or row["method"] in wanted]
         for row in rng.sample(rows, min(sample_rows, len(rows))):
-            replay = sbm_sweep.replay_store_row(g, row, spec)
-            rows_checked += 1
             label = (
                 f"{path.name} {row['method']} noise={row['noise']} "
                 f"partition_seed={row['partition_seed']} run={row['run']}"
             )
+            try:
+                replay = sbm_sweep.replay_store_row(g, row, spec)
+            except ValueError as exc:
+                problems.append(f"{label}: {exc}")
+                continue
+            rows_checked += 1
             if replay["partition_hash"] != row["partition_hash"]:
                 problems.append(f"{label}: replayed partition differs")
             for metric in REPLAYED_METRICS:
@@ -866,6 +1034,64 @@ def verify_store(
                 replay["partition"]
             ):
                 problems.append(f"{label}: stored partition column differs")
+    return graphs_checked, rows_checked, problems
+
+
+def current_method_digests(spec: dict[str, Any]) -> dict[str, str]:
+    """The identity each of the spec's methods would have if computed now, by this build."""
+    from hedonic.experiments.disjoint import sbm_sweep
+
+    runtime = runtime_identity()
+    return {
+        name: spec_hash(
+            method_identity(
+                name,
+                sbm_sweep.METHODS.get(name, info),
+                n_runs=spec.get("n_runs", 1),
+                runtime=runtime,
+            )
+        )
+        for name, info in spec.get("methods", {}).items()
+    }
+
+
+def verify_store(
+    root: str | Path,
+    *,
+    sample_shards: int | None = 5,
+    sample_rows: int = 10,
+    seed: int = 0,
+    methods: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Regenerate sampled graphs and replay sampled rows from their seeds.
+
+    Checks shard metadata, graph fingerprints against freshly generated graphs, and, for a sample
+    of rows per shard, that the replayed detector returns the stored partition (hash) and metrics.
+    ``sample_shards=None`` checks every shard; ``methods`` limits the replay to those methods.
+    A method whose rows were computed by another build is reported (its replay can differ).
+    """
+    root = Path(root)
+    manifest = read_manifest(root)
+    if manifest is None:
+        raise FileNotFoundError(f"{root / MANIFEST_NAME} not found")
+    spec = manifest["spec"]
+    problems: list[str] = []
+    stored = stored_method_digests(manifest)
+    now = current_method_digests(spec)
+    names = sorted(stored if methods is None else set(methods))
+    other_build = [name for name in names if stored.get(name) != now.get(name)]
+    if other_build:
+        problems.append(
+            f"rows of {', '.join(other_build)} were computed by another build or setting "
+            "(replay needs the same one)"
+        )
+    paths = shard_paths(root)
+    rng = random.Random(seed)
+    chosen = paths if sample_shards is None else rng.sample(paths, min(sample_shards, len(paths)))
+    graphs_checked, rows_checked, found = _replay_shards(
+        chosen, spec, methods=methods, sample_rows=sample_rows, rng=rng
+    )
+    problems.extend(found)
     return {
         "store": str(root),
         "shards_total": len(paths),
@@ -873,6 +1099,61 @@ def verify_store(
         "rows_checked": rows_checked,
         "problems": problems,
         "ok": not problems,
+    }
+
+
+def verify_carry(
+    source: str | Path,
+    methods: Iterable[str],
+    *,
+    sample_shards: int = 5,
+    sample_rows: int = 10,
+    seed: int = 0,
+) -> dict[str, Any]:
+    """May ``methods``' rows in ``source`` be carried into a store written by this build?
+
+    Replays a sample of their rows with the current code: every replay must return the stored
+    partition and metrics exactly.  The source's rows may come from another build (that is the
+    point); the replay shows this build computes the same rows.
+    """
+    source = Path(source)
+    manifest = read_manifest(source)
+    if manifest is None:
+        raise FileNotFoundError(f"{source / MANIFEST_NAME} not found")
+    methods = sorted(set(methods))
+    spec = manifest["spec"]
+    problems = [
+        f"{name}: not in {source}" for name in methods if name not in spec.get("methods", {})
+    ]
+    paths = shard_paths(source)
+    rng = random.Random(seed)
+    chosen = rng.sample(paths, min(sample_shards, len(paths)))
+    per_method = max(1, sample_rows)
+    graphs_checked = rows_checked = 0
+    for name in methods:
+        if name not in spec.get("methods", {}):
+            continue
+        graphs, rows, found = _replay_shards(
+            chosen, spec, methods=[name], sample_rows=per_method, rng=rng
+        )
+        graphs_checked = max(graphs_checked, graphs)
+        rows_checked += rows
+        problems.extend(found)
+        if rows == 0:
+            problems.append(f"{name}: no row of it was replayed")
+    return {
+        "source": str(source),
+        "methods": methods,
+        "partitions": spec.get("partitions"),
+        "shards_total": len(paths),
+        "graphs_checked": graphs_checked,
+        "rows_checked": rows_checked,
+        "problems": problems,
+        "ok": not problems,
+        "legacy": legacy_shard_digests(manifest),
+        # Rows of another timing rule never share a store: their durations would not compare.
+        "timing_scope": spec.get("timing_scope"),
+        "clock_differs": spec.get("timing_scope") != TIMING_SCOPE,
     }
 
 

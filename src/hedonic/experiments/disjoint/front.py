@@ -43,7 +43,7 @@ METHOD_ALIASES = {
 }
 METHOD_LABELS = {
     "GroundTruth": "Ground truth", "Mirror": "Mirror", "OnePass": "One Pass", "Spectral": "Spectral",
-    "Leiden": "Leiden (full)", "Hedonic": "Leiden (phase 1)",
+    "Leiden": "Leiden", "Hedonic": "Hedonic",
 }
 
 # Cost model (M1 Max, 8 workers, measured on the paper grid): seconds per
@@ -126,12 +126,20 @@ def build_parser(add_help: bool = True) -> argparse.ArgumentParser:
     g.add_argument("--partition-seeds", dest="partition_seeds", type=int, help="noisy starts per noise level")
     m = p.add_argument_group("methods")
     m.add_argument("--methods", help="comma list or all: groundtruth, mirror, onepass, spectral, leiden, hedonic")
-    m.add_argument("--restarts", type=int, help="seeded restarts of Leiden and Leiden phase 1 per cell")
+    m.add_argument("--restarts", type=int, help="seeded restarts of Leiden and Hedonic per cell")
     r = p.add_argument_group("run")
     r.add_argument("--workers", type=int, help="graphs in parallel (default: CPUs − 2)")
     r.add_argument("--partitions", choices=("hash", "full"), help="store each partition or only its hash")
     r.add_argument("--output-dir", dest="output_dir", help="store directory (default: <disjoint_output_root>/<name>)")
-    r.add_argument("--dry-run", action="store_true", help="print the plan and estimates; run nothing")
+    r.add_argument("--dry-run", action="store_true",
+                   help="print the plan, estimates and what the store already holds per method; run nothing")
+    s = p.add_argument_group("existing results")
+    s.add_argument("--rerun", help="methods whose stored rows come from another build or setting: recompute them")
+    s.add_argument("--reuse-from", dest="reuse_from",
+                   help="a store (this one or another) whose rows of --reuse-methods are kept after a replay check")
+    s.add_argument("--reuse-methods", dest="reuse_methods", help="methods to take from --reuse-from (comma list)")
+    s.add_argument("--reuse-sample", dest="reuse_sample", type=int,
+                   help="graphs replayed before reusing (default 5)")
     r.add_argument("--json", action="store_true", help="wait for the run and print its statistics as JSON")
     return p
 
@@ -157,7 +165,17 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         "restarts": int(args.restarts if args.restarts is not None else base["n_runs"]),
         "partitions": args.partitions or base["partitions"],
         "workers": int(args.workers if args.workers is not None else default_workers()),
+        "rerun": parse_methods(args.rerun) if getattr(args, "rerun", None) else [],
+        "reuse_from": (str(expand_path(args.reuse_from).resolve())
+                       if getattr(args, "reuse_from", None) else None),
+        "reuse_methods": parse_methods(args.reuse_methods) if getattr(args, "reuse_methods", None) else [],
+        "reuse_sample": int(getattr(args, "reuse_sample", None) or 5),
     }
+    if bool(settings["reuse_from"]) != bool(settings["reuse_methods"]):
+        raise ValueError("--reuse-from and --reuse-methods go together")
+    stray = [m for m in settings["rerun"] + settings["reuse_methods"] if m not in settings["methods"]]
+    if stray:
+        raise ValueError(f"--rerun/--reuse-methods name methods the run does not: {', '.join(stray)}")
     if settings["workers"] < 1:
         raise ValueError("--workers must be at least 1")
     if settings["partition_seeds"] < 1 or settings["restarts"] < 1:
@@ -196,6 +214,9 @@ def sweep_argv(settings: dict[str, Any], store_root: Path) -> list[str]:
         "--output_root", str(store_root.parent),
         "--folder_name", store_root.name,
         "--resume",
+        *(["--rerun", ",".join(settings["rerun"])] if settings.get("rerun") else []),
+        *(["--reuse-from", settings["reuse_from"], "--reuse-methods", ",".join(settings["reuse_methods"]),
+           "--reuse-sample", str(settings.get("reuse_sample", 5))] if settings.get("reuse_from") else []),
     ]
 
 
@@ -214,7 +235,13 @@ def front_argv(settings: dict[str, Any]) -> list[str]:
             "--noises", floats(settings["noises"]), "--partition-seeds", str(settings["partition_seeds"]),
             "--methods", ",".join(m.lower() for m in settings["methods"]),
             "--restarts", str(settings["restarts"]), "--partitions", settings["partitions"],
-            "--workers", str(settings["workers"])]
+            "--workers", str(settings["workers"]),
+            *(["--rerun", ",".join(m.lower() for m in settings["rerun"])] if settings.get("rerun") else []),
+            *(["--reuse-from", settings["reuse_from"],
+               "--reuse-methods", ",".join(m.lower() for m in settings["reuse_methods"])]
+              if settings.get("reuse_from") else []),
+            *(["--reuse-sample", str(settings["reuse_sample"])]
+              if settings.get("reuse_from") and settings.get("reuse_sample", 5) != 5 else [])]
 
 
 def plan(settings: dict[str, Any]) -> dict[str, Any]:
@@ -234,6 +261,106 @@ def plan(settings: dict[str, Any]) -> dict[str, Any]:
                                           if settings["partitions"] == "full" else 0.0)
     return {"graphs": graphs, "rows_per_graph": rows_per_graph, "rows": rows,
             "logical_cells_per_graph": cells, "seconds": seconds, "bytes": rows * per_row_bytes}
+
+
+def store_status(settings: dict[str, Any], output: str, *, replay: bool = False) -> dict[str, Any]:
+    """What the store at ``output`` (and a ``--reuse-from`` source) already holds, per method.
+
+    Read-only.  ``refused`` is the reason a run would stop before writing anything, ``state`` the
+    store-level verdict per method (same / new / changed), ``graphs`` per method the graphs whose
+    rows are current, of another build or setting, or missing; ``source`` the same counts in the
+    reuse source (rows that would be carried after the replay check).
+    """
+    from hedonic.experiments.disjoint import store as store_mod
+
+    sweep = _sweep()
+    methods = sweep._parse_methods(settings["methods"])
+    spec = store_mod.build_spec(methods=methods, n_runs=settings["restarts"],
+                                partitions=settings["partitions"], generator_id=sweep.SBM_GENERATOR_ID)
+    out: dict[str, Any] = {"refused": None, "state": None, "graphs": {}, "source": {}, "replay": None}
+    try:
+        out["state"] = store_mod.check_store(
+            output, spec, rerun=set(settings.get("rerun", ())) | set(settings.get("reuse_methods", ())))
+    except store_mod.StoreConflict as exc:
+        out["refused"] = str(exc)
+
+    def count(root: str) -> dict[str, dict[str, int]]:
+        if store_mod.read_manifest(root) is None:
+            return {}
+        root = Path(root)
+        return sweep.preflight_grid(
+            folder_name=root.name, max_n_nodes=settings["nodes"], n_communities=settings["communities"],
+            seeds=settings["seeds"], p_in=settings["p_in"], difficulty=settings["difficulty"],
+            noises=settings["noises"], partition_seeds=settings["partition_seeds"], methods=methods,
+            n_runs=settings["restarts"], layout="store", output_root=root.parent, check_graphs=False,
+            spec=spec)["method_graphs"]
+
+    out["graphs"] = count(output)
+    if settings.get("reuse_from"):
+        if Path(settings["reuse_from"]).resolve() != Path(output).resolve():
+            out["source"] = count(settings["reuse_from"])
+        if replay and store_mod.read_manifest(settings["reuse_from"]) is not None:
+            # The check the run makes before carrying, on a small sample (seconds).
+            out["replay"] = store_mod.verify_carry(
+                settings["reuse_from"], settings["reuse_methods"],
+                sample_shards=min(2, settings.get("reuse_sample", 5)), sample_rows=5)
+    return out
+
+
+def render_store_status(settings: dict[str, Any], output: str, status: dict[str, Any] | None = None) -> str:
+    from hedonic.experiments.disjoint import store as store_mod
+    from hedonic.experiments.overlapping.tui import style
+
+    status = status or store_status(settings, output)
+    graphs = plan(settings)["graphs"]
+    lines = [style("  existing results", "bold")]
+    if not status["graphs"] and not status["refused"]:
+        lines.append(f"  store       {output} is empty: every method runs")
+    for title, table in (("store", status["graphs"]), ("reuse from", status["source"])):
+        if not table:
+            continue
+        where = output if title == "store" else settings["reuse_from"]
+        lines.append(f"  {title:<11} {where}")
+        for name, c in table.items():
+            if title == "reuse from" and name not in settings["reuse_methods"]:
+                continue
+            what = []
+            if c["current"]:
+                what.append(f"{c['current']:,} current")
+            if c["other"]:
+                what.append(f"{c['other']:,} from another build or setting")
+            if c["missing"]:
+                what.append(f"{c['missing']:,} missing")
+            lines.append(f"    {METHOD_LABELS.get(name, name):<13} {' · '.join(what) or '-'}  (of {graphs:,} graphs)")
+    replay = status.get("replay")
+    if replay:
+        clock = [p for p in replay["problems"] if "timed" in p]
+        found = [p for p in replay["problems"] if p not in clock]
+        verdict = (style(f"{replay['rows_checked']} replayed rows match", "green") if not found else
+                   style(f"{len(found)} of {replay['rows_checked']} replayed rows differ", "red"))
+        lines.append(f"  replay      {verdict} (sample of {replay['graphs_checked']} graphs, "
+                     f"{', '.join(METHOD_LABELS[m] for m in replay['methods'])})")
+        for problem in found[:3]:
+            lines.append(style(f"              {problem}", "dim"))
+        if replay["clock_differs"]:
+            lines.append(style(f"  clock       the source timed its rows under {replay['timing_scope'] or 'the old rule'}, "
+                               f"this build under {store_mod.TIMING_SCOPE}: a run will not carry them", "yellow"))
+    if status["refused"]:
+        lines.append(style(f"  refused     {status['refused']}", "red"))
+    else:
+        todo = [m for m in settings["methods"]
+                if not status["graphs"] or status["graphs"].get(m, {}).get("current", 0) < graphs]
+        blocked = bool(replay and (replay["problems"] or replay["clock_differs"]))
+        carried = [] if blocked else [m for m in todo if m in settings.get("reuse_methods", [])]
+        runs = [m for m in todo if m not in carried]
+        if carried:
+            lines.append(f"  reuse       {', '.join(METHOD_LABELS[m] for m in carried)} "
+                         f"(after replaying {settings.get('reuse_sample', 5)} graphs with this build)")
+        elif blocked and replay and not [p for p in replay["problems"] if "timed" not in p]:
+            lines.append(style("  reuse       none: same results, other clock; recompute them (cheap) and keep the "
+                               "replay as the evidence that they did not change", "dim"))
+        lines.append(f"  to compute  {', '.join(METHOD_LABELS[m] for m in runs) or 'nothing (the store is complete)'}")
+    return "\n".join(lines)
 
 
 def describe(settings: dict[str, Any]) -> str:
@@ -368,8 +495,15 @@ def front_main(argv: list[str] | None = None) -> int:
         print(style("\n  cancelled", "yellow"))
         return 130
     print(render_plan(settings, output))
+    status = store_status(settings, output, replay=args.dry_run)
+    if args.dry_run or status["graphs"] or status["source"] or status["refused"]:
+        print(render_store_status(settings, output, status))
     if args.dry_run:
         return 0
+    if status["refused"]:
+        # Refused before anything is written or registered.
+        print(f"hedonic run disjoint: error: {status['refused']}", file=sys.stderr)
+        return 2
     if args.foreground:
         entry = {"name": name, "kind": "disjoint", "settings": settings, "output_dir": output,
                  "argv": sweep_argv(settings, Path(output)), "command": "hedonic run disjoint " + " ".join(front_argv(settings))}

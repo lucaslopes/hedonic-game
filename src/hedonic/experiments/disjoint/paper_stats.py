@@ -204,7 +204,7 @@ def compute_stats(cells: pd.DataFrame) -> dict[str, Any]:
     }
     durations = stats["tracking"]["mean_duration_s"]
     if durations.get("Hedonic") and durations.get("Leiden"):
-        stats["tracking"]["leiden_over_phase1_duration"] = _r(
+        stats["tracking"]["leiden_over_hedonic_duration"] = _r(
             durations["Leiden"] / durations["Hedonic"], 2
         )
     stats["_tables"] = {
@@ -428,8 +428,8 @@ def _summary_md(stats: dict[str, Any]) -> str:
         ]
     tr = stats["tracking"]
     out += [
-        (f"- Mean runtime (s): {tr['mean_duration_s']}; full/Phase-1 ratio "
-        f"{tr.get('leiden_over_phase1_duration')}."),
+        (f"- Mean runtime (s): {tr['mean_duration_s']}; Leiden/Hedonic ratio "
+        f"{tr.get('leiden_over_hedonic_duration')}."),
         f"- Mean robustness: {tr['mean_robustness']}",
         f"- Mean ARI: {tr['mean_ari']}",
     ]
