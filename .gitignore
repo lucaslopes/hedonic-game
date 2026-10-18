@@ -4,10 +4,23 @@ __pycache__/
 build/
 dist/
 wheels/
+wheelhouse/
 *.egg-info
+
+# The compiled C core (setup.py build_ext --inplace) and the C test builds
+*.so
+*.pyd
+native/build/
 
 # Virtual environments
 .venv
 
 # macOS files
 .DS_Store
+
+# Web explainer (web/): dependencies and build output are reproducible from
+# package-lock.json; web/dist/ is also covered by the dist/ rule above.
+node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo

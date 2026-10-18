@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hedonic native core"
+  short_description: "Develop, verify and release hedonic's own C core"
+  default_prompt: "Use $hedonic-native-core to change or measure the C core in native/ (hedonic._core) in an isolated worktree with an arm64 venv: rebuild it, check the build matches the checkout with scripts/fresh.py, run the C and pinned Python tests, compare the scripts/bitcheck.py fingerprint with the base build, and keep the partition engines byte-identical across the hedonic 1 and hedonic 2 lines, without pushing, tagging or publishing anything."

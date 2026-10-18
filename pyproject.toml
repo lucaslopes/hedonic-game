@@ -1,14 +1,69 @@
 [project]
 name = "hedonic"
-version = "0.0.5"
-description = "A Python library for hedonic games"
+version = "1.0.0"
+description = "Community detection with hedonic games: best-response local moving to a partition at equilibrium, in a purpose-built C core"
 readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [
     { name = "Lucas Lopes Felipe" }
 ]
 requires-python = ">=3.12"
-dependencies = ["igraph @ git+https://github.com/igraph/python-igraph.git@0.11.9"]
+# `pip install hedonic` is the library alone (igraph and numpy), for use from other code. The experiment command
+# line (`hedonic`, `hedonic-exp`) and the experiments of the disjoint paper need the `cli` extra:
+# `pip install "hedonic[cli]"`. The command line needs macOS or Linux; Windows gets the library.
+dependencies = [
+    "igraph>=1.0",
+    "numpy",
+]
+keywords = ["community detection", "hedonic games", "graphs", "networks"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+[project.optional-dependencies]
+# One-to-one matching in hedonic.metrics (Game.evaluate_against "one_to_one_f1").
+metrics = ["scipy>=1.10"]
+# The experiment command line and its runs (tests/experiments need it too). The CLI refuses to start without it.
+cli = [
+    "scipy>=1.10",
+    "pandas>=2.0; sys_platform != 'win32'",
+    "matplotlib>=3.7; sys_platform != 'win32'",
+    "pyarrow>=14; sys_platform != 'win32'",
+    "duckdb>=1.0; sys_platform != 'win32'",
+    "tqdm>=4.60; sys_platform != 'win32'",
+    "networkx>=3.0; sys_platform != 'win32'",  # LFR graphs in `hedonic detect`
+]
+# The igraph-fork releases' name of the same extra.
+experiments = ["hedonic[cli]"]
+
+[project.scripts]
+hedonic = "hedonic.experiments.CLI:hedonic_main"
+hedonic-exp = "hedonic.experiments.CLI:main"
+
+[project.urls]
+Homepage = "https://github.com/lucaslopes/hedonic"
+Documentation = "https://lucaslopes.github.io/hedonic/"
 
 [build-system]
-requires = ["uv_build>=0.8.11,<0.9.0"]
-build-backend = "uv_build"
+# setuptools: the package compiles its C core (native/, see setup.py) into the
+# extension hedonic._core.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hedonic = ["py.typed"]
+# Shipped run configs (`hedonic run queue disjoint`): hedonic.experiments.resources finds them.
+"hedonic.experiments" = ["configs/*.toml"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["__pycache__/*", "*.pyc", ".venv/*"]

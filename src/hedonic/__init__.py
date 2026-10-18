@@ -1,33 +1,21 @@
-from igraph import Graph  # type: ignore
+from .Game import Game
 
 
-class Game(Graph):
-    """A hedonic game represented as an `igraph.Graph`."""
-
-    def __init__(self, graph: Graph | None = None, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        if isinstance(graph, Graph):
-            self.add_vertices(graph.vcount())
-            self.add_edges(graph.get_edgelist())
-            for attr in graph.vertex_attributes():
-                self.vs[attr] = graph.vs[attr]
-            for attr in graph.edge_attributes():
-                self.es[attr] = graph.es[attr]
-            for attr in graph.attributes():
-                self[attr] = graph[attr]
-
-    def to_igraph(self) -> Graph:
-        """Convert the `Game` object to a standalone `igraph.Graph` instance."""
-        g = Graph()
-        g.add_vertices(self.vcount())
-        g.add_edges(self.get_edgelist())
-        for attr in self.vertex_attributes():
-            g.vs[attr] = self.vs[attr]
-        for attr in self.edge_attributes():
-            g.es[attr] = self.es[attr]
-        for attr in self.attributes():
-            g[attr] = self[attr]
-        return g
+__all__ = ["Game", "metrics"]
 
 
-__all__ = ["Game"]
+def __getattr__(name):
+    # ``hedonic.metrics`` is importable as an attribute without importing it
+    # (and its optional SciPy path) with the package.
+    if name == "metrics":
+        import importlib
+
+        return importlib.import_module(f".{name}", __name__)
+    if name == "__version__":  # the installed distribution's version (a tag build sets it, e.g. 2.0.0.dev7)
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version("hedonic")
+        except PackageNotFoundError:  # a bare source tree on sys.path
+            return "unknown"
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
