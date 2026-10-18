@@ -68,7 +68,7 @@
 extern "C" {
 #endif
 
-#define HIG_VERSION_STRING "2.0.0"
+#define HIG_VERSION_STRING "1.0.0"
 
 typedef int64_t hig_int;
 
