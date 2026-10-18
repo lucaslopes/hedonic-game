@@ -539,14 +539,14 @@ examples:
   # Isolated local checks (no data)
   hedonic-exp smoke
   hedonic-exp overlapping-small
-  hedonic-exp overlapping-controlled --smoke --output ~/hedonic-runs/controlled/smoke.json
-  hedonic-exp overlapping-tradeoffs --smoke --output-dir ~/hedonic-runs/tradeoffs/smoke
-  hedonic-exp participation-budget --output ~/hedonic-runs/participation_budget.pdf
+  hedonic-exp overlapping-controlled --smoke --output ~/Databases/Hedonic/Overlap/controlled/smoke.json
+  hedonic-exp overlapping-tradeoffs --smoke --output-dir ~/Databases/Hedonic/Overlap/tradeoffs/smoke
+  hedonic-exp participation-budget --output ~/Databases/Hedonic/Overlap/participation_budget.pdf
 
   # Disjoint SBM benchmark (seeded graphs, Parquet store); durable form: hedonic run disjoint
-  hedonic-exp reproduce-disjoint --preset sbm-smoke --output_root ~/hedonic-runs/disjoint
-  hedonic-exp disjoint-store ~/hedonic-runs/disjoint/sbm-smoke --verify --all
-  hedonic-exp disjoint-stats --data ~/hedonic-runs/disjoint/sbm-smoke
+  hedonic-exp reproduce-disjoint --preset sbm-smoke --output_root ~/Databases/Hedonic/Disjoint
+  hedonic-exp disjoint-store ~/Databases/Hedonic/Disjoint/sbm-smoke --verify --all
+  hedonic-exp disjoint-stats --data ~/Databases/Hedonic/Disjoint/sbm-smoke
 
   # Overlapping SNAP studies (data: hedonic setup --pairs dblp:top5000,...)
   hedonic-exp start-quality --config start-quality-hoc-local --dry-run
@@ -555,7 +555,7 @@ examples:
   hedonic-exp baseline-calibrate --smoke --methods clique_percolation,codeseg --max-evals 6
   hedonic-exp overlapping-gt-spectrum --discover
   hedonic-exp overlapping-codeseg --datasets dblp --max-nodes 5000 --methods hedonic_local \\
-      --output-dir ~/hedonic-runs/codeseg/dblp-local
+      --output-dir ~/Databases/Hedonic/Overlap/codeseg/dblp-local
   hedonic-exp codeseg-doctor --methods all
 """
 
@@ -573,10 +573,11 @@ def _print_command_list() -> None:
     print("  -V/--version  Package version")
     print()
     print("Data paths (environment overrides; see also ~/.config/hedonic/config.toml):")
-    print("  HEDONIC_DATA_DIR       data root (default ~/hedonic-data)")
+    print("  HEDONIC_DATA_DIR       data root (default ~/Databases/Hedonic)")
     print("  HEDONIC_NETWORKS_DIR   SNAP networks (default <data root>/networks)")
     print("  HEDONIC_SYNTHETIC_DIR  disjoint synthetic results")
-    print("  HEDONIC_OUTPUT_DIR     run outputs (default ~/hedonic-runs)")
+    print("  HEDONIC_OUTPUT_DIR     run outputs (default <data root>/Overlap)")
+    print("  HEDONIC_DISJOINT_OUTPUT_DIR  disjoint runs (default <data root>/Disjoint)")
     print("  HEDONIC_RUNS_DIR       registry of durable runs (default ~/.cache/hedonic/runs)")
 
 

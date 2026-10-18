@@ -7,7 +7,7 @@
 #   hedonic run stop paper-queue            # stop; run the same `hedonic run queue paper` again to continue
 #
 # {root} is the folder every run writes into: `--root DIR`, by default <output_dir>/paper-queue with the output_dir of
-# `hedonic config` (else ~/hedonic-runs). Running the queue again skips what its files on disk show finished and
+# `hedonic config` (else ~/Databases/Hedonic/Overlap). Running the queue again skips what its files on disk show finished and
 # resumes the rest. The two calibrations come first because the later runs read their results (--tuned); then the
 # synthetic study; then leveraging-gt, gt-robustness and the benchmark go pair by pair, in the order of `pairs`.
 

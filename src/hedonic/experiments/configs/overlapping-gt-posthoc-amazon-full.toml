@@ -1,7 +1,7 @@
 # Exact post-hoc stability of the SNAP ground-truth cover on the complete Amazon graph.
 # Start with:  hedonic run posthoc --config amazon-full
 # Progress, ETA and status:  hedonic run status | attach | list
-# Output: --output-dir, else <output_dir from the user config, or ~/hedonic-runs>/<name>/{summary.json, result.json.gz}
+# Output: --output-dir, else <output_dir from the user config, or ~/Databases/Hedonic/Overlap>/<name>/{summary.json, result.json.gz}
 # Without audit_resolutions the spectrum's registered 131-point audit grid is used. A pair missing locally is
 # downloaded from SNAP first.
 

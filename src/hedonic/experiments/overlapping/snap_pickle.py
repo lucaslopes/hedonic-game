@@ -15,7 +15,7 @@ worker then reopens the file to measure the unpickle time and peak memory. A pai
 free memory is reported as ``skipped`` with the reason (``--force`` tries anyway), and every worker watches the machine's
 free memory and stops itself below the floor (``HEDONIC_MEMORY_FLOOR``, default 10%).
 
-    hedonic pickle dblp:top5000 amazon:all --out-dir ~/hedonic-data/pickles
+    hedonic pickle dblp:top5000 amazon:all --out-dir <data root>/Pickles
     hedonic pickle --all --dry-run
     hedonic pickle run --all --tuned hoc_tuned.json     # HOC-local on each pickle: time and memory (see pickle_run)
 """
@@ -82,7 +82,7 @@ def default_out_dir() -> Path:
     from hedonic.experiments.config import DATA_ROOT
 
     configured = userconfig.defaults().get("pickle_dir")
-    return Path(configured).expanduser() if configured else Path(DATA_ROOT) / "pickles"
+    return Path(configured).expanduser() if configured else Path(DATA_ROOT) / "Pickles"
 
 
 def pickle_path(out_dir: Path, network: str, cover: str) -> Path:
@@ -269,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="pairs to pickle (dblp:top5000 ...)")
     parser.add_argument("--all", action="store_true", help="every pair of the paper's Table 1 (11)")
     parser.add_argument("--out-dir", type=Path, help="folder of the pickles (default: pickle_dir of the user config, "
-                                                     "else ~/hedonic-data/pickles)")
+                                                     "else <data root>/Pickles)")
     parser.add_argument("--network-root", type=Path, help="folder of the SNAP networks (default: the configured one)")
     parser.add_argument("--cache-dir", type=Path, help="SNAP cache folder (default ~/.cache/hedonic/snap)")
     parser.add_argument("--overwrite", action="store_true", help="write again a pair whose pickle exists")

@@ -7,9 +7,9 @@
 run = "paper"
 
 [defaults]          # machine settings, applied to every run unless a flag overrides them
-output_dir = "~/hedonic-runs"
+# output_dir = "~/Databases/Hedonic/Overlap"     # the default: every run is saved under it
 # cache_dir = "~/.cache/hedonic"
-# network_root = "~/hedonic-data/networks"   # where `hedonic setup` puts the SNAP files
+# network_root = "~/Databases/Hedonic/Networks"   # where `hedonic setup` puts the SNAP files
 # threads = 8
 
 [profiles.quick]    # your own named configs: any `hedonic run exp` setting

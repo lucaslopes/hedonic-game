@@ -130,8 +130,8 @@ TOPICS: dict[str, tuple[str, str]] = {
     """),
     "config": ("Your settings (`hedonic config`)", """
         hedonic config                                show ~/.config/hedonic/config.toml
-        hedonic config set output_dir ~/hedonic-runs  where every run is saved
-        hedonic config set network_root ~/hedonic-data/networks   where SNAP files are looked up and downloaded
+        hedonic config set output_dir ~/Databases/Hedonic/Overlap  where every run is saved
+        hedonic config set network_root ~/Databases/Hedonic/Networks   where SNAP files are looked up and downloaded
         hedonic config set run paper                  what a bare `hedonic run` starts (it asks first)
         hedonic config set profiles.quick.nodes 20000 your own named configuration
 
@@ -141,7 +141,7 @@ TOPICS: dict[str, tuple[str, str]] = {
         overrides them. Keep machine paths out of repositories.
     """),
     "data": ("Data and caches", """
-        Data lives under ~/hedonic-data (HEDONIC_DATA_DIR) and runs under ~/hedonic-runs (HEDONIC_OUTPUT_DIR), unless
+        Data lives under ~/Databases/Hedonic (HEDONIC_DATA_DIR) and runs under ~/Databases/Hedonic/Overlap (HEDONIC_OUTPUT_DIR), unless
         the user config says otherwise. SNAP archives are looked up in the network root (HEDONIC_NETWORKS_DIR or
         `hedonic config set network_root`) and downloaded there on first use; `hedonic show networks --remote` shows
         the download sizes. `hedonic show table` reads only pairs already on disk and writes a CSV analysis, a LaTeX
@@ -190,7 +190,7 @@ def next_steps() -> list[str]:
     if not entries:
         steps.append("no runs yet: hedonic run exp   (a minute for the default experiment)")
     if not userconfig.path().is_file():
-        steps.append("set where results go: hedonic config set output_dir ~/hedonic-runs")
+        steps.append("set where results go: hedonic config set output_dir ~/Databases/Hedonic/Overlap")
     return steps
 
 

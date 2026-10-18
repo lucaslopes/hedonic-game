@@ -6,9 +6,9 @@ only place that knows the archive layout: experiments consume
 :class:`SnapDataset`, whose cover is already normalized to igraph indices.
 
 Input archives are read-only.  A validated normalized cache is written below
-``~/hedonic-data/cache/snap`` by default, never next to the archived SNAP
+``~/Databases/Hedonic/cache/snap`` by default, never next to the archived SNAP
 files.  :func:`ensure_pair` puts the official files of a ``network:cover`` pair
-into the networks folder (``~/hedonic-data/networks`` by default), in the
+into the networks folder (``~/Databases/Hedonic/Networks`` by default), in the
 layout every loader here reads, downloading only what is missing.
 """
 
@@ -282,13 +282,13 @@ def network_names() -> tuple[str, ...]:
 def networks_root() -> Path:
     """The SNAP networks folder in effect now: ``HEDONIC_NETWORKS_DIR`` (read at the call), else the configured
     ``NETWORKS_DIR`` (an experiment TOML's ``[paths] networks_dir``, the user config's ``network_root``, else
-    ``~/hedonic-data/networks``)."""
+    ``~/Databases/Hedonic/Networks``)."""
     configured = os.getenv("HEDONIC_NETWORKS_DIR")
     return expand_path(configured) if configured else Path(_config.NETWORKS_DIR)
 
 
 def default_cache_dir() -> Path:
-    """Return the normalized-data cache location (``~/hedonic-data/cache/snap``)."""
+    """Return the normalized-data cache location (``~/Databases/Hedonic/cache/snap``)."""
     configured = os.getenv("HEDONIC_SNAP_CACHE_DIR")
     return expand_path(configured) if configured else SNAP_CACHE_DIR
 
@@ -1211,7 +1211,7 @@ def ensure_pair(
     ``network`` is a SNAP network (``dblp``) or a pair (``dblp:top5k``); ``cover``
     overrides the pair's cover (default ``all``). ``root`` is the networks folder
     (default :func:`networks_root`: ``HEDONIC_NETWORKS_DIR``, the user config's
-    ``network_root``, else ``~/hedonic-data/networks``). Files already there
+    ``network_root``, else ``~/Databases/Hedonic/Networks``). Files already there
     (a trusted pickle or the official gzip) are used as they are; otherwise the
     official SNAP files are downloaded from snap.stanford.edu into
     ``root/<Network>/`` under their official names, atomically, so every loader

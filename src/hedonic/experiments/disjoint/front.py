@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from hedonic.experiments.config import RUNS_ROOT, expand_path
+from hedonic.experiments.config import DISJOINT_RUNS_ROOT, expand_path
 
 # Preset name -> (sbm_sweep preset, one-line description)
 PRESETS: dict[str, tuple[str, str]] = {
@@ -435,7 +435,7 @@ def default_output(name: str) -> str:
     from hedonic.experiments.overlapping import userconfig
 
     machine = userconfig.defaults()
-    base = machine.get("disjoint_output_root") or machine.get("output_dir") or RUNS_ROOT
+    base = machine.get("disjoint_output_root") or DISJOINT_RUNS_ROOT
     return str(expand_path(base) / name)
 
 

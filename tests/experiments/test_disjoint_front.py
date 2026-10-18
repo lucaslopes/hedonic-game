@@ -16,10 +16,11 @@ class TestDefaultOutput(unittest.TestCase):
             self.assertEqual(Path(front.default_output("sbm100")), expected)
 
     def test_the_runs_root_never_the_working_directory(self):
-        self.check({}, Path(config.RUNS_ROOT) / "sbm100")
+        self.check({}, Path(config.DISJOINT_RUNS_ROOT) / "sbm100")
 
     def test_the_user_config_moves_it(self):
-        self.check({"output_dir": "/data/runs"}, Path("/data/runs/sbm100"))
+        # The overlap runs' folder is not the disjoint runs' folder.
+        self.check({"output_dir": "/data/runs"}, Path(config.DISJOINT_RUNS_ROOT) / "sbm100")
         self.check({"output_dir": "/data/runs", "disjoint_output_root": "/data/disjoint"}, Path("/data/disjoint/sbm100"))
 
 

@@ -665,7 +665,7 @@ def build_parser() -> argparse.ArgumentParser:
         / "controlled_overlap.json",
         help=(
             "JSON output path (default: "
-            "~/hedonic-runs/artifacts/overlapping/controlled_overlap/controlled_overlap.json)"
+            "<output_dir>/artifacts/overlapping/controlled_overlap/controlled_overlap.json)"
         ),
     )
     parser.add_argument(

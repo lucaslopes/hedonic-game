@@ -16,7 +16,7 @@ No detector runs, and no spectrum output is touched.
 registered 131-point audit grid (``gt_spectrum.AUDIT_GRID``) is used. A pair
 missing from the networks folder is downloaded first (``snap.ensure_pair``).
 The run folder is ``--output-dir``, else the config's ``output_dir``, else
-``<user-config output_dir or ~/hedonic-runs>/NAME``; it holds ``summary.json``
+``<output_dir>/NAME``; it holds ``summary.json``
 (per-policy timings, agreement with the grid, Nash windows) and
 ``result.json.gz`` (every vertex interval).
 """
@@ -275,7 +275,7 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
                         help="a TOML path, or NAME (the shipped overlapping-gt-posthoc-NAME.toml, else NAME.toml)")
     parser.add_argument("--name", help="run name (default: the config's name)")
     parser.add_argument("--output-dir", help="run folder (default: the config's output_dir, else "
-                                             "<user-config output_dir or ~/hedonic-runs>/NAME)")
+                                             "<output_dir>/NAME)")
     parser.add_argument("--workers", type=int, help="forked vertex workers (default: the config's workers, else 1)")
     return parser
 

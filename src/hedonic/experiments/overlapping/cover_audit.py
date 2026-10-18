@@ -123,7 +123,7 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
                         help="the graph the source runs detected on: covered = the subgraph induced by the cover's "
                              "vertices (a network may be named NETWORK:COVER). Default: whichever folder the unit has")
     parser.add_argument("--name", help="run name (default cover-audit)")
-    parser.add_argument("--output-dir", help="run folder (default: <user-config output_dir or ~/hedonic-runs>/NAME)")
+    parser.add_argument("--output-dir", help="run folder (default: <output_dir>/NAME)")
     parser.add_argument("--overwrite", action="store_true", help="delete this audit's records before starting")
     parser.add_argument("--dry-run", action="store_true", help="print the plan; load nothing and write nothing")
     return parser

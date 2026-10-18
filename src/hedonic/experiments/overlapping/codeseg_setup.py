@@ -1324,7 +1324,7 @@ def _setup_parser(prog: str = "hedonic setup") -> argparse.ArgumentParser:
                         help="print the plan and the tool check; download, build and write nothing")
     parser.add_argument("--network-root", default=str(NETWORKS_DIR),
                         help="where the SNAP files go (default: the user config's network_root, "
-                             "HEDONIC_NETWORKS_DIR, else ~/hedonic-data/networks)")
+                             "HEDONIC_NETWORKS_DIR, else ~/Databases/Hedonic/Networks)")
     parser.add_argument("--cache-dir", default=None,
                         help="the cache folder, as for `hedonic run exp --cache-dir` and the user config's cache_dir: "
                              "sources, builds and the CDlib environment go to CACHE_DIR/codeseg, where the runs look "

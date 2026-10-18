@@ -431,7 +431,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "defaults ('paper' is accepted as an old spelling)")
     p.add_argument("--threads", type=int, default=None, help="threads for methods that support them (default: all cores)")
     p.add_argument("--timeout", type=float, default=None, help="per-run detection timeout in seconds (default 600)")
-    p.add_argument("--output-dir", default=None, help="where run records and the summary are saved (default ~/hedonic-runs/exp; a durable run adds /NAME)")
+    p.add_argument("--output-dir", default=None, help="where run records and the summary are saved (default ~/Databases/Hedonic/Overlap/exp; a durable run adds /NAME)")
     p.add_argument("--cache-dir", default=None, help="downloads and built runtimes (default ~/.cache/hedonic)")
     p.add_argument("--network-root", default=None, help="optional folder with local SNAP archives")
     p.add_argument("--no-omega", action="store_true", help="skip the sampled Omega index (faster on big graphs)")

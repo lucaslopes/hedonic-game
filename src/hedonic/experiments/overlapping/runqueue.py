@@ -10,7 +10,7 @@ A queue file lists the runs in the order they should execute::
 
 ``run`` holds the arguments after ``hedonic run``; ``--name`` repeats the item's name. ``{root}`` in an argument is the
 queue's root folder: ``hedonic run queue FILE --root DIR``, by default ``<output_dir>/<queue name>`` with the user
-config's ``[defaults] output_dir`` (else ``~/hedonic-runs``). A shipped queue is named without its file:
+config's ``[defaults] output_dir`` (else ``~/Databases/Hedonic/Overlap``). A shipped queue is named without its file:
 ``hedonic run queue paper`` reads ``queue-paper.toml`` from the package's configs.
 
 Each item is an ordinary durable run (its own tmux session, its own row in ``hedonic run list``, its own
@@ -238,12 +238,22 @@ def queue_file(name_or_path: str) -> Path:
 
 def default_root(name: str) -> Path:
     """Where a queue's items write by default: ``<output_dir>/<queue name>``, with the user config's ``[defaults]
-    output_dir`` (``hedonic config set output_dir DIR``), else ``~/hedonic-runs`` (``HEDONIC_OUTPUT_DIR``)."""
+    output_dir`` (``hedonic config set output_dir DIR``), else ``~/Databases/Hedonic/Overlap`` (``HEDONIC_OUTPUT_DIR``)."""
     from hedonic.experiments import config
     from hedonic.experiments.overlapping import userconfig
 
     base = userconfig.defaults().get("output_dir")
     return (Path(os.path.expanduser(str(base))) if base else Path(config.RUNS_ROOT)) / name
+
+
+def default_disjoint_root(name: str) -> Path:
+    """A queue of disjoint runs only: ``<disjoint_output_root>/<queue name>`` (``hedonic config set
+    disjoint_output_root DIR``), else ``~/Databases/Hedonic/Disjoint`` (``HEDONIC_DISJOINT_OUTPUT_DIR``)."""
+    from hedonic.experiments import config
+    from hedonic.experiments.overlapping import userconfig
+
+    base = userconfig.defaults().get("disjoint_output_root")
+    return (Path(os.path.expanduser(str(base))) if base else Path(config.DISJOINT_RUNS_ROOT)) / name
 
 
 def load_queue(path: str, root: str | Path | None = None) -> dict:
@@ -257,7 +267,12 @@ def load_queue(path: str, root: str | Path | None = None) -> dict:
         name = qs.parse_name(str(data.get("name") or file.stem))
     except ValueError as exc:
         raise SystemExit(f"{path}: {exc}") from None
-    root_dir = (Path(os.path.expanduser(str(root))) if root else default_root(name)).resolve()
+    disjoint_only = bool(data.get("items")) and all(
+        (item.get("run") or [""])[0] == "disjoint" for item in data.get("items") or [])
+    if root:
+        root_dir = Path(os.path.expanduser(str(root))).resolve()
+    else:
+        root_dir = (default_disjoint_root(name) if disjoint_only else default_root(name)).resolve()
     pairs: list[str] = []
     if data.get("pairs") is not None:
         listed = data["pairs"]
@@ -1717,7 +1732,7 @@ def front_main(argv: list[str]) -> int:
                         help="queue file, or the name of a shipped queue: " + (", ".join(shipped_queues()) or "none"))
     parser.add_argument("--root", default=None,
                         help="folder the items write into ({root} in the queue file); default "
-                             "<output_dir>/<queue name>, output_dir from `hedonic config` else ~/hedonic-runs")
+                             "<output_dir>/<queue name>, output_dir from `hedonic config` else ~/Databases/Hedonic/Overlap")
     parser.add_argument("--dry-run", action="store_true", help="print what would run and what is skipped, then exit")
     parser.add_argument("--detach", action="store_true", help="start in the background and return")
     parser.add_argument("--report", action="store_true",

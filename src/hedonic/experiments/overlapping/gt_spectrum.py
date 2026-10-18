@@ -1915,7 +1915,7 @@ def build_parser(add_help: bool = True) -> argparse.ArgumentParser:
     p.add_argument("--data-root", help="folder with SNAP archives (default HEDONIC_NETWORKS_DIR)")
     p.add_argument("--snap-cache-dir", help="hedonic download cache also inspected (default ~/.cache/hedonic/snap)")
     p.add_argument("--output-dir", help="artifact folder (default: the config's output_dir, else "
-                                        "~/hedonic-runs/artifacts/overlapping/gt_spectrum_v1)")
+                                        "<output_dir>/artifacts/overlapping/gt_spectrum_v1)")
     p.add_argument("--uncovered-policy", choices=("covered-induced", "singleton"),
                    help="partial-cover policy; singleton is a synthetic-completion sensitivity, never GT")
     p.add_argument("--max-nodes", type=int, help="bounded induced-subgraph size; 0 = full graph (default 3000)")

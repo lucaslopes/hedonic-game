@@ -768,7 +768,7 @@ def _front_parser() -> argparse.ArgumentParser:
                         help="conditions run side by side (default: the performance cores, or HEDONIC_WORKERS)")
     parser.add_argument("--name", help="run name (default: the config file's name)")
     parser.add_argument("--output-dir", help="run folder, which holds the records (default: the config's output, "
-                                             "else <user-config output_dir or ~/hedonic-runs>/<name>)")
+                                             "else <output_dir>/<name>)")
     parser.add_argument("--overwrite", action="store_true",
                         help="delete this study's records before starting (a plain start resumes them)")
     parser.add_argument("--dry-run", action="store_true",
@@ -793,7 +793,7 @@ def front_plan(args: argparse.Namespace) -> dict[str, Any]:
         study += ["--workers", str(args.workers)]
     if args.output_dir:
         study += ["--output", str(expand_path(args.output_dir).resolve())]
-    elif "output" not in config_defaults(str(config)):  # a named run: <user-config output_dir or ~/hedonic-runs>/<name>
+    elif "output" not in config_defaults(str(config)):  # a named run: <output_dir>/<name>
         from hedonic.experiments.overlapping import userconfig
 
         study += ["--output", str((expand_path(userconfig.defaults().get("output_dir") or RUNS_ROOT) / name).resolve())]

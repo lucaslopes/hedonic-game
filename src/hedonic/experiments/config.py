@@ -9,19 +9,21 @@ resolving, after applying sources in this order):
    ``HEDONIC_CONFIG``)
 3. The user config (``~/.config/hedonic/config.toml``): ``[defaults]
    network_root`` names the SNAP networks folder
-4. Built-in defaults: data under ``~/hedonic-data`` (networks, caches) and run
-   outputs under ``~/hedonic-runs``
+4. Built-in defaults: one folder, ``~/Databases/Hedonic`` (``HEDONIC_DATA_DIR``),
+   holds the networks (``Networks``), the caches (``cache``), the overlap runs
+   (``Overlap``, ``HEDONIC_OUTPUT_DIR``) and the disjoint runs (``Disjoint``,
+   ``HEDONIC_DISJOINT_OUTPUT_DIR``)
 
 A pip-installed ``hedonic`` has no repository next to it, so no default points
 into one. A relative path that starts with ``artifacts`` is anchored at
-``~/hedonic-runs`` (``HEDONIC_OUTPUT_DIR`` moves it), whatever the working
+``~/Databases/Hedonic/Overlap`` (``HEDONIC_OUTPUT_DIR`` moves it), whatever the working
 directory.
 
 An optional experiment TOML (``--config path.toml``) may set the same paths::
 
     [paths]
-    networks_dir = "~/hedonic-data/networks"
-    output_dir = "~/hedonic-runs"
+    networks_dir = "~/Databases/Hedonic/Networks"
+    output_dir = "~/Databases/Hedonic/Overlap"
 """
 
 from __future__ import annotations
@@ -71,10 +73,11 @@ def _user_network_root() -> str | None:
     return str(value) if value else None
 
 
-# Data (downloaded networks, normalized caches) and run outputs live in two
-# user folders; nothing defaults to a repository or to the working directory.
-DATA_ROOT = _env_path("HEDONIC_DATA_DIR", "~/hedonic-data")
-RUNS_ROOT = _env_path("HEDONIC_OUTPUT_DIR", "~/hedonic-runs")
+# One user folder holds the data (downloaded networks, normalized caches) and the run outputs, for every user and
+# every verb; nothing defaults to a repository or to the working directory. A run only adds its own folder there.
+DATA_ROOT = _env_path("HEDONIC_DATA_DIR", "~/Databases/Hedonic")
+RUNS_ROOT = _env_path("HEDONIC_OUTPUT_DIR", str(DATA_ROOT / "Overlap"))
+DISJOINT_RUNS_ROOT = _env_path("HEDONIC_DISJOINT_OUTPUT_DIR", str(DATA_ROOT / "Disjoint"))
 ARTIFACTS_DIR = RUNS_ROOT / "artifacts"
 DISJOINT_ARTIFACTS_DIR = ARTIFACTS_DIR / "disjoint"
 OVERLAPPING_ARTIFACTS_DIR = ARTIFACTS_DIR / "overlapping"
@@ -105,9 +108,9 @@ def codeseg_cache_dir(cache_dir: str | Path | None = None) -> Path:
     return expand_path(base) / "codeseg" if base else expand_path(CODESEG_CACHE_DEFAULT)
 
 
-DEFAULT_NETWORKS_DIR = expand_path(_user_network_root() or DATA_ROOT / "networks")
+DEFAULT_NETWORKS_DIR = expand_path(_user_network_root() or DATA_ROOT / "Networks")
 DEFAULT_DBLP_DIR = DEFAULT_NETWORKS_DIR / "DBLP"
-DEFAULT_SYNTHETIC_DIR = DATA_ROOT / "synthetic" / "V1020"
+DEFAULT_SYNTHETIC_DIR = DATA_ROOT / "PHYSA" / "Synthetic_Networks" / "V1020"
 # The historical V1020 tree (the PHYSA archive) is an input archive. Experiment
 # writers never place generated output in it (or in a descendant directory).
 # Keep this in the shared config module so every disjoint entry point applies
@@ -156,7 +159,7 @@ def ensure_not_archived_v1020(
     raise ValueError(
         f"Refusing to use archived V1020 as {label}: {resolved}. "
         "Choose a separate output root (for example "
-        "~/hedonic-runs/disjoint/v1020)."
+        "~/Databases/Hedonic/Overlap/disjoint/v1020)."
     )
 
 # Last successfully loaded TOML (full table) and its path; for experiments.

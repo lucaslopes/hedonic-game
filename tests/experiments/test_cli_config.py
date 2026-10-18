@@ -19,29 +19,31 @@ from hedonic.experiments.config import (
 
 class TestExperimentsConfig(unittest.TestCase):
     def test_defaults(self):
-        """With no environment and no user config, data goes to ~/hedonic-data and runs to ~/hedonic-runs."""
+        """With no environment and no user config, everything lives under one folder, ~/Databases/Hedonic."""
         import subprocess
         import sys
 
         code = ("import json; from hedonic.experiments import config as c; "
-                "print(json.dumps({k: str(getattr(c, k)) for k in ('DATA_ROOT', 'RUNS_ROOT', 'DEFAULT_NETWORKS_DIR', "
-                "'DEFAULT_DBLP_DIR', 'DEFAULT_SYNTHETIC_DIR', 'DEFAULT_OUTPUT_DIR', 'SNAP_CACHE_DIR', 'NETWORKS_DIR')}))")
+                "print(json.dumps({k: str(getattr(c, k)) for k in ('DATA_ROOT', 'RUNS_ROOT', 'DISJOINT_RUNS_ROOT', "
+                "'DEFAULT_NETWORKS_DIR', 'DEFAULT_DBLP_DIR', 'DEFAULT_SYNTHETIC_DIR', 'DEFAULT_OUTPUT_DIR', "
+                "'SNAP_CACHE_DIR', 'NETWORKS_DIR')}))")
         with tempfile.TemporaryDirectory() as d:
             env = {k: v for k, v in os.environ.items() if not k.startswith("HEDONIC_") or k == "HIG_PINNED"}
             env["HEDONIC_CONFIG"] = str(Path(d) / "absent.toml")
             out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
         paths = {k: Path(v) for k, v in json.loads(out.stdout).items()}
-        home = Path.home()
-        self.assertEqual(paths["DATA_ROOT"], home / "hedonic-data")
-        self.assertEqual(paths["RUNS_ROOT"], home / "hedonic-runs")
-        self.assertEqual(paths["DEFAULT_NETWORKS_DIR"], home / "hedonic-data" / "networks")
+        root = Path.home() / "Databases" / "Hedonic"
+        self.assertEqual(paths["DATA_ROOT"], root)
+        self.assertEqual(paths["RUNS_ROOT"], root / "Overlap")
+        self.assertEqual(paths["DISJOINT_RUNS_ROOT"], root / "Disjoint")
+        self.assertEqual(paths["DEFAULT_NETWORKS_DIR"], root / "Networks")
         self.assertEqual(paths["NETWORKS_DIR"], paths["DEFAULT_NETWORKS_DIR"])
         self.assertEqual(paths["DEFAULT_DBLP_DIR"], paths["DEFAULT_NETWORKS_DIR"] / "DBLP")
-        self.assertEqual(paths["DEFAULT_SYNTHETIC_DIR"], home / "hedonic-data" / "synthetic" / "V1020")
+        self.assertEqual(paths["DEFAULT_SYNTHETIC_DIR"], root / "PHYSA" / "Synthetic_Networks" / "V1020")
         self.assertEqual(paths["DEFAULT_OUTPUT_DIR"], paths["RUNS_ROOT"])
-        self.assertEqual(paths["SNAP_CACHE_DIR"], home / "hedonic-data" / "cache" / "snap")
+        self.assertEqual(paths["SNAP_CACHE_DIR"], root / "cache" / "snap")
         for value in paths.values():
-            self.assertNotIn("Databases", str(value))
+            self.assertTrue(value.is_relative_to(root), value)
 
     def test_environment_and_user_config_move_the_roots(self):
         import subprocess
@@ -189,8 +191,10 @@ class TestExperimentsConfig(unittest.TestCase):
         for path in configs:
             text = path.read_text()
             tomllib.loads(text)
-            for word in ("/Users/", "Databases", "-1006", "docs/papers"):
+            for word in ("/Users/", "-1006", "docs/papers"):
                 self.assertNotIn(word, text, f"{path.name}: {word}")
+            # The one data folder may be named, as the documented default (~/Databases/Hedonic), never elsewhere.
+            self.assertEqual(text.count("Databases"), text.count("~/Databases/Hedonic"), path.name)
 
     def test_find_config_prefers_configs_dir(self):
         from hedonic.experiments.config import DEFAULT_TOML_NAMES, find_config_file

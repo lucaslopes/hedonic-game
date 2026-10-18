@@ -292,7 +292,9 @@ class TestPlanAndConfig(unittest.TestCase):
                 self.assertEqual(plan["output"], Path(folder).resolve())
         default = sq.resolve(["--networks", "dblp", "--seeds", "0"])
         self.assertEqual(default["output"], Path(sq.DEFAULT_OUTPUT).resolve())
-        self.assertNotIn("Databases", str(default["output"]))
+        from hedonic.experiments import config
+
+        self.assertFalse(Path(default["output"]).resolve().is_relative_to(Path(config.NETWORKS_DIR).resolve()))
 
     def test_config_rejects_unknown_keys_and_bad_levels(self):
         with tempfile.TemporaryDirectory() as folder:

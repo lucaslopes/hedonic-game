@@ -343,7 +343,7 @@ compiler with OpenMP for FOX (Homebrew `g++` on macOS) and
 [`uv`](https://docs.astral.sh/uv/) for the locked CDlib environment of ANGEL
 and Ego-Splitting; `--dry-run` says which are missing. Starting the queue
 again continues it: every run decides from its files what is already done.
-The queue writes under `--root DIR` (default `~/hedonic-runs/paper-queue`).
+The queue writes under `--root DIR` (default `~/Databases/Hedonic/Overlap/paper-queue`).
 
 The benchmark runs a deterministic method (CliquePerc, FOX, BigCLAM, NcGame,
 NEO-K-Means) once per pair, at the lowest seed of the plan, since its other
@@ -354,9 +354,9 @@ reuse the same records.
 
 Runs execute detached (tmux when available), so closing the terminal does not
 stop them: `hedonic run list`, `status`, `attach`, `logs`, `stop NAME` and
-`resume NAME` manage them. Data goes to `~/hedonic-data` (`HEDONIC_DATA_DIR`;
+`resume NAME` manage them. Data goes to `~/Databases/Hedonic` (`HEDONIC_DATA_DIR`;
 SNAP files under `networks/`, or `HEDONIC_NETWORKS_DIR`), runs to
-`~/hedonic-runs` (`HEDONIC_OUTPUT_DIR`), and built method runtimes to
+`~/Databases/Hedonic/Overlap` (`HEDONIC_OUTPUT_DIR`), and built method runtimes to
 `~/.cache/hedonic/codeseg` (`HEDONIC_CODESEG_CACHE`, or `hedonic config set
 cache_dir PATH`). `hedonic config set output_dir PATH` and
 `hedonic config set network_root PATH` change them for every run;

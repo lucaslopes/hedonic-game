@@ -19,7 +19,7 @@ the same order. Only a cell's ``elapsed_seconds`` differs (it is the wall-clock 
 machine); the worker count is written next to the output as ``<output>.execution.json``.
 
 A durable run writes into its run folder: ``--output-dir`` when given, else the folder of the table's ``output`` path,
-else ``<user-config output_dir or ~/hedonic-runs>/<name>``. The run name defaults to the config file's name. Stop and
+else ``<output_dir>/<name>``. The run name defaults to the config file's name. Stop and
 resume restart the study from its first instance, because the study does not checkpoint its instances.
 """
 
@@ -240,7 +240,7 @@ def _front_parser() -> argparse.ArgumentParser:
                              "(overlap-heatmap)")
     parser.add_argument("--name", help="run name (default: the config file's name)")
     parser.add_argument("--output-dir", help="run folder (default: the folder of the table's output, else "
-                                             "<user-config output_dir or ~/hedonic-runs>/NAME)")
+                                             "<output_dir>/NAME)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the plan and the paths; start nothing and write nothing")
     parser.add_argument("--overwrite", action="store_true",
