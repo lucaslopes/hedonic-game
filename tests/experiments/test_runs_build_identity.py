@@ -19,6 +19,10 @@ class TestBuildIdentity(unittest.TestCase):
         setup = ROOT / "setup.py"
         if not setup.is_file():
             self.skipTest("no source tree (an installed wheel)")
+        try:
+            import setuptools  # noqa: F401
+        except ImportError:
+            self.skipTest("setuptools is not installed (an installed wheel)")
         with patch("setuptools.setup"):
             digest = runpy.run_path(str(setup))["source_digest"](str(ROOT))
         self.assertEqual(_core.source_sha256, digest, "rebuild the extension: the C sources changed since it was built")
