@@ -1232,39 +1232,6 @@ def finish(cfg: Config, records: list[dict], unavailable: dict[str, str]) -> lis
     return summary
 
 
-def run(cfg: Config) -> int:
-    """Foreground execution in this terminal (``--foreground``)."""
-    def say(text: str) -> None:
-        print(style("  setup ", "magenta") + text, flush=True)
-
-    binary, unavailable = prepare(cfg, say)
-    plan = build_plan(cfg, unavailable)
-    print(style(f"\n  {len(plan)} runs", "bold") + f" · {describe(cfg)}", flush=True)
-    print(style(f"  {environment_line()}\n", "dim"), flush=True)
-    records: list[dict] = []
-    stage = open_stage(cfg)
-    with Progress([expected_seconds(m, cfg, net) for net, _, m in plan]) as progress:
-        for i, (net, seed, m) in enumerate(plan, 1):
-            tag = f"[{i}/{len(plan)}] {NETWORKS[net][0]} · seed {seed} · {m.label}"
-            progress.start(tag)
-            rec = run_one(cfg, net, seed, m, binary)
-            if stage is not None:
-                attach_robustness(stage, net, seed, m, rec)
-            records.append(rec)
-            progress.finish(result_line(tag, rec))
-    if stage is not None:
-        stage.finish()
-    summary = finish(cfg, records, unavailable)
-    print(render(summary, cfg))
-    output = expand_path(cfg.output_dir)
-    print(style(f"\n  records   {output}", "dim"))
-    print(style(f"  summary   {output / 'summary.json'}", "dim"))
-    print(style(f"  rerun     {cfg.command()}", "dim"))
-    if cfg.json:
-        print(json.dumps(summary, indent=2, default=str))
-    return 0 if all(r.get("status") == "completed" for r in records) else 1
-
-
 def environment() -> dict:
     """Software provenance stored with every run (summary.json, progress.json)."""
     import platform
@@ -1487,9 +1454,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if wants_wizard and not args.yes:
             cfg = wizard(cfg)
-        if args.foreground:
-            return run(cfg)
         from hedonic.experiments.overlapping import runmanager
+
+        if args.foreground:  # the worker in this terminal, registered like a detached run
+            code = runmanager.run_foreground(cfg, args.name)
+            summary = expand_path(cfg.output_dir) / "summary.json"
+            if cfg.json and summary.is_file():
+                print(summary.read_text())
+            return code
 
         entry = runmanager.launch(cfg, args.name)
         where = (f"tmux session {entry['session']}" if entry["backend"] == "tmux"

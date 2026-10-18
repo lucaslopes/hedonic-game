@@ -396,3 +396,38 @@ class TestCLI(unittest.TestCase):
             self.assertGreaterEqual(len(figs), 4)
 
 
+
+
+class TestForeground(unittest.TestCase):
+    """``hedonic run exp --foreground`` runs the worker in this terminal and registers the run under its --name."""
+
+    def test_a_foreground_run_is_registered_under_its_name(self):
+        import io
+        import os
+        import tempfile
+        from contextlib import redirect_stdout
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from hedonic.experiments.overlapping import runmanager as rm
+
+        seen = {}
+
+        def fake_work(name, entry, prog):
+            seen.update(name=name, backend=entry["backend"], pid=entry["pid"], output=entry["output_dir"])
+            prog.update(status="completed", pid=os.getpid())
+            rm.write_json(rm.progress_path(entry), prog)
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, {"HEDONIC_RUNS_DIR": str(Path(tmp) / "registry")}), \
+                patch.object(rm, "_work", fake_work), redirect_stdout(io.StringIO()):
+            code = CLI.hedonic_main(["run", "exp", "--foreground", "--yes", "--name", "fg-test", "--networks", "dblp",
+                                     "--methods", "hedonic", "--nodes", "1000", "--output-dir", tmp + "/out"])
+            self.assertEqual(code, 0)
+            self.assertEqual(seen["name"], "fg-test")
+            self.assertEqual(seen["backend"], "foreground")
+            self.assertEqual(seen["pid"], os.getpid())
+            self.assertTrue(seen["output"].endswith("fg-test"))
+            entry = rm.load_entry("fg-test")
+            self.assertEqual(rm.effective_status(entry, rm.read_progress(entry)), "completed")

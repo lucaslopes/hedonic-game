@@ -141,7 +141,20 @@ def tmux_session_exists(session: str) -> bool:
 
 
 def worker_alive(entry: dict, prog: dict) -> bool:
+    if entry.get("backend") == "foreground":  # the user's own `hedonic run exp --foreground` process
+        return any(_is_foreground(pid) for pid in {prog.get("pid"), entry.get("pid")} - {None})
     return any(is_worker(pid, entry["name"]) for pid in {prog.get("pid"), entry.get("pid")} - {None})
+
+
+def _is_foreground(pid: int | None) -> bool:
+    if not alive(pid):
+        return False
+    try:
+        command = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="], capture_output=True, text=True,
+                                 check=False).stdout
+    except (OSError, ValueError):
+        return True
+    return "hedonic" in command
 
 
 def effective_status(entry: dict, prog: dict) -> str:
@@ -171,6 +184,35 @@ FORWARDED_ENV = ("HEDONIC_", "PATH", "CXX", "CC", "CFLAGS", "CPATH", "LIBRARY_PA
 
 def launch(cfg: qs.Config, name: str | None = None, *, backend: str = "auto") -> dict:
     """Start the worker detached (tmux if available) and register the run."""
+    entry = _benchmark_entry(cfg, name, backend)
+    return _spawn(entry)
+
+
+def run_foreground(cfg: qs.Config, name: str | None = None) -> int:
+    """``--foreground``: the same worker, in this terminal, registered like a detached run (``hedonic run status NAME``,
+    ``list``, ``resume`` know it). Ctrl-C stops it (recorded as ``stopped``); finished records are kept either way."""
+    entry = _benchmark_entry(cfg, name, "foreground")
+    entry["pid"] = os.getpid()
+    write_json(entry_path(entry["name"]), entry)
+    prog: dict = {}
+    guard = start_memory_guard(entry["name"], entry, prog)
+    try:
+        return _work(entry["name"], entry, prog)
+    except KeyboardInterrupt:
+        prog.update(status="stopped", finished=time.time(), updated=time.time())
+        write_json(progress_path(entry), prog)
+        print(style(f"\n  stopped · continue with: hedonic run resume {entry['name']}", "yellow"), flush=True)
+        return 130
+    except BaseException as exc:  # noqa: BLE001 - recorded, then raised as before
+        prog.update(status="failed", reason=f"{type(exc).__name__}: {exc}", finished=time.time(), updated=time.time())
+        write_json(progress_path(entry), prog)
+        raise
+    finally:
+        if guard is not None:
+            guard.set()
+
+
+def _benchmark_entry(cfg: qs.Config, name: str | None, backend: str) -> dict:
     name = qs.parse_name(name or new_name(cfg.profile))
     previous = entry_path(name)
     if previous.is_file():
@@ -189,10 +231,10 @@ def launch(cfg: qs.Config, name: str | None = None, *, backend: str = "auto") ->
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
     (Path(cfg.output_dir) / "progress.json").unlink(missing_ok=True)  # a resumed run must not look finished
     use_tmux = backend == "tmux" or (backend == "auto" and shutil.which("tmux"))
-    entry = {"name": name, "config": cfg.__dict__, "output_dir": cfg.output_dir, "created": time.time(),
-             "session": f"hedonic-{name}" if use_tmux else "", "backend": "tmux" if use_tmux else "process",
-             "log": str(Path(cfg.output_dir) / "worker.log"), "command": cfg.command()}
-    return _spawn(entry)
+    return {"name": name, "config": cfg.__dict__, "output_dir": cfg.output_dir, "created": time.time(),
+            "session": f"hedonic-{name}" if use_tmux else "",
+            "backend": "foreground" if backend == "foreground" else "tmux" if use_tmux else "process",
+            "log": str(Path(cfg.output_dir) / "worker.log"), "command": cfg.command()}
 
 
 # One numerical thread per process: the disjoint worker runs one graph per CPU.
@@ -618,7 +660,8 @@ def _work(name: str, entry: dict, prog: dict) -> int:
     write_json(ppath, prog)
     print(style(f"hedonic run {name}", "bold") + " · " + qs.describe(cfg))
     print(style(qs.environment_line(), "dim"))
-    print(style("Ctrl-C does not stop this run. Detach: Ctrl-b d · stop: hedonic run stop " + name, "dim"), flush=True)
+    print(style("Ctrl-C stops this run (in the foreground); finished records are kept" if entry.get("backend") == "foreground"
+                else "Ctrl-C does not stop this run. Detach: Ctrl-b d · stop: hedonic run stop " + name, "dim"), flush=True)
 
     def say(text: str) -> None:
         print("  setup " + text, flush=True)
