@@ -37,15 +37,19 @@ MSVC_FLAGS = ["/std:c11", "/O2", "/DNDEBUG", "/fp:strict"]
 # Every file the extension is compiled from. Their digest is ``hedonic._core.source_sha256``: since the rounding is
 # fixed by the source, two builds of the same source compute the same results on every platform, so records name the
 # source digest, not the compiled bytes (which differ between platforms, compilers and builds).
-SOURCE_GLOBS = ("native/include/*.h", "native/core/*.c", "native/core/*.h", "native/binding/*.c", "native/binding/*.h",
-                "native/unity.c", "native/unity_fma.c", "native/dispatch.c")
+SOURCE_GLOBS = ("native/include/*.h", "native/core/*.h", "native/core/*/*.c", "native/core/*/*.h",
+                "native/binding/*.c", "native/binding/*.h", "native/unity.c", "native/unity_fma.c", "native/dispatch.c")
+
+
+def source_paths(root="."):
+    """The core's sources, relative to root with / separators, in path order."""
+    return sorted({os.path.relpath(p, root).replace(os.sep, "/") for g in SOURCE_GLOBS for p in glob(os.path.join(root, g))})
 
 
 def source_digest(root="."):
     """SHA-256 over the core's sources: path, length and bytes of each, in path order, line endings as LF."""
     digest = hashlib.sha256()
-    paths = sorted({os.path.relpath(p, root).replace(os.sep, "/") for g in SOURCE_GLOBS for p in glob(os.path.join(root, g))})
-    for rel in paths:
+    for rel in source_paths(root):
         data = Path(root, rel).read_bytes().replace(b"\r\n", b"\n")
         digest.update(rel.encode() + b"\0" + str(len(data)).encode() + b"\0" + data)
     return digest.hexdigest()
@@ -75,6 +79,7 @@ setup(
             sources=["native/unity.c", "native/unity_fma.c", "native/dispatch.c",
                      *sorted(glob("native/binding/*.c"))],
             include_dirs=["native/include", "native/core", "native/binding"],
+            depends=source_paths(),  # unity.c includes the engines: rebuild when any of them changes
         )
     ],
 )

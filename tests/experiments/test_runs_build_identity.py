@@ -24,7 +24,11 @@ class TestBuildIdentity(unittest.TestCase):
         except ImportError:
             self.skipTest("setuptools is not installed (an installed wheel)")
         with patch("setuptools.setup"):
-            digest = runpy.run_path(str(setup))["source_digest"](str(ROOT))
+            build = runpy.run_path(str(setup))
+        digest = build["source_digest"](str(ROOT))
+        compiled = {str(p.relative_to(ROOT)).replace("\\", "/") for p in (ROOT / "native").rglob("*")
+                    if p.suffix in (".c", ".h") and "tests" not in p.relative_to(ROOT / "native").parts}
+        self.assertEqual(set(build["source_paths"](str(ROOT))), compiled, "every C source of the core is in its digest")
         self.assertEqual(_core.source_sha256, digest, "rebuild the extension: the C sources changed since it was built")
         self.assertEqual(runtime.core_source_sha256(), digest)
 
