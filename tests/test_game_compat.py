@@ -1,7 +1,7 @@
-"""Option matrix of ``Game.community_hedonic``.
+"""Option matrix of ``Game.community_hedonic`` for partitions.
 
-Every combination is exercised: both values of ``allow_isolation``, default
-and supplied starts, and unconstrained, at-most and exact community counts. Each returned state is a
+Both values of ``allow_isolation``, default and supplied starts, and
+unconstrained, at-most and exact community counts. Each returned state is a
 fixed point (continuing from it moves nothing) and a seeded call replays.
 Invalid combinations raise errors that name the conflicting option.
 """
@@ -22,11 +22,13 @@ def _karate() -> Game:
     return Game(graph)
 
 
-class TestOptionMatrix(unittest.TestCase):
+class TestModeParityMatrix(unittest.TestCase):
     def test_matrix(self):
         n = 34
         cells = 0
-        for allow_isolation, supplied, count in itertools.product(
+        for (
+            allow_isolation, supplied, count,
+        ) in itertools.product(
             (False, True), (False, True), ("none", "at_most", "exact"),
         ):
             limits = {}
@@ -39,8 +41,8 @@ class TestOptionMatrix(unittest.TestCase):
                 k = 4 if count != "none" else 6
                 start = [v % k for v in range(n)]
             kwargs = dict(
-                allow_isolation=allow_isolation, resolution=0.08, edge_weights="weight",
-                seed=100 + cells, **limits,
+                max_memberships=1, allow_isolation=allow_isolation,
+                resolution=0.08, edge_weights="weight", seed=100 + cells, **limits,
             )
             with self.subTest(supplied=supplied, **kwargs):
                 game = _karate()
@@ -67,9 +69,9 @@ class TestOptionMatrix(unittest.TestCase):
 
                 # The run ends at an equilibrium, so continuing from
                 # the stored state returns it unchanged.
-                resumed = game.community_hedonic(**kwargs)
+                resumed = game.community_hedonic(game.memberships, **kwargs)
                 self.assertEqual(
-                    resumed._hedonic_provenance["initialization"], "loaded memberships"
+                    resumed._hedonic_provenance["initialization"], "initial_membership"
                 )
                 self.assertEqual(resumed.membership, plain.membership)
                 cells += 1
@@ -82,8 +84,11 @@ class TestMessagesNameTheConflictingOption(unittest.TestCase):
         game = _karate()
         cases = [
             (lambda: directed.community_hedonic(), "undirected"),
+            (lambda: game.community_hedonic(max_memberships=0), "max_memberships"),
             (lambda: game.community_hedonic(n_communities=35),
              "n_communities=35 exceeds the vertex count"),
+            (lambda: game.community_hedonic(max_memberships=2), "partitions only"),
+            (lambda: game.community_hedonic(max_memberships=-1), "partitions only"),
             (lambda: game.community_hedonic(max_total_communities=2, n_communities=3),
              "n_communities must not exceed max_total_communities"),
             (lambda: game.community_hedonic(max_total_communities=0),
@@ -94,9 +99,11 @@ class TestMessagesNameTheConflictingOption(unittest.TestCase):
             (lambda: game.community_hedonic(
                 initial_membership=[[v] for v in range(34)], n_communities=3),
              "initial_membership.*n_communities=3"),
-            (lambda: game.community_hedonic(
-                initial_membership=[[0, 1]] + [[0]] * 33),
-             "initial_membership.*one label per vertex"),
+            (lambda: game.community_hedonic(resolution="0.1"),
+             "resolution must be a finite real number"),
+            (lambda: game.community_hedonic(allow_isolation="False"), "allow_isolation"),
+            (lambda: game.community_hedonic(edge_weights="missing"),
+             "no edge attribute 'missing'"),
             (lambda: game.community_hedonic(resolution=float("nan")), "resolution"),
             (lambda: game.community_hedonic(node_weights=[-1.0] * 34), "node_weights"),
         ]
@@ -111,19 +118,49 @@ class TestMessagesNameTheConflictingOption(unittest.TestCase):
         self.assertEqual(
             disjoint._hedonic_provenance["max_communities_effect"], "random disjoint start"
         )
-        bounded = game.community_hedonic(
-            initial_membership=None, max_communities=3, max_total_communities=4
-        )
-        self.assertEqual(
-            bounded._hedonic_provenance["max_communities_effect"],
-            "none: count limits select the default start",
-        )
         supplied = game.community_hedonic(
             initial_membership=[v % 2 for v in range(34)], max_communities=3
         )
         self.assertEqual(
             supplied._hedonic_provenance["max_communities_effect"],
             "none: a start state was supplied",
+        )
+
+
+class TestWarmStart(unittest.TestCase):
+    def test_flat_and_row_starts_agree(self):
+        for limits in ({}, {"max_total_communities": 6}, {"n_communities": 4}):
+            with self.subTest(**limits):
+                common = dict(
+                    resolution=0.08, edge_weights="weight", seed=7,
+                    allow_isolation=False, max_memberships=1, **limits,
+                )
+                game = _karate()
+                partition = game.community_hedonic(initial_membership=None, **common)
+                flat = _karate().community_hedonic(
+                    initial_membership=list(partition.membership), **common,
+                )
+                nested = _karate().community_hedonic(
+                    initial_membership=[[c] for c in partition.membership], **common,
+                )
+                # Continuing from the Game's stored partition.
+                loaded = game.community_hedonic(game.memberships, **common)
+                self.assertEqual(flat.membership, nested.membership)
+                self.assertEqual(flat.membership, loaded.membership)
+                self.assertEqual(
+                    flat._hedonic_provenance["initialization"], "initial_membership"
+                )
+                if "n_communities" in limits:
+                    self.assertEqual(len(set(flat.membership)), 4)
+
+    def test_default_start_is_recorded(self):
+        part = _karate().community_hedonic(
+            initial_membership=None, resolution=0.08, seed=1
+        )
+        self.assertEqual(part._hedonic_provenance["initialization"], "default")
+        self.assertEqual(
+            part._hedonic_provenance["max_communities_effect"],
+            "none: disjoint singleton start",
         )
 
 

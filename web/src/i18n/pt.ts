@@ -395,7 +395,7 @@ export const pt: Dictionary = {
   tool: {
     kicker: '6 · Do brinquedo à ferramenta',
     title: 'Use o jogo em redes reais',
-    body: 'Esta página simula um grafo de quatro vértices no seu navegador. O pacote Python `hedonic` joga o mesmo jogo em grafos reais com seu próprio núcleo compilado em C: um único método, `Game.community_hedonic`, encontra partições disjuntas.',
+    body: 'Esta página simula um grafo de quatro vértices no seu navegador. O pacote Python `hedonic` joga o mesmo jogo em grafos reais com seu próprio núcleo compilado em C: um único método, `Game.community_hedonic`, encontra partições disjuntas e coberturas sobrepostas.',
     scope:
       'O modelo do navegador é uma simplificação educacional: enumera todas as partições de um grafo minúsculo e move um vértice por vez. Resultados em grafos reais vêm do pacote e do seu detector nativo, não desta página.',
     cards: {

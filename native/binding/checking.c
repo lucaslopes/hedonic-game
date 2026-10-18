@@ -17,14 +17,14 @@
 */
 
 /*
- * The independent verifier of the core (native/core/check.c) over plain
+ * The independent verifier of the core (native/core/check/check.c) over plain
  * Python data: a vertex count, a flat edge buffer, the result to check and
  * the options it was computed under. Returns {"vertices", "improvable",
  * "max_certified", "max_bound"} (raw gains, not divided by |W|).
  */
 
 #include "binding.h"
-#include "hedonic_check.h"
+#include "check/hedonic_check.h"
 
 static PyObject *report_dict(const hig_verify_t *report) {
     return Py_BuildValue("{sLsLsdsd}", "vertices", (long long) report->vertices, "improvable",
@@ -85,7 +85,8 @@ PyObject *py_verify_partition(PyObject *self, PyObject *args, PyObject *kwds) {
                                      &n_communities_obj, &allow_isolation)) {
         return NULL;
     }
-    options = (hig_options_t) { .resolution = resolution, .allow_isolation = allow_isolation };
+    options = (hig_options_t) { .resolution = resolution, .max_memberships = 1,
+                                .allow_isolation = allow_isolation };
     if (optional_limit(max_total_obj, &options.max_total_communities, "max_total_communities") < 0 ||
         optional_limit(n_communities_obj, &options.n_communities, "n_communities") < 0) {
         return NULL;

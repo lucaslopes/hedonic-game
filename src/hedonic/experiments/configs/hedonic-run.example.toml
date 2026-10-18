@@ -1,0 +1,7 @@
+# Example per-user settings for `hedonic run`.
+# Copy to ~/.config/hedonic/config.toml (or point HEDONIC_CONFIG at a copy),
+# or build it with `hedonic config set KEY VALUE`.
+
+[defaults]          # machine settings, applied to every run unless a flag overrides them
+# disjoint_output_root = "~/Databases/Hedonic/Disjoint"   # the default: `hedonic run disjoint` runs and queues go under it
+# threads = 8

@@ -2,13 +2,14 @@
 
 The detector behind :meth:`hedonic.Game.community_hedonic`.
 ``community_hedonic(graph, ...)`` runs best-response local moving on an
-undirected ``igraph.Graph`` until no vertex has an improving move. It returns
-a partition, a Nash equilibrium of the CPM hedonic game (Felipe, Avrachenkov
-& Menasche, Physica A 680:130989, 2025). A move is taken only when its
-computed gain exceeds a rigorous bound of its rounding error, so every move
-raises the exact potential and every call terminates; the result reports
-``equilibrium_slack``, a bound of what any vertex could still gain by
-deviating (0 when the arithmetic is exact; ``native/README.md``).
+undirected ``igraph.Graph`` until no vertex has an improving move, and
+returns a partition, a Nash equilibrium of the CPM hedonic game (Felipe,
+Avrachenkov & Menasche, Physica A 680:130989, 2025). Overlapping covers
+(``max_memberships > 1``) are hedonic 2. A move is
+taken only when its computed gain exceeds a rigorous bound of its rounding
+error, so every move raises the exact potential and every call terminates;
+the result reports ``equilibrium_slack``, a bound of what any vertex could
+still gain by deviating (0 when the arithmetic is exact; ``native/README.md``).
 
 The C core (``native/`` in the repository, the extension ``hedonic._core``)
 has no igraph dependency: it takes an edge list and draws random numbers from
@@ -22,7 +23,6 @@ from __future__ import annotations
 
 import math as _math
 import random as _random
-from array import array as _array
 
 from ._core import core_version
 from ._core import detect as _detect
@@ -57,47 +57,28 @@ def default_rng():
 
 
 def _edge_weight_buffer(graph, values):
-    """One real weight per edge whose total is finite (signs are allowed)."""
+    """One finite real weight per edge, as contiguous doubles."""
     if values is None:
         return None
-    values = graph.es[values] if isinstance(values, str) else list(values)
-    if len(values) != graph.ecount():
-        raise ValueError("edge_weights must have one value per graph edge")
-    buffer = _array("d")
-    total = 0.0
-    for value in values:
-        if isinstance(value, bool):
-            raise ValueError("edge_weights must be real numbers")
-        weight = float(value)
-        total += weight
-        if not _math.isfinite(total):
-            raise ValueError("edge_weights must be finite")
-        buffer.append(weight)
-    return buffer
+    from ._game.helpers import weight_vector
+
+    return weight_vector(graph, values, "edge_weights", per_vertex=False, nonnegative=False)
 
 
 def _node_weight_buffer(graph, values):
-    """One finite, non-negative weight per vertex."""
+    """One finite, non-negative weight per vertex, as contiguous doubles."""
     if values is None:
         return None
-    values = graph.vs[values] if isinstance(values, str) else list(values)
-    if len(values) != graph.vcount():
-        raise ValueError("node_weights must have one value per vertex")
-    buffer = _array("d")
-    for value in values:
-        if isinstance(value, bool):
-            raise ValueError("node_weights must be real numbers")
-        weight = float(value)
-        if not _math.isfinite(weight) or weight < 0:
-            raise ValueError("node_weights must be finite and non-negative")
-        buffer.append(weight)
-    return buffer
+    from ._game.helpers import weight_vector
+
+    return weight_vector(graph, values, "node_weights", per_vertex=True, nonnegative=True)
 
 
 def community_hedonic(
     graph,
     *,
     resolution=None,
+    max_memberships=1,
     initial_membership=None,
     allow_isolation=False,
     edge_weights=None,
@@ -116,11 +97,12 @@ def community_hedonic(
     unit weights at resolution 0, 1/2 or 1: an exact Nash equilibrium).
 
     resolution: CPM gamma; the graph density if None.
-    initial_membership: start partition, flat labels or one-label rows; None
-        starts from singletons (or, under a count limit, v mod K). Labels are
-        non-negative integers contiguous from 0 (igraph's convention), rows
-        are non-empty, flat and nested rows are not mixed, and a row holds
-        one distinct label (a repeated label counts once).
+    max_memberships: 1 (a partition, the only value hedonic 1 accepts;
+        covers are hedonic 2).
+    initial_membership: start partition, flat labels (or one-label rows);
+        None starts from singletons (or, under a count limit, v mod K).
+        Labels are non-negative integers contiguous from 0 (igraph's
+        convention).
     allow_isolation: may a vertex move to a new, empty community.
     edge_weights, node_weights: sequences or attribute names; None for ones.
     max_total_communities, n_communities: at most / exactly K occupied
@@ -130,6 +112,9 @@ def community_hedonic(
     """
     if graph.is_directed():
         raise ValueError("community_hedonic requires an undirected graph")
+    if max_memberships != 1 or isinstance(max_memberships, bool):
+        raise ValueError("hedonic 1 detects partitions only (max_memberships=1); "
+                         "overlapping covers are hedonic 2")
     if seed is not None and rng is not None:
         raise ValueError("pass seed or rng, not both")
     if seed is not None:
@@ -153,6 +138,7 @@ def community_hedonic(
         graph,
         rng,
         res,
+        max_memberships=max_memberships,
         start=initial_membership,
         allow_isolation=bool(allow_isolation),
         edge_weights=edge_buffer,
@@ -169,7 +155,10 @@ def community_hedonic(
     membership, nb_clusters, quality, slack = out
     modularity_params = {"resolution": res}
     if edge_weights is not None:
-        modularity_params["weights"] = edge_weights
+        # An attribute name as given; otherwise the validated values.
+        modularity_params["weights"] = (
+            edge_weights if isinstance(edge_weights, str) else edge_buffer
+        )
     return VertexClustering(graph, membership,
                             params={"quality": quality, "equilibrium_slack": slack},
                             modularity_params=modularity_params)

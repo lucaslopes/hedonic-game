@@ -1,7 +1,8 @@
 """Controls of ``Game.community_hedonic``.
 
-End-to-end seed replay, isolation of the caller's igraph generator, node
-weights, global community-count constraints, and result provenance.
+Checks end-to-end seed replay, isolation of the caller's igraph generator,
+node weights, the partition-only ``max_memberships``, global community-count
+constraints, and result provenance.
 """
 
 from __future__ import annotations
@@ -35,11 +36,15 @@ class TestSeedReplay(unittest.TestCase):
         self.addCleanup(random.setstate, random.getstate())
 
     def test_same_seed_same_result(self):
-        a = _karate().community_hedonic(initial_membership=None, resolution=0.1, seed=7)
+        a = _karate().community_hedonic(
+            initial_membership=None, max_memberships=1, resolution=0.1, seed=7,
+        )
         # Perturb the caller's generators between the calls.
         ig.set_random_number_generator(random.Random(999))
         random.seed(999)
-        b = _karate().community_hedonic(initial_membership=None, resolution=0.1, seed=7)
+        b = _karate().community_hedonic(
+            initial_membership=None, max_memberships=1, resolution=0.1, seed=7,
+        )
         ig.set_random_number_generator(random)
         self.assertEqual(a.membership, b.membership)
 
@@ -68,7 +73,7 @@ class TestSeedReplay(unittest.TestCase):
         mine = random.Random(123)
         state, module_state = mine.getstate(), random.getstate()
         ig.set_random_number_generator(mine)
-        _karate().community_hedonic(resolution=0.1, seed=1)
+        _karate().community_hedonic(max_memberships=1, resolution=0.1, seed=1)
         self.assertEqual(mine.getstate(), state)
         self.assertEqual(random.getstate(), module_state)
 
@@ -104,8 +109,8 @@ class TestSeedReplay(unittest.TestCase):
         state = rng.getstate()
         game = _karate()
         game.memberships = [v % 2 for v in range(34)]
-        with self.assertRaisesRegex(ValueError, "finite"):
-            game.community_hedonic(edge_weights=[math.inf] + [1.0] * 77)
+        with self.assertRaisesRegex(ValueError, "positive total edge weight"):
+            game.community_hedonic(edge_weights=[-1.0] * 78)
         self.assertEqual(rng.getstate(), state)
         self.assertEqual(game.memberships, [[v % 2] for v in range(34)])
 
@@ -119,9 +124,12 @@ class TestSeedReplay(unittest.TestCase):
 
 class TestNodeWeights(unittest.TestCase):
     def test_unit_node_weights_match_the_default(self):
-        a = _karate().community_hedonic(initial_membership=None, resolution=0.1, seed=3)
+        a = _karate().community_hedonic(
+            initial_membership=None, max_memberships=1, resolution=0.1, seed=3,
+        )
         b = _karate().community_hedonic(
-            initial_membership=None, resolution=0.1, seed=3, node_weights=[1.0] * 34,
+            initial_membership=None, max_memberships=1, resolution=0.1, seed=3,
+            node_weights=[1.0] * 34,
         )
         self.assertEqual(a.membership, b.membership)
         self.assertTrue(b._hedonic_provenance["node_weighted"])
@@ -145,10 +153,10 @@ class TestNodeWeights(unittest.TestCase):
     def test_node_weights_from_a_vertex_attribute(self):
         game = _karate()
         game.vs["w"] = [1.0 + (v % 3) for v in range(game.vcount())]
-        a = game.community_hedonic(initial_membership=None, resolution=0.05, seed=5,
-                                   node_weights="w")
-        b = game.community_hedonic(initial_membership=None, resolution=0.05, seed=5,
-                                   node_weights=list(game.vs["w"]))
+        a = game.community_hedonic(initial_membership=None,
+                                   resolution=0.05, seed=5, node_weights="w")
+        b = game.community_hedonic(initial_membership=None,
+                                   resolution=0.05, seed=5, node_weights=list(game.vs["w"]))
         self.assertEqual(a.membership, b.membership)
 
     def test_invalid_node_weights_are_rejected(self):
@@ -161,26 +169,39 @@ class TestNodeWeights(unittest.TestCase):
         game = _karate()
         weights = [0.5 + (v % 4) * 0.25 for v in range(game.vcount())]
         gamma = 0.07
-        partition = game.community_hedonic(initial_membership=None, resolution=gamma, seed=2,
-                                           node_weights=weights)
-        labels = partition.membership
+        part = game.community_hedonic(initial_membership=None,
+                                      resolution=gamma, seed=2, node_weights=weights)
+        labels = part.membership
         mass: dict[int, float] = {}
         for v, c in enumerate(labels):
             mass[c] = mass.get(c, 0.0) + weights[v]
-        internal = sum(1 for u, v in game.get_edgelist() if labels[u] == labels[v])
-        phi = (internal - gamma / 2 * sum(m * m for m in mass.values())) / game.ecount()
-        self.assertAlmostEqual(partition._hedonic_native_quality, phi, places=12)
+        support = sum(1.0 for u, v in game.get_edgelist() if labels[u] == labels[v])
+        phi = (support - gamma / 2 * sum(m * m for m in mass.values())) / game.ecount()
+        self.assertAlmostEqual(part._hedonic_native_quality, phi, places=12)
 
 
-class TestCounts(unittest.TestCase):
+class TestCapAndCounts(unittest.TestCase):
+    def test_covers_are_refused(self):
+        for value in (2, 3, -1, _karate().vcount()):
+            with self.subTest(max_memberships=value):
+                with self.assertRaisesRegex(ValueError, "partitions only"):
+                    _karate().community_hedonic(initial_membership=None,
+                                                max_memberships=value,
+                                                resolution=0.05, seed=4)
+        for value in (0, -2, 1.5, True):
+            with self.assertRaises(ValueError):
+                _karate().community_hedonic(max_memberships=value)
+
     def test_upper_bound_and_exact_count(self):
         bounded = _karate().community_hedonic(
-            initial_membership=None, resolution=0.3, seed=1, max_total_communities=4,
+            initial_membership=None, max_memberships=1, resolution=0.3, seed=1,
+            max_total_communities=4,
         )
         self.assertLessEqual(_occupied(bounded), 4)
         self.assertEqual(bounded._hedonic_provenance["count_constraint"], "at_most")
         exact = _karate().community_hedonic(
-            initial_membership=None, resolution=0.05, seed=1, n_communities=6,
+            initial_membership=None, max_memberships=1, resolution=0.05, seed=1,
+            n_communities=6,
         )
         self.assertEqual(_occupied(exact), 6)
         self.assertEqual(exact._hedonic_provenance["equilibrium_notion"],

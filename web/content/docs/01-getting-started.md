@@ -19,10 +19,16 @@ With [uv](https://docs.astral.sh/uv/):
 uv add hedonic
 ```
 
-`Game.evaluate_against` and `hedonic.metrics` score a result against a reference partition or cover. Their one-to-one matching scores need SciPy, available as an optional extra:
+`Game.evaluate_against` and `hedonic.metrics` score a result against a reference cover. Their one-to-one matching scores need SciPy, available as an optional extra:
 
 ```bash
 python -m pip install "hedonic[metrics]"
+```
+
+The command line that reproduces the papers' experiments (`hedonic run ...`, macOS and Linux) has its own extra:
+
+```bash
+python -m pip install "hedonic[cli]"
 ```
 
 ```package-info
@@ -30,7 +36,7 @@ python -m pip install "hedonic[metrics]"
 
 ## Detect communities
 
-Wrap any undirected `igraph.Graph` in a `Game` and call `community_hedonic`:
+Wrap any undirected `igraph.Graph` in a `Game` and call `community_hedonic`. One method covers both kinds of output:
 
 ```python
 import igraph as ig
@@ -38,15 +44,24 @@ from hedonic import Game
 
 graph = Game(ig.Graph.Famous("Zachary"))
 
-# A partition: every vertex belongs to exactly one community.
+# Disjoint partition: every vertex belongs to exactly one community.
 partition = graph.community_hedonic(
     resolution=graph.density(),
+    max_memberships=1,
     seed=0,
 )
 print(partition.membership)
+
+# Overlapping cover: a vertex may belong to up to four communities.
+cover = graph.community_hedonic(
+    resolution=graph.density(),
+    max_memberships=4,
+    seed=0,
+)
+print(cover)
 ```
 
-Every call runs until no vertex can improve by moving, so the result is an equilibrium of the game. `community_hedonic` returns an `igraph.VertexClustering`; the same `seed` on the same inputs returns the same result. See [community_hedonic](docs:#community-hedonic) for every parameter.
+Every call runs until no vertex can improve by moving, so the result is an equilibrium of the game. `community_hedonic` returns an `igraph.VertexClustering` when `max_memberships=1` and an `igraph.VertexCover` when the cap is larger; the same `seed` on the same inputs returns the same result. See [community_hedonic](docs:#community-hedonic) for every parameter.
 
 ## Reproduce the explainer's network
 
@@ -59,8 +74,8 @@ from hedonic import Game
 g = Game(ig.Graph(n=4, edges=[(0, 1), (0, 2), (0, 3), (1, 2)]))
 for gamma in (0.2, 0.5):
     part = g.community_hedonic(
-        initial_membership=None,  # start from singletons (omitting it reuses the last result)
         resolution=gamma,
+        max_memberships=1,
         allow_isolation=True,  # allow "leave to found a new community", as in the explainer
     )
     print(gamma, part.membership)

@@ -401,7 +401,7 @@ export const en = {
   tool: {
     kicker: '6 · From toy to tool',
     title: 'Use the game on real networks',
-    body: 'This page simulates a four-vertex graph in your browser. The `hedonic` Python package plays the same game on real graphs with its own compiled C core: one method, `Game.community_hedonic`, finds disjoint partitions.',
+    body: 'This page simulates a four-vertex graph in your browser. The `hedonic` Python package plays the same game on real graphs with its own compiled C core: one method, `Game.community_hedonic`, finds disjoint partitions and overlapping covers.',
     scope:
       'The browser model is an educational simplification: it enumerates every partition of a tiny graph and moves one vertex at a time. Results on real graphs come from the package and its native detector, not from this page.',
     cards: {

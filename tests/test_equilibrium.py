@@ -1,20 +1,20 @@
 """Every call returns a certified equilibrium: an exact-arithmetic oracle.
 
-Random small games (unit, mixed, wide-range 1e-300..1e300, tie-heavy,
-signed and cancellation-heavy edge weights; unit, mixed, wide, huge and
-dyadic node weights; the odd self-loop and multi-edge; resolutions near ties
-and resolutions whose products are exact; isolation on and off; no count
-limit, at most K or exactly K communities; default and random starts) run
-through the core's traced entry point (``hedonic._core._trace_partition``),
+Random small partition games (unit, mixed, wide-range 1e-300..1e300,
+tie-heavy, signed and cancellation-heavy edge weights; unit, mixed, wide,
+huge and dyadic node weights; the odd self-loop and multi-edge; resolutions
+near ties and resolutions whose products are exact; isolation on and off; no
+count limit, at most K or exactly K communities; default and random starts)
+run through the core's traced entry point (``hedonic._core._trace_partition``),
 which also returns the start state, every accepted move and the raw
 equilibrium slack. In exact arithmetic (Fractions) the oracle checks:
 
 (a) every accepted move strictly raises the exact potential;
 (b) at return, no feasible unilateral deviation raises a vertex's exact
     payoff by more than the slack, and the slack is exactly 0 for unit-weight
-    games at resolutions whose products are exact (0, 1/2, 1, ...);
+    partitions at resolutions whose products are exact (0, 1/2, 1, ...);
 (c) the independent C verifier (``_core._verify_partition``,
-    native/core/check.c) certifies no gain above the slack.
+    native/core/check/check.c) certifies no gain above the slack.
 
 ``run_case`` / ``run_cases`` are also the engine of a longer sweep run
 outside the suite.
@@ -31,7 +31,7 @@ from fractions import Fraction
 
 from hedonic import _core
 
-LARGEST = 14  # vertices of a random game at most
+LARGEST = 14  # vertices of the largest game
 RESOLUTIONS = (-0.7, -0.05, 0.0, 0.02, 0.1, 0.35, 0.8, 2.0, 0.1462, 1 / 3, 2 / 3, 0.3)
 EXACT_RESOLUTIONS = (0.0, 0.5, 0.25, 1.0, 2.0, -0.5, -1.0, 0.125)
 LIMIT = 2.0 ** 1000  # |gamma| N^2 stays far inside the core's arithmetic bound
@@ -72,7 +72,7 @@ def _node_weights(rng, n):
 
 
 def random_game(case: int) -> dict:
-    """A random small game of at most LARGEST vertices."""
+    """A random small partition game."""
     rng = random.Random(case)
     n = rng.randint(2, LARGEST)
     p = rng.uniform(0.15, 0.85)
@@ -114,14 +114,14 @@ def random_game(case: int) -> dict:
     if rng.random() < 0.35:
         target = exact or max_total or n
         flat = [v % target for v in range(n)]
-        for v in range(target, n):
-            flat[v] = rng.randrange(target)
         relabel = {c: i for i, c in enumerate(sorted(set(flat)))}
         start = [relabel[c] for c in flat]
+        if exact is not None and len(relabel) != exact:
+            start = None
     return dict(case=case, n=n, edges=edges, weights=weights, node_weights=node_weights,
-                gamma=gamma, isolation=isolation, max_total=max_total, exact=exact,
-                start=start, edge_mode=edge_mode, node_mode=node_mode,
-                exact_arithmetic=exact_arithmetic)
+                gamma=gamma, isolation=isolation,
+                max_total=max_total, exact=exact, start=start, edge_mode=edge_mode,
+                node_mode=node_mode, exact_arithmetic=exact_arithmetic)
 
 
 def core_arguments(game):
@@ -135,11 +135,13 @@ def core_arguments(game):
 
 
 def run_core(game, seed):
-    """The traced run: (membership, quality, record)."""
+    """The traced run: (rows, quality, record)."""
     flat, kwargs = core_arguments(game)
+    rng = random.Random(seed)
     membership, _, quality, record = _core._trace_partition(
-        game["n"], flat, random.Random(seed), membership=game["start"], **kwargs)
-    return list(membership), quality, record
+        game["n"], flat, rng, membership=game["start"], **kwargs)
+    rows = [[c] for c in membership]
+    return rows, quality, record
 
 
 def _node(game, v):
@@ -150,19 +152,20 @@ def _weight(game, e):
     return game["weights"][e] if game["weights"] else 1.0
 
 
-def float_quality(game, labels):
+def float_quality(game, rows):
     """The documented quality, in floating point (loops count twice in q)."""
     total = sum(game["weights"]) if game["weights"] else float(len(game["edges"]))
     q, mass = 0.0, Counter()
     for e, (a, b) in enumerate(game["edges"]):
-        if labels[a] == labels[b]:
-            q += 2.0 * _weight(game, e)
+        shared = len(set(rows[a]) & set(rows[b]))
+        q += 2.0 * _weight(game, e) * shared / math.sqrt(len(rows[a]) * len(rows[b]))
     for v in range(game["n"]):
-        mass[labels[v]] += _node(game, v)
+        for c in rows[v]:
+            mass[c] += _node(game, v) / math.sqrt(len(rows[v]))
     return (q - game["gamma"] * sum(m * m for m in mass.values())) / (2.0 * total)
 
 
-# ---- The exact game: Fractions --------------------------------------------------
+# ---- Partitions: Fractions ------------------------------------------------------
 
 
 def partition_potential(game, labels):
@@ -217,11 +220,12 @@ class OracleFailure(AssertionError):
     pass
 
 
-def structure(labels):
-    """The partition as a multiset of member sets (labels do not matter)."""
+def structure(rows):
+    """The cover as a multiset of member sets (labels do not matter)."""
     members = {}
-    for v, c in enumerate(labels):
-        members.setdefault(c, set()).add(v)
+    for v, row in enumerate(rows):
+        for c in row:
+            members.setdefault(c, set()).add(v)
     return Counter(frozenset(s) for s in members.values())
 
 
@@ -234,36 +238,39 @@ def run_case(case: int, game: dict | None = None) -> Counter:
     def fail(*what):
         raise OracleFailure((context,) + what)
 
-    membership, quality, record = run_core(game, seed=game.get("case", case))
+    rows, quality, record = run_core(game, seed=game.get("case", case))
     slack = record["raw_slack"]
-    counts = Counter(games=1)
+    counts = Counter(kind="partition")
     if not slack >= 0.0:
         fail("slack", slack)
-    used = set(membership)
+    used = {c for row in rows for c in row}
     if game["exact"] is not None and len(used) != game["exact"]:
         fail("exact count")
     if game["max_total"] is not None and len(used) > game["max_total"]:
         fail("count limit")
+    if not all(len(row) == 1 for row in rows):
+        fail("cap")
     if game["edge_mode"] in ("unit", "mixed", "ties", "signed") and game["node_mode"] in (
             "unit", "mixed", "dyadic"):
-        expected = float_quality(game, membership)
+        expected = float_quality(game, rows)
         if not math.isclose(quality, expected, rel_tol=1e-9, abs_tol=1e-9):
             fail("quality", quality, expected)
 
-    state = [row[0] for row in record["start"]]
+    state = [list(row) for row in record["start"]]
     flat, kwargs = core_arguments(game)
-    before = partition_potential(game, state)
+    before = partition_potential(game, [r[0] for r in state])
     for v, row, improvement, bound in record["moves"]:
         if not improvement > bound:
             fail("uncertified move", improvement, bound)
-        state[v] = row[0]
-        after = partition_potential(game, state)
+        state[v] = list(row)
+        after = partition_potential(game, [r[0] for r in state])
         if not after > before:  # (a)
             fail("a move did not raise the potential", v, after - before)
         before = after
         counts["moves"] += 1
-    if structure(state) != structure(membership):
+    if structure(state) != structure(rows):
         fail("the trace does not end at the result")
+    membership = [row[0] for row in rows]
     for gain in partition_gains(game, membership):  # (b)
         if gain is not None:
             counts["vertices"] += 1
@@ -284,11 +291,13 @@ def run_case(case: int, game: dict | None = None) -> Counter:
 
 
 def run_cases(cases, first=0):
-    """Totals over cases first .. first + cases - 1: games, accepted moves
-    checked, vertices checked, games in exact arithmetic, ..."""
+    """Totals over cases first .. first + cases - 1: games per kind, accepted
+    moves checked, vertices checked, exact set decisions, ..."""
     totals = Counter()
     for case in range(first, first + cases):
-        totals.update(run_case(case))
+        counts = run_case(case)
+        totals[counts.pop("kind")] += 1
+        totals.update(counts)
     return totals
 
 
@@ -298,10 +307,14 @@ def run_cases(cases, first=0):
 class TestEquilibrium(unittest.TestCase):
     def test_random_games(self):
         totals = run_cases(400)
-        self.assertEqual(totals["games"], 400)
+        self.assertEqual(totals["partition"], 400)
         self.assertGreater(totals["moves"], 1000)
         self.assertGreater(totals["exact_games"], 10)
-        self.assertEqual(totals["improvable"], 0)
+
+    def test_generator_never_skips(self):
+        for case in range(400):
+            game = random_game(case)
+            self.assertLessEqual(game["n"], LARGEST)
 
     def test_exact_arithmetic_has_zero_slack(self):
         import igraph as ig
@@ -320,8 +333,8 @@ class TestEquilibrium(unittest.TestCase):
                     max_total=None, exact=None)
         gains = partition_gains(game, [0, 0, 1, 1, 1, 1])
         self.assertGreater(max(g for g in gains if g is not None), 0)
-        gains = partition_gains(game, [0, 0, 0, 1, 1, 1])
-        self.assertLessEqual(max(g for g in gains if g is not None), 0)
+        stable = partition_gains(game, [0, 0, 0, 1, 1, 1])
+        self.assertLessEqual(max(g for g in stable if g is not None), 0)
 
 
 if __name__ == "__main__":

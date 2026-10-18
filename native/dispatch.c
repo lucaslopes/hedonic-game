@@ -32,7 +32,7 @@
 #if HIG_DISPATCH
 
 #include "hedonic_core.h"
-#include "hedonic_check.h"
+#include "check/hedonic_check.h"
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>

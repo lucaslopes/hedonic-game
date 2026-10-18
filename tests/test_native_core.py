@@ -1,5 +1,5 @@
 """The C core (``hedonic._core``) through ``hedonic._native``: best-response
-local moving of partitions.
+local moving for partitions.
 
 The pinned values are results recorded on macOS arm64 (Apple clang -O3). The
 core is written to give the same bits on every platform, but the pins are
@@ -23,30 +23,30 @@ ZACHARY_SEED0 = [0, 0, 0, 0, 1, 2, 2, 0, 3, 0, 1, 1, 0, 0, 3, 3, 2, 0, 3, 0, 3, 
                  4, 3, 4, 4, 3, 3, 4, 3, 3]
 
 
-# The pins of native/tests/test_core.c (test_pins), from the same seeded
-# random.Random order: (seed, resolution or None for the density, isolation,
-# edge-weighted, node-weighted, max_total, exact) -> (k, quality hex,
-# membership in order of first appearance). Edge e weighs 0.5 + 0.25 (e mod 7),
-# vertex v 0.5 (1 + v mod 4).
+# The partition pins of native/tests/test_core.c (test_pins), from the same
+# seeded random.Random order: (seed, resolution or None for the density, cap,
+# isolation, edge-weighted, node-weighted, max_total, exact) -> (k, quality
+# hex, membership in order of first appearance). Edge e weighs
+# 0.5 + 0.25 (e mod 7), vertex v 0.5 (1 + v mod 4).
 PINS = [
-    ((0, None, False, False, False, None, None), (5, "0x1.b8f407b8f407dp-2", ZACHARY_SEED0)),
-    ((1, 0.2, True, True, False, None, None), (10, "0x1.96f439aec498ep-2", [
+    ((0, None, 1, False, False, False, None, None), (5, "0x1.b8f407b8f407dp-2", ZACHARY_SEED0)),
+    ((1, 0.2, 1, True, True, False, None, None), (10, "0x1.96f439aec498ep-2", [
         0, 0, 0, 0, 1, 1, 1, 0, 2, 3, 1, 4, 0, 0, 5, 5, 1, 0, 6, 0, 6, 7, 5, 8, 9, 9, 8, 6, 6, 8,
         2, 6, 5, 6])),
-    ((3, 0.1, False, False, False, None, 3), (3, "0x1.01f81f81f81f8p-1", [
+    ((3, 0.1, 1, False, False, False, None, 3), (3, "0x1.01f81f81f81f8p-1", [
         0, 0, 0, 0, 1, 1, 1, 0, 2, 0, 1, 0, 0, 0, 2, 2, 1, 0, 2, 0, 2, 0, 2, 2, 1, 1, 2, 2, 1, 2,
         2, 1, 2, 2])),
-    ((7, 0.5, True, False, False, None, None), (19, "0x1.20d20d20d20d2p-4", [
+    ((7, 0.5, 1, True, False, False, None, None), (19, "0x1.20d20d20d20d2p-4", [
         0, 0, 0, 0, 1, 2, 2, 0, 3, 4, 1, 5, 6, 0, 7, 8, 2, 9, 10, 11, 12, 13, 14, 15, 16, 16, 17,
         15, 18, 17, 3, 16, 3, 3])),
 ]
 
 
-def pinned_run(seed, resolution, isolation, weighted, node_weighted, max_total, exact):
-    """(k, quality hex, membership in order of first appearance) of one pinned call."""
+def pinned_run(seed, resolution, cap, isolation, weighted, node_weighted, max_total, exact):
+    """(k, quality hex, canonical result) of one pinned call."""
     g = ig.Graph.Famous("Zachary")
     r = _native.community_hedonic(
-        g, seed=seed, resolution=resolution, allow_isolation=isolation,
+        g, seed=seed, resolution=resolution, max_memberships=cap, allow_isolation=isolation,
         edge_weights=[0.5 + 0.25 * (e % 7) for e in range(78)] if weighted else None,
         node_weights=[0.5 * (1 + v % 4) for v in range(34)] if node_weighted else None,
         max_total_communities=max_total, n_communities=exact)
@@ -170,6 +170,15 @@ class TestPartition(unittest.TestCase):
         self.assertFalse(hasattr(_native, "DivergedError"))
 
 
+class TestCover(unittest.TestCase):
+    def test_covers_are_refused(self):
+        g = ig.Graph.Famous("Zachary")
+        self.assertFalse(hasattr(_native, "cover"))
+        for M in (2, 3, -1):
+            with self.assertRaisesRegex(ValueError, "partitions only"):
+                _native.community_hedonic(g, seed=0, max_memberships=M, resolution=0.1)
+
+
 class TestRemovedOptions(unittest.TestCase):
     def test_native_call_rejects_removed_keywords(self):
         g = ig.Graph.Famous("Zachary")
@@ -236,6 +245,7 @@ class TestErrors(unittest.TestCase):
     def test_rejections(self):
         self.check(ValueError, resolution=math.nan)
         self.check(ValueError, resolution=math.inf)
+        self.check(ValueError, max_memberships=0)
         self.check(ValueError, n_communities=35)
         self.check(ValueError, initial_membership=[5 * v for v in range(34)])
         self.check(ValueError, initial_membership=[-1] + [0] * 33)

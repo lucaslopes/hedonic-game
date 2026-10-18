@@ -17,20 +17,22 @@
 */
 
 /*
- * hig_verify_partition (hedonic_check.h) takes a result and scores every
- * vertex's feasible deviations with no queue, no settlement record, no heap
- * and no accumulator shared with the engine: the masses are summed afresh,
- * each candidate's error is bounded on its own, and the communities a vertex
- * has no edge to are read off one sorted array. For each deviation the report
- * keeps the certified lower bound of its exact gain (when it is certainly
- * positive) and an upper bound, so a result whose engine claimed slack s is
- * wrong if any certified gain exceeds s.
+ * hig_verify_partition (hedonic_check.h) takes a result
+ * and score every vertex's feasible deviations with no queue, no settlement
+ * record, no heap and no accumulator shared with the engines: the masses are
+ * summed afresh, each candidate's error is bounded on its own (the engines
+ * bound some of them together), and the communities a vertex has no edge to
+ * are read off one sorted array. For each deviation the report keeps the
+ * certified lower bound of its exact gain (when it is certainly positive) and
+ * an upper bound, so a result whose engine claimed slack s is wrong if any
+ * certified gain exceeds s.
  */
 
 #include "internal.h"
 
 #include <stdlib.h>
 #include <string.h>
+
 
 /* A lower bound of d - e > 0 (0 otherwise). */
 static double hig_certified(double d, double e) {
@@ -78,6 +80,8 @@ static void hig_note(hig_verify_t *report, double d, double e, bool *improvable)
     }
 }
 
+/* ---- Partitions -------------------------------------------------------------- */
+
 /* |exact w - gn m - r| for r = fl(w - gn m): one rounding, inputs' errors. */
 static double hig_check_partition_bound(double r, double gn, double m, double ew, double em,
                                         double eg) {
@@ -104,7 +108,7 @@ hig_error_t hig_verify_partition(const hig_graph_t *graph, const hig_options_t *
     if (!options.rng) {
         options.rng = &unused;
     }
-    HIG_TRY(hig_check_input(graph, &options));
+    HIG_TRY(hig_check_input(graph, &options, false));
     n = (hig_id) graph->vertex_count;
     exact = hig_limit_set(options.n_communities);
     HIG_TRY(hig_adjacency_build(&adj, graph));

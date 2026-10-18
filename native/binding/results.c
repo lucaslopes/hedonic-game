@@ -1,5 +1,5 @@
 /*
-   hedonic -- the result list of detect().
+   hedonic -- result lists of detect().
    Copyright (C) 2025-2026  Lucas Lopes Felipe
 
    This program is free software: you can redistribute it and/or modify

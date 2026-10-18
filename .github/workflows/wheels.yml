@@ -4,17 +4,26 @@
 # FMA and the soft-fma build, and the libm check), then
 # cibuildwheel runs the native Python tests of each wheel with HIG_PINNED=1
 # (tools/native_tests.py, which fails on any skip), so a platform whose results
-# differ from the pinned ones, bit for bit, fails here. Publishing needs every
-# job. Wheels and
-# the sdist are uploaded as artifacts. A `v*` tag whose name matches the
-# project version publishes exactly those artifacts to PyPI (trusted
-# publishing: configure the PyPI project for this repository, workflow
-# `wheels.yml`, environment `pypi`).
+# differ from the pinned ones, bit for bit, fails here. Wheels and the sdist are
+# uploaded as artifacts.
+#
+# Branch pushes and pull requests only build and test. A tag publishes exactly
+# those artifacts once every job has passed, and the tag sets their version
+# (tools/release_version.py; pyproject.toml holds the release, e.g. 1.0.0):
+#
+#   v1.0.0.dev1  -> TestPyPI (trial uploads; environment `testpypi`)
+#   v1.0.0rc1    -> PyPI, a pre-release pip installs only with --pre
+#   v1.0.0       -> PyPI (environment `pypi`)
+#
+# Publishing is trusted publishing (no token): each index needs a trusted
+# publisher for this repository, workflow `wheels.yml` and that environment.
+# After the upload, `verify` installs that version from the index on every
+# platform and runs the pinned tests and the whole test suite against it.
 name: Wheels
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -32,6 +41,8 @@ env:
   # x87 registers, so its results could differ from every other platform.
   CIBW_SKIP: "cp3??t-* *-win32 *_i686"
   # tools/native_tests.py sets HIG_PINNED=1 and fails on any skipped test.
+  # Testing a wheel installs only the library's dependencies (igraph, numpy),
+  # which have wheels everywhere, musllinux included.
   CIBW_TEST_COMMAND: "python {project}/tools/native_tests.py"
 
 jobs:
@@ -91,7 +102,7 @@ jobs:
           set HIG_TEST_FMA=
           cl /nologo /std:c11 /O2 /DNDEBUG /fp:strict /W3 /DHIG_FORCE_SOFT_FMA /Inative\include /Inative\core native\tests\test_core.c native\unity.c native\unity_fma.c native\dispatch.c /Fe:test_core_soft.exe || exit /b 1
           test_core_soft.exe
-      - name: The core calls no libm function but sqrt
+      - name: The core calls no libm function but sqrt and fabs
         shell: cmd
         run: |
           cl /nologo /c /std:c11 /O2 /DNDEBUG /fp:strict /Inative\include /Inative\core native\unity.c native\unity_fma.c native\dispatch.c || exit /b 1
@@ -105,6 +116,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: The version the tag names
+        run: python tools/release_version.py
       - name: Build the sdist, then a wheel from it
         run: |
           python -m pip install -U build
@@ -143,6 +156,12 @@ jobs:
             archs: ARM64
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: The version the tag names
+        shell: bash
+        run: python tools/release_version.py
       # The C core's tests on this runner before any wheel: release and
       # sanitized builds with the C bit pins (on x86_64 with each of the two
       # builds), the soft fma everywhere, the libm check, and on macOS the
@@ -180,25 +199,112 @@ jobs:
           path: ./wheelhouse/*.whl
 
   publish:
-    name: Publish to PyPI
+    name: Publish to ${{ contains(github.ref_name, '.dev') && 'TestPyPI' || 'PyPI' }}
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [c_core, c_core_msvc, sdist, wheels]
     runs-on: ubuntu-24.04
-    environment: pypi
+    environment: ${{ contains(github.ref_name, '.dev') && 'testpypi' || 'pypi' }}
     permissions:
       id-token: write
     steps:
       - uses: actions/checkout@v5
-      - name: The tag names the project version
-        run: |
-          python3 - <<'PY'
-          import os, tomllib
-          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
-          assert os.environ["GITHUB_REF_NAME"] == f"v{version}", "tag/version mismatch"
-          PY
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # The tag names pyproject.toml's version and its index, and every
+      # distribution carries the tag's version.
+      - name: Check the tag and the distributions
+        id: check
+        run: |
+          index=$(python tools/release_version.py)
+          echo "index=$index" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import os, pathlib, tomllib
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          assert os.environ["GITHUB_REF_NAME"] == f"v{version}", "tag/version mismatch"
+          files = sorted(p.name for p in pathlib.Path("dist").iterdir())
+          print("\n".join(files))
+          assert any(f.endswith(".tar.gz") for f in files), "no sdist"
+          assert sum(f.endswith(".whl") for f in files) >= 15, "wheels missing"
+          wrong = [f for f in files if not f.startswith(f"hedonic-{version}")]
+          assert not wrong, f"not version {version}: {wrong}"
+          PY
+      - name: Upload to TestPyPI
+        if: steps.check.outputs.index == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+      - name: Upload to PyPI
+        if: steps.check.outputs.index == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
 
+  # What was published, installed from the index it went to on every platform
+  # (hedonic with --no-deps from that index, its dependencies from PyPI, so a
+  # TestPyPI upload never pulls other projects from TestPyPI), then the pinned
+  # tests and the whole test suite against the installed package (the src
+  # layout keeps the checkout's sources off the path).
+  verify:
+    name: Install from ${{ contains(github.ref_name, '.dev') && 'TestPyPI' || 'PyPI' }} (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: publish
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, windows-2022, windows-11-arm]
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the published version
+        shell: bash
+        run: |
+          index=$(python tools/release_version.py)
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "$index" = testpypi ]; then url=https://test.pypi.org/simple/; else url=https://pypi.org/simple/; fi
+          python -m pip install -U pip
+          # The library's own dependencies only: the pinned tests run on the lean install a library user gets.
+          python - > requirements.txt <<'PY'
+          import tomllib
+          print("\n".join(tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]))
+          PY
+          python - > requirements-cli.txt <<'PY'
+          import tomllib
+          print("\n".join(tomllib.load(open("pyproject.toml", "rb"))["project"]["optional-dependencies"]["cli"]))
+          PY
+          python -m pip install -r requirements.txt
+          # A new upload can take a few minutes to reach the index's mirrors.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            python -m pip install --no-deps --only-binary :all: --no-cache-dir \
+              --index-url "$url" "hedonic==$version" && break
+            [ "$attempt" = 10 ] && exit 1
+            sleep 30
+          done
+          python - "$version" <<'PY'
+          import sys, importlib.metadata, hedonic
+          assert importlib.metadata.version("hedonic") == sys.argv[1]
+          assert "site-packages" in hedonic.__file__, hedonic.__file__
+          print("hedonic", sys.argv[1], "from", hedonic.__file__)
+          PY
+          # The tests read pyproject.toml's own version (the release).
+          git checkout -- pyproject.toml
+      - name: Pinned tests (no skips), library alone
+        run: python tools/native_tests.py
+      - name: The command line asks for the cli extra
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set +e; out=$(hedonic run list 2>&1); code=$?; set -e
+          echo "$out"
+          [ "$code" = 2 ] && grep -q 'hedonic\[cli\]' <<<"$out"
+      - name: The cli extra (pyproject.toml, with its platform markers)
+        run: python -m pip install -r requirements-cli.txt pytest
+      - name: The whole test suite
+        env:
+          HIG_PINNED: "1"
+        run: python -m pytest -q -p no:cacheprovider

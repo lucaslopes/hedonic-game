@@ -1,17 +1,19 @@
-"""The C core calls no libm function but sqrt.
+"""The C core calls no libm function but sqrt and fabs.
 
 Usage: python check_libm.py OBJECT [OBJECT ...]
 
 Lists each object's undefined symbols (``nm -u``; ``dumpbin /symbols`` for a
 ``.obj`` built by MSVC) and fails if one is a <math.h> function other than
-sqrt, or any float/long double variant (sqrtf, fmal, ...). Pass every object
+sqrt or fabs, or any float/long double variant (sqrtf, fmal, ...). Pass every object
 of the core: unity.c, and on x86_64 dispatch targets unity_fma.c and
 dispatch.c (elsewhere these compile to empty objects).
 
 Why this pins the results across platforms: IEEE 754 requires +, -, *, /
 and sqrt to be correctly rounded, and the hardware of every target does
 them (sqrt is an instruction everywhere; a libm sqrt computes the same
-correctly rounded result). The fused multiply-add is also correctly rounded
+correctly rounded result). fabs is exact (it clears the sign bit), so a call
+to it, which MSVC emits under /fp:strict where other compilers inline it,
+gives the same bits everywhere. The fused multiply-add is also correctly rounded
 by IEEE 754, but the core does not rely on a C library for it: it uses the
 instruction where the target has one at compile time and otherwise its own
 soft fma in integer arithmetic (core/softfma.h; x86_64 wheels choose between
@@ -36,7 +38,7 @@ expm1 frexp ilogb ldexp log log10 log1p log2 logb modf scalbn scalbln cbrt fabs
 hypot pow sqrt erf erfc lgamma tgamma ceil floor nearbyint rint lrint llrint round
 lround llround trunc fmod remainder remquo copysign nan nextafter nexttoward fdim
 fmax fmin fma sincos exp10 pow10 significand gamma j0 j1 jn y0 y1 yn""".split()
-ALLOWED = {"sqrt"}
+ALLOWED = {"sqrt", "fabs"}
 LIBM = {name + suffix for name in BASE for suffix in ("", "f", "l")}
 
 

@@ -17,7 +17,7 @@
 */
 
 #include "binding.h"
-#include "hedonic_check.h"
+#include "check/hedonic_check.h"
 
 #include <string.h>
 
@@ -146,6 +146,7 @@ static PyObject *run_partition(PyObject *args, PyObject *kwds, int traced) {
     }
     options = (hig_options_t) {
         .resolution = resolution,
+        .max_memberships = 1,
         .allow_isolation = allow_isolation,
         .interrupt = &interrupt
     };

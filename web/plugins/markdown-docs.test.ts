@@ -9,7 +9,7 @@ const bundle = loadDocs(
     apiFile: resolve(root, 'src/generated/api.json'),
     referencesFile: resolve(root, 'src/generated/references.json'),
   },
-  '/hedonic-game/',
+  '/hedonic/',
 );
 const page = (slug: string) => {
   const found = bundle.pages.find((p) => p.slug === slug);
@@ -25,6 +25,7 @@ describe('documentation bundle', () => {
       'concepts',
       'game-api',
       'community-hedonic',
+      'disjoint-vs-overlapping',
       'resolution',
       'familiarity-index',
       'metagraph',
@@ -43,7 +44,7 @@ describe('documentation bundle', () => {
   it('generates the API reference from the Python source', () => {
     const html = page('community-hedonic').html;
     expect(html).toContain('id="api-game-community-hedonic"');
-    for (const parameter of ['initial_<wbr>membership', 'max_<wbr>communities', 'resolution', 'allow_<wbr>isolation', 'seed', 'max_<wbr>total_<wbr>communities', 'n_<wbr>communities']) {
+    for (const parameter of ['initial_<wbr>membership', 'max_<wbr>memberships', 'resolution', 'allow_<wbr>isolation', 'seed', 'max_<wbr>total_<wbr>communities', 'n_<wbr>communities']) {
       expect(html).toContain(parameter);
     }
     expect(html).toContain('src/hedonic/Game.py');
@@ -58,7 +59,7 @@ describe('documentation bundle', () => {
     expect(html).toContain('class="katex"');
     expect(html).not.toMatch(/\$\\Delta/);
     expect(page('concepts').html).toContain('href="#ref-traag2011cpm"');
-    expect(page('concepts').html).toContain('href="/hedonic-game/#dilemma"');
+    expect(page('concepts').html).toContain('href="/hedonic/#dilemma"');
     expect(page('game-api').html).toMatch(/href="https:\/\/github\.com\/[^"]+\/blob\/[^"]+\/src\/hedonic\/Game\.py"/);
   });
 
@@ -85,6 +86,6 @@ describe('helpers', () => {
   });
 
   it('converts docstring reStructuredText to Markdown', () => {
-    expect(rstToMarkdown('Use ``max_total_communities`` and :meth:`community_hedonic`.')).toBe('Use `max_total_communities` and `community_hedonic`.');
+    expect(rstToMarkdown('Use ``max_memberships`` and :meth:`community_hedonic`.')).toBe('Use `max_memberships` and `community_hedonic`.');
   });
 });

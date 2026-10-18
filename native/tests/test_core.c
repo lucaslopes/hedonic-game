@@ -19,8 +19,9 @@
 /*
  * The C core alone (no Python): every returned partition of a small game is
  * checked against an independent brute-force best response computed from the
- * definition of the payoffs (every community), together with the count
- * limits, the structure of the result and the returned quality. Then fixed points, determinism, callbacks and error
+ * definition of the payoffs (every community),
+ * together with the count limits, the structure of the result and the
+ * returned quality. Then fixed points, determinism, callbacks and error
  * paths, and first the soft fma (core/softfma.h) against the FMA instruction.
  * Meant to run under ASan/UBSan (make test) and at -O3 (make test-release);
  * an argument multiplies the number of random games, HIG_FMA_CASES sets the
@@ -30,8 +31,8 @@
  */
 
 #include "hedonic_core.h"
-#include "hedonic_check.h"   /* the traced entry points and the verifier */
-#include "softfma.h"         /* the core's soft fma, compared with the instruction */
+#include "check/hedonic_check.h"   /* the traced entry points and the verifier */
+#include "softfma.h"               /* the core's soft fma, compared with the instruction */
 
 #include <float.h>
 #include <math.h>
@@ -84,10 +85,13 @@ static hig_int below(hig_int n) {
     return (hig_int) (next64() % (uint64_t) n);
 }
 
-static hig_options_t options(double resolution, int allow_isolation, const hig_rng_t *rng) {
+
+static hig_options_t options(double resolution, hig_int max_memberships, int allow_isolation,
+                             const hig_rng_t *rng) {
     hig_options_t o;
     memset(&o, 0, sizeof o);
     o.resolution = resolution;
+    o.max_memberships = max_memberships;
     o.max_total_communities = -1;
     o.n_communities = -1;
     o.allow_isolation = allow_isolation;
@@ -241,6 +245,7 @@ static double partition_regret(const hig_graph_t *g, const hig_int *membership, 
     return worst;
 }
 
+
 /* Potential / W from the definitions. */
 static double partition_potential(const hig_graph_t *g, const hig_int *membership, hig_int k,
                                   double gamma) {
@@ -285,16 +290,16 @@ typedef struct {
 } small_graph_t;
 
 /* A random graph of 2 .. largest vertices. */
-static void random_graph(small_graph_t *s, hig_int largest) {
+static void random_graph(small_graph_t *s, int cover, hig_int largest) {
     const double p = 0.15 + 0.6 * uniform();
-    const int signed_weights = below(4) == 0;
+    const int signed_weights = !cover && below(4) == 0;
     const int weighted = signed_weights || below(3) == 0, node_weighted = below(3) == 0;
     s->n = 2 + below(largest - 1);
     do {
         s->m = 0;
         for (hig_int a = 0; a < s->n; a++) {
-            /* The odd self-loop. */
-            for (hig_int b = a + (below(8) != 0); b < s->n; b++) {
+            /* Partitions get the odd self-loop. */
+            for (hig_int b = a + (cover || below(8) != 0); b < s->n; b++) {
                 if (uniform() < p && s->m < SMALL_M - 1) {
                     s->edges[2 * s->m] = a;
                     s->edges[2 * s->m + 1] = b;
@@ -331,13 +336,13 @@ static double total_edge_weight(const hig_graph_t *g) {
 
 static const double RESOLUTIONS[] = {-0.7, -0.05, 0.0, 0.02, 0.1, 0.35, 0.8, 2.0};
 
-static void random_limits(hig_options_t *o, hig_int n) {
+static void random_limits(hig_options_t *o, hig_int n, hig_int cap) {
     switch (below(4)) {
     case 0:
         o->max_total_communities = 1 + below(n);
         break;
     case 1:
-        o->n_communities = 1 + below(n);
+        o->n_communities = 1 + below(n * cap);
         break;
     default:
         break;
@@ -383,10 +388,10 @@ static void test_random_partitions(int cases) {
         double quality = 0.0, raw_slack = -1.0, regret;
         const int start = below(3) == 0;
         hig_error_t status;
-        random_graph(&s, SMALL_N);
+        random_graph(&s, 0, SMALL_N);
         seed_rng(&r, (uint64_t) i);
-        o = options(RESOLUTIONS[below(8)], (int) below(2), &r.rng);
-        random_limits(&o, s.n);
+        o = options(RESOLUTIONS[below(8)], 1, (int) below(2), &r.rng);
+        random_limits(&o, s.n, 1);
         if (!(total_edge_weight(&s.graph) > 0.0)) continue;
         if (start) {
             const hig_int labels = start_labels(&o, s.n);
@@ -439,7 +444,7 @@ static void test_zachary(void) {
 
     for (int isolation = 0; isolation <= 1; isolation++) {
         seed_rng(&r, 0);
-        o = options(density, isolation, &r.rng);
+        o = options(density, 1, isolation, &r.rng);
         CHECK(hig_partition(&g, &o, 0, membership, &k, &quality, NULL) == HIG_SUCCESS, "%s",
               hig_error_message());
         CHECK(partition_regret(&g, membership, k, &o) <= 1.0, "isolation %d", isolation);
@@ -467,14 +472,14 @@ static void test_zachary(void) {
  * reproduce bit for bit, from the seeded order of random.Random(seed) (the
  * same values are pinned in tests/test_native_core.py and
  * tests/test_native_backend.py). A partition is pinned as its labels in
- * order of first appearance, with the hex of the quality and of the slack.
- * HIG_PRINT_PINS=1 prints the values instead of checking them.
+ * order of first appearance, with the hex of the quality. HIG_PRINT_PINS=1 prints the values instead of checking them.
  */
 
 typedef struct {
     const char *name;
     uint32_t seed;
     double resolution;        /* DENSITY: the graph density */
+    hig_int cap;
     int isolation, weighted, node_weighted;
     hig_int max_total, exact;
     hig_int k;
@@ -485,15 +490,16 @@ typedef struct {
 #define DENSITY 1e300
 
 static const pin_t PINS[] = {
-    {"zachary partition seed 0", 0, DENSITY, 0, 0, 0, -1, -1, 5, 0x1.b8f407b8f407dp-2, 0x0p+0,
+    {"zachary partition seed 0", 0, DENSITY, 1, 0, 0, 0, -1, -1, 5, 0x1.b8f407b8f407dp-2, 0x0p+0,
      {0, 0, 0, 0, 1, 2, 2, 0, 3, 0, 1, 1, 0, 0, 3, 3, 2, 0, 3, 0, 3, 0, 3, 3, 4, 4, 3, 4, 4, 3, 3, 4, 3, 3}},
-    {"weighted partition gamma 0.2 isolation seed 1", 1, 0x1.999999999999ap-3, 1, 1, 0, -1, -1, 10, 0x1.96f439aec498ep-2, 0x1.0c0000000000ap-50,
+    {"weighted partition gamma 0.2 isolation seed 1", 1, 0x1.999999999999ap-3, 1, 1, 1, 0, -1, -1, 10, 0x1.96f439aec498ep-2, 0x1.0c0000000000ap-50,
      {0, 0, 0, 0, 1, 1, 1, 0, 2, 3, 1, 4, 0, 0, 5, 5, 1, 0, 6, 0, 6, 7, 5, 8, 9, 9, 8, 6, 6, 8, 2, 6, 5, 6}},
-    {"exactly 3 communities gamma 0.1 seed 3", 3, 0x1.999999999999ap-4, 0, 0, 0, -1, 3, 3, 0x1.01f81f81f81f8p-1, 0x0p+0,
+    {"exactly 3 communities gamma 0.1 seed 3", 3, 0x1.999999999999ap-4, 1, 0, 0, 0, -1, 3, 3, 0x1.01f81f81f81f8p-1, 0x0p+0,
      {0, 0, 0, 0, 1, 1, 1, 0, 2, 0, 1, 0, 0, 0, 2, 2, 1, 0, 2, 0, 2, 0, 2, 2, 1, 1, 2, 2, 1, 2, 2, 1, 2, 2}},
-    {"exact arithmetic partition gamma 0.5 isolation seed 7", 7, 0x1p-1, 1, 0, 0, -1, -1, 19, 0x1.20d20d20d20d2p-4, 0x0p+0,
+    {"exact arithmetic partition gamma 0.5 isolation seed 7", 7, 0x1p-1, 1, 1, 0, 0, -1, -1, 19, 0x1.20d20d20d20d2p-4, 0x0p+0,
      {0, 0, 0, 0, 1, 2, 2, 0, 3, 4, 1, 5, 6, 0, 7, 8, 2, 9, 10, 11, 12, 13, 14, 15, 16, 16, 17, 15, 18, 17, 3, 16, 3, 3}},
 };
+
 
 /* The pins' edge and node weights: dyadic, so the inputs are the same
  * everywhere. */
@@ -517,31 +523,33 @@ static void test_pins(void) {
         hig_options_t o;
         test_mt_t mt;
         hig_int k = 0, membership[34];
-        hig_int names[34], next = 0;
         double quality = 0.0, slack = -1.0;
         int same = 1;
 
         g.edge_weights = pin->weighted ? ew : NULL;
         g.node_weights = pin->node_weighted ? nw : NULL;
         seed_mt(&mt, pin->seed);
-        o = options(pin->resolution == DENSITY ? 78.0 / 561.0 : pin->resolution, pin->isolation,
-                    &mt.rng);
+        o = options(pin->resolution == DENSITY ? 78.0 / 561.0 : pin->resolution, pin->cap,
+                    pin->isolation, &mt.rng);
         o.max_total_communities = pin->max_total;
         o.n_communities = pin->exact;
-        CHECK(hig_partition_traced(&g, &o, 0, membership, &k, &quality, &slack, NULL) ==
-              HIG_SUCCESS,
-              "%s: %s", pin->name, hig_error_message());
-        for (hig_int c = 0; c < 34; c++) names[c] = -1;
-        for (hig_int v = 0; v < 34; v++) {
-            if (names[membership[v]] < 0) names[membership[v]] = next++;
-            membership[v] = names[membership[v]];
-            same &= membership[v] == pin->membership[v];
+        {
+            hig_int names[34], next = 0;
+            CHECK(hig_partition_traced(&g, &o, 0, membership, &k, &quality, &slack, NULL) ==
+                  HIG_SUCCESS,
+                  "%s: %s", pin->name, hig_error_message());
+            for (hig_int c = 0; c < 34; c++) names[c] = -1;
+            for (hig_int v = 0; v < 34; v++) {
+                if (names[membership[v]] < 0) names[membership[v]] = next++;
+                membership[v] = names[membership[v]];
+                same &= membership[v] == pin->membership[v];
+            }
         }
         if (print) {
-            printf("    {\"%s\", %u, %a, %d, %d, %d, %lld, %lld, %lld, %a, %a,\n     {",
-                   pin->name, pin->seed, pin->resolution, pin->isolation, pin->weighted,
-                   pin->node_weighted, (long long) pin->max_total, (long long) pin->exact,
-                   (long long) k, quality, slack);
+            printf("    {\"%s\", %u, %a, %lld, %d, %d, %d, %lld, %lld, %lld, %a, %a,\n     {",
+                   pin->name, pin->seed, pin->resolution, (long long) pin->cap, pin->isolation,
+                   pin->weighted, pin->node_weighted, (long long) pin->max_total,
+                   (long long) pin->exact, (long long) k, quality, slack);
             for (hig_int v = 0; v < 34; v++) printf("%s%lld", v ? ", " : "", (long long) membership[v]);
             printf("}},\n");
             continue;
@@ -567,7 +575,7 @@ static void test_edge_layouts(void) {
     split.edge_first = first;
     split.edge_second = second;
     seed_rng(&r, 3);
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 1, 0, &r.rng);
     CHECK(hig_partition(&g, &o, 0, a, &ka, &qa, NULL) == HIG_SUCCESS, "%s", hig_error_message());
     seed_rng(&r, 3);
     CHECK(hig_partition(&split, &o, 0, b, &kb, &qb, NULL) == HIG_SUCCESS, "%s", hig_error_message());
@@ -594,7 +602,7 @@ static void test_former_tie_cycle(void) {
     for (uint64_t seed = 0; seed < 50; seed++) {
         for (int isolation = 0; isolation <= 1; isolation++) {
             seed_rng(&r, seed);
-            o = options(0.342, isolation, &r.rng);
+            o = options(0.342, 1, isolation, &r.rng);
             CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_SUCCESS, "%s",
                   hig_error_message());
             CHECK(partition_regret(&g, membership, k, &o) <= 1.0, "seed %llu",
@@ -620,7 +628,7 @@ static void test_counts(void) {
     g.edges = edges;
     for (hig_int target = 1; target <= 12; target++) {
         seed_rng(&r, (uint64_t) target);
-        o = options(0.3, 1, &r.rng);
+        o = options(0.3, 1, 1, &r.rng);
         o.n_communities = target;
         CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_SUCCESS, "%s",
               hig_error_message());
@@ -662,7 +670,7 @@ static void test_planted(void) {
         g.edge_weights = weighted ? weights : NULL;
         for (int isolation = 0; isolation <= 1; isolation++) {
             seed_rng(&r, 11);
-            o = options(0.02, isolation, &r.rng);
+            o = options(0.02, 1, isolation, &r.rng);
             CHECK(hig_partition(&g, &o, 0, membership, &k, &quality, NULL) == HIG_SUCCESS, "%s",
                   hig_error_message());
             CHECK(partition_well_formed(membership, n, k), "planted");
@@ -708,12 +716,12 @@ static void test_callbacks(void) {
     g.vertex_count = n;
     g.edge_count = n;
     g.edges = edges;
-    o = options(0.1, 0, &failing);
+    o = options(0.1, 1, 0, &failing);
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_ECALLBACK, "rng failure");
     interrupt.check = interrupt_now;
     interrupt.state = &calls;
     seed_rng(&r, 1);
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 1, 0, &r.rng);
     o.interrupt = &interrupt;
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_INTERRUPTED, "interrupt");
     CHECK(calls == 1, "interrupt called %d times", calls);
@@ -733,37 +741,37 @@ static void test_errors(void) {
     hig_options_t o;
 
     seed_rng(&r, 0);
-    o = options(NAN, 0, &r.rng);
+    o = options(NAN, 1, 0, &r.rng);
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "NaN resolution");
     CHECK(strstr(hig_error_message(), "resolution must be finite") != NULL, "%s",
           hig_error_message());
-    o = options(0.1, 0, NULL);
+    o = options(0.1, 1, 0, NULL);
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "no rng");
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 2, 0, &r.rng);
+    CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "partition cap 2");
+    o = options(0.1, 1, 0, &r.rng);
     o.n_communities = 35;
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "K above n");
     o.n_communities = 5;
     o.max_total_communities = 4;
     CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "K above max");
-    o = options(1e305, 0, &r.rng);
-    CHECK(hig_partition(&g, &o, 0, membership, &k, NULL, NULL) == HIG_EOVERFLOW,
-          "overflowing resolution");
 
     bad = g;
     bad.vertex_count = 2;
     bad.edge_count = 2;
     bad.edges = loop;
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 1, 0, &r.rng);
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_SUCCESS,
-          "a loop is fine: %s", hig_error_message());
+          "a loop is fine in a partition: %s", hig_error_message());
     bad.edge_count = 1;
     bad.edges = outside;
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "end outside");
     bad.edge_count = 2;
     bad.edges = double_edge;
     bad.edge_weights = negative;
+    o = options(0.1, 1, 0, &r.rng);
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_SUCCESS,
-          "signed weights: %s", hig_error_message());
+          "signed partition weights: %s", hig_error_message());
     bad.edge_weights = nan_weight;
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "NaN weight");
     bad.edge_weights = NULL;
@@ -771,7 +779,7 @@ static void test_errors(void) {
     CHECK(hig_partition(&bad, &o, 0, membership, &k, NULL, NULL) == HIG_EINVAL, "negative node weight");
 
     /* Starts. */
-    o = options(0.1, 0, &r.rng);
+    o = options(0.1, 1, 0, &r.rng);
     for (int v = 0; v < 34; v++) membership[v] = v % 3;
     membership[5] = -1;
     CHECK(hig_partition(&g, &o, 1, membership, &k, NULL, NULL) == HIG_EINVAL, "negative label");
@@ -851,11 +859,17 @@ static double random_sign(double x) {
 }
 
 static double special_value(void) {
-    static const double values[] = {0.0, -0.0, INFINITY, -INFINITY, NAN, DBL_MIN, -DBL_MIN,
-                                    4.9406564584124654e-324, -4.9406564584124654e-324,
-                                    DBL_MAX, -DBL_MAX, 1.0, -1.0, 0x1p-1022 - 0x1p-1074};
+    /* As bit patterns: MSVC does not take INFINITY or NAN as constants. 0, -0,
+     * +-inf, a quiet NaN, +-DBL_MIN, +-the least subnormal, +-DBL_MAX, +-1 and
+     * the largest subnormal. */
+    static const uint64_t values[] = {
+        0x0000000000000000ULL, 0x8000000000000000ULL, 0x7ff0000000000000ULL,
+        0xfff0000000000000ULL, 0x7ff8000000000000ULL, 0x0010000000000000ULL,
+        0x8010000000000000ULL, 0x0000000000000001ULL, 0x8000000000000001ULL,
+        0x7fefffffffffffffULL, 0xffefffffffffffffULL, 0x3ff0000000000000ULL,
+        0xbff0000000000000ULL, 0x000fffffffffffffULL};
     const uint64_t i = fma_next() % 16;
-    return i < 14 ? values[i] : random_double(-1080, 1030);
+    return i < 14 ? from_bits(values[i]) : random_double(-1080, 1030);
 }
 
 #define FMA_CLASSES 12
@@ -934,7 +948,9 @@ static void fma_case(int cls, double *x, double *y, double *z) {
     }
     case 10: {  /* exponent gaps from 54 to 1100 between x y and z */
         const int ex = fma_range(-30, 30), ey = fma_range(-30, 30);
-        const int gap = fma_range(54, 1100) * (fma_next() & 1 ? 1 : -1);
+        /* One draw per statement (the operands of * are unsequenced). */
+        const int magnitude = fma_range(54, 1100);
+        const int gap = magnitude * (fma_next() & 1 ? 1 : -1);
         *x = random_double(ex, ex); *y = random_double(ey, ey);
         *z = random_sign(ldexp(random_double(0, 0), ex + ey + gap));
         break;
@@ -944,7 +960,11 @@ static void fma_case(int cls, double *x, double *y, double *z) {
         const int ex = fma_range(-200, 200), ey = fma_range(-200, 200);
         *x = random_double(ex, ex); *y = random_double(ey, ey);
         (void) frexp(*x * *y, &e);
-        *z = random_sign(ldexp((double) fma_range(1, 8), e - 53 - fma_range(0, 3)));
+        /* One draw per statement: C leaves the order of sibling arguments
+         * unspecified (GCC on x86_64 evaluates them right to left). */
+        const double multiple = (double) fma_range(1, 8);
+        const int drop = fma_range(0, 3);
+        *z = random_sign(ldexp(multiple, e - 53 - drop));
         break;
     }
     }

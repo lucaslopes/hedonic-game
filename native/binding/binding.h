@@ -26,7 +26,7 @@
  *                   _trace_partition(), for tests)
  *   graph_edges.c   the edges of an igraph.Graph, borrowed when possible
  *   start_rows.c    the start state of detect(), checked
- *   results.c       the result list of detect()
+ *   results.c       the result lists of detect()
  *   detect.c        detect(), what Game.community_hedonic calls
  *   checking.c      _verify_partition(), for tests
  *
@@ -128,7 +128,7 @@ typedef struct {
 extern PyObject *integral_type;   /* numbers.Integral, set by the module */
 
 void start_rows_release(start_rows_t *rows);
-int read_start_rows(PyObject *obj, Py_ssize_t n, start_rows_t *rows);
+int read_start_rows(PyObject *obj, Py_ssize_t n, hig_int max_memberships, start_rows_t *rows);
 
 /* ---- results.c ------------------------------------------------------------- */
 

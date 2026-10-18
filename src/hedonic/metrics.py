@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict, deque
 from itertools import combinations
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 import math
 from typing import Any, Literal
 
@@ -64,24 +64,62 @@ def cover_quality(result) -> float | None:
     return None
 
 
+def _is_label(value) -> bool:
+    """A flat label, as opposed to a community or a row of labels."""
+    return not isinstance(value, (list, tuple, set, frozenset, np.ndarray))
+
+
+def flat_labels_to_cover(labels) -> list[list[int]]:
+    """Group a flat label vector (one hashable label per vertex) into
+    communities, ordered by label when the labels sort, else by first
+    appearance."""
+    groups: dict = {}
+    for vertex, label in enumerate(labels):
+        groups.setdefault(label.item() if isinstance(label, np.generic) else label, []).append(vertex)
+    try:
+        keys = sorted(groups)
+    except TypeError:
+        keys = list(groups)
+    return [groups[key] for key in keys]
+
+
 def partition_to_cover_lists(partition) -> list[list[int]]:
-    """Convert a VertexClustering (or flat membership) to community lists."""
+    """Convert a VertexClustering, VertexCover or flat membership vector to
+    community lists."""
     if hasattr(partition, "membership") and partition.membership is not None:
         mem = partition.membership
         # Overlapping VertexCover: membership is list[list[int]]
         if mem and isinstance(mem[0], (list, tuple)):
             return [list(c) for c in partition]
-        n_comms = max(mem) + 1 if mem else 0
-        return [
-            [v for v, c in enumerate(mem) if c == ci]
-            for ci in range(n_comms)
-        ]
-    return [list(c) for c in partition]
+        return flat_labels_to_cover(mem)
+    values = list(partition)
+    if values and all(_is_label(value) for value in values):
+        return flat_labels_to_cover(values)
+    return [list(c) for c in values]
 
 
 def flat_membership_to_cover_init(membership: list[int]) -> list[list[int]]:
     """Disjoint membership vector → overlapping initial_membership format."""
     return [[int(c)] for c in membership]
+
+
+def restrict_cover(
+    cover: Sequence[Sequence[int]], reference: Sequence[Sequence[int]]
+) -> list[list[int]]:
+    """``cover`` restricted to the vertices that ``reference`` covers.
+
+    Every community keeps only its vertices that belong to some community of
+    ``reference``, in their order; a community left empty is dropped. This is
+    how a prediction on a whole graph is scored against a reference that
+    labels only part of it.
+    """
+    covered = {int(vertex) for community in reference for vertex in community}
+    restricted = []
+    for community in cover:
+        kept = [int(vertex) for vertex in community if int(vertex) in covered]
+        if kept:
+            restricted.append(kept)
+    return restricted
 
 
 def cover_to_memberships(
@@ -94,11 +132,12 @@ def cover_to_memberships(
     :meth:`hedonic.Game.community_hedonic`, making the helper convenient for
     notebooks and experiment adapters that already have a cover in list form.
     """
-    rows = [[] for _ in range(int(n_vertices))]
+    n_vertices = _check_count(n_vertices, "n_vertices", minimum=0)
+    _check_vertices(cover, n_vertices, "cover")
+    rows = [[] for _ in range(n_vertices)]
     for community_id, community in enumerate(cover):
         for vertex in sorted(set(map(int, community))):
-            if 0 <= vertex < n_vertices:
-                rows[vertex].append(community_id)
+            rows[vertex].append(community_id)
     next_label = len(cover)
     for row in rows:
         if not row:
@@ -115,13 +154,18 @@ def score_cover(
     cover: Sequence[Sequence[int]],
     *,
     metrics: Sequence[str] = GAME_EVALUATION_METRICS,
-    omega_sample_size: int = 10_000,
-    seed: int = 7,
+    omega_sample_size: int = 100_000,
+    seed: int = 0,
+    restrict_to_reference: bool = False,
 ) -> dict[str, float | None]:
     """Score a cover through the public :class:`hedonic.Game` facade.
 
-    The import is local so the metrics package remains usable without making
-    the core package eagerly import the optional experiment machinery.
+    The defaults are those of :meth:`hedonic.Game.evaluate_against`. Vertices
+    the cover leaves out play alone (``cover_to_memberships``), so they count
+    as singleton predictions; pass ``restrict_to_reference=True`` to score
+    only the vertices the reference covers. The import is local so the
+    metrics package remains usable without making the core package eagerly
+    import the optional experiment machinery.
     """
     from hedonic import Game
 
@@ -133,6 +177,7 @@ def score_cover(
             method=metric,
             omega_sample_size=omega_sample_size,
             omega_seed=seed,
+            restrict_to_reference=restrict_to_reference,
         )
         for metric in metrics
     }
@@ -214,7 +259,12 @@ def _one_to_one_matches(
     one zero-score dummy prediction per GT community. Both paths solve the same
     optional maximum-weight one-to-one assignment.
     """
-    from scipy.optimize import linear_sum_assignment
+    try:
+        from scipy.optimize import linear_sum_assignment
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise ImportError(
+            "one-to-one matching needs SciPy: pip install 'hedonic[metrics]'"
+        ) from exc
 
     scores, intersections = (
         pair_data if pair_data is not None else _pair_scores(pred_sets, gt_sets, weight)
@@ -310,6 +360,11 @@ def one_to_one_community_metrics(
     matched-pair recall over *all GT* communities.  Thus an unmatched predicted
     community contributes zero precision and an unmatched GT community
     contributes zero recall.  ``matching_f1`` is their harmonic mean.
+
+    When several assignments reach the maximum total weight, the solver picks
+    one; covers above ``MAX_DENSE_MATCHING_CELLS`` pair cells are matched by
+    a sparse solver that can pick another, so these scores can differ between
+    the two paths on tied inputs (the total weight does not).
     """
     pred_sets = _cover_sets(predicted, singleton_mode)
     gt_sets = _cover_sets(ground_truth, singleton_mode)
@@ -365,8 +420,10 @@ def node_membership_multilabel_metrics(
     """Multilabel membership scores after one-to-one community alignment.
 
     Micro scores count vertex-community assignments.  Macro F1 is the standard
-    label-wise multilabel macro average over aligned GT labels plus unmatched
-    predicted labels; unmatched labels therefore receive F1 zero.
+    label-wise multilabel macro average over the label space after alignment:
+    every GT label (a matched predicted community takes its GT label) plus the
+    unmatched predicted labels, that is ``|predicted| + |GT| - |matches|``
+    labels; an unmatched label, on either side, receives F1 zero.
     """
     pred_sets = _cover_sets(predicted, singleton_mode)
     gt_sets = _cover_sets(ground_truth, singleton_mode)
@@ -581,6 +638,10 @@ def overlapping_normalized_mutual_information_lfk(
     entropy; omit it to reproduce the paper's evaluation convention of using
     the union of vertices appearing in either cover.
     """
+    if n_vertices is not None:
+        n_vertices = _check_count(n_vertices, "n_vertices", minimum=0)
+    _check_vertices(predicted, n_vertices, "predicted")
+    _check_vertices(ground_truth, n_vertices, "ground_truth")
     pred_sets = _cover_sets(predicted, "all")
     gt_sets = _cover_sets(ground_truth, "all")
     if not pred_sets and not gt_sets:
@@ -743,6 +804,9 @@ def cover_diagnostics(
     singleton_mode: SingletonMode = "all",
 ) -> dict[str, float | int | None]:
     """Descriptive cover statistics after applying ``singleton_mode``."""
+    n_vertices = _check_count(n_vertices, "n_vertices", minimum=0)
+    _check_vertices(predicted, n_vertices, "predicted")
+    _check_vertices(ground_truth, n_vertices, "ground_truth")
     pred_sets = _cover_sets(predicted, singleton_mode)
     gt_sets = _cover_sets(ground_truth, singleton_mode)
 
@@ -884,6 +948,35 @@ def structural_overlap_metrics(
     }
 
 
+def _check_vertices(cover, n_vertices: int | None, name: str) -> None:
+    """Every vertex of ``cover`` is an integer in ``range(n_vertices)`` (any
+    non-negative integer when ``n_vertices`` is None)."""
+    if isinstance(cover, (str, bytes)) or not isinstance(cover, Iterable):
+        raise ValueError(f"{name} must be a list of communities, each a list of vertices")
+    for community in cover:
+        if isinstance(community, (str, bytes)) or not isinstance(community, Iterable):
+            raise ValueError(
+                f"{name} must be a list of communities, each a list of vertices; "
+                f"got the entry {community!r}"
+            )
+        for vertex in community:
+            if isinstance(vertex, (bool, np.bool_)) or not isinstance(vertex, (int, np.integer)):
+                raise ValueError(f"{name}: vertex {vertex!r} is not an integer")
+            if vertex < 0 or (n_vertices is not None and vertex >= n_vertices):
+                raise ValueError(
+                    f"{name}: vertex {vertex} is outside range({n_vertices})"
+                    if n_vertices is not None else f"{name}: vertex {vertex} is negative"
+                )
+
+
+def _check_count(value, name: str, *, minimum: int) -> int:
+    """``value`` as an int, an integer (not a bool) at least ``minimum``."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) \
+            or value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}, got {value!r}")
+    return int(value)
+
+
 def evaluate_cover(
     predicted: Sequence[Sequence[int]],
     ground_truth: Sequence[Sequence[int]],
@@ -894,8 +987,28 @@ def evaluate_cover(
     matching_weight: MatchingWeight = "f1",
     omega_sample_size: int = 100_000,
     omega_seed: int = 0,
+    one_to_one: bool = True,
 ) -> dict:
-    """Evaluate a cover with legacy and recommended overlap-aware metrics."""
+    """Evaluate a cover with legacy and recommended overlap-aware metrics.
+
+    Vertices are integers in ``range(n_vertices)``. ``one_to_one=False``
+    skips the one-to-one matching (and the metrics built on it, which are
+    then absent), the only part that needs SciPy.
+
+    Both covers are read as sets of vertex sets (``SCORE_DEFINITION``):
+    repeated members count once and communities with the same members are
+    collapsed into one before scoring (``n_pred_comms`` and ``n_gt_comms``
+    count them after the collapse); ``singleton_mode="size_ge_2"`` then drops
+    communities of one vertex. A vertex absent from a cover is in none of its
+    communities. When a side is empty, a precision or recall over it is 0, so
+    the community and vertex F1 and Jaccard scores are 0; for two empty
+    covers, Omega, ``node_macro_f1`` and ``matching_mean_weight`` are 1 (as
+    is ONMI, :func:`overlapping_normalized_mutual_information_lfk`). Omega is a sampled estimate
+    (``omega_sample_size`` vertex pairs drawn with ``omega_seed``); ``nf1``
+    follows its reference implementation (see :func:`normalized_f1_rossetti`).
+    """
+    _check_vertices(predicted, n_vertices, "predicted")
+    _check_vertices(ground_truth, n_vertices, "ground_truth")
     pred_sets = _cover_sets(predicted, singleton_mode)
     gt_sets = _cover_sets(ground_truth, singleton_mode)
     pair_data = _pair_scores(pred_sets, gt_sets, matching_weight)
@@ -909,11 +1022,15 @@ def evaluate_cover(
     legacy = _symmetric_metrics_from_scores(
         pred_scores, gt_scores, len(pred_sets), len(gt_sets)
     )
-    matches = _one_to_one_matches(
-        pred_sets,
-        gt_sets,
-        weight=matching_weight,
-        pair_data=pair_data,
+    matches = (
+        _one_to_one_matches(
+            pred_sets,
+            gt_sets,
+            weight=matching_weight,
+            pair_data=pair_data,
+        )
+        if one_to_one
+        else None
     )
 
     omega = (
@@ -944,12 +1061,13 @@ def evaluate_cover(
         "detected_to_reference_f1": (sum(sc[0] for sc in pred_scores) / len(pred_scores)) if pred_scores else 0.0,
         "nf1": normalized_f1_rossetti(predicted, ground_truth),
     }
-    result.update(
-        _one_to_one_metrics_from_matches(
-            pred_sets, gt_sets, matches, matching_weight
+    if matches is not None:
+        result.update(
+            _one_to_one_metrics_from_matches(
+                pred_sets, gt_sets, matches, matching_weight
+            )
         )
-    )
-    result.update(_node_metrics_from_matches(pred_sets, gt_sets, matches))
+        result.update(_node_metrics_from_matches(pred_sets, gt_sets, matches))
     result.update(cover_diagnostics(pred_sets, gt_sets, n_vertices))
     result.update(
         structural_overlap_metrics(
@@ -974,6 +1092,11 @@ def normalized_f1_rossetti(
     where coverage is the fraction of reference communities matched and
     redundancy is the number of detected communities per matched reference
     community.
+
+    As in the reference, the covers are used as given: duplicate communities
+    are not collapsed and ``singleton_mode`` does not apply, and NF1 exceeds 1
+    when there are fewer detected communities than matched reference ones (one
+    detected community tied between two reference communities, for instance).
     """
     gt = [list(c) for c in ground_truth]
     if not gt:
@@ -1016,33 +1139,43 @@ def omega_index(
     sample_size: int = 100_000,
     seed: int = 0,
 ) -> float:
-    """Sampled Omega approximation with no dense ``n × n`` allocation.
+    """Omega index, exact on small graphs and sampled on large ones.
 
-    ``sample_size`` unordered vertex pairs are drawn uniformly with replacement.
-    Memory is O(total memberships + n + sample_size), making the metric safe for
-    full DBLP.  Use a fixed ``seed`` for reproducible rescoring.
+    When the graph has at most ``sample_size`` unordered vertex pairs, every
+    pair is counted once and the result is the exact Omega index (``seed`` is
+    then unused). Otherwise ``sample_size`` pairs are drawn uniformly with
+    replacement. Memory is O(total memberships + n + sample_size), with no
+    dense ``n × n`` allocation, making the metric safe for full DBLP. Use a
+    fixed ``seed`` for reproducible rescoring.
     """
+    n = _check_count(n, "n", minimum=0)
+    sample_size = _check_count(sample_size, "sample_size", minimum=1)
+    seed = _check_count(seed, "seed", minimum=0)
+    _check_vertices(pred, n, "pred")
+    _check_vertices(gt, n, "gt")
     n_pairs = n * (n - 1) // 2
     if n_pairs == 0:
         return 1.0
-    if sample_size <= 0:
-        raise ValueError("sample_size must be positive")
 
     def vertex_memberships(cover: Sequence[Sequence[int]]) -> list[set[int]]:
         memberships = [set() for _ in range(n)]
         for community, members in enumerate(cover):
             for vertex in set(members):
-                if 0 <= vertex < n:
-                    memberships[vertex].add(community)
+                memberships[vertex].add(community)
         return memberships
 
     pred_memberships = vertex_memberships(pred)
     gt_memberships = vertex_memberships(gt)
-    rng = np.random.default_rng(seed)
-    first = rng.integers(0, n, size=int(sample_size), dtype=np.int64)
-    second = rng.integers(0, n - 1, size=int(sample_size), dtype=np.int64)
-    # Map [0, n-1) onto all vertices except ``first`` without rejection.
-    second += second >= first
+    if n_pairs <= sample_size:
+        # Every pair once: the exact index.
+        first, second = np.triu_indices(n, k=1)
+        sample_size = n_pairs
+    else:
+        rng = np.random.default_rng(seed)
+        first = rng.integers(0, n, size=int(sample_size), dtype=np.int64)
+        second = rng.integers(0, n - 1, size=int(sample_size), dtype=np.int64)
+        # Map [0, n-1) onto all vertices except ``first`` without rejection.
+        second += second >= first
     k_pred = np.fromiter(
         (len(pred_memberships[u] & pred_memberships[v]) for u, v in zip(first, second)),
         dtype=np.int32,
