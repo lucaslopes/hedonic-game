@@ -14,6 +14,7 @@
 # reason (recompute those methods with --rerun, or start a new folder).
 
 name = "disjoint-queue"
+schedule = "shortest"  # at each turn the run with the least work left (the smoke check first); --schedule file: file order
 
 [[items]]
 name = "disjoint-smoke"

@@ -21,12 +21,21 @@ shows every item.
 Running the same queue again continues it. An item whose results are already on disk is skipped; the test is the
 one its runner uses to reuse work (see ``data_state``). A stopped or interrupted item is relaunched with its own
 arguments and resumes from its finished records.
+
+Shortest first. ``schedule = "shortest"`` in the file (or ``hedonic run queue FILE --schedule shortest``) keeps one run
+going at a time, as always, but chooses each next run at its turn: of the runs that are ready, the one with the smallest
+estimate of what it has left (a running run's own ETA; a disjoint run's planned time for the graphs it still lacks), so
+a long run no longer holds back the short ones behind it. A run is ready when every run it reads is finished: an item
+waits for an earlier item whose output folder one of its arguments names, and for the items listed in its
+``after = [...]``. A run with no estimate goes after the runs that have one. ``schedule = "file"`` (the default) is the
+order of the file.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+from collections.abc import Callable
 import io
 import json
 import os
@@ -77,6 +86,70 @@ def _absolute_config(run: list[str]) -> list[str]:
         if found.is_file():
             run[index] = str(found.resolve())
     return run
+
+
+SCHEDULES = ("file", "shortest")
+
+
+def dependencies(queue: dict) -> dict[str, set[str]]:
+    """Item name -> the earlier items it must wait for: those named in its ``after``, and those whose output folder one
+    of its arguments names."""
+    root = queue.get("root") or ""
+    deps: dict[str, set[str]] = {}
+    earlier: list[tuple[str, list[str]]] = []
+    for item in queue["items"]:
+        mine = set(item.get("after") or [])
+        for name, folders in earlier:
+            if any(any(arg == f or f + os.sep in arg for f in folders) for arg in item["run"]):
+                mine.add(name)
+        deps[item["name"]] = mine
+        folders = [f for f in (_option(item["run"], "--output-dir"), str(Path(root) / item["name"]) if root else None) if f]
+        earlier.append((item["name"], [os.path.normpath(os.path.expanduser(f)) for f in folders]))
+    return deps
+
+
+def ready_items(items: list[dict], pending: list[int], deps: dict[str, set[str]]) -> list[int]:
+    """The pending items that may start now: no item they depend on is still pending."""
+    waiting = {items[i]["name"] for i in pending}
+    return [i for i in pending if not deps.get(items[i]["name"], set()) & waiting]
+
+
+def shortest_order(items: list[dict], pending: list[int], deps: dict[str, set[str]],
+                   cost: Callable[[int], float | None]) -> list[int]:
+    """The pending items in the order a shortest-first queue would take them if no estimate changed: each turn the ready
+    item with the smallest ``cost`` (None, no estimate, goes after every item that has one; ties keep the file's order)."""
+    left, order = list(pending), []
+    while left:
+        ready = ready_items(items, left, deps) or left[:1]
+        index = min(ready, key=lambda i: (cost(i) is None, cost(i) or 0.0, i))
+        order.append(index)
+        left.remove(index)
+    return order
+
+
+def item_cost(item: dict) -> float | None:
+    """Seconds an item should still take: 0 when its files are complete, a running run's own ETA, a disjoint run's
+    planned time scaled to the graphs it still lacks; None when there is no basis."""
+    status, run_entry = _status_of(item)
+    if status == "completed":
+        return 0.0
+    if status in ACTIVE and run_entry is not None:
+        seconds = rm.remaining_seconds(run_entry, rm.read_progress(run_entry), status)
+        if seconds is not None:
+            return float(seconds)
+    if item["run"][0] == "disjoint":
+        try:
+            from hedonic.experiments.disjoint import front
+
+            settings = front.front_study(item["run"][1:])["settings"]
+            seconds = float(front.plan(settings)["seconds"])
+        except Exception:  # noqa: BLE001 - without an estimate the item keeps its place in the file
+            return None
+        count = unit_counts(item["run"])
+        if count and count[1]:
+            seconds *= 1.0 - min(count[0], count[1]) / count[1]
+        return seconds
+    return None
 
 
 def shipped_queues() -> list[str]:
@@ -152,10 +225,21 @@ def load_queue(path: str, root: str | Path | None = None) -> dict:
         seen.add(item_name)
         row = {"name": item_name, "run": run,
                **{key: str(item[key]) for key in ("title", "about", "short", "note") if item.get(key)}}
+        after = item.get("after") or []
+        if not isinstance(after, list) or not all(isinstance(a, str) for a in after):
+            raise SystemExit(f"{path}: item {item_name!r}: after must be a list of earlier item names")
+        unknown = [a for a in after if a not in seen - {item_name}]
+        if unknown:
+            raise SystemExit(f"{path}: item {item_name!r} is after {', '.join(unknown)}, which no earlier item is named")
+        if after:
+            row["after"] = list(after)
         items.append(row)
     if not items:
         raise SystemExit(f"{path} lists no [[items]]")
-    return {"name": name, "items": items, "file": str(file.resolve()), "root": str(root_dir)}
+    plan = str(data.get("schedule") or "file")
+    if plan not in SCHEDULES:
+        raise SystemExit(f"{path}: schedule must be one of {', '.join(SCHEDULES)}, not {plan!r}")
+    return {"name": name, "items": items, "file": str(file.resolve()), "root": str(root_dir), "schedule": plan}
 
 
 def _state(name: str) -> tuple[str, dict | None]:
@@ -423,7 +507,23 @@ def work(name: str, entry: dict, prog: dict, launch_item=_launch_item) -> int:
         print(f"  {row['name']:<30} {first:<10} {tally}", flush=True)
     prog.update(verified=time.time())
     rm.write_json(ppath, prog)
-    for index, row in enumerate(prog["items"]):
+    shortest = entry.get("schedule") == "shortest"
+    deps = dependencies(entry) if shortest else {}
+    if shortest:
+        print(style("order: shortest estimate first, chosen again at each turn among the runs that are ready", "bold"),
+              flush=True)
+    pending = list(range(len(entry["items"])))
+    while pending:
+        index = pending[0]
+        if shortest:
+            ready = ready_items(entry["items"], pending, deps) or pending[:1]
+            costs = {i: item_cost(entry["items"][i]) for i in ready}
+            index = min(ready, key=lambda i: (costs[i] is None, costs[i] or 0.0, i))
+            print(style(f"  next: {entry['items'][index]['name']} ("
+                        + (f"~{qm.fmt_seconds(costs[index])}" if costs[index] is not None else "no estimate")
+                        + f"; the shortest of {len(ready)} ready, {len(pending)} left)", "dim"), flush=True)
+        pending.remove(index)
+        row = prog["items"][index]
         prog.update(current=index, updated=time.time())
         ended = _run_item(row, prog, ppath, launch_item)
         if ended != "completed":
@@ -448,11 +548,12 @@ def launch(entry: dict, *, backend: str = "auto") -> dict:
     (Path(output) / "progress.json").unlink(missing_ok=True)
     use_tmux = backend == "tmux" or (backend == "auto" and shutil.which("tmux"))
     record = {"name": name, "kind": "queue", "items": entry["items"], "file": entry.get("file", ""),
-              "root": entry.get("root", ""), "output_dir": output,
+              "root": entry.get("root", ""), "output_dir": output, "schedule": entry.get("schedule") or "file",
               "created": time.time(),
               "session": f"hedonic-{name}" if use_tmux else "", "backend": "tmux" if use_tmux else "process",
               "log": str(Path(output) / "worker.log"),
-              "command": f"hedonic run queue {entry.get('file', '')}" + (f" --root {entry['root']}" if entry.get("root") else "")}
+              "command": f"hedonic run queue {entry.get('file', '')}" + (f" --root {entry['root']}" if entry.get("root") else "")
+              + (" --schedule shortest" if entry.get("schedule") == "shortest" else "")}
     return rm._spawn(record)
 
 
@@ -881,11 +982,17 @@ def front_main(argv: list[str]) -> int:
     parser.add_argument("--report", action="store_true",
                         help="print the whole queue as sections (run > group > graphs) from the files on disk, then exit")
     parser.add_argument("--full", action="store_true", help="with --report: open every run, finished ones too")
+    parser.add_argument("--schedule", choices=SCHEDULES, default=None,
+                        help="file: the runs in the file's order (default); shortest: at each turn the ready run with "
+                             "the smallest estimate, so short work is not held back by a long run (overrides the "
+                             "file's schedule key)")
     parser.add_argument("--adopt-root", action="store_true",
                         help="write into a --root that already holds runs this hedonic's queues did not start "
                              "(a record certifies only for the build that reads it; others are rerun in place)")
     args = parser.parse_args(argv)
     queue = load_queue(args.file, root=args.root)
+    if args.schedule:
+        queue["schedule"] = args.schedule
     print(style(f"queue {queue['name']} · {len(queue['items'])} runs", "bold") + style(f" · root {queue['root']}", "dim"))
     items = with_labels(queue["items"], queue.get("file", ""))
     if args.report:
@@ -895,6 +1002,13 @@ def front_main(argv: list[str]) -> int:
     for number, (name, status, action) in enumerate(plan(queue), 1):
         print(f"  {number}. {name:<28} {status:<12} → {action}")
     print(style("  each run is read again at its turn (2nd), so data that appeared or vanished since is caught", "dim"))
+    if queue.get("schedule") == "shortest":
+        costs = {i: item_cost(item) for i, item in enumerate(queue["items"])}
+        print(style("order: shortest estimate first — chosen again at each turn; with today's estimates:", "bold"))
+        for number, index in enumerate(shortest_order(queue["items"], list(costs), dependencies(queue), costs.get), 1):
+            cost = costs[index]
+            print(f"  {number}. {queue['items'][index]['name']}  "
+                  + ("done" if cost == 0 else f"~{qm.fmt_seconds(cost)}" if cost is not None else "no estimate"))
     problem = root_check(queue)
     if problem:
         print(style(f"root: {problem}; a start needs --root NEWDIR or --adopt-root", "yellow"))

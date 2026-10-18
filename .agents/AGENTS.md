@@ -260,7 +260,12 @@ Contracts to keep when changing it:
   after another, each an ordinary durable run started with `--detach` once
   the previous one completed. The shipped queue `disjoint`
   (`configs/queue-disjoint.toml`, queue name `disjoint-queue`) is
-  `disjoint-smoke` then `disjoint-paper`. `{root}` in an item is `--root DIR`,
+  `disjoint-smoke` then `disjoint-paper`. `schedule = "shortest"` in a queue
+  file (or `--schedule shortest`) still runs one item at a time but takes, at
+  each turn, the ready item with the smallest estimate (an item waits for an
+  earlier one whose output folder its arguments name, or that its
+  `after = [...]` lists); the default `schedule = "file"` keeps the file's
+  order. `{root}` in an item is `--root DIR`,
   by default `<disjoint_output_root>/<queue name>`. Each item is judged from
   its files on disk, twice (before anything starts, and again at its turn):
   complete is skipped, partial resumes, missing starts. `--adopt-root` is

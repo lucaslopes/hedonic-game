@@ -80,7 +80,8 @@ TOPICS: dict[str, tuple[str, str]] = {
         The mouse wheel scrolls, a click selects or opens a row, the arrows move, and the pane under the tree
         explains the selected row. Press ? for the keys, q or Ctrl-C to close the view (the queue keeps
         running). HEDONIC_PLAIN_VIEW=1 prints the text view instead; `hedonic run queue FILE --report` prints
-        it once without starting anything.
+        it once without starting anything. `schedule = "shortest"` in a queue file (or --schedule shortest) still
+        runs one item at a time, but takes at each turn the ready item with the smallest estimate.
     """),
     "config": ("Your settings (`hedonic config`)", """
         hedonic config                                show ~/.config/hedonic/config.toml
