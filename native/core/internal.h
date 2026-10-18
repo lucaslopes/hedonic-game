@@ -21,7 +21,7 @@
  * checks, the adjacency, the random visiting order and the queue that decides
  * when every vertex is settled, the mass-ordered heap of communities, the
  * double-double masses and the certified arithmetic of the move rule.
- * partition/ is the engine, check/ the independent
+ * partition/ and cover/ are the two engines, check/ the independent
  * verifier of a result (hedonic_check.h). Conventions: a function that can fail returns
  * hig_error_t; a workspace is zero-initialized and released by one call
  * whatever step failed.
@@ -42,10 +42,19 @@
 #endif
 #define hig_pcg32_seed HIG_VARIANT(pcg32_seed)
 #define hig_pcg32_next32 HIG_VARIANT(pcg32_next32)
+#define hig_cover_free HIG_VARIANT(cover_free)
 #define hig_partition HIG_VARIANT(partition)
+#define hig_cover HIG_VARIANT(cover)
 #define hig_error_message HIG_VARIANT(error_message)
 #define hig_partition_traced HIG_VARIANT(partition_traced)
+#define hig_cover_traced HIG_VARIANT(cover_traced)
 #define hig_verify_partition HIG_VARIANT(verify_partition)
+#define hig_verify_cover HIG_VARIANT(verify_cover)
+#define hig_audit_prepare HIG_VARIANT(audit_prepare)
+#define hig_audit_free HIG_VARIANT(audit_free)
+#define hig_audit_intervals HIG_VARIANT(audit_intervals)
+#define hig_audit_intervals_free HIG_VARIANT(audit_intervals_free)
+#define hig_audit_regrets HIG_VARIANT(audit_regrets)
 #endif
 
 #include "hedonic_core.h"
@@ -164,7 +173,7 @@ HIG_SHARED hig_error_t hig_compact_labels(const hig_int *in, int64_t count, hig_
  * record: settled[v].at
  * is the number of moves made when a visit of v last found no improving move
  * (-1 if v has moved since, or was never visited), settled[v].bound what
- * that visit recorded (a bound of v's gain; together, because both
+ * that visit recorded (cover/visit.c: a bound of v's gain; together, because both
  * are written at every visit and the run is bound by memory latency). A
  * vertex is settled when settled[v].at equals the move count. When the FIFO runs dry, the unsettled
  * vertices are queued again in a fresh random order; when none is left, every

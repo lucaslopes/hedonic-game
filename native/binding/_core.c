@@ -19,8 +19,8 @@
 /*
  * The module hedonic._core (see binding.h for its files). Every call runs
  * best-response local moving to an equilibrium (native/include/hedonic_core.h). detect() takes an
- * igraph.Graph, and is what Game.community_hedonic calls; partition()
- * takes plain Python data: a vertex count, a flat edge list (any
+ * igraph.Graph, and is what Game.community_hedonic calls; partition() and
+ * cover() take plain Python data: a vertex count, a flat edge list (any
  * buffer of 64-bit integers, e.g. array('q')), optional weight buffers of
  * doubles and an optional start state. Random numbers are those of the
  * caller's generator (32-bit words of getrandbits), used once per call to
@@ -71,9 +71,10 @@ static PyMethodDef core_methods[] = {
       "allow_isolation=False, edge_weights=None, node_weights=None, "
       "max_total_communities=None, n_communities=None)\n\n"
       "Best-response local moving on an undirected igraph.Graph, run until no vertex\n"
-      "can improve. Returns (membership, nb_clusters, quality, equilibrium_slack);\n"
-      "max_memberships must be 1 (hedonic 1 detects partitions only).\n"
-      "`start` is flat labels or one-label rows, checked as hedonic._native documents;\n"
+      "can improve. Returns (membership, nb_clusters, quality, equilibrium_slack)\n"
+      "for max_memberships=1, else (rows, clusters, nb_clusters, quality,\n"
+      "equilibrium_slack).\n"
+      "`start` is flat labels or per-vertex rows, checked as hedonic._native documents;\n"
       "weights are buffers of doubles or None." },
     { "partition", (PyCFunction) (void (*)(void)) py_partition, METH_VARARGS | METH_KEYWORDS,
       "partition(n, edges, rng, edge_weights=None, node_weights=None, membership=None, "
@@ -82,11 +83,19 @@ static PyMethodDef core_methods[] = {
       "Local moving of a partition: the CPM hedonic game. `edges` is a flat buffer of\n"
       "64-bit integers (u0, v0, u1, v1, ...); weights are buffers of doubles or None;\n"
       "`rng` is an object with getrandbits(). A given membership is the start." },
+    { "cover", (PyCFunction) (void (*)(void)) py_cover, METH_VARARGS | METH_KEYWORDS,
+      "cover(n, edges, rng, edge_weights=None, node_weights=None, memberships=None, "
+      "max_memberships=2, resolution=1.0, max_total_communities=None, n_communities=None, "
+      "allow_isolation=True) -> (memberships, nb_clusters, quality)\n\n"
+      "Local moving of a cover: the unit-l2 CPM hedonic game, at most max_memberships\n"
+      "labels per vertex. Given memberships (one row per vertex) are the start." },
     { "_trace_partition", (PyCFunction) (void (*)(void)) py_trace_partition,
       METH_VARARGS | METH_KEYWORDS,
       "partition() that also returns {'start', 'moves', 'raw_slack'}: the start rows in\n"
       "the core's internal labels, (v, new row, improvement, bound) for every move, and\n"
       "the slack before division by |W|. For tests." },
+    { "_trace_cover", (PyCFunction) (void (*)(void)) py_trace_cover,
+      METH_VARARGS | METH_KEYWORDS, "cover() with the record of _trace_partition(). For tests." },
     { "_verify_partition", (PyCFunction) (void (*)(void)) py_verify_partition,
       METH_VARARGS | METH_KEYWORDS,
       "_verify_partition(n, edges, membership, edge_weights=None, node_weights=None,\n"
@@ -94,6 +103,16 @@ static PyMethodDef core_methods[] = {
       "allow_isolation=True) -> {'vertices', 'improvable', 'max_certified', 'max_bound'}\n\n"
       "The independent verifier (native/core/check/check.c): every deviation of every vertex\n"
       "scored afresh with certified bounds. For tests." },
+    { "_verify_cover", (PyCFunction) (void (*)(void)) py_verify_cover,
+      METH_VARARGS | METH_KEYWORDS,
+      "_verify_cover(n, edges, memberships, max_memberships, ...): the same for a cover\n"
+      "(sorted rows of distinct labels). For tests." },
+    { "_audit_prepare", (PyCFunction) (void (*)(void)) py_audit_prepare,
+      METH_VARARGS | METH_KEYWORDS, "Fixed-cover audit prepare (private binding)." },
+    { "_audit_intervals", (PyCFunction) (void (*)(void)) py_audit_intervals,
+      METH_VARARGS | METH_KEYWORDS, "Fixed-cover audit intervals (private binding)." },
+    { "_audit_regrets", (PyCFunction) (void (*)(void)) py_audit_regrets,
+      METH_VARARGS | METH_KEYWORDS, "Fixed-cover audit regrets (private binding)." },
     { NULL, NULL, 0, NULL }
 };
 

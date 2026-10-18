@@ -1,5 +1,5 @@
 """Game.community_hedonic on stock igraph with the package's own C core
-(best-response local moving, partitions only).
+(best-response local moving, partitions and covers).
 
 The pinned memberships and qualities are results recorded on macOS arm64
 (Apple clang -O3). The core is written to give the same bits everywhere
@@ -34,21 +34,28 @@ class TestBackendRouting(unittest.TestCase):
         self.assertEqual(p.membership, ZACHARY_SEED0)
         self.assertEqual(p.quality.hex(), (0.4306184012066366).hex())
 
+    @PINNED
+    def test_cover_matches_native_pin(self):
+        c = _karate().community_hedonic(initial_membership=None, seed=0, max_memberships=3,
+                                        resolution=0.1)
+        self.assertIsInstance(c, ig.VertexCover)
+        self.assertEqual(len(c), 9)
+        self.assertEqual(c._params["quality"].hex(), (0.5307815234627419).hex())
+        self.assertEqual(c._hedonic_native_quality.hex(), (0.5307815234627419).hex())
+
     def test_game_and_native_layer_agree(self):
         from hedonic import _native
 
-        for kw in (dict(), dict(resolution=0.1)):
+        for kw in (dict(), dict(max_memberships=3, resolution=0.1)):
             a = _karate().community_hedonic(initial_membership=None, seed=0, **kw)
             b = _native.community_hedonic(_karate(), seed=0, **kw)
             self.assertEqual(list(a), list(b), kw)
-        with self.assertRaisesRegex(ValueError, "partitions only"):
-            _native.community_hedonic(_karate(), seed=0, max_memberships=3, resolution=0.1)
 
     def test_seed_ignores_the_caller_generator(self):
-        a = _karate().community_hedonic(initial_membership=None, seed=5)
+        a = _karate().community_hedonic(initial_membership=None, seed=5, max_memberships=2)
         ig.set_random_number_generator(random.Random(999))
         try:
-            b = _karate().community_hedonic(initial_membership=None, seed=5)
+            b = _karate().community_hedonic(initial_membership=None, seed=5, max_memberships=2)
         finally:
             ig.set_random_number_generator(random)
         self.assertEqual(a.membership, b.membership)
