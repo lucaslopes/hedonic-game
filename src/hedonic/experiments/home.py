@@ -4,8 +4,7 @@ A header says where things stand (version, local SNAP pairs, ready methods,
 runs) and a menu starts the command that does each thing. Every choice prints
 the ``hedonic ...`` command it runs before running it, so the menu teaches the
 command line and can never do anything the command line cannot. Nothing starts
-without a choice: a run starts only from a wizard's own choices (the benchmark
-wizard's default run is its first option, as on the command line), and
+without a choice: every wizard ends with a yes/no before a run starts, and
 resuming a run asks first. Views (lists, ``show``, the guide, settings) come back to the menu;
 a choice that starts or watches a run hands the terminal over to it.
 
@@ -138,13 +137,16 @@ def menu(state: State) -> list[Item]:
         name, status = state.unfinished[-1]
         items.append(Item(f"Resume {name}", f"{status}; finished work is reused", ["run", "resume", name],
                           confirm=f"Resume {name}?"))
+    items.append(Item("Start a benchmark", "a quick default run (about a minute), the paper's, or your own",
+                      ["run", "exp"]))
     if state.favourite:
-        items.append(Item(f"Run {state.favourite}", "your favourite config (confirms first)", ["run"]))
+        items.append(Item(f"Run {state.favourite}", "your favourite config (hedonic config set run NAME; asks first)",
+                          ["run"]))
     items += [
-        Item("Start a benchmark", "networks x methods x seeds, step by step", ["run", "exp"]),
         Item("Plan the paper queue", "the overlap paper's experiments: plan and time, nothing starts",
              ["run", "queue", "paper", "--dry-run"], back=True),
-        Item("Disjoint SBM benchmark", "planted partitions, step by step", ["run", "disjoint"]),
+        Item("Disjoint SBM benchmark", "planted partitions: a seconds-long smoke run, or the paper's grid",
+             ["run", "disjoint"]),
         Item("Runs", "every run and its progress", ["run", "list"], back=True),
         Item("Networks & covers", "the SNAP graph/cover pairs on disk", ["show", "covers"], back=True),
         Item("Methods", "which methods are ready, which need hedonic setup", ["show", "methods"], back=True),

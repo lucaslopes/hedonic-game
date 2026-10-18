@@ -510,7 +510,8 @@ def front_main(argv: list[str] | None = None) -> int:
         if args.name:
             qs.parse_name(args.name)
         settings = resolve(args)
-        if (args.interactive or (not argv and tui.interactive())) and not args.yes:
+        asked = (args.interactive or (not argv and tui.interactive())) and not args.yes
+        if asked:
             settings = wizard(settings)
             print(style("  equivalent: hedonic run disjoint " + " ".join(front_argv(settings)), "dim"))
         name = args.name or runmanager.new_name("disjoint")
@@ -529,6 +530,9 @@ def front_main(argv: list[str] | None = None) -> int:
     if args.dry_run or status["graphs"] or status["source"] or status["refused"]:
         print(render_store_status(settings, output, status))
     if args.dry_run:
+        return 0
+    if asked and not status["refused"] and not qs.confirm_start():
+        print(style("  not started", "yellow"))
         return 0
     if status["refused"]:
         # Refused before anything is written or registered.

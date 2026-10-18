@@ -49,7 +49,8 @@ class TestMenu(unittest.TestCase):
         self.assertEqual(items[0].argv, ["run", "attach", "q"])
         self.assertEqual(items[1].argv, ["run", "resume", "old"])
         self.assertTrue(items[1].confirm)
-        self.assertEqual(items[2].argv, ["run"])
+        self.assertEqual(items[2].argv, ["run", "exp"])  # the quick default comes before a favourite
+        self.assertEqual(items[3].argv, ["run"])
         self.assertIsNone(items[-1].argv)
         first_words = {i.argv[0] for i in items if i.argv}
         self.assertLessEqual(first_words, set(CLI.TOP_LEVEL))
@@ -111,6 +112,45 @@ class TestLoop(unittest.TestCase):
 
     def test_q_quits(self):
         self.assertEqual(self._run(["q"])[:2], (0, []))
+
+
+class TestWizardsAskBeforeStarting(unittest.TestCase):
+    """Every wizard ends with a yes/no; the quick default runs are the first answers, never the paper's."""
+
+    def _select(self, answers):
+        answers = list(answers)
+
+        def select(title, options, default=0, help_text=""):
+            return answers.pop(0)
+        return select
+
+    def test_the_benchmark_default_is_the_quick_run_and_no_goes_back(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        cfg = qs.Config()
+        self.assertEqual((cfg.networks, cfg.nodes, cfg.seeds, cfg.methods), (["dblp"], 5000, [0], ["hedonic", "codeseg"]))
+        # default -> No -> back at the start menu -> default -> Yes
+        with patch.object(tui, "select", side_effect=self._select([0, 1, 0, 0])) as select, \
+                redirect_stdout(io.StringIO()) as out:
+            self.assertIs(qs.wizard(cfg), cfg)
+        self.assertEqual(select.call_count, 4)
+        self.assertIn("Start it?", [c.args[0] for c in select.call_args_list])
+        self.assertIn("DBLP", out.getvalue())
+        with patch.object(tui, "select", side_effect=tui.Cancelled):
+            self.assertFalse(qs.confirm_start())
+
+    def test_the_disjoint_wizard_defaults_to_smoke_and_no_starts_nothing(self):
+        from hedonic.experiments.disjoint import front
+        from hedonic.experiments.overlapping import runmanager
+
+        self.assertEqual(list(front.PRESETS)[1], "smoke")  # the wizard's pre-selected answer (default=1)
+        with tempfile.TemporaryDirectory() as d, patch.object(tui, "interactive", return_value=True), \
+                patch.object(tui, "select", side_effect=self._select([1, 1])), \
+                patch.object(tui, "text", side_effect=lambda title, default="", validate=None: default), \
+                patch.object(runmanager, "launch_disjoint") as launch, redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(front.front_main(["-i", "--output-dir", d + "/out"]), 0)
+        launch.assert_not_called()
+        self.assertIn("not started", out.getvalue())
 
 
 @unittest.skipUnless(os.name == "posix", "needs a pty")

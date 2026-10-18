@@ -4,7 +4,7 @@ Run with no arguments in a terminal to open an interactive wizard (arrow keys,
 space, enter); its first choice runs the default experiment. Any flag, ``--yes``,
 or a non-terminal session runs directly. Examples::
 
-    hedonic run exp                                  # wizard (default run is one keypress away)
+    hedonic run exp                                  # wizard (the quick default run is the first choice, then a yes)
     hedonic run exp --yes                            # default: DBLP, 5,000 vertices, seed 0, Hedonic + CoDeSEG
     hedonic run exp --networks dblp,amazon --methods all --seeds 0-2 --nodes 20000
     hedonic run exp --networks youtube --nodes 0 --methods hedonic,fox,clique_percolation   # clique_percolation is CliquePerc
@@ -608,6 +608,14 @@ def _check(fn, value):
     return None
 
 
+def confirm_start(question: str = "Start it?") -> bool:
+    """The wizards' last question before a run starts: yes or no (q and Ctrl-C are no)."""
+    try:
+        return tui.select(question, [("Yes", "start the run"), ("No", "nothing starts")]) == 0
+    except tui.Cancelled:
+        return False
+
+
 def wizard(cfg: Config) -> Config:
     print(style("\n  hedonic · overlapping community benchmark\n", "bold", "magenta"))
     default = (f"{NETWORKS[cfg.networks[0]][0]} · {cfg.nodes:,} vertices · seed {cfg.seeds[0]} · "
@@ -622,8 +630,11 @@ def wizard(cfg: Config) -> Config:
         raise tui.Cancelled
     if start == 3:
         raise SwitchToSpectrum
-    if start == 0:
-        return cfg
+    if start == 0:  # the quick show-off run: say what it is and ask once
+        print(render_plan(cfg).split("\n\n")[0])
+        if confirm_start():
+            return cfg
+        return wizard(cfg)
     if start == 1:
         paper = load_config("paper")
         print(render_plan(paper))

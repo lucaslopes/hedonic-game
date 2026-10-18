@@ -24,7 +24,7 @@ TOPICS: dict[str, tuple[str, str]] = {
         hedonic show covers             which SNAP graph/cover pairs are on disk
         hedonic setup --dry-run         what `hedonic setup` would download and build, and the system tools it needs
         hedonic run exp --dry-run       the plan and time estimate of the default run
-        hedonic run exp                 a wizard (arrow keys, space, enter); the first choice is the default run
+        hedonic run exp                 a wizard (arrow keys, space, enter); the first choice is the quick default run, then a yes/no
 
         The default run takes about a minute: DBLP, a 5,000-vertex subgraph, seed 0, Hedonic and CoDeSEG.
         Everything runs detached, so closing the terminal or pressing Ctrl-C only closes the view.
