@@ -429,8 +429,9 @@ class TestNamedConfig(unittest.TestCase):
         self.assertIs(options["locked"], False)
         self.assertTrue(options["provision"])  # the queue's step names its pairs; a missing one is downloaded
         self.assertIsNone(options["max_nodes"])
-        self.assertEqual(options["pairs"], [(net, cover) for cover in ("top5000", "all")
-                                            for net in ("dblp", "amazon", "youtube", "livejournal")])
+        self.assertEqual(options["pairs"], [(net, "top5000") for net in ("dblp", "amazon", "youtube", "friendster", "livejournal")]
+                         + [(net, "all") for net in ("dblp", "amazon", "youtube")])
+        self.assertIsNone(options["tuned_resolutions"])  # the queue passes --tuned; the config alone reads none
         self.assertEqual(options["workers"], 8)
         self.assertIn("spectrum-full", CLI.RUN_ALIASES)
         default = gt_spectrum.resolve_options(gt_spectrum.build_parser().parse_args([]))
@@ -526,6 +527,82 @@ class TestTunedSettings(_FixedBudget):
             self.assertEqual(len(summary), 1 + 2)
             with patch.object(gs, "run_in_subprocess", side_effect=AssertionError("detector invoked")):
                 self.assertEqual(gs.run_study(_options(out, "--config", str(config), "--seeds", "0-1")), 0)
+
+
+
+def _calibration(path: Path, settings: dict, complete: bool = True) -> Path:
+    path.write_text(json.dumps({"complete": complete, "settings": {"hedonic": settings}}))
+    return path
+
+
+class TestCalibratedResolutions(_FixedBudget):
+    """``--tuned hoc_tuned.json``: each pair's calibrated resolution joins that pair's detector and audit grids."""
+
+    def test_a_pair_gets_its_own_calibrated_resolution_and_nothing_else_changes(self):
+        with tempfile.TemporaryDirectory() as d:
+            tuned = _calibration(Path(d) / "hoc_tuned.json", {
+                "amazon:top5000": {"max_memberships": 3, "absolute_resolution": 0.35},
+                "dblp": {"max_memberships": 9, "absolute_resolution": 0.2}})  # a plain name is the `all` cover
+            options = _options(os.path.join(d, "out"), "--tuned", str(tuned))
+            self.assertEqual(options["tuned_resolutions"], {"amazon/top5000": 0.35, "dblp/all": 0.2})
+            self.assertEqual(gs.detector_resolutions(options, "amazon", "top5000"), [0.0, 0.35, 0.5, 1.0])
+            self.assertEqual(gs.detector_resolutions(options, "dblp", "all"), [0.0, 0.2, 0.5, 1.0])
+            self.assertIn(0.35, gs.audit_resolutions(options, "amazon", "top5000"))
+            self.assertNotIn(0.35, gs.audit_resolutions(options, "dblp", "all"))
+            self.assertEqual([s["gamma"] for s in gs.job_settings(options, "amazon", "top5000")], [0.0, 0.35, 0.5, 1.0])
+            with self.assertRaisesRegex(ValueError, "no Hedonic setting for dblp:top5k"):
+                gs.detector_resolutions(options, "dblp", "top5000")
+            grid = gs.scientific_grid(options, [("amazon", "top5000")])
+            self.assertEqual(grid["tuned_resolutions"], {"amazon/top5000": 0.35})
+            # without a file the grid, and so the hash of every earlier study, is unchanged
+            plain = _options(os.path.join(d, "out"))
+            self.assertNotIn("tuned_resolutions", gs.scientific_grid(plain, [("amazon", "top5000")]))
+            self.assertEqual(gs.detector_resolutions(plain, "amazon", "top5000"), [0.0, 0.5, 1.0])
+
+    def test_a_missing_or_unfinished_calibration_is_tuned_missing(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(qs.TunedMissing):
+                _options(os.path.join(d, "out"), "--tuned", str(Path(d) / "absent.json"))
+            half = _calibration(Path(d) / "half.json", {}, complete=False)
+            with self.assertRaises(qs.TunedMissing):
+                _options(os.path.join(d, "out"), "--tuned", str(half))
+
+    def test_smoke_study_runs_the_calibrated_resolution_audits_it_and_resumes(self):
+        with tempfile.TemporaryDirectory() as d:
+            tuned = _calibration(Path(d) / "hoc_tuned.json",
+                                 {"amazon:top5000": {"max_memberships": 3, "absolute_resolution": 0.35}})
+            out = os.path.join(d, "out")
+            args = ("--pairs", "amazon/top5000", "--tuned", str(tuned))
+            self.assertEqual(gs.run_study(_options(out, *args)), 0)
+            root = Path(out)
+            coverage = json.loads((root / "coverage_report.json").read_text())
+            self.assertTrue(coverage["complete"])
+            self.assertEqual(coverage["expected_detector_conditions"], 2 * 4 * 2)  # policies x (3 + 1) resolutions x seeds
+            rows = [json.loads(line) for line in (root / "results.jsonl").read_text().splitlines()]
+            self.assertEqual(sum(r["row_type"] == "detector_run" and r["gamma"] == 0.35 for r in rows), 2 * 2)
+            audit = json.loads((root / "audit" / "amazon-top5000.json").read_text())
+            self.assertIn(0.35, audit["identity"]["grid"])
+            self.assertEqual(sum(r["gamma"] == 0.35 for r in audit["rows"]), 2)  # one row per action policy
+            manifest = json.loads((root / "manifest.json").read_text())
+            self.assertEqual(manifest["effective_grid"]["tuned_resolutions"], {"amazon/top5000": 0.35})
+            with patch.object(gs, "run_in_subprocess", side_effect=AssertionError("detector invoked")):
+                self.assertEqual(gs.run_study(_options(out, *args)), 0)
+            self.assertEqual(gs.main(["--replot", "--output-dir", out, "--profile", "smoke", *args]), 0)
+            summary = (root / "condition_summary.csv").read_text().splitlines()
+            self.assertEqual(len(summary), 1 + 2 * 4)
+
+    def test_the_queue_waits_for_the_calibration_but_still_knows_the_pairs(self):
+        from hedonic.experiments.overlapping import runqueue
+
+        with tempfile.TemporaryDirectory() as d:
+            run = ["spectrum", "--config", "full", "--tuned", str(Path(d) / "absent" / "hoc_tuned.json"),
+                   "--name", "gt-robustness", "--output-dir", str(Path(d) / "gt")]
+            self.assertEqual(runqueue.data_state(run, fresh=True)[0], "awaiting")
+            options = runqueue._spectrum_options("spectrum", run[1:])
+            self.assertIn(("friendster", "top5000"), options["pairs"])
+            self.assertNotIn(("livejournal", "all"), options["pairs"])
 
 
 if __name__ == "__main__":

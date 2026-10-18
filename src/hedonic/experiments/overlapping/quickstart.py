@@ -97,7 +97,8 @@ METHODS = [
     # gamma = 7000 x density(full DBLP) = 0.1462, given as an absolute CPM resolution so that it transfers to
     # subgraphs and other networks (a density multiple would grow with the subgraph's higher density).
     Method("hedonic", "hedonic_local", "Hedonic", {"max_memberships": 64, "absolute_resolution": 0.1462}, 40, .425, .519),
-    Method("codeseg", "codeseg", "CoDeSEG", {"iterations": 20, "tau": 0.5}, 6, .406, .518, threads=True),
+    # one thread (the runner's default), where its runs are deterministic: see replication.REPLICATION
+    Method("codeseg", "codeseg", "CoDeSEG", {"iterations": 20, "tau": 0.5}, 6, .406, .518),
     Method("fox", "fox", "FOX (LazyFox)", {"wcc_threshold": 0.01, "queue_size": 1}, 184, .428, .525, "fox", True),
     Method("clique_percolation", "clique_percolation", "CliquePerc (clique percolation)", {"clique_size": 4}, 9, .419, .524, "clique_percolation"),
     Method("angel", "angel", "ANGEL", {"threshold": 0.6, "min_community_size": 3}, 58, .403, .518, "angel"),

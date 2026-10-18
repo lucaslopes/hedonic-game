@@ -95,7 +95,8 @@ class TestCLI(unittest.TestCase):
         cfg = qs.config_from_args(qs.build_parser().parse_args(["--networks", "dblp", "--nodes", "1000", "--threads", "4"]))
         # community counts tuned on full DBLP are scaled to the subgraph; threads reach threaded methods
         self.assertLess(qs.method_params(qs.BY_KEY["bigclam"], cfg, "dblp")["communities"], 25000)
-        self.assertEqual(qs.method_params(qs.BY_KEY["codeseg"], cfg, "dblp")["threads"], 4)
+        self.assertEqual(qs.method_params(qs.BY_KEY["bigclam"], cfg, "dblp")["threads"], 4)
+        self.assertNotIn("threads", qs.method_params(qs.BY_KEY["codeseg"], cfg, "dblp"))  # one thread: deterministic
         self.assertEqual(qs.method_params(qs.BY_KEY["hedonic"], cfg, "dblp")["max_memberships"], 64)
         self.assertIn("--nodes 1000", cfg.command())
 
@@ -119,7 +120,7 @@ class TestCLI(unittest.TestCase):
 
         cfg = qs.load_config("paper")
         plan = qs.build_plan(cfg, {})
-        self.assertEqual(len(plan), 2 * (4 * 10 + 5))  # Hedonic, CoDeSEG, ANGEL, Ego-Splitting x 10; 5 deterministic x 1
+        self.assertEqual(len(plan), 2 * (3 * 10 + 6))  # Hedonic, ANGEL, Ego-Splitting x 10; 6 deterministic x 1
         # seed -> method -> network: seed 0, method 1 on DBLP then Amazon, then method 2 ...
         self.assertEqual([(n, s, m.key) for n, s, m in plan[:3]],
                          [("dblp", 0, "hedonic"), ("amazon", 0, "hedonic"), ("dblp", 0, "codeseg")])
@@ -132,7 +133,7 @@ class TestCLI(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "c.json")
             self.assertEqual(qs.main(["--config", "paper", "--save-config", path]), 0)
-            self.assertEqual(len(qs.build_plan(qs.load_config(path), {})), 90)
+            self.assertEqual(len(qs.build_plan(qs.load_config(path), {})), 72)
             toml_path = os.path.join(d, "c.toml")  # the extension decides the format, so it must load back
             self.assertEqual(qs.main(["--config", "paper", "--seeds", "0-2", "--save-config", toml_path]), 0)
             self.assertEqual(qs.load_config(toml_path).seeds, [0, 1, 2])

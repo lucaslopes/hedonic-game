@@ -85,7 +85,7 @@ class TestShippedBenchmark(unittest.TestCase):
         self.assertEqual(cfg.methods[0], "hedonic")
         self.assertEqual(len(cfg.methods), 9)
         self.assertTrue(cfg.robustness and cfg.save_covers)
-        self.assertEqual(len(qs.build_plan(cfg, {})), 8 * (4 * 10 + 5))  # 5 deterministic methods run once per pair
+        self.assertEqual(len(qs.build_plan(cfg, {})), 8 * (3 * 10 + 6))  # 6 deterministic methods run once per pair
 
     def test_the_queue_item_reads_that_file_and_the_queue_still_loads(self):
         with tempfile.TemporaryDirectory() as tmp:

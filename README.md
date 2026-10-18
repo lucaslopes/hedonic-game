@@ -337,8 +337,10 @@ what to do with it.
 The overlapping-communities paper is one queue of six runs: the Hedonic
 calibration, the baseline calibration, the synthetic networks, then, pair by
 pair, the ground-truth start curve, the robustness spectrum and the benchmark,
-on eight SNAP graph/cover pairs (DBLP, Amazon, YouTube and LiveJournal, each
-with its `top5000` and `all` covers):
+on eight SNAP graph/cover pairs (the `top5000` covers of DBLP, Amazon,
+YouTube, Friendster and LiveJournal, then the `all` covers of DBLP, Amazon and
+YouTube). The robustness spectrum and the start curve read each pair's
+calibrated resolution from the Hedonic calibration:
 
 ```bash
 hedonic setup --all --dry-run    # the pairs, the eight baselines and the system tools they need
@@ -356,10 +358,10 @@ and Ego-Splitting; `--dry-run` says which are missing. Starting the queue
 again continues it: every run decides from its files what is already done.
 The queue writes under `--root DIR` (default `~/Databases/Hedonic/Overlap/paper-queue`).
 
-The benchmark runs a deterministic method (CliquePerc, FOX, BigCLAM, NcGame,
-NEO-K-Means) once per pair, at the lowest seed of the plan, since its other
-seeds would repeat the same cover; Hedonic, ANGEL, Ego-Splitting and CoDeSEG
-(whose multi-threaded runs differ) run at every seed. `--replication all`
+The benchmark runs a deterministic method (CoDeSEG at one thread, CliquePerc,
+FOX, BigCLAM, NcGame, NEO-K-Means) once per pair, at the lowest seed of the
+plan, since its other seeds would repeat the same cover; Hedonic, ANGEL and
+Ego-Splitting run at every seed. `--replication all`
 runs every method at every seed, to check that determinism; both settings
 reuse the same records.
 

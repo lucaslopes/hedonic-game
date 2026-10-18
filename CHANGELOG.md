@@ -89,12 +89,12 @@
     stop|resume|check`); `hedonic guide` is a tour of the commands.
   - The overlap benchmark runs each method as often as its replication kind
     says (one table, `overlapping/replication.py`, shared with the baseline
-    calibration): a deterministic method (CliquePerc, FOX, BigCLAM, NcGame,
+    calibration): a deterministic method (CoDeSEG, which the benchmark runs
+    at one thread as the calibration does, CliquePerc, FOX, BigCLAM, NcGame,
     NEO-K-Means, the disjoint oracle) runs once per pair, at the lowest seed
     of the plan, because every other seed repeats its cover; Hedonic, ANGEL
-    and Ego-Splitting (seeded) and CoDeSEG (its runs differ at the
-    benchmark's thread count, so they are replicas) run at every seed. The
-    paper's benchmark has 360 units instead of 720. The plan, `--dry-run` and
+    and Ego-Splitting (seeded) run at every seed. The paper's benchmark has
+    288 units instead of 720. The plan, `--dry-run` and
     its estimate, the scan, the queue's counts and tree, the robustness stage
     and `hedonic run audit`, the result tables (a single run has no ± sd and
     reads `1/1`), `hedonic run check` and the joint plots follow it.

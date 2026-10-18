@@ -446,27 +446,31 @@ class TestQueueFile(_Base):
         queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
         names = [item["name"] for item in queue["items"]]
         readers = [item["name"] for item in queue["items"] if runqueue._option(item["run"], "--tuned")]
-        self.assertEqual(readers, ["leveraging-gt", "benchmark"])
+        self.assertEqual(readers, ["leveraging-gt", "gt-robustness", "benchmark"])
         for reader in readers:
             tuned = runqueue._option(next(i for i in queue["items"] if i["name"] == reader)["run"], "--tuned")
             self.assertIn("/hedonic-calibration/hoc_tuned.json", tuned)
             self.assertLess(names.index("hedonic-calibration"), names.index(reader))
 
     def test_every_item_covers_the_pairs_in_the_same_order_top5000_first(self):
-        top5000 = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "livejournal:top5000"]
+        # the manuscript's pairs: DBLP, Amazon and YouTube with both covers, Friendster and LiveJournal with top5000
+        top5000 = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000"]
+        complete = ["dblp:all", "amazon:all", "youtube:all"]
         queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
         by_name = {item["name"]: item for item in queue["items"]}
-        calibration = runqueue._option(by_name["hedonic-calibration"]["run"], "--networks").split(",")
-        self.assertEqual(calibration, top5000 + [t.replace(":top5000", ":all") for t in top5000])
+        for name in ("hedonic-calibration", "baseline-calibration"):
+            self.assertEqual(runqueue._option(by_name[name]["run"], "--networks").split(","), top5000 + complete)
         plan = sq.resolve(["--config", runqueue._option(by_name["leveraging-gt"]["run"], "--config")])
-        self.assertEqual(plan["networks"], top5000 + ["dblp", "amazon", "youtube", "livejournal"])
+        self.assertEqual(plan["networks"], top5000 + ["dblp", "amazon", "youtube"])
         cfg = qs.load_config(runqueue._option(by_name["benchmark"]["run"], "--config"))
-        self.assertEqual(cfg.networks, top5000 + [t.replace(":top5000", ":all") for t in top5000])
+        self.assertEqual(cfg.networks, top5000 + complete)
+        spectrum = runqueue._spectrum_options("spectrum", by_name["gt-robustness"]["run"][1:])
+        self.assertEqual([f"{d}:{c}" for d, c in spectrum["pairs"]], top5000 + complete)
         self.assertEqual(cfg.order, "seed,network,method")
 
 
-PAPER_PAIRS = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "livejournal:top5000",
-               "dblp:all", "amazon:all", "youtube:all", "livejournal:all"]
+PAPER_PAIRS = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000",
+               "dblp:all", "amazon:all", "youtube:all"]
 
 
 class TestPairByPair(_Base):
@@ -586,7 +590,7 @@ class TestPairByPair(_Base):
                          [(name, pair) for pair in PAPER_PAIRS for name in ("leveraging-gt", "gt-robustness", "benchmark")])
         # the first pair is finished in all three experiments before the second pair starts
         self.assertEqual([s["pair"] for s in steps[3:6]], ["dblp:top5000"] * 3)
-        self.assertEqual(steps[-1]["pair"], "livejournal:all")
+        self.assertEqual(steps[-1]["pair"], "youtube:all")
 
     def test_the_worker_takes_the_steps_in_order_and_skips_a_pair_whose_files_are_complete(self):
         queue = self._queue_file()

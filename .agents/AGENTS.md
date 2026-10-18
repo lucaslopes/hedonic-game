@@ -316,7 +316,22 @@ hedonic-exp list                       # analysis and utility commands
   resumes from its files. `--foreground` runs the same worker in the
   terminal and registers it under its `--name`. A queue judges each item, and each pair of a
   by-pair item, from the files on disk; never reorder queue items to change
-  the pair order (that is `pairs` in the queue file).
+  the pair order (that is `pairs` in the queue file). The paper queue's pairs
+  are the manuscript's (Table 1's "in paper" marks): the `top5000` covers of
+  DBLP, Amazon, YouTube, Friendster and LiveJournal, then the `all` covers of
+  DBLP, Amazon and YouTube; every item lists them in that order.
+- **Calibrated resolutions.** The benchmark, the start curve and the spectrum
+  read `hoc_tuned.json` through `--tuned`. The spectrum takes only each
+  pair's gamma and adds it to that pair's detector and audit grids
+  (`gt_spectrum.detector_resolutions` / `audit_resolutions`; the cap stays the
+  cover's multiplicity); a pair the file does not name is an error, and the
+  key `tuned_resolutions` enters the scientific grid only when a file is
+  read, so studies without one keep their hash. A queue item whose file is
+  missing or unfinished is `awaiting`.
+- **Friendster.** Its edge file (9.4 GB compressed) is never built whole:
+  every covered-induced loader (`codeseg_reproduction._load_dataset`,
+  `gt_spectrum.load_job`, `cover_audit.load_graph`, `snap_pickle`) streams it
+  when `ground_truth_data.stream_covered_wanted` says so.
 - **Memory.** Detector runs whose time or memory is a result run one at a
   time; parallel steps use `overlapping/parallel.py` (forked workers, a
   free-memory floor) and plan their workers with `overlapping/capacity.py`.
@@ -341,7 +356,8 @@ hedonic-exp list                       # analysis and utility commands
   `hedonic run check`, `plots/benchmark_tradeoffs.py`), and the setting never
   enters a unit's arguments, digest or folder. Classify a new method there,
   from runs at the benchmark's own settings (threads included): CoDeSEG
-  repeats at one thread but not at all cores.
+  repeats at one thread but not at all cores, so the benchmark gives it no
+  `threads` (the runner's default, one thread).
 - **Hedonic only through `Game.community_hedonic`.** The method's key is
   `hedonic` (runner `hedonic_local`). The 1.x multilevel phase and the
   multi-phase variants are refused with a message saying they are not

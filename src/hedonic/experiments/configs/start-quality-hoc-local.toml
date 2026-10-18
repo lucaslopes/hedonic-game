@@ -17,7 +17,7 @@
 [start_quality]
 # The eight network/cover pairs in run order. A pair runs all its levels and seeds before the next pair starts, because
 # its graph is loaded once and shared by the conditions running side by side.
-networks = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "livejournal:top5000", "dblp:all", "amazon:all", "youtube:all", "livejournal:all"]
+networks = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000", "dblp:all", "amazon:all", "youtube:all"]
 seeds = "0-9"
 levels = [0, 0.005, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, "random"]
 phase = "local"

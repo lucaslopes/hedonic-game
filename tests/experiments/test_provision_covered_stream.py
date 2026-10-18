@@ -76,5 +76,45 @@ class TestCoveredStream(unittest.TestCase):
                 self.assertFalse(gtd.stream_covered_wanted("dblp", root))
 
 
+
+class TestEveryCoveredLoaderStreams(unittest.TestCase):
+    """The spectrum (and the start curve, through it), the cover audit and the baselines' calibration (through the
+    audit's loader) read a streamed pair as the same graph and cover the full load gives them."""
+
+    def test_the_spectrum_job_is_the_same_streamed_or_not(self):
+        from hedonic.experiments.overlapping import gt_spectrum as gs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "nets"
+            write_root(root)
+            jobs = {}
+            for stream in ("0", "1"):
+                options = {"smoke": False, "policy": "covered-induced", "max_nodes": None, "data_root": str(root),
+                           "provision": False, "max_download_bytes": None, "snap_cache_dir": str(Path(tmp) / f"c{stream}")}
+                with patch.dict(os.environ, {"HEDONIC_SNAP_STREAM_COVERED": stream}):
+                    jobs[stream] = gs.load_job(options, {"dataset": "orkut", "cover": "top5000"})
+            self.assertTrue(list((Path(tmp) / "c1").glob("*covered-stream*.pkl")))  # the stream ran, into the study's cache
+            full, streamed = jobs["0"], jobs["1"]
+            self.assertEqual(edge_multiset(full.graph), edge_multiset(streamed.graph))
+            self.assertEqual(full.memberships, streamed.memberships)
+            self.assertEqual((full.cap, full.prepared.ground_truth_identity),
+                             (streamed.cap, streamed.prepared.ground_truth_identity))
+
+    def test_the_cover_audit_graph_is_the_same_streamed_or_not(self):
+        from hedonic.experiments.overlapping import cover_audit as ca
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "nets"
+            write_root(root)
+            config = Path(tmp) / "config.toml"
+            config.write_text(f'[defaults]\ncache_dir = "{tmp}/cache"\n')
+            graphs = {}
+            for stream in ("0", "1"):
+                with patch.dict(os.environ, {"HEDONIC_SNAP_STREAM_COVERED": stream, "HEDONIC_CONFIG": str(config)}):
+                    graphs[stream] = ca.load_graph("orkut", "top5000", root, induce="covered")
+            self.assertTrue(list((Path(tmp) / "cache" / "snap").glob("*covered-stream*.pkl")))  # the runner's cache
+            self.assertEqual(graphs["0"].vcount(), graphs["1"].vcount())
+            self.assertEqual(edge_multiset(graphs["0"]), edge_multiset(graphs["1"]))
+
 if __name__ == "__main__":
     unittest.main()

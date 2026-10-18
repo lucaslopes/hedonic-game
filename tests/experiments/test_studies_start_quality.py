@@ -369,9 +369,9 @@ class TestPhase(unittest.TestCase):
     def test_local_takes_the_hedonic_settings_from_the_config_or_the_flag(self):
         plan = sq.resolve(["--config", SHIPPED])
         self.assertEqual(plan["phase"], "local")
-        # the top5000 covers first, then the complete (all) covers, each in the order DBLP, Amazon, YouTube, LiveJournal
-        self.assertEqual(plan["networks"], ["dblp:top5000", "amazon:top5000", "youtube:top5000", "livejournal:top5000",
-                                            "dblp", "amazon", "youtube", "livejournal"])
+        # the top5000 covers first (DBLP, Amazon, YouTube, Friendster, LiveJournal), then the complete (all) covers
+        self.assertEqual(plan["networks"], ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000",
+                                            "livejournal:top5000", "dblp", "amazon", "youtube"])
         self.assertEqual(plan["seeds"], list(range(10)))
         self.assertEqual(len(sq.conditions(plan)), 720)
         local = qs.HOC_TUNED["hedonic"]
@@ -383,7 +383,7 @@ class TestPhase(unittest.TestCase):
         self.assertEqual(flagged["settings"], {k: plan["settings"][k] for k in ("dblp", "amazon")})
         # a pair takes its network's setting until a calibration names it, and the DBLP one when its network has none
         self.assertEqual(plan["settings"]["amazon:top5000"], plan["settings"]["amazon"])
-        self.assertEqual(plan["settings"]["livejournal"]["cap"], local["dblp"]["max_memberships"])
+        self.assertEqual(plan["settings"]["friendster:top5000"]["cap"], local["dblp"]["max_memberships"])
 
     def test_the_multilevel_phase_is_a_clear_error_before_anything_runs(self):
         for spelling in ("multilevel", "multi-phase", "multiphase", "hoc_multilevel"):

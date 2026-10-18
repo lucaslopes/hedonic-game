@@ -26,8 +26,8 @@ from hedonic.experiments.overlapping import runqueue
 from hedonic.experiments.plots import benchmark_tradeoffs as bt
 from hedonic.experiments.resources import CONFIG_DIR
 
-DETERMINISTIC = ["clique_percolation", "fox", "bigclam", "ncgame", "neo_kmeans"]
-EVERY_SEED = ["hedonic", "codeseg", "angel", "ego_splitting"]
+DETERMINISTIC = ["codeseg", "clique_percolation", "fox", "bigclam", "ncgame", "neo_kmeans"]
+EVERY_SEED = ["hedonic", "angel", "ego_splitting"]
 
 
 def config(*argv: str) -> qs.Config:
@@ -48,9 +48,10 @@ class TestTable(unittest.TestCase):
 
     def test_the_calibration_reads_the_same_table(self):
         self.assertIs(bc.REPLICATION, replication.REPLICATION)
-        # CoDeSEG repeats at the calibration's one thread, so the calibration never replicates it
-        self.assertEqual(replication.kind("codeseg"), "replicas")
+        # CoDeSEG runs at one thread in both, where it repeats: neither replicates it
+        self.assertEqual(replication.kind("codeseg"), "deterministic")
         self.assertEqual(replication.calibration_kind("codeseg"), "deterministic")
+        self.assertNotIn("threads", qs.method_params(qs.BY_KEY["codeseg"], qs.Config(threads=8), "dblp"))
         ctx = bc.with_replicates(bc.Context(graph=bc.synthetic_graph(50)), 3)
         self.assertEqual(ctx.replicates, {})
 
@@ -70,7 +71,7 @@ class TestPlan(unittest.TestCase):
         runs = Counter(m.key for _net, _seed, m in plan)
         self.assertEqual({m: runs[m] for m in DETERMINISTIC}, {m: 2 for m in DETERMINISTIC})
         self.assertEqual({m: runs[m] for m in EVERY_SEED}, {m: 20 for m in EVERY_SEED})
-        self.assertEqual(len(plan), 2 * (4 * 10 + 5))
+        self.assertEqual(len(plan), 2 * (3 * 10 + 6))
         self.assertEqual({seed for _net, seed, m in plan if m.key in DETERMINISTIC}, {0})
         # the lowest seed of the plan, whatever it is; the nesting is kept
         cfg = config("--networks", "dblp", "--methods", "hedonic,fox", "--seeds", "3,5,7", "--order", "seed,method,network")
@@ -103,13 +104,13 @@ class TestPlan(unittest.TestCase):
         cfg = config("--config", str(CONFIG_DIR / "paper-benchmark.toml"))
         self.assertEqual(cfg.seeds, list(range(10)))  # the config keeps seeds 0-9
         plan = qs.build_plan(cfg, {})
-        self.assertEqual(len(plan), 8 * (4 * 10 + 5))  # 8 pairs; 360 units instead of 720
+        self.assertEqual(len(plan), 8 * (3 * 10 + 6))  # 8 pairs; 288 units instead of 720
         every = config("--config", str(CONFIG_DIR / "paper-benchmark.toml"), "--replication", "all")
         seconds = lambda c: sum(qs.expected_seconds(m, c, net) for net, _s, m in qs.build_plan(c, {}))  # noqa: E731
         self.assertLess(seconds(cfg), seconds(every))
         text = qs.render_plan(cfg)
-        self.assertIn("360 runs", text)
-        self.assertIn("deterministic, one run at seed 0: FOX, CliquePerc, BigCLAM, NcGame, NEO-K-Means", text)
+        self.assertIn("288 runs", text)
+        self.assertIn("deterministic, one run at seed 0: CoDeSEG, FOX, CliquePerc, BigCLAM, NcGame, NEO-K-Means", text)
 
     def test_the_setting_never_changes_a_units_arguments_identity_or_folder(self):
         auto = config("--networks", "amazon:top5000", "--induce", "covered", "--full", "--methods", "all",
@@ -249,7 +250,9 @@ class TestCheck(unittest.TestCase):
         prog = {"plan": [{"network": "dblp", "seed": s, "method": "codeseg", "label": "CoDeSEG", "status": "completed",
                           "detection_seconds": 1.0} for s in (0, 1)]}
         out = io.StringIO()
+        replicas = {"kind": "replicas", "runs": 10, "note": "a method whose runs differ (CoDeSEG on several threads)"}
         with patch.object(rm, "read_progress", return_value=prog), contextlib.redirect_stdout(out), \
+                patch.dict(replication.REPLICATION, {"codeseg": replicas}), \
                 patch.object(qs, "run_one", side_effect=AssertionError("no rerun of a replica")):
             self.assertEqual(rm.check_benchmark(entry, 2), 1)
         self.assertIn("independent replicas", out.getvalue())

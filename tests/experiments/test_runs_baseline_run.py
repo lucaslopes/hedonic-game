@@ -378,12 +378,12 @@ class TestReplicas(unittest.TestCase):
             self.assertNotIn(method, ctx.replicates)
 
     def test_the_registered_policy(self):
-        # one table for the calibration and the benchmark (``replication``); CoDeSEG's runs are replicas at the benchmark's
-        # thread count but repeat at the calibration's one thread
+        # one table for the calibration and the benchmark (``replication``); CoDeSEG runs at one thread in both, where
+        # its runs repeat
         self.assertIs(bc.REPLICATION, replication.REPLICATION)
         self.assertEqual({m: (i["kind"], i["runs"]) for m, i in REGISTERED.items()},
                          {"hedonic": ("seeded", 10), "clique_percolation": ("deterministic", 1), "angel": ("seeded", 10),
-                          "ncgame": ("deterministic", 1), "codeseg": ("replicas", 10), "ego_splitting": ("seeded", 10),
+                          "ncgame": ("deterministic", 1), "codeseg": ("deterministic", 1), "ego_splitting": ("seeded", 10),
                           "bigclam": ("deterministic", 1), "fox": ("deterministic", 1), "neo_kmeans": ("deterministic", 1),
                           "disjoint_oracle": ("deterministic", 1)})
         self.assertEqual([m for m, i in REGISTERED.items() if i.get("calibration_kind", i["kind"]) == "replicas"], [])

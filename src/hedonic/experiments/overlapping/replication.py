@@ -11,7 +11,7 @@ checked by running them twice (not taken from the papers' claims):
   calibration averages ``--replicates`` runs per setting.
 
 ``runs`` is the number of benchmark runs the paper's ten-seed plan makes. ``calibration_kind``, where given, is the kind
-under the calibration's own settings when they differ from the benchmark's (CoDeSEG: one thread there, all cores here). ``replication = "all"`` (``--replication
+under the calibration's own settings when they differ from the benchmark's (no registered method now). ``replication = "all"`` (``--replication
 all``) runs every method at every seed, for an audit of determinism; it changes no unit's identity, so the two modes
 share their records.
 """
@@ -36,10 +36,10 @@ REPLICATION: dict[str, dict[str, Any]] = {
                       "a seed reproduces a run (unseeded, two runs on one graph gave 38 and 39 communities)"},
     "ncgame": {"kind": "deterministic", "runs": 1,
                "note": "the authors describe no stochastic process; two runs on Amazon/top5000 gave identical covers"},
-    "codeseg": {"kind": "replicas", "runs": 10, "calibration_kind": "deterministic",
-                "note": "no seed reaches the program; at one thread (the calibration) two runs on Amazon/top5000 gave "
-                        "identical covers, but at the benchmark's thread count (all cores) they differ (2,073 and 2,081 "
-                        "communities; ten earlier runs gave ten different covers), so each seed is an independent replica"},
+    "codeseg": {"kind": "deterministic", "runs": 1,
+                "note": "no seed reaches the program; the benchmark and the calibration run it at one thread, where two "
+                        "runs on Amazon/top5000 gave identical covers. On several threads its runs differ (2,073 and 2,081 "
+                        "communities at all cores), so a run with method_params threads > 1 is a replica, not a repeat"},
     "ego_splitting": {"kind": "seeded", "runs": 10,
                       "note": "the Louvain step of the persona graph takes the seed as random_state"},
     "bigclam": {"kind": "deterministic", "runs": 1,

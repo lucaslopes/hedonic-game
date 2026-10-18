@@ -1,4 +1,5 @@
-# The overlap paper's benchmark: four SNAP networks, both ground-truth covers of each, Hedonic and eight baselines,
+# The overlap paper's benchmark: eight SNAP network/cover pairs (DBLP, Amazon and YouTube with both covers, Friendster
+# and LiveJournal with top5000), Hedonic and eight baselines,
 # seeds 0-9, on three axes (accuracy, time, robustness). The `benchmark` item of the paper queue starts it:
 #
 #   hedonic run exp --config paper-benchmark --tuned HOC_TUNED.json,BASELINE_TUNED.json --name benchmark --yes
@@ -10,9 +11,9 @@
 #
 # Replication. `seeds = "0-9"` is the seed list; how many of them a method runs follows its replication kind
 # (src/hedonic/experiments/overlapping/replication.py, the table the baseline calibration uses too). Hedonic, ANGEL and
-# Ego-Splitting take the seed (seeded), and CoDeSEG's runs differ at the benchmark's thread count (replicas): ten runs per
-# pair each. CliquePerc, FOX, BigCLAM, NcGame and NEO-K-Means return the same cover for every seed (deterministic, checked
-# by running them twice at these settings): one run per pair, at seed 0. 360 units instead of 720. `replication = "all"`
+# Ego-Splitting take the seed (seeded): ten runs per pair each. CoDeSEG (at one thread), CliquePerc, FOX, BigCLAM, NcGame
+# and NEO-K-Means return the same cover for every seed (deterministic, checked by running them twice at these settings):
+# one run per pair, at seed 0. 288 units instead of 720. `replication = "all"`
 # (or --replication all) runs every method at every seed, to audit determinism; units keep their identity either way, so
 # the two share their records.
 #
@@ -26,7 +27,7 @@
 
 [hedonic_run]
 config = "paper"                    # screened settings, 1-hour timeout
-networks = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "livejournal:top5000", "dblp:all", "amazon:all", "youtube:all", "livejournal:all"]
+networks = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000", "dblp:all", "amazon:all", "youtube:all"]
 induce = "covered"
 methods = ["hedonic", "codeseg", "fox", "clique_percolation", "angel", "bigclam", "ego_splitting", "ncgame", "neo_kmeans"]
 seeds = "0-9"
@@ -47,5 +48,9 @@ max_memberships = 32
 absolute_resolution = 0.14285714285714285
 
 [hedonic_run.method_params.hedonic.livejournal]
+max_memberships = 32
+absolute_resolution = 0.14285714285714285
+
+[hedonic_run.method_params.hedonic.friendster]
 max_memberships = 32
 absolute_resolution = 0.14285714285714285

@@ -347,11 +347,19 @@ def load_graph(network: str, cover_variant: str, root: Path, induce: str = "full
     ``induce="covered"``: the subgraph induced by the vertices the cover contains (vertices renumbered, as the detectors
     saw them, so the saved covers index it).
     """
+    from hedonic.experiments.overlapping import ground_truth_data as gtd
+
+    if induce == "covered" and gtd.stream_covered_wanted(network, root, cover_variant=cover_variant):
+        # a graph too large to build whole (Friendster): the covered-induced graph read as a stream, as the runner does,
+        # from the runner's cache (<cache_dir>/snap), so the stream is read once for the benchmark and its audits
+        from hedonic.experiments.overlapping import userconfig
+
+        cache = expand_path(userconfig.defaults().get("cache_dir") or "~/.cache/hedonic") / "snap"
+        return gtd.load_covered_induced_streaming(network, cover_variant=cover_variant, data_root=root,
+                                                  cache_dir=cache).graph
     dataset = snap.load_snap_dataset(network, cover_variant=cover_variant, data_root=root, allow_catalog=False)
     if induce == "covered":
-        from hedonic.experiments.overlapping.ground_truth_data import covered_induced_dataset
-
-        dataset = covered_induced_dataset(dataset)
+        dataset = gtd.covered_induced_dataset(dataset)
     return dataset.graph
 
 

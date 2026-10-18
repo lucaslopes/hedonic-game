@@ -139,7 +139,15 @@ def spectrum(rows: list[dict], *, folder: Path, live: dict, options: dict, audit
         parallel=max(side_by_side.values(), default=1))
 
     # exact audit ---------------------------------------------------------------------------------------------------
-    steps = [(shown[p], f"{g:g}") for p in policies for g in grid]
+    tuned = options.get("tuned_resolutions") or {}  # a pair's calibrated resolution joins its grid (`--tuned`)
+    pair_of = {str(r.get("job")): f"{r.get('dataset')}/{r.get('cover')}" for r in rows if r.get("job")}
+
+    def job_steps(job: str) -> list[tuple[str, str]]:
+        gamma = tuned.get(pair_of.get(job, ""))
+        gammas = grid if gamma is None or gamma in grid else sorted([*grid, float(gamma)])
+        return [(shown[p], f"{g:g}") for p in policies for g in gammas]
+
+    steps = job_steps(jobs[0]) if jobs else [(shown[p], f"{g:g}") for p in policies for g in grid]
     stage = str(live.get("stage") or "")
     running = _AUDIT_STAGE.match(stage)
     running_job = f"{running[1]}-{running[2]}" if running else ""
@@ -147,11 +155,13 @@ def spectrum(rows: list[dict], *, folder: Path, live: dict, options: dict, audit
     audit_units: list[qm.Unit] = []
     audit_steps = len(steps)
     pool = max(1, workers.get((running_job, "spectrum audit"), default_workers)) if running_job else 1
+    per_job = {job: len(job_steps(job)) for job in jobs}
     for job in jobs:
         done = audit_done.get(job, 0)
+        steps_j = per_job[job]
         # a finished audit's recorded runtime is spread evenly over its steps (the pool does not time them one by one)
-        share = audit_seconds[job] / audit_steps if job in audit_seconds and audit_steps and done >= audit_steps else None
-        for index, (policy, gamma) in enumerate(steps):
+        share = audit_seconds[job] / steps_j if job in audit_seconds and steps_j and done >= steps_j else None
+        for index, (policy, gamma) in enumerate(job_steps(job)):
             audit_units.append(qm.Unit((labels[job], policy, gamma), index < done, None, "",
                                        job == running_job and done <= index < done + pool,
                                        share if index < done else None))
@@ -161,10 +171,10 @@ def spectrum(rows: list[dict], *, folder: Path, live: dict, options: dict, audit
         target = by_label[unit.coords[0]]
         job = next(j for j in jobs if labels[j] == unit.coords[0])
         if job == running_job and eta_left is not None:
-            todo = max(1, audit_steps - audit_done.get(job, 0))
+            todo = max(1, per_job[job] - audit_done.get(job, 0))
             return eta_left / todo, "measured"
         whole = scaled(target, measured_seconds)
-        return (whole / audit_steps, "estimate") if whole is not None and audit_steps else (None, "")
+        return (whole / per_job[job], "estimate") if whole is not None and per_job[job] else (None, "")
 
     audit = qm.Family(
         "audit", "audit steps",
@@ -178,7 +188,8 @@ def spectrum(rows: list[dict], *, folder: Path, live: dict, options: dict, audit
         parallel=default_workers) if audit_units else None
 
     notes = [f"A pair first gets its exact audit ({audit_steps} steps = {len(policies)} action policies x {len(grid)} "
-             "resolutions), then its detector runs; pairs go one after another.",
+             "resolutions" + (", plus the pair's calibrated resolution under each policy" if tuned else "")
+             + "), then its detector runs; pairs go one after another.",
              "The audit measures how stable the supplied cover is; the detector runs start from it and measure how far "
              "local moving drifts away."] if audit_units else []
     return qm.RunModel([f for f in (audit, detector) if f is not None], notes, stage)

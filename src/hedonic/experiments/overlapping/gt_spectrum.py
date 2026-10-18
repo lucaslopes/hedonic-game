@@ -480,12 +480,18 @@ def resolve_options(args: argparse.Namespace) -> dict[str, Any]:
     if policy not in ("covered-induced", "singleton"):
         raise ValueError("uncovered policy must be covered-induced or singleton")
     detector_settings = parse_detector_settings(section.get("detector_settings"))
+    tuned_paths, tuned = load_tuned_resolutions(args.tuned if args.tuned is not None else section.get("tuned"),
+                                                config_path)
+    if tuned is not None and detector_settings is not None:
+        raise ValueError("tuned and detector_settings both set the detector's resolutions; keep one")
     provision = args.provision
     if provision is None:  # TOML key, else on for a run that names its pairs (every queue step does), off otherwise
         provision = bool(section.get("provision", pairs is not None and not smoke))
     return {
         "schema_version": SCHEMA_VERSION,
         "detector_settings": detector_settings,
+        "tuned": tuned_paths or None,
+        "tuned_resolutions": tuned,
         "config_path": str(config_path) if config_path.is_file() else None,
         "config_sha256": config_sha,
         "smoke": smoke,
@@ -561,12 +567,63 @@ def parse_detector_settings(raw: Any) -> list[dict[str, Any]] | None:
     return out
 
 
+def load_tuned_resolutions(value, config_path: Path | None = None) -> tuple[list[str], dict[str, float] | None]:
+    """The calibrated Hedonic resolution of every pair a calibration file names (``--tuned``, TOML key ``tuned``).
+
+    ``value`` is a path, a comma list or a list of them (``hoc_tuned.json`` of ``hedonic run calibrate``; a later file
+    overrides an earlier one). Returns the resolved paths and {"dataset/cover": gamma}, a plain network name being its
+    ``all`` cover, or ([], None) without a file. Only the gamma is read: the spectrum keeps its own cap rule (the cover's
+    multiplicity). A missing or unfinished file raises ``quickstart.TunedMissing``.
+    """
+    if not value:
+        return [], None
+    from hedonic.experiments.overlapping import quickstart as qs
+
+    names = qs.tuned_files(value)
+    resolved, tuned = [], {}
+    for name in names:
+        path = expand_path(name)
+        if not path.is_absolute() and config_path is not None and (config_path.parent / name).is_file():
+            path = config_path.parent / name
+        resolved.append(str(path.resolve()))
+        for target, values in (qs.load_tuned_file(path).get("hedonic") or {}).items():
+            base, cover = qs.split_target(target)
+            tuned[f"{base}/{cover or 'all'}"] = float(values["absolute_resolution"])
+    return resolved, tuned
+
+
+def tuned_gamma(options: dict[str, Any], dataset: str, cover: str) -> float | None:
+    """The pair's calibrated resolution when the study reads a calibration file (``tuned``), else None."""
+    tuned = options.get("tuned_resolutions")
+    if tuned is None:
+        return None
+    key = f"{dataset}/{cover}"
+    if key not in tuned:
+        raise ValueError(f"the calibration file has no Hedonic setting for {dataset}:{snap.cover_variant_label(cover)}")
+    return float(tuned[key])
+
+
+def _with_tuned(grid: Iterable[float], gamma: float | None) -> list[float]:
+    values = [float(g) for g in grid]
+    return values if gamma is None or gamma in values else sorted([*values, gamma])
+
+
+def detector_resolutions(options: dict[str, Any], dataset: str, cover: str) -> list[float]:
+    """The detector grid of one pair: the study's grid, with the pair's calibrated resolution when it reads one."""
+    return _with_tuned(options["detector_resolutions"], tuned_gamma(options, dataset, cover))
+
+
+def audit_resolutions(options: dict[str, Any], dataset: str, cover: str) -> list[float]:
+    """The audit grid of one pair: the study's grid, with the pair's calibrated resolution when it reads one."""
+    return _with_tuned(options["audit_resolutions"], tuned_gamma(options, dataset, cover))
+
+
 def job_settings(options: dict[str, Any], dataset: str, cover: str) -> list[dict[str, Any]]:
     """The detector settings of one pair: the resolution grid (local, GT cap), or the explicit list."""
     explicit = options.get("detector_settings")
     if explicit is None:
         return [{"label": None, "phase": "local", "gamma": float(g), "cap": None}
-                for g in options["detector_resolutions"]]
+                for g in detector_resolutions(options, dataset, cover)]
     return [s for s in explicit if s["pair"] == f"{dataset}/{cover}"]
 
 
@@ -625,6 +682,9 @@ def project_memberships(graph, memberships: list[list[int]], cap: int) -> tuple[
 def scientific_grid(options: dict[str, Any], jobs: list[tuple[str, str]]) -> dict[str, Any]:
     """Every scientific axis of the study, hashed into the lock and the manifest."""
     grid = _scientific_grid(options, jobs)
+    if options.get("tuned_resolutions") is not None:  # absent key: the grid (and its hash) is unchanged
+        grid["tuned_resolutions"] = {f"{d}/{c}": tuned_gamma(options, d, c) for d, c in jobs}
+        grid["tuned_rule"] = "each pair's calibrated Hedonic resolution joins its detector and audit grids"
     if options.get("detector_settings") is not None:  # absent key: the grid (and its hash) is unchanged
         grid["detector_settings"] = [dict(s) for s in options["detector_settings"]]
         grid["detector_resolutions"] = []
@@ -821,6 +881,11 @@ def load_job(options: dict[str, Any], row: dict[str, Any]) -> Job:
         raw = snap.smoke_dataset(name, cover_variant=variant)
     elif row.get("root_kind") == "hedonic_cache":
         raw = snap._load_from_raw(snap.SPECS[name], Path(row["base"]), variant)
+    elif (options["policy"] == "covered-induced" and not options["max_nodes"]
+          and gtd.stream_covered_wanted(name, options["data_root"], cover_variant=variant)):
+        # a graph too large to build whole (Friendster): the same covered-induced dataset, read as a stream
+        raw = gtd.load_covered_induced_streaming(name, cover_variant=variant, data_root=options["data_root"],
+                                                 cache_dir=options["snap_cache_dir"])
     else:
         raw = snap.load_snap_dataset(
             name,
@@ -1286,7 +1351,8 @@ def _priors(options: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def estimate_runtime(options: dict[str, Any], jobs_count: int, datasets: list[str] | None = None) -> dict[str, Any]:
     """Seconds per local-moving run from the records already in the output folder, else an explicit unknown."""
     priors = _priors(options)
-    conditions = jobs_count * len(options["isolation_policies"]) * len(options["detector_resolutions"]) * len(options["detector_seeds"])
+    points = len(options["detector_resolutions"]) + (options.get("tuned_resolutions") is not None)
+    conditions = jobs_count * len(options["isolation_policies"]) * points * len(options["detector_seeds"])
     if options.get("detector_settings") is not None:
         conditions = len(options["detector_settings"]) * len(options["isolation_policies"]) * len(options["detector_seeds"])
     chosen = [priors[d] for d in (datasets or priors) if d in priors]
@@ -1331,7 +1397,8 @@ def inspect_pairs(options: dict[str, Any], rows: list[dict[str, Any]]) -> list[d
             "communities": len(job.gt_cover), "cap": job.cap,
             "covered_vertices": provenance["covered_vertices"],
             "source_covered_vertices": provenance["source_covered_vertices"],
-            "audit_best_responses": vertices * len(options["audit_resolutions"]) * len(options["isolation_policies"]),
+            "audit_best_responses": vertices * (len(options["audit_resolutions"]) + (options.get("tuned_resolutions") is not None))
+            * len(options["isolation_policies"]),
             "detector_runs": conditions_per_job(options, job.dataset, job.cover),
             "settings": [
                 {"label": s["label"], "phase": s["phase"], "gamma": s["gamma"], "cap": s["cap"],
@@ -1351,7 +1418,12 @@ def describe(options: dict[str, Any], pairs: int) -> str:
                 f"{len(options['detector_settings'])} explicit detector settings × {len(options['detector_seeds'])} seeds "
                 "(GT start, cap-projected where needed)")
     return (f"{pairs} graph/cover pairs · {size} covered-induced graph · {', '.join(options['isolation_policies'])} · "
-            f"{len(options['detector_resolutions'])} resolutions × {len(options['detector_seeds'])} seeds (local moving from the exact GT)")
+            f"{len(options['detector_resolutions'])} resolutions{_tuned_note(options)} × {len(options['detector_seeds'])} seeds "
+            "(local moving from the exact GT)")
+
+
+def _tuned_note(options: dict[str, Any]) -> str:
+    return " + each pair's calibrated γ" if options.get("tuned_resolutions") is not None else ""
 
 
 def render_plan(options: dict[str, Any], rows: list[dict[str, Any]], inspected: list[dict[str, Any]] | None = None) -> str:
@@ -1366,7 +1438,8 @@ def render_plan(options: dict[str, Any], rows: list[dict[str, Any]], inspected: 
     if options.get("detector_settings") is None:
         lines.append(
             f"        audit grid {len(options['audit_resolutions'])} resolutions in [{options['audit_resolutions'][0]:g}, "
-            f"{options['audit_resolutions'][-1]:g}] · detector grid {len(options['detector_resolutions'])} resolutions × "
+            f"{options['audit_resolutions'][-1]:g}]{_tuned_note(options)} · detector grid "
+            f"{len(options['detector_resolutions'])} resolutions{_tuned_note(options)} × "
             f"{len(options['detector_seeds'])} seeds (local moving to an equilibrium, exact GT start)"
         )
     else:
@@ -1685,7 +1758,7 @@ def _audit_job(job: Job, options: dict[str, Any], identity: dict[str, Any], emit
     identity_payload = {
         "graph": job.prepared.graph_identity, "ground_truth": job.prepared.ground_truth_identity,
         "cap": job.cap, "policies": list(options["isolation_policies"]),
-        "grid": [float(g) for g in options["audit_resolutions"]], "atol": options["atol"], "rtol": options["rtol"],
+        "grid": audit_resolutions(options, job.dataset, job.cover), "atol": options["atol"], "rtol": options["rtol"],
         "dense": options["dense"], "implementation": _compact_identity(identity),
     }
     audit_identity = _json_hash(identity_payload)
@@ -1695,7 +1768,7 @@ def _audit_job(job: Job, options: dict[str, Any], identity: dict[str, Any], emit
     started = time.monotonic()
     display_job = f"{job.dataset}/{snap.cover_variant_label(job.cover)}"
     emit({"type": "audit_start", "job": display_job})
-    gammas = [float(g) for g in options["audit_resolutions"]]
+    gammas = audit_resolutions(options, job.dataset, job.cover)
     total = len(gammas) * len(options["isolation_policies"])
     workers = max(1, min(int(options["workers"]), os.cpu_count() or 1))
     emit({"type": "stage", "job": display_job, "text": "preparing the audit"})
@@ -1875,7 +1948,8 @@ def replot(options: dict[str, Any]) -> int:
                           if r.get("row_type") != "start_setting_audit")
     grid = manifest["effective_grid"]
     settings_options = {"detector_settings": grid.get("detector_settings"),
-                        "detector_resolutions": grid["detector_resolutions"]}
+                        "detector_resolutions": grid["detector_resolutions"],
+                        "tuned_resolutions": grid.get("tuned_resolutions")}
     expected = {
         (job[0], job[1], p, float(st["gamma"]), *([st["label"]] if st["label"] is not None else [])):
             len(grid["detector_seeds"])
@@ -1919,6 +1993,9 @@ def build_parser(add_help: bool = True) -> argparse.ArgumentParser:
                    help="partial-cover policy; singleton is a synthetic-completion sensitivity, never GT")
     p.add_argument("--max-nodes", type=int, help="bounded induced-subgraph size; 0 = full graph (default 3000)")
     p.add_argument("--audit-resolutions", help="audit grid: START:STOP:COUNT, geom:START:STOP:COUNT, a list, or joined with + (default 0:1:101+geom:1e-4:1:33)")
+    p.add_argument("--tuned", action="append", metavar="FILE[,FILE]",
+                   help="calibrated settings (hoc_tuned.json of `hedonic run calibrate`): each pair's Hedonic resolution "
+                        "joins its detector and audit grids (TOML key tuned)")
     p.add_argument("--resolutions", help="detector grid, same syntax (default 0+geom:1e-4:1:9)")
     p.add_argument("--isolation-policies", help="fixed_labels,open_labels (default both)")
     p.add_argument("--seeds", help="detector seeds, e.g. 0-4 (default 0-4)")

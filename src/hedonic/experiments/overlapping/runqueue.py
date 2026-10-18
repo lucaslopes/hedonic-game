@@ -514,10 +514,13 @@ def _spectrum_options(verb: str, args: list[str]) -> dict:
     study = gt_spectrum._strip_front(list(args))
     if verb != "spectrum":  # `hedonic run spectrum-full` is `--config full`
         study = ["--config", verb.removeprefix("spectrum-"), *study]
-    try:
-        return dict(gt_spectrum.resolve_options(gt_spectrum.build_parser().parse_args(study)))
-    except (SystemExit, Exception):  # noqa: BLE001
-        return {}
+    # a calibration file (--tuned) that is not written yet adds a resolution per pair but changes no pair: read without it
+    for attempt in (study, _without_option(study, "--tuned")):
+        try:
+            return dict(gt_spectrum.resolve_options(gt_spectrum.build_parser().parse_args(attempt)))
+        except (SystemExit, Exception):  # noqa: BLE001
+            continue
+    return {}
 
 
 def _spectrum_pairs(verb: str, args: list[str]) -> list[str] | None:
@@ -534,6 +537,9 @@ def _spectrum_state(args: list[str], verb: str = "spectrum") -> tuple[str, str]:
     """
     from hedonic.experiments.overlapping import userconfig
 
+    if _option(args, "--tuned"):  # its records depend on the calibration: judged once the file is there (TunedMissing)
+        for file in qs.tuned_files(_option(args, "--tuned")):
+            qs.load_tuned_file(file)
     explicit, name = _option(args, "--output-dir"), _option(args, "--name")
     if explicit:
         folder = qs.expand_path(explicit)
@@ -813,17 +819,17 @@ def _controlled_state(args: list[str]) -> tuple[str, str]:
     total = int(plan["plan"]["instances"])
     grid = _controlled_grid(cc, plan["config"])
     if Path(plan["json"]).is_file() and cc.json_build(plan["json"]) != "current":
-        _note(plan["folder"], 0, total, "instances", [("no network (synthetic)", "instances", [False] * total)],
+        _note(plan["folder"], 0, total, "instances", [("synthetic (no pair)", "instances", [False] * total)],
               stale="its JSON was made by another build (hedonic core or igraph); a start moves it aside and runs again")
         return "partial", plan["folder"]
     if Path(plan["json"]).is_file():
-        _note(plan["folder"], total, total, "instances", [("no network (synthetic)", "instances", [True] * total)])
+        _note(plan["folder"], total, total, "instances", [("synthetic (no pair)", "instances", [True] * total)])
         _set_model(plan["folder"], qb.controlled, plan["plan"], total, grid)
         return "complete", plan["folder"]
     progress = _read(Path(plan["folder"]) / "progress.json") or {}
     got = min(int(progress.get("done") or 0), total)
     _note(plan["folder"], got, total, "instances",
-          [("no network (synthetic)", "instances", [True] * got + [False] * (total - got))])
+          [("synthetic (no pair)", "instances", [True] * got + [False] * (total - got))])
     _set_model(plan["folder"], qb.controlled, plan["plan"], got, grid)
     return ("partial" if int(progress.get("done") or 0) else "missing"), plan["folder"]
 
@@ -1345,25 +1351,33 @@ def matrix(items: list[dict], G: dict | None = None) -> list[str]:
     rows: list[str] = []
     for *_rest, groups in columns:
         rows += [group for group in groups if group not in rows]
-    cell_w = 11
     label_w = min(max([len(row) for row in rows] + [9]), 22)
+    # a column is as wide as its name or its count ("x 0/640"), plus a space; the last one is not padded, so a queue of
+    # six runs fits 80 columns
+    totals = [f"{count[0]}/{count[1]}" for *_rest, count, _groups in columns if count]
+    cell_w = max([len(name) + 1 for name, *_ in columns] + [len(t) + 3 for t in totals] + [7])
+    last = len(columns) - 1
 
-    def cell(status: str, done: int, total: int, text: str | None = None) -> str:
+    def cell(status: str, done: int, total: int, text: str | None = None, end: bool = False) -> str:
         mark = G["done"] if total and done == total else G["running"] if status in ACTIVE or done else G["pending"]
         colour = "green" if total and done == total else "cyan" if status in ACTIVE else "yellow" if done else "dim"
         shown = text if text is not None else (G["done"] if total and done == total else f"{100 * done // total}%" if total else "-")
-        return style(f"{mark} {shown:<{cell_w - 2}}", colour)
+        return style(f"{mark} {shown}" if end else f"{mark} {shown:<{cell_w - 2}}", colour)
 
-    lines = [style(f"{'':<{label_w}} ", "bold") + "".join(style(f"{name[:cell_w - 1]:<{cell_w}}", "bold") for name, *_ in columns)]
+    def blank(text: str, end: bool) -> str:
+        return style(text if end else f"{text:<{cell_w}}", "dim")
+
+    lines = [style(f"{'':<{label_w}} ", "bold") + "".join(
+        style(name if i == last else f"{name[:cell_w - 1]:<{cell_w}}", "bold") for i, (name, *_) in enumerate(columns))]
     for row in rows:
         out = f"{row[:label_w]:<{label_w}} "
-        for _name, status, _count, groups in columns:
+        for i, (_name, status, _count, groups) in enumerate(columns):
             flags = groups.get(row)
-            out += cell(status, sum(flags), len(flags)) if flags else style(f"{'':<{cell_w}}", "dim")
+            out += cell(status, sum(flags), len(flags), end=i == last) if flags else blank("", i == last)
         lines.append(out)
     out = style(f"{'all pairs':<{label_w}} ", "bold")
-    for _name, status, count, _groups in columns:
-        out += cell(status, count[0], count[1], f"{count[0]}/{count[1]}") if count else style(f"{'?':<{cell_w}}", "dim")
+    for i, (_name, status, count, _groups) in enumerate(columns):
+        out += cell(status, count[0], count[1], f"{count[0]}/{count[1]}", end=i == last) if count else blank("?", i == last)
     lines.append(out)
     return lines
 

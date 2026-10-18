@@ -14,8 +14,8 @@ from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.resources import CONFIG_DIR
 
 COVERS = str(CONFIG_DIR / "paper-benchmark.toml")
-PAIR_ORDER = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "livejournal:top5000",
-              "dblp:all", "amazon:all", "youtube:all", "livejournal:all"]
+PAIR_ORDER = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000",
+              "dblp:all", "amazon:all", "youtube:all"]
 
 
 def load(path: str = COVERS) -> qs.Config:
@@ -101,7 +101,7 @@ class TestUnits(unittest.TestCase):
 
 
 class TestShippedCoversConfig(unittest.TestCase):
-    def test_four_networks_two_covers_nine_methods_ten_seeds(self):
+    def test_eight_pairs_nine_methods_ten_seeds(self):
         cfg = load()
         self.assertEqual(cfg.networks, PAIR_ORDER)
         self.assertEqual(cfg.methods, ["hedonic", "codeseg", "fox", "clique_percolation", "angel", "bigclam", "ego_splitting",
@@ -109,7 +109,7 @@ class TestShippedCoversConfig(unittest.TestCase):
         self.assertNotIn("hoc_multilevel", cfg.methods)
         self.assertEqual(cfg.induce, "covered")
         self.assertTrue(cfg.robustness and cfg.save_covers)
-        self.assertEqual(len(qs.build_plan(cfg, {})), 8 * (4 * 10 + 5))  # 5 deterministic methods run once per pair
+        self.assertEqual(len(qs.build_plan(cfg, {})), 8 * (3 * 10 + 6))  # 6 deterministic methods run once per pair
 
     def test_for_a_seed_each_pair_is_finished_with_all_methods_before_the_next_top5000_covers_first(self):
         cfg = load()

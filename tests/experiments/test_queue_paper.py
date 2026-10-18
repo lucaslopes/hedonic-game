@@ -16,8 +16,8 @@ from hedonic.experiments.overlapping import codeseg_setup as cs
 from hedonic.experiments.overlapping import runqueue
 from hedonic.experiments.resources import CONFIG_DIR
 
-PAIRS = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "livejournal:top5000",
-         "dblp:all", "amazon:all", "youtube:all", "livejournal:all"]
+PAIRS = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000",
+         "dblp:all", "amazon:all", "youtube:all"]
 BASELINES = ["codeseg", "ncgame", "ego_splitting", "fox", "clique_percolation", "angel", "bigclam", "neo_kmeans"]
 
 

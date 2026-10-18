@@ -84,11 +84,11 @@ PAPER_PAIRS: tuple[str, ...] = (
     "dblp:top5000",
     "amazon:top5000",
     "youtube:top5000",
+    "friendster:top5000",
     "livejournal:top5000",
     "dblp:all",
     "amazon:all",
     "youtube:all",
-    "livejournal:all",
 )
 # The eight baselines of the overlap paper (``hedonic run exp`` keys), cheapest first.
 PAPER_BASELINES: tuple[str, ...] = (
