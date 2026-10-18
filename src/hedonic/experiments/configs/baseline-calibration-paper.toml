@@ -28,6 +28,10 @@ max_evals = 8
 max_minutes = 240
 eval_timeout_minutes = 60
 replicates = 1
+# ANGEL is the slowest searched method on the large pairs: at most 3 of its phi values, 60 single-core minutes per pair.
+method_budget = "angel=3:60"
+# A search that ends without a setting takes the setting of the nearest calibrated pair, recorded as transferred.
+transfer_missing = true
 # Cores: the pairs of one method run side by side (workers, each forked child loads its own pair; no more than `workers`,
 # and a new one starts only while the machine's free memory is 15 points above the floor, 20 s after the previous start).
 # Detector probes are single-core, so `workers` pairs use `workers` cores. A free-memory floor (HEDONIC_MEMORY_FLOOR,

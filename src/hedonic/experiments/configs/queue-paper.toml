@@ -26,8 +26,8 @@ run = ["calibrate", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,l
 name = "baseline-calibration"
 short = "calib-base"
 title = "precondition: the baselines' parameters per pair"
-about = "Chooses CliquePerc k, ANGEL phi and the BigCLAM / NEO-K-Means K on each pair's covered subgraph without ground truth and fixes the other baselines at their published values. Writes baseline_tuned.json, which the benchmark reads."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all,livejournal:all", "--methods", "codeseg,ncgame,ego_splitting,fox,clique_percolation,angel,bigclam,neo_kmeans", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--name", "baseline-calibration", "--output-dir", "{root}/baseline-calibration"]
+about = "Chooses CliquePerc k, ANGEL phi and the BigCLAM / NEO-K-Means K on each pair's covered subgraph without ground truth and fixes the other baselines at their published values. ANGEL tries at most 3 settings in 60 minutes per pair. LiveJournal/all is not searched: each searched method takes the setting of LiveJournal/top5000 (K scaled by the vertex count), and a search that ends without a setting takes the nearest calibrated pair's; both are recorded as transferred. Writes baseline_tuned.json, which the benchmark reads."
+run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all,livejournal:all", "--methods", "codeseg,ncgame,ego_splitting,fox,clique_percolation,angel,bigclam,neo_kmeans", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=3:60", "--transfer", "livejournal:all", "--transfer-missing", "--name", "baseline-calibration", "--output-dir", "{root}/baseline-calibration"]
 
 [[items]]
 name = "synthetic-networks"

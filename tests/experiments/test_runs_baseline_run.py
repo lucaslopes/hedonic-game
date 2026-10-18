@@ -225,6 +225,126 @@ class TestRun(unittest.TestCase):
             self.assertEqual([p for p in (Path(tmp) / "ledger").rglob("*") if p.is_file()], [])
 
 
+class SizedLoader(Loader):
+    """A loader whose pairs differ in size (``:all`` twice the vertices), so a transferred K must be scaled."""
+
+    def __call__(self, target, **kw):
+        ctx = super().__call__(target, **kw)
+        ctx.graph = bc.synthetic_graph(800 if target.endswith(":all") else 400)
+        return ctx
+
+
+class TestAdoptAndTransfer(unittest.TestCase):
+    run_plan = TestRun.run_plan
+
+    def test_method_budget_is_per_method_and_survives_a_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = plan_for(tmp, "--method-budget", "angel=3:60")
+            self.assertEqual(plan["method_budgets"], {"angel": (3, 60.0)})
+            self.assertEqual(br.budget_of(plan, "angel").max_evals, 3)
+            self.assertEqual(br.budget_of(plan, "angel").max_seconds, 3600)
+            self.assertEqual(br.budget_of(plan, "bigclam").max_evals, 8)
+            again = br.resolve(br.launch_argv(plan))
+            self.assertEqual(again["method_budgets"], plan["method_budgets"])
+            for bad in ("nope=3", "angel", "angel=x", "fox=3"):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    plan_for(tmp, "--method-budget", bad)  # fox is not in plan_for's methods
+            plan = plan_for(tmp, "--method-budget", "angel=3")
+            with patch.object(bc, "load_context", Loader()), redirect_stdout(io.StringIO()):
+                br.run_calibration(plan)
+            self.assertLessEqual(len(br.read_tuned(plan)["searches"]["angel/amazon"]["candidates"]), 3)
+
+    def test_a_transferred_pair_is_not_searched_and_its_k_is_scaled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = br.resolve(["--networks", "dblp:top5000,amazon:top5000,dblp:all", "--methods", "codeseg,bigclam,angel",
+                               "--transfer", "dblp:all", "--output-dir", tmp])
+            self.assertIn("transfer", "\n".join(br.plan_lines(plan)))
+            loader = SizedLoader()
+            with patch.object(bc, "load_context", loader), redirect_stdout(io.StringIO()):
+                self.assertEqual(br.run_calibration(plan), 0)
+            self.assertEqual(loader.targets.count("dblp:all"), 1)  # codeseg's published setting only: no search there
+            data = br.read_tuned(plan)
+            moved = data["searches"]["bigclam/dblp:all"]
+            self.assertEqual(moved["status"], "transferred")
+            self.assertEqual(moved["transferred_from"], "dblp:top5000")  # the same network's other cover first
+            source = data["settings"]["bigclam"]["dblp:top5000"]["communities"]
+            self.assertEqual(data["settings"]["bigclam"]["dblp:all"]["communities"], round(source * 800 / 400))
+            self.assertEqual(data["settings"]["angel"]["dblp:all"], data["settings"]["angel"]["dblp:top5000"])
+            self.assertEqual(data["searches"]["codeseg/dblp:all"]["status"], "fixed")
+            self.assertTrue(data["complete"])
+            self.assertEqual(br.resolve(br.launch_argv(plan))["transfer"], ["dblp:all"])
+        with self.assertRaises(ValueError):
+            br.resolve(["--networks", "dblp:top5000", "--transfer", "amazon:all"])
+        with self.assertRaises(ValueError):
+            br.resolve(["--networks", "dblp:top5000", "--transfer", "dblp:top5000"])
+
+    def test_a_search_without_a_setting_is_transferred_when_asked(self):
+        def runner(method, graph, params, seed):
+            if method == "bigclam" and graph.vcount() == 800:
+                raise RuntimeError("every probe fails here")
+            return blocks_runner(method, graph, params, seed)
+
+        def loader(target, **kw):
+            ctx = SizedLoader()(target, **kw)
+            ctx.runner = runner
+            return ctx
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = br.resolve(["--networks", "dblp:top5000,amazon:all", "--methods", "bigclam", "--transfer-missing",
+                               "--output-dir", tmp])
+            with patch.object(bc, "load_context", loader), redirect_stdout(io.StringIO()):
+                self.assertEqual(br.run_calibration(plan), 0)
+            entry = br.read_tuned(plan)["searches"]["bigclam/amazon:all"]
+            self.assertEqual(entry["status"], "transferred")
+            self.assertEqual(entry["transferred_from"], "dblp:top5000")
+            self.assertEqual(entry["failed_search"]["status"], "failed")  # the search that failed is kept beside it
+
+    def test_finished_searches_are_adopted_with_their_ledgers_and_the_source_is_untouched(self):
+        with tempfile.TemporaryDirectory() as earlier, tempfile.TemporaryDirectory() as tmp:
+            first = br.resolve(["--networks", "dblp:top5000,amazon", "--methods", "codeseg,bigclam", "--output-dir", earlier])
+            self.run_plan(first, Loader())
+            data = json.loads((Path(earlier) / br.TUNED_NAME).read_text())
+            del data["searches"]["bigclam/amazon"]  # stopped before its last search: its ledger stays
+            data["environment"] = {"hedonic": "1.0.5"}
+            for entry in data["searches"].values():
+                entry.pop("environment", None)
+            (Path(earlier) / br.TUNED_NAME).write_text(json.dumps(data))
+            before = sorted((p.name, p.stat().st_size) for p in Path(earlier).rglob("*") if p.is_file())
+            plan = br.resolve(["--networks", "dblp:top5000,amazon", "--methods", "codeseg,bigclam,angel",
+                               "--adopt-from", earlier, "--output-dir", tmp])
+            self.assertEqual(br.adoptable(plan), {str(Path(earlier).resolve()): ["codeseg/dblp:top5000", "codeseg/amazon",
+                                                                                 "bigclam/dblp:top5000"]})
+            self.assertIn("adopt    3 finished searches", "\n".join(br.plan_lines(plan)))
+            loader = Loader()
+            calls = []
+
+            def counting(method, graph, params, seed):
+                calls.append(method)
+                return blocks_runner(method, graph, params, seed)
+
+            def load(target, **kw):
+                ctx = loader(target, **kw)
+                ctx.runner = counting
+                return ctx
+
+            with patch.object(bc, "load_context", load), redirect_stdout(io.StringIO()):
+                self.assertEqual(br.run_calibration(plan), 0)
+            self.assertEqual(sorted(loader.targets), ["amazon", "amazon", "dblp:top5000"])  # bigclam/amazon, angel x 2
+            self.assertNotIn("bigclam", calls)  # bigclam/amazon resumed entirely from the copied ledger
+            got = br.read_tuned(plan)
+            self.assertEqual(got["searches"]["codeseg/amazon"]["adopted_from"]["environment"], {"hedonic": "1.0.5"})
+            self.assertNotIn("adopted_from", got["searches"]["angel/amazon"])
+            self.assertTrue(got["complete"])
+            after = sorted((p.name, p.stat().st_size) for p in Path(earlier).rglob("*") if p.is_file())
+            self.assertEqual(before, after)
+            bad = dict(data, protocol="other")
+            (Path(earlier) / br.TUNED_NAME).write_text(json.dumps(bad))
+            other = br.resolve(["--networks", "dblp:top5000", "--methods", "codeseg", "--adopt-from", earlier,
+                                "--output-dir", tmp + "/x"])
+            with self.assertRaises(ValueError), redirect_stdout(io.StringIO()):
+                br.adopt(other)
+
+
 REGISTERED = {m: dict(i) for m, i in bc.REPLICATION.items()}  # the policy as shipped
 REPLICAS_POLICY = {m: {"kind": "replicas", "runs": 10, "note": "test"} for m in ("bigclam", "fox", "neo_kmeans")}
 
