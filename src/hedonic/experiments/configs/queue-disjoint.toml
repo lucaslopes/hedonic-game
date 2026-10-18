@@ -1,4 +1,4 @@
-# The disjoint paper's experiment queue: the SBM benchmark of "Robustness of community structures" (Physica A),
+# The disjoint paper's experiment queue: the SBM benchmark of "From Leiden to Pleasure Island" (Physica A),
 # with Hedonic (this package's native core) and Leiden (stock igraph's CPM Leiden) next to the four reference
 # methods (ground truth, Mirror, One Pass, spectral clustering).
 #

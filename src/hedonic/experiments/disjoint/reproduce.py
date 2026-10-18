@@ -95,7 +95,7 @@ def main(argv=None) -> int:
         type=str,
         default=None,
         help=(
-            "Root directory (default: repository artifacts/disjoint for sbm "
+            "Root directory (default: artifacts/disjoint under the output folder, HEDONIC_OUTPUT_DIR, for sbm "
             "presets, artifacts/disjoint/v1020 for v1020 presets; must NOT be "
             "the archived V1020 folder)"
         ),

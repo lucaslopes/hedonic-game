@@ -10,7 +10,7 @@ Archived V1020 figures (under the read-only configured synthetic input)::
     acc_robustness.pdf  — KDE accuracy/ARI vs robustness
     acc_efficiency.pdf  — KDE accuracy/ARI vs duration
 
-Reproduce via CLI (writes below the repository artifact root)::
+Reproduce via CLI (writes below the artifacts root of the output folder)::
 
     hedonic-exp plots \\
         --data /path/to/resultados.csv.gzip \\
@@ -1013,7 +1013,7 @@ def main(argv=None) -> int:
         type=str,
         default=None,
         help=(
-            "Directory for figures (default: repository "
+            "Directory for figures (default: under the output folder, HEDONIC_OUTPUT_DIR: "
             "artifacts/disjoint/figures)"
         ),
     )

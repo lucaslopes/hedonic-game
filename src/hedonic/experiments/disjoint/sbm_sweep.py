@@ -1948,7 +1948,7 @@ def main(argv=None, progress=None):
             "  v1020        Full archived grid (1020 nodes, 5× community counts,\n"
             "               10×p_in, 10×difficulty, 5 noises, 5 nets, 10 partitions,\n"
             "               all methods, 10 Leiden/Hedonic runs, v1020 layout).\n"
-            "               Very large — write under the repository artifacts root.\n"
+            "               Very large — write under the artifacts root of the output folder.\n"
             "  v1020-smoke  Tiny structural clone of the V1020 layout/methods.\n"
             "\n"
             "examples:\n"
@@ -2093,7 +2093,7 @@ def main(argv=None, progress=None):
         type=str,
         default=None,
         help=(
-            "Root directory for results (default: repository artifacts/disjoint; "
+            "Root directory for results (default: artifacts/disjoint under the output folder, HEDONIC_OUTPUT_DIR; "
             "explicit paths are supported for isolated runs)"
         ),
     )

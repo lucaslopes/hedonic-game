@@ -380,7 +380,7 @@ def main(argv=None):
         default=str(DISJOINT_ARTIFACTS_DIR / "resultados"),
         help=(
             "Folder of raw JSON experiment results (default: "
-            "repository artifacts/disjoint/resultados)"
+            "artifacts/disjoint/resultados under the output folder, HEDONIC_OUTPUT_DIR)"
         ),
     )
     parser.add_argument(
