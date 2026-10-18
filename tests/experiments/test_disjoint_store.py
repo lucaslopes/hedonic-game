@@ -460,7 +460,7 @@ class TestDisjointFrontDoor(unittest.TestCase):
         from hedonic.experiments.disjoint import front
         from hedonic.experiments.overlapping import runmanager
 
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d, patch.dict("os.environ", {"HEDONIC_RUNS_DIR": str(Path(d) / "runs")}):
             out = Path(d) / "smoke-run"
             code = CLI.hedonic_main(["run", "disjoint", "--preset", "smoke", "--foreground",
                                      "--workers", "2", "--output-dir", str(out), "--name", "fg-smoke"])
@@ -471,6 +471,12 @@ class TestDisjointFrontDoor(unittest.TestCase):
             self.assertIn("igraph_c", prog["environment"])
             self.assertEqual(prog["methods"]["GroundTruth"]["adjusted_rand"], prog["methods"]["GroundTruth"]["n"])
             self.assertTrue((out / "stats" / "paper_stats.json").is_file())
+            # Registered like a detached run, so the morning check it prints (`hedonic run check NAME`) finds it.
+            registered = runmanager.load_entry("fg-smoke")
+            self.assertEqual((registered["backend"], registered["kind"]), ("foreground", "disjoint"))
+            self.assertEqual(registered["output_dir"], str(out.resolve()))
+            self.assertEqual(runmanager.effective_status(registered, runmanager.read_progress(registered)), "completed")
+            self.assertEqual(CLI.hedonic_main(["run", "check", "fg-smoke", "--sample", "2", "--rows", "3"]), 0)
             entry = {"name": "fg-smoke", "kind": "disjoint", "output_dir": str(out), "backend": "process",
                      "created": prog["started"], "settings": front.resolve(
                          front.build_parser().parse_args(["--preset", "smoke", "--workers", "2"]))}

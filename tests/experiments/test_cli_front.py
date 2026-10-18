@@ -364,7 +364,8 @@ class TestForeground(unittest.TestCase):
             self.assertEqual((seen["name"], seen["kind"]), ("fg-test", "disjoint"))
             self.assertEqual(Path(seen["output"]), (Path(tmp) / "out").resolve())
             self.assertEqual(Path(seen["progress"]), (Path(tmp) / "out").resolve() / "progress.json")
-            self.assertEqual(rm.all_entries(), [])  # a foreground run is not recoverable, so it is not registered
+            # Registered, so `hedonic run check|status NAME` find it; a resume relaunches it detached.
+            self.assertEqual([(e["name"], e["backend"]) for e in rm.all_entries()], [("fg-test", "foreground")])
 
 
 class TestTmuxEnvironment(unittest.TestCase):
