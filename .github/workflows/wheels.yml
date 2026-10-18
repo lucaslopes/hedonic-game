@@ -42,6 +42,11 @@ env:
   CIBW_SKIP: "cp3??t-* *-win32 *_i686"
   # tools/native_tests.py sets HIG_PINNED=1 and fails on any skipped test.
   CIBW_TEST_COMMAND: "python {project}/tools/native_tests.py"
+  # Testing a wheel installs its dependencies, and duckdb ships no musllinux
+  # wheels, so each musl test would compile it from source (over half an hour).
+  # The musl wheels are still built and published; the C core they carry is
+  # the one the glibc wheels and the C test jobs check.
+  CIBW_TEST_SKIP: "*-musllinux_*"
 
 jobs:
   c_core:
