@@ -195,7 +195,12 @@ class TestBuilders(unittest.TestCase):
         self.assertEqual(runqueue._startcurve_earlier({"settings": {"youtube:top5000": {"cap": 7, "gamma": 0.3}}},
                                                       {"old": record}, set()),
                          ["YouTube · top5k: 1 conditions ran at cap 9, gamma 0.2 (now cap 7, gamma 0.3); "
-                          "other settings (kept, not reused)"])
+                          "other settings and code (1.x); kept, not reused"])
+        # The same settings on other code: the note says the code, not the settings, is why.
+        self.assertEqual(runqueue._startcurve_earlier({"settings": {"youtube:top5000": {"cap": 9, "gamma": 0.2}}},
+                                                      {"old": record}, set()),
+                         ["YouTube · top5k: 1 conditions ran at cap 9, gamma 0.2; same settings, other code (1.x); "
+                          "kept, not reused"])
 
     # ---- the benchmark: a unit's time includes its audit, and a unit past its estimate has no ETA
     NOW = 1_000_000.0

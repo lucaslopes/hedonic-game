@@ -350,15 +350,31 @@ def normalize_tuned(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def current_build() -> dict[str, str]:
+    """The build a search's evaluations are made on (``calibration_search.build``)."""
+    from hedonic.experiments.overlapping.calibration_search import build
+
+    return build()
+
+
 def recorded(plan: dict[str, Any]) -> set[str]:
-    return set((read_tuned(plan).get("searches") or {}))
+    """The searches of hoc_tuned.json made on this build. A search of another build (or of 1.x, which recorded none)
+    is not recorded: a run searches it again and replaces its entry, and the queue does not count it."""
+    mine = current_build()
+    return {key for key, entry in (read_tuned(plan).get("searches") or {}).items()
+            if isinstance(entry, dict) and entry.get("build") == mine}
+
+
+def other_build(plan: dict[str, Any]) -> set[str]:
+    """The searches of hoc_tuned.json that another build made (kept until this build replaces them)."""
+    return set(read_tuned(plan).get("searches") or {}) - recorded(plan)
 
 
 def state_of(plan: dict[str, Any]) -> str:
     """complete | partial | missing, from the result file alone."""
     done = recorded(plan)
     wanted = {s["key"] for s in searches(plan)}
-    if wanted <= done and read_tuned(plan).get("complete"):
+    if wanted <= done:
         return "complete"
     return "partial" if done & wanted else "missing"
 
@@ -411,8 +427,9 @@ def record_search(plan: dict[str, Any], search: dict[str, Any], summary: dict[st
              "start": {"max_memberships": int(start["max_memberships"]),
                        "absolute_resolution": float(start["absolute_resolution"])},
              "changed": cap != int(start["max_memberships"]) or gamma != float(start["absolute_resolution"])}
-    if summary.get("build"):  # the build the search's evaluations were made on
-        entry["build"] = summary["build"]
+    # The build the search's evaluations were made on: the search's own record, else this run's (an external --script
+    # reports none, and runs on the run's interpreter).
+    entry["build"] = summary.get("build") or current_build()
     if summary.get("lazy"):  # a stopped search: its setting is the best observed, scored on one selection seed
         entry["lazy"] = {k: summary["lazy"][k] for k in ("budget", "cap_minutes", "stopped_by", "stopped_after", "evaluations",
                                                         "probe_seconds", "detection_seconds", "selection")}
@@ -423,7 +440,9 @@ def record_search(plan: dict[str, Any], search: dict[str, Any], summary: dict[st
     data.setdefault("searches", {})[search["key"]] = entry
     data.setdefault("settings", {}).setdefault(search["method"], {})[search["network"]] = {
         "max_memberships": cap, "absolute_resolution": gamma}
-    data["complete"] = {s["key"] for s in searches(plan)} <= set(data["searches"])
+    mine = current_build()
+    data["complete"] = {s["key"] for s in searches(plan)} <= {
+        key for key, value in data["searches"].items() if isinstance(value, dict) and value.get("build") == mine}
     path = plan["output"] / TUNED_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")

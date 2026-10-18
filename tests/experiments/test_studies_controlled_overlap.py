@@ -479,9 +479,11 @@ class TestControlledRunFrontDoor(unittest.TestCase):
     def test_existing_output_refuses_a_start_unless_overwrite_is_given(self):
         from hedonic.experiments.overlapping import runmanager as rm
 
+        from hedonic.experiments.overlapping import controlled_overlap as co
+
         output = self.root / "out" / "controlled.json"
         output.parent.mkdir(parents=True)
-        output.write_text("{}")
+        output.write_text(json.dumps({"implementation_identity": {"environment": co._environment_identity()}}))
         config = self.write_config()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -495,6 +497,27 @@ class TestControlledRunFrontDoor(unittest.TestCase):
                                                "--overwrite"]), 0)
         spawn.assert_called_once()
         self.assertEqual(spawn.call_args[0][0]["kind"], "controlled")
+
+    def test_another_builds_output_is_renamed_aside_and_the_study_starts(self):
+        from hedonic.experiments.overlapping import runmanager as rm
+
+        output = self.root / "out" / "controlled.json"
+        output.parent.mkdir(parents=True)
+        output.write_text(json.dumps({"implementation_identity": {"environment": {"hedonic_core_sha256": "0" * 64}}}))
+        output.with_suffix(".csv").write_text("old\n")
+        config = self.write_config()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(CLI.hedonic_main(["run", "controlled", "--config", str(config), "--dry-run"]), 0)
+        self.assertIn("made by another build", out.getvalue())
+        self.assertTrue(output.exists())  # a dry run moves nothing
+        with patch.object(rm, "_spawn", side_effect=lambda entry: entry) as spawn, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(CLI.hedonic_main(["run", "controlled", "--config", str(config), "--detach"]), 0)
+            spawn.assert_called_once()
+        self.assertFalse(output.exists())
+        kept = sorted(p.name for p in output.parent.iterdir())
+        self.assertEqual(len([n for n in kept if ".other-build-" in n]), 2, kept)
 
     def test_runmanager_routes_controlled_runs_to_their_worker_and_snapshot(self):
         from hedonic.experiments.overlapping import controlled_overlap_config as wrapper

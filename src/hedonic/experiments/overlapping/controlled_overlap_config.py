@@ -278,6 +278,33 @@ def _describe(run: dict[str, Any]) -> str:
             f"· at most {plan['timeout_per_run']:g} s per run")
 
 
+def json_build(path: str | Path) -> str:
+    """``current`` when the study's JSON was made by this build (hedonic core, its version, python-igraph and NetworkX:
+    the study's ``_environment_identity``), else ``other`` (also a 1.x JSON, which recorded no core)."""
+    from hedonic.experiments.overlapping import controlled_overlap as co
+
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return "other"
+    stored = ((data.get("implementation_identity") or {}).get("environment")) or {}
+    now = co._environment_identity()
+    keys = ("hedonic_core_sha256", "python_igraph", "networkx")
+    return "current" if all(stored.get(key) == now.get(key) for key in keys) else "other"
+
+
+def set_aside(path: str | Path) -> list[Path]:
+    """Rename a JSON of another build and its CSV out of the way (never deleted); returns the new names."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    moved = []
+    for file in (Path(path), Path(path).with_suffix(".csv")):
+        if file.exists():
+            target = file.with_name(f"{file.stem}.other-build-{stamp}{file.suffix}")
+            file.rename(target)
+            moved.append(target)
+    return moved
+
+
 def _plan_lines(run: dict[str, Any]) -> list[str]:
     plan = run["plan"]
     worst_case_hours = plan["runs"] * plan["timeout_per_run"] / 3600
@@ -291,7 +318,9 @@ def _plan_lines(run: dict[str, Any]) -> list[str]:
         f"  output   {run['json']} (and the sibling .csv)",
         f"  folder   {run['folder']} (progress.json, worker.log)",
     ]
-    if Path(run["json"]).exists():
+    if Path(run["json"]).exists() and json_build(run["json"]) != "current":
+        lines.append("  exists   the output was made by another build: a start renames it aside and runs the study again")
+    elif Path(run["json"]).exists():
         lines.append("  exists   the output is already there: a start needs --overwrite (or another --output-dir)")
     return lines
 
@@ -338,6 +367,9 @@ def front_main(argv: list[str] | None = None) -> int:
         print("\n".join(_plan_lines(run)))
         print(style("  dry run: nothing started, nothing written", "dim"))
         return 0
+    if Path(run["json"]).exists() and json_build(run["json"]) != "current":
+        for moved in set_aside(run["json"]):
+            print(f"  another build's output renamed aside: {moved}")
     if Path(run["json"]).exists() and not args.overwrite:
         print(f"hedonic run controlled: {run['json']} already exists; pass --overwrite to replace it "
               "or --output-dir for another folder", file=sys.stderr)

@@ -263,7 +263,7 @@ def cfg_key(spec: str, cfg: dict) -> str:
 
 
 def _cache() -> dict:
-    """Every record of this build in the ledger folder. A torn line (a write cut short by a kill) is skipped, not fatal:
+    """Every record of this build in the ledger folder (a record of another build, or of none, is skipped). A torn line (a write cut short by a kill) is skipped, not fatal:
     the other searches of a concurrent calibration are appending to their own files in the same folder."""
     cache, other = {}, 0
     mine = build()
@@ -274,7 +274,7 @@ def _cache() -> dict:
             except ValueError:
                 continue
             if isinstance(r, dict) and "key" in r:
-                if r.get("build") not in (None, mine):
+                if r.get("build") != mine:  # a record without a build was made by 1.x: never this build's
                     other += 1
                     continue
                 cache[r["key"]] = r

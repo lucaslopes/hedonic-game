@@ -727,21 +727,33 @@ def _startcurve_state(args: list[str]) -> tuple[str, str]:
 
 
 def _startcurve_earlier(plan: dict, records: dict, keys: set[str]) -> list[str]:
-    """Records on disk that the current plan does not reuse: per pair, the settings they ran at against the ones now."""
+    """Records on disk that the current plan does not reuse: per pair, the settings and the code they ran with, and why
+    they are not reused (other settings, or the same settings run by other code: 1.x, or another hedonic build)."""
+    from hedonic.experiments.overlapping import start_quality as sq
+
+    here = sq.code_identity()
     seen: dict[str, dict[tuple, int]] = {}
     for key, record in records.items():
         if key in keys:
             continue
+        code = key.partition(sq.CODE_TOKEN)[2] or "1.x"
         target = qb.record_target(record)  # the pair, cover included: top5000 and all are different pairs
-        seen.setdefault(target, {}).setdefault((record.get("cap"), record.get("gamma")), 0)
-        seen[target][(record.get("cap"), record.get("gamma"))] += 1
+        cell = (record.get("cap"), record.get("gamma"), code)
+        seen.setdefault(target, {}).setdefault(cell, 0)
+        seen[target][cell] += 1
     lines = []
     for network, found in seen.items():
         now = (plan.get("settings") or {}).get(network)
-        for (cap, gamma), n in found.items():
+        for (cap, gamma, code), n in found.items():
             at = f"cap {cap}, gamma {gamma:.4g}" if isinstance(gamma, (int, float)) else f"cap {cap}"
-            want = f" (now cap {now['cap']}, gamma {now['gamma']:.4g})" if now else ""
-            lines.append(f"{_pair_label(network)}: {n} conditions ran at {at}{want}; other settings (kept, not reused)")
+            same = bool(now) and now["cap"] == cap and isinstance(gamma, (int, float)) and now["gamma"] == gamma
+            if same and code != here:
+                why = f"same settings, other code ({code}); kept, not reused"
+            else:
+                want = f" (now cap {now['cap']}, gamma {now['gamma']:.4g})" if now else ""
+                at += want
+                why = "other settings (kept, not reused)" if code == here else f"other settings and code ({code}); kept, not reused"
+            lines.append(f"{_pair_label(network)}: {n} conditions ran at {at}; {why}")
     return lines
 
 
@@ -770,6 +782,10 @@ def _calibrate_state(args: list[str]) -> tuple[str, str]:
     seconds = {key: float(detail["wall_hours"]) * 3600 for key, detail in searches.items()
                if isinstance(detail, dict) and isinstance(detail.get("wall_hours"), (int, float))}
     _set_model(plan["output"], qb.calibrate, cal.searches(plan), have, seconds)
+    other = cal.other_build(plan) & wanted
+    if other and not _is_quiet():
+        _STALE[str(plan["output"])] = (f"{len(other)} search(es) were made by another build (hedonic or its core); "
+                                       "kept until this build searches them again")
     return cal.state_of(plan), str(plan["output"])
 
 
@@ -796,6 +812,10 @@ def _controlled_state(args: list[str]) -> tuple[str, str]:
     plan = cc.resolve(args)
     total = int(plan["plan"]["instances"])
     grid = _controlled_grid(cc, plan["config"])
+    if Path(plan["json"]).is_file() and cc.json_build(plan["json"]) != "current":
+        _note(plan["folder"], 0, total, "instances", [("no network (synthetic)", "instances", [False] * total)],
+              stale="its JSON was made by another build (hedonic core or igraph); a start moves it aside and runs again")
+        return "partial", plan["folder"]
     if Path(plan["json"]).is_file():
         _note(plan["folder"], total, total, "instances", [("no network (synthetic)", "instances", [True] * total)])
         _set_model(plan["folder"], qb.controlled, plan["plan"], total, grid)

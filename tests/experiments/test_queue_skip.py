@@ -129,7 +129,11 @@ class TestWhatIsFinished(_Base):
         (self.root / "cc").mkdir()
         (self.root / "cc" / "progress.json").write_text(json.dumps({"done": 3, "total": 640}))
         self.assertEqual(self._state(run), "partial")
-        target.write_text("{}")
+        target.write_text("{}")  # a JSON of another build (a 1.x one names no core): run again, after moving it aside
+        self.assertEqual(self._state(run), "partial")
+        from hedonic.experiments.overlapping import controlled_overlap as co
+
+        target.write_text(json.dumps({"implementation_identity": {"environment": co._environment_identity()}}))
         self.assertEqual(self._state(run), "complete")
 
     def test_units_are_counted_from_the_files(self):

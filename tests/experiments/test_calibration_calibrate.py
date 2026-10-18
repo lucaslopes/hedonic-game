@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import os
 import stat
 import sys
@@ -385,25 +386,32 @@ class TestResults(unittest.TestCase):
                                                summary)["search"], cal.SEARCH_MODULE)
 
     def test_a_file_written_before_the_rename_is_read_as_hedonics(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            plan = plan_for(tmp, "--networks", "dblp,amazon")
-            plan["output"].mkdir(parents=True)
-            (plan["output"] / cal.TUNED_NAME).write_text(json.dumps({
-                "complete": False,
-                "settings": {"hoc_local": {"dblp": {"max_memberships": 9, "absolute_resolution": 0.1}},
-                             "hoc_multilevel": {"dblp": {"max_memberships": 3, "absolute_resolution": 0.5}}},
-                "searches": {"hoc_local/dblp": {"max_memberships": 9, "absolute_resolution": 0.1},
-                             "hoc_multilevel/dblp": {"max_memberships": 3, "absolute_resolution": 0.5}}}))
-            self.assertEqual(cal.recorded(plan), {"hedonic/dblp"})
-            self.assertEqual(cal.read_tuned(plan)["settings"], {"hedonic": {"dblp": {"max_memberships": 9,
-                                                                                    "absolute_resolution": 0.1}}})
-            self.assertEqual(cal.state_of(plan), "partial")
-            lines: list[str] = []
-            self.assertEqual(cal.run_calibration(plan, emit=lines.append), 0)  # only amazon is searched
-            self.assertEqual(sum(line.lstrip().startswith("$") for line in lines), 1)
-            data = json.loads((plan["output"] / cal.TUNED_NAME).read_text())
-            self.assertEqual(set(data["settings"]), {"hedonic"})
-            self.assertEqual(set(data["searches"]), {"hedonic/dblp", "hedonic/amazon"})
+        for build in (True, False):  # a search of this build is kept; one of 1.x (no build) is searched again
+            with self.subTest(build=build), tempfile.TemporaryDirectory() as tmp:
+                plan = plan_for(tmp, "--networks", "dblp,amazon")
+                plan["output"].mkdir(parents=True)
+                stamp = {"build": cal.current_build()} if build else {}
+                (plan["output"] / cal.TUNED_NAME).write_text(json.dumps({
+                    "complete": False,
+                    "settings": {"hoc_local": {"dblp": {"max_memberships": 9, "absolute_resolution": 0.1}},
+                                 "hoc_multilevel": {"dblp": {"max_memberships": 3, "absolute_resolution": 0.5}}},
+                    "searches": {"hoc_local/dblp": {"max_memberships": 9, "absolute_resolution": 0.1, **stamp},
+                                 "hoc_multilevel/dblp": {"max_memberships": 3, "absolute_resolution": 0.5, **stamp}}}))
+                self.assertEqual(cal.recorded(plan), {"hedonic/dblp"} if build else set())
+                self.assertEqual(cal.other_build(plan), set() if build else {"hedonic/dblp"})
+                self.assertEqual(cal.read_tuned(plan)["settings"], {"hedonic": {"dblp": {"max_memberships": 9,
+                                                                                        "absolute_resolution": 0.1}}})
+                self.assertEqual(cal.state_of(plan), "partial" if build else "missing")
+                lines: list[str] = []
+                self.assertEqual(cal.run_calibration(plan, emit=lines.append), 0)
+                # One command line per search started (side by side, each line carries its search's prefix).
+                commands = [line for line in lines if re.match(r"\s*(\[[^\]]+\] )?\s*\$", line)]
+                self.assertEqual(len(commands), 1 if build else 2)
+                data = json.loads((plan["output"] / cal.TUNED_NAME).read_text())
+                self.assertEqual(set(data["settings"]), {"hedonic"})
+                self.assertEqual(set(data["searches"]), {"hedonic/dblp", "hedonic/amazon"})
+                self.assertTrue(data["complete"])
+                self.assertEqual(cal.recorded(plan), {"hedonic/dblp", "hedonic/amazon"})
 
     def test_an_unchanged_optimum_keeps_the_exact_start_value_and_an_unkept_fraction_is_not_reported(self):
         # A search that comes back to its start reports the probes' 6-digit value (0.142857 for 1/7); that is the same
