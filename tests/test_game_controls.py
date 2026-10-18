@@ -1,7 +1,7 @@
 """Controls of ``Game.community_hedonic``.
 
-Checks end-to-end seed replay, isolation of the caller's igraph generator,
-node weights, the partition-only ``max_memberships``, global community-count
+Covers end-to-end seed replay, isolation of the caller's igraph generator,
+node weights, the ``max_memberships=-1`` convention, global community-count
 constraints, and result provenance.
 """
 
@@ -26,7 +26,10 @@ def _karate() -> Game:
 
 
 def _occupied(result) -> int:
-    return len(set(result.membership))
+    rows = result.membership
+    if rows and isinstance(rows[0], list):
+        return len({label for row in rows for label in row})
+    return len(set(rows))
 
 
 class TestSeedReplay(unittest.TestCase):
@@ -35,18 +38,21 @@ class TestSeedReplay(unittest.TestCase):
         self.addCleanup(ig.set_random_number_generator, random)
         self.addCleanup(random.setstate, random.getstate())
 
-    def test_same_seed_same_result(self):
-        a = _karate().community_hedonic(
-            initial_membership=None, max_memberships=1, resolution=0.1, seed=7,
-        )
-        # Perturb the caller's generators between the calls.
-        ig.set_random_number_generator(random.Random(999))
-        random.seed(999)
-        b = _karate().community_hedonic(
-            initial_membership=None, max_memberships=1, resolution=0.1, seed=7,
-        )
-        ig.set_random_number_generator(random)
-        self.assertEqual(a.membership, b.membership)
+    def test_same_seed_same_result_for_partitions_and_covers(self):
+        for max_memberships in (1, 3):
+            a = _karate().community_hedonic(
+                initial_membership=None, max_memberships=max_memberships,
+                resolution=0.1, seed=7,
+            )
+            # Perturb the caller's generators between the calls.
+            ig.set_random_number_generator(random.Random(999))
+            random.seed(999)
+            b = _karate().community_hedonic(
+                initial_membership=None, max_memberships=max_memberships,
+                resolution=0.1, seed=7,
+            )
+            ig.set_random_number_generator(random)
+            self.assertEqual(a.membership, b.membership)
 
     def test_seed_replays_across_processes(self):
         script = textwrap.dedent(
@@ -54,7 +60,8 @@ class TestSeedReplay(unittest.TestCase):
             import json, igraph as ig
             from hedonic import Game
             g = Game(ig.Graph.Famous("Zachary"))
-            r = g.community_hedonic(initial_membership=None, resolution=0.08, seed=11)
+            r = g.community_hedonic(initial_membership=None, max_memberships=3,
+                                    resolution=0.08, seed=11)
             print(json.dumps(r.membership))
             """
         )
@@ -65,7 +72,7 @@ class TestSeedReplay(unittest.TestCase):
         }
         self.assertEqual(len(outputs), 1)
         in_process = _karate().community_hedonic(
-            initial_membership=None, resolution=0.08, seed=11
+            initial_membership=None, max_memberships=3, resolution=0.08, seed=11
         )
         self.assertEqual(json.loads(outputs.pop()), in_process.membership)
 
@@ -73,7 +80,9 @@ class TestSeedReplay(unittest.TestCase):
         mine = random.Random(123)
         state, module_state = mine.getstate(), random.getstate()
         ig.set_random_number_generator(mine)
-        _karate().community_hedonic(max_memberships=1, resolution=0.1, seed=1)
+        for max_memberships in (1, 2):
+            _karate().community_hedonic(max_memberships=max_memberships,
+                                        resolution=0.1, seed=1)
         self.assertEqual(mine.getstate(), state)
         self.assertEqual(random.getstate(), module_state)
 
@@ -104,35 +113,37 @@ class TestSeedReplay(unittest.TestCase):
         self.assertEqual(random.getstate(), module_state)
         self.assertEqual(game.memberships, [[v % 2] for v in range(34)])
 
-    def test_validation_error_leaves_the_generator_alone(self):
+    def test_native_validation_error_leaves_the_generator_alone(self):
         rng = _native.default_rng()
         state = rng.getstate()
         game = _karate()
         game.memberships = [v % 2 for v in range(34)]
-        with self.assertRaisesRegex(ValueError, "positive total edge weight"):
-            game.community_hedonic(edge_weights=[-1.0] * 78)
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            game.community_hedonic(max_memberships=2, edge_weights=[-1.0] + [1.0] * 77)
         self.assertEqual(rng.getstate(), state)
         self.assertEqual(game.memberships, [[v % 2] for v in range(34)])
 
     def test_seeded_call_never_sets_igraphs_generator(self):
         with patch.object(ig, "set_random_number_generator") as setter:
-            a = _karate().community_hedonic(seed=1, resolution=0.1)
-            b = _karate().community_hedonic(seed=1, resolution=0.1)
+            a = _karate().community_hedonic(seed=1, max_memberships=2, resolution=0.1)
+            b = _karate().community_hedonic(seed=1, max_memberships=2, resolution=0.1)
         setter.assert_not_called()
         self.assertEqual(a.membership, b.membership)
 
 
 class TestNodeWeights(unittest.TestCase):
     def test_unit_node_weights_match_the_default(self):
-        a = _karate().community_hedonic(
-            initial_membership=None, max_memberships=1, resolution=0.1, seed=3,
-        )
-        b = _karate().community_hedonic(
-            initial_membership=None, max_memberships=1, resolution=0.1, seed=3,
-            node_weights=[1.0] * 34,
-        )
-        self.assertEqual(a.membership, b.membership)
-        self.assertTrue(b._hedonic_provenance["node_weighted"])
+        for max_memberships in (1, 2):
+            a = _karate().community_hedonic(
+                initial_membership=None, max_memberships=max_memberships,
+                resolution=0.1, seed=3,
+            )
+            b = _karate().community_hedonic(
+                initial_membership=None, max_memberships=max_memberships,
+                resolution=0.1, seed=3, node_weights=[1.0] * 34,
+            )
+            self.assertEqual(a.membership, b.membership)
+            self.assertTrue(b._hedonic_provenance["node_weighted"])
 
     def test_zero_node_weights_remove_crowding(self):
         # With every vertex weight zero the crowding term vanishes, so even at
@@ -153,9 +164,9 @@ class TestNodeWeights(unittest.TestCase):
     def test_node_weights_from_a_vertex_attribute(self):
         game = _karate()
         game.vs["w"] = [1.0 + (v % 3) for v in range(game.vcount())]
-        a = game.community_hedonic(initial_membership=None,
+        a = game.community_hedonic(initial_membership=None, max_memberships=2,
                                    resolution=0.05, seed=5, node_weights="w")
-        b = game.community_hedonic(initial_membership=None,
+        b = game.community_hedonic(initial_membership=None, max_memberships=2,
                                    resolution=0.05, seed=5, node_weights=list(game.vs["w"]))
         self.assertEqual(a.membership, b.membership)
 
@@ -169,43 +180,55 @@ class TestNodeWeights(unittest.TestCase):
         game = _karate()
         weights = [0.5 + (v % 4) * 0.25 for v in range(game.vcount())]
         gamma = 0.07
-        part = game.community_hedonic(initial_membership=None,
-                                      resolution=gamma, seed=2, node_weights=weights)
-        labels = part.membership
+        cover = game.community_hedonic(initial_membership=None, max_memberships=3,
+                                       resolution=gamma, seed=2, node_weights=weights)
+        rows = cover.membership
         mass: dict[int, float] = {}
-        for v, c in enumerate(labels):
-            mass[c] = mass.get(c, 0.0) + weights[v]
-        support = sum(1.0 for u, v in game.get_edgelist() if labels[u] == labels[v])
+        for v, row in enumerate(rows):
+            for c in row:
+                mass[c] = mass.get(c, 0.0) + weights[v] / math.sqrt(len(row))
+        support = 0.0
+        for u, v in game.get_edgelist():
+            shared = len(set(rows[u]) & set(rows[v]))
+            support += shared / math.sqrt(len(rows[u]) * len(rows[v]))
         phi = (support - gamma / 2 * sum(m * m for m in mass.values())) / game.ecount()
-        self.assertAlmostEqual(part._hedonic_native_quality, phi, places=12)
+        self.assertAlmostEqual(cover._hedonic_native_quality, phi, places=12)
 
 
 class TestCapAndCounts(unittest.TestCase):
-    def test_covers_are_refused(self):
-        for value in (2, 3, -1, _karate().vcount()):
-            with self.subTest(max_memberships=value):
-                with self.assertRaisesRegex(ValueError, "partitions only"):
-                    _karate().community_hedonic(initial_membership=None,
-                                                max_memberships=value,
-                                                resolution=0.05, seed=4)
+    def test_minus_one_removes_the_practical_cap(self):
+        game = _karate()
+        cover = game.community_hedonic(initial_membership=None, max_memberships=-1,
+                                       resolution=0.05, seed=4)
+        self.assertIsInstance(cover, ig.VertexCover)
+        provenance = cover._hedonic_provenance
+        self.assertEqual(provenance["max_memberships"], -1)
+        self.assertEqual(provenance["effective_max_memberships"], game.vcount())
+        same = _karate().community_hedonic(initial_membership=None,
+                                           max_memberships=game.vcount(),
+                                           resolution=0.05, seed=4)
+        self.assertEqual(cover.membership, same.membership)
         for value in (0, -2, 1.5, True):
             with self.assertRaises(ValueError):
                 _karate().community_hedonic(max_memberships=value)
 
     def test_upper_bound_and_exact_count(self):
-        bounded = _karate().community_hedonic(
-            initial_membership=None, max_memberships=1, resolution=0.3, seed=1,
-            max_total_communities=4,
-        )
-        self.assertLessEqual(_occupied(bounded), 4)
-        self.assertEqual(bounded._hedonic_provenance["count_constraint"], "at_most")
-        exact = _karate().community_hedonic(
-            initial_membership=None, max_memberships=1, resolution=0.05, seed=1,
-            n_communities=6,
-        )
-        self.assertEqual(_occupied(exact), 6)
-        self.assertEqual(exact._hedonic_provenance["equilibrium_notion"],
-                         "count_constrained")
+        for max_memberships in (1, 3):
+            bounded = _karate().community_hedonic(
+                initial_membership=None, max_memberships=max_memberships,
+                resolution=0.3, seed=1,
+                max_total_communities=4,
+            )
+            self.assertLessEqual(_occupied(bounded), 4)
+            self.assertEqual(bounded._hedonic_provenance["count_constraint"], "at_most")
+            exact = _karate().community_hedonic(
+                initial_membership=None, max_memberships=max_memberships,
+                resolution=0.05, seed=1,
+                n_communities=6,
+            )
+            self.assertEqual(_occupied(exact), 6)
+            self.assertEqual(exact._hedonic_provenance["equilibrium_notion"],
+                             "count_constrained")
 
     def test_invalid_count_requests(self):
         game = _karate()
@@ -224,15 +247,27 @@ class TestCapAndCounts(unittest.TestCase):
             _karate().community_hedonic(initial_membership=list(range(34)),
                                         max_total_communities=3)
 
+    def test_exact_count_above_the_vertex_count_on_a_cover(self):
+        # Six communities on four vertices needs extra memberships per vertex.
+        game = Game(ig.Graph.Ring(4))
+        cover = game.community_hedonic(
+            initial_membership=None, max_memberships=2, n_communities=6, seed=0,
+        )
+        self.assertEqual(_occupied(cover), 6)
+        self.assertEqual(cover._hedonic_provenance["occupied_communities"], 6)
+        self.assertTrue(all(1 <= len(row) <= 2 for row in cover.membership))
+
 
 class TestProvenance(unittest.TestCase):
     def test_provenance_records_versions_parameters_and_stopping(self):
-        seeded = _karate().community_hedonic(resolution=0.1, seed=0)
-        provenance = seeded._hedonic_provenance
+        cover = _karate().community_hedonic(max_memberships=2, resolution=0.1, seed=0)
+        provenance = cover._hedonic_provenance
         self.assertIsNotNone(provenance["versions"]["python_igraph"])
+        self.assertEqual(provenance["equilibrium_notion"], "cap_constrained")
         self.assertEqual(provenance["rng"], "seeded")
         self.assertEqual(provenance["seed"], 0)
         self.assertEqual(provenance["resolution"], 0.1)
+        self.assertEqual(cover._hedonic_native_quality, cover._params["quality"])
         partition = _karate().community_hedonic(resolution=0.1)
         self.assertEqual(partition._hedonic_provenance["equilibrium_notion"],
                          "unconstrained_partition")

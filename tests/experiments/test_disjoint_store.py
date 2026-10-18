@@ -506,6 +506,7 @@ class TestDisjointFrontDoor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             queue = runqueue.load_queue("disjoint", root=d)
             self.assertEqual([item["name"] for item in queue["items"]], ["disjoint-smoke", "disjoint-paper"])
+            self.assertEqual(runqueue.requirements(queue), ([], []))  # nothing to download or build
             self.assertEqual(runqueue.data_state(queue["items"][1]["run"], fresh=True),
                              ("missing", str(Path(d).resolve() / "disjoint-paper")))
             bad = Path(d) / "q.toml"
@@ -525,6 +526,35 @@ class TestDisjointFrontDoor(unittest.TestCase):
                 userconfig.main(["set", "disjoint_output_root", str(Path(d) / "runs")])
                 self.assertEqual(front.default_output("x"), str(Path(d) / "runs" / "x"))
                 self.assertNotIn("disjoint_output_root", userconfig.MACHINE_KEYS)
+
+
+class TestPaperHocProfile(unittest.TestCase):
+    def test_per_network_tuned_settings_and_command(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        cfg = qs.load_config("paper-hoc")
+        self.assertEqual(cfg.methods, ["hedonic"])
+        self.assertEqual((cfg.nodes, cfg.seeds, cfg.save_covers), (0, list(range(10)), True))
+        local = qs.BY_KEY["hedonic"]
+        self.assertEqual(qs.method_params(local, cfg, "dblp"), {"max_memberships": 32, "absolute_resolution": 1 / 7})
+        self.assertEqual(qs.method_params(local, cfg, "amazon"),
+                         {"max_memberships": 4, "absolute_resolution": 1 / 723})
+        # Other configs keep the screened settings.
+        self.assertEqual(qs.method_params(local, qs.load_config("paper"), "amazon"), dict(local.screened))
+        self.assertIn("--config paper-hoc", cfg.command())
+        self.assertEqual(len(qs.build_plan(cfg, {})), 20)
+        env = qs.environment()
+        self.assertIn("igraph_c", env)
+        self.assertIn("igraph_extension_sha256", env)
+
+    def test_youtube_hoc_is_gone(self):
+        from hedonic.experiments import CLI
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        with self.assertRaisesRegex(ValueError, "unknown config 'youtube-hoc'"):
+            qs.load_config("youtube-hoc")
+        self.assertNotIn("youtube-hoc", CLI.RUN_ALIASES)
+        self.assertIn("--isolate", qs.Config(isolate=True).command())
 
 
 class TestStoreCLIRegistry(unittest.TestCase):
