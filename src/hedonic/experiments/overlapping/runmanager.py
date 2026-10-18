@@ -73,6 +73,9 @@ def load_entry(name: str | None) -> dict:
         raise SystemExit("no runs yet — start one with `hedonic run exp`")
     if name is None:
         return entries[-1]
+    if not name.strip():
+        raise SystemExit("an empty run name; give a name or a unique part of one (see `hedonic run list`), "
+                         "or leave it out for the latest run")
     for e in entries:
         if e["name"] == name:
             return e
@@ -1716,6 +1719,9 @@ def dispatch(argv: list[str]) -> int:
         parser.add_argument("--json", action="store_true", help="print progress.json instead of the formatted snapshot")
     if verb == "resume":
         parser.add_argument("--detach", action="store_true", help="restart in the background without opening the view")
+        parser.add_argument("--again", action="store_true",
+                            help="relaunch a completed run too: it checks its records against the files and redoes "
+                                 "only what no longer certifies")
     if verb == "check":
         parser.add_argument("--sample", type=int, default=None,
                             help="graphs to regenerate (disjoint, default 20) or detector runs to rerun (default 2)")
@@ -1741,6 +1747,13 @@ def dispatch(argv: list[str]) -> int:
         return cmd_stop(name)
     if verb == "check":
         return cmd_check(name, args.sample, args.rows)
+    if not args.again:  # the verb continues unfinished runs; a completed one only says where its results are
+        entry = load_entry(name)
+        if effective_status(entry, read_progress(entry)) == "completed" and entry.get("kind") != "queue":
+            print(f"  {entry['name']} is completed; its results are in {entry.get('output_dir', '?')}")
+            print(style(f"  to check its records against the files and redo anything missing: "
+                        f"hedonic run resume {entry['name']} --again", "dim"))
+            return 0
     return cmd_resume(name, attach=not args.detach)
 
 

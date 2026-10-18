@@ -332,6 +332,11 @@ def parse_seeds(value: str) -> list[int]:
     return sorted(dict.fromkeys(seeds))
 
 
+def seeds_text(seeds: list[int]) -> str:
+    """``seed 0`` or ``seeds 0,1,2``."""
+    return ("seed " if len(seeds) == 1 else "seeds ") + ",".join(map(str, seeds))
+
+
 def parse_name(value: str) -> str:
     """Run names become directory and tmux session names, so keep them plain."""
     import re
@@ -543,8 +548,11 @@ def config_from_args(a: argparse.Namespace) -> Config:
     from hedonic.experiments.overlapping import userconfig
 
     cfg = load_config(a.config)
-    for key, value in userconfig.defaults().items():  # machine settings from ~/.config/hedonic/config.toml
-        if key in userconfig.MACHINE_KEYS:
+    # Machine settings from ~/.config/hedonic/config.toml. One rule everywhere: flag > environment > file > default,
+    # so an environment variable that names a folder wins over the file (as the home screen and the loaders read it).
+    overridden = {"network_root": "HEDONIC_NETWORKS_DIR", "output_dir": "HEDONIC_OUTPUT_DIR"}
+    for key, value in userconfig.defaults().items():
+        if key in userconfig.MACHINE_KEYS and not os.environ.get(overridden.get(key, "")):
             setattr(cfg, key, value)
     if a.networks is not None:
         cfg.networks = parse_targets(a.networks)
@@ -608,12 +616,17 @@ def _check(fn, value):
     return None
 
 
-def confirm_start(question: str = "Start it?") -> bool:
-    """The wizards' last question before a run starts: yes or no (q and Ctrl-C are no)."""
+def _positive_seconds(value: str) -> str | None:
     try:
-        return tui.select(question, [("Yes", "start the run"), ("No", "nothing starts")]) == 0
-    except tui.Cancelled:
-        return False
+        ok = float(value) > 0
+    except ValueError:
+        ok = False
+    return None if ok else "enter a positive number of seconds"
+
+
+def confirm_start(question: str = "Start it?") -> bool:
+    """The wizards' last question before a run starts (:func:`tui.confirm`)."""
+    return tui.confirm(question)
 
 
 def wizard(cfg: Config) -> Config:
@@ -638,8 +651,13 @@ def wizard(cfg: Config) -> Config:
     if start == 1:
         paper = load_config("paper")
         print(render_plan(paper))
-        if tui.select("Start the paper reproduction?", ["Run", "Back", "Quit"]) == 0:
+        choice = tui.select("Start the paper reproduction?",
+                            [("Run", "start it now"), ("Back", "to the first menu"), ("Quit", "nothing starts")],
+                            default=1)
+        if choice == 0:
             return paper
+        if choice == 2:
+            raise tui.Cancelled
         return wizard(cfg)
     while True:
         names = list(NETWORKS)
@@ -656,8 +674,9 @@ def wizard(cfg: Config) -> Config:
                   ("100,000 vertices", ""), ("Full graph", "slow on the large networks"), ("Custom…", "")]
         i = tui.select("Graph size (deterministic induced subgraph built around the labelled communities)", labels,
                        sizes.index(cfg.nodes) if cfg.nodes in sizes else 1)
-        cfg.nodes = sizes[i] if sizes[i] >= 0 else int(tui.text("Number of vertices", "5000",
-                                                                  lambda v: None if v.isdigit() else "enter an integer"))
+        cfg.nodes = sizes[i] if sizes[i] >= 0 else int(tui.text(
+            "Number of vertices", "5000",
+            lambda v: None if v.isdigit() and int(v) > 0 else "enter a positive whole number (Full graph is its own choice)"))
         seed_opts = [("1 seed", "0"), ("3 seeds", "0-2"), ("5 seeds", "0-4"), ("10 seeds", "0-9"), ("Custom…", "")]
         i = tui.select("Seeds", seed_opts, 0)
         spec = seed_opts[i][1] or tui.text("Seeds (e.g. 0-4 or 0,3,7)", "0", lambda v: _check(parse_seeds, v))
@@ -671,7 +690,7 @@ def wizard(cfg: Config) -> Config:
         cfg.omega = i == 0
         cfg.threads = int(tui.text("Threads for multi-threaded methods", str(cfg.threads),
                                    lambda v: None if v.isdigit() and int(v) > 0 else "enter a positive integer"))
-        cfg.timeout = float(tui.text("Per-run timeout [s]", f"{cfg.timeout:g}", lambda v: _check(float, v)))
+        cfg.timeout = float(tui.text("Per-run timeout [s]", f"{cfg.timeout:g}", _positive_seconds))
         cfg.output_dir = tui.text("Save runs and results in", cfg.output_dir)
         cfg.cache_dir = tui.text("Cache for downloads and built tools", cfg.cache_dir)
         runs = len(build_plan(cfg, {}))
@@ -680,16 +699,17 @@ def wizard(cfg: Config) -> Config:
         print(style("  Summary", "bold"))
         print(f"  networks  {', '.join(NETWORKS[n][0] for n in cfg.networks)}")
         print(f"  methods   {', '.join(BY_KEY[m].label for m in cfg.methods)}")
-        print(f"  size      {size} · seeds {','.join(map(str, cfg.seeds))} · {runs} runs · preset {cfg.preset}"
+        print(f"  size      {size} · {seeds_text(cfg.seeds)} · {runs} runs · preset {cfg.preset}"
               + ("" if cfg.omega else " · no Omega"))
         estimate = sum(expected_seconds(m, cfg, net) for net, _, m in build_plan(cfg, {}))
-        print(f"  estimate  ~{fmt_time(estimate)} on an M1-Max-class machine (rough; refined live while running)")
+        print(f"  estimate  ~{fmt_duration(estimate)} on an M1-Max-class machine (rough; refined live while running)")
         print(f"  saving to {expand_path(cfg.output_dir).resolve()}/<run name>")
         print(style("  same run without the wizard:", "dim"))
         print(style("    " + cfg.pretty_command(), "dim"))
         if "friendster" in cfg.networks and not cfg.nodes:
             print(style("  warning: full Friendster has 1.8 billion edges (tens of GB to download and load)", "yellow"))
-        choice = tui.select("Start?", ["Run", "Change settings", "Quit"])
+        choice = tui.select("Start?", [("Run", "start it now"), ("Change settings", "ask again, keeping these"),
+                                       ("Quit", "nothing starts")], default=1)
         if choice == 0:
             return cfg
         if choice == 2:
@@ -814,6 +834,21 @@ def fmt_time(seconds: float) -> str:
     seconds = max(0, int(seconds))
     h, rest = divmod(seconds, 3600)
     return f"{h}:{rest // 60:02d}:{rest % 60:02d}" if h else f"{rest // 60}:{rest % 60:02d}"
+
+
+def fmt_duration(seconds: float) -> str:
+    """A length of time that cannot be read as a clock time: ``45 s``, ``12 min``, ``19 h 42 min``, ``3 d 4 h``."""
+    seconds = max(0, int(round(seconds)))
+    if seconds < 60:
+        return f"{seconds} s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours} h {minutes:02d} min" if minutes else f"{hours} h"
+    days, hours = divmod(hours, 24)
+    return f"{days} d {hours} h" if hours else f"{days} d"
 
 
 class Progress:
@@ -1273,7 +1308,7 @@ def environment_line() -> str:
 
 def describe(cfg: Config) -> str:
     size = graph_text(cfg)
-    return (f"{', '.join(NETWORKS[n][0] for n in cfg.networks)} · {size} · seeds {','.join(map(str, cfg.seeds))}"
+    return (f"{', '.join(NETWORKS[n][0] for n in cfg.networks)} · {size} · {seeds_text(cfg.seeds)}"
             f" · preset {cfg.preset} · {cfg.threads} threads" + (" · + robustness" if cfg.robustness else "")
             + (" · replication all" if cfg.replication == "all" else ""))
 
@@ -1424,9 +1459,12 @@ def main(argv: list[str] | None = None) -> int:
         fav = userconfig.favourite()
         print(style(f"\n  bare `hedonic run` starts: {fav or 'the wizard'}  (hedonic config set run NAME)", "dim"))
         return 0
+    if args.preset == "paper":  # an old spelling that reads like the paper's experiment, which it is not
+        print(style("  note: --preset sets the methods' settings, and 'paper' is the old spelling of 'registry'; the "
+                    "paper's experiment is `hedonic run paper` (= --config paper)", "yellow"), file=sys.stderr)
     try:
         cfg = config_from_args(args)
-        if args.name:
+        if args.name is not None:
             parse_name(args.name)
     except ValueError as exc:  # one line, not the whole usage block
         parser.exit(2, f"hedonic run exp: error: {exc}\n(see `hedonic run exp --help`)\n")
@@ -1461,6 +1499,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(style("  not started", "yellow"))
                 return 0
         argv = [a for a in argv if a != "--confirm"] or ["--yes"]
+    if not argv and not tui.interactive():  # nothing typed and nobody to ask: never start on our own
+        print(render_plan(cfg).split("\n\n")[0])
+        print(style("  not started: no terminal to confirm in; add --yes (or the run's flags) to start", "yellow"))
+        return 0
     wants_wizard = args.interactive or (not argv and tui.interactive())
     try:
         if wants_wizard and not args.yes:
@@ -1491,7 +1533,11 @@ def main(argv: list[str] | None = None) -> int:
         from hedonic.experiments.overlapping import gt_spectrum
 
         return gt_spectrum.front_main(["--interactive"])
-    except (tui.Cancelled, KeyboardInterrupt):
+    except tui.Cancelled:  # q, Esc or Quit: a choice, not a failure
+        print(style("\n  nothing started", "yellow"))
+        tui.note_cancelled()
+        return 0
+    except KeyboardInterrupt:
         print(style("\n  cancelled", "yellow"))
         return 130
 

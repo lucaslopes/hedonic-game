@@ -157,6 +157,24 @@ def _labels(options: Sequence) -> list[tuple[str, str]]:
     return [(o, "") if isinstance(o, str) else (o[0], o[1]) for o in options]
 
 
+def _hint(head: str, hint: str, columns: int | None = None) -> str:
+    """The dim hint after an option, cut at a word so the row fits the terminal (dropped when no word fits)."""
+    columns = (columns or shutil.get_terminal_size((100, 24)).columns) - 1
+    room = columns - visible_len(head) - 2
+    if not hint or room < 4:
+        return ""
+    if len(hint) > room:
+        words, kept = hint.split(), ""
+        for word in words:
+            if len(kept) + len(word) + (1 if kept else 0) > room - 1:
+                break
+            kept = f"{kept} {word}" if kept else word
+        if not kept:
+            return ""
+        hint = kept.rstrip(" ,;·(") + "…"
+    return style(f"  {hint}", "dim")
+
+
 def _column(label: str, opts: list[tuple[str, str]]) -> str:
     """Pad labels to a common width so the dim hints line up in a column."""
     width = max((len(l) for l, hint in opts if hint), default=0)
@@ -179,7 +197,7 @@ def select(title: str, options: Sequence, default: int = 0, help_text: str = "")
                 pointer = style("❯ ", "cyan") if i == index else "  "
                 shown_label = _column(label, opts) if hint else label
                 text = style(shown_label, "cyan", "bold") if i == index else shown_label
-                lines.append(pointer + text + (style(f"  {hint}", "dim") if hint else ""))
+                lines.append(pointer + text + _hint(pointer + text, hint))
             shown = _render(lines, shown)
             key = _read_key()
             if key in ("up", "k"):
@@ -224,7 +242,7 @@ def multiselect(title: str, options: Sequence, selected: Sequence[int] = (), hel
                 pointer = style("❯ ", "cyan") if i == index else "  "
                 shown_label = _column(label, opts) if hint else label
                 text = style(shown_label, "cyan", "bold") if i == index else shown_label
-                lines.append(f"{pointer}{box} {text}" + (style(f"  {hint}", "dim") if hint else ""))
+                lines.append(f"{pointer}{box} {text}" + _hint(f"{pointer}{box} {text}", hint))
             if warn:
                 lines.append(style(warn, "yellow"))
             shown = _render(lines, shown)
@@ -248,6 +266,32 @@ def multiselect(title: str, options: Sequence, selected: Sequence[int] = (), hel
                 return sorted(chosen)
             elif key in ("q", "esc", "ctrl-c"):
                 raise Cancelled
+
+
+def confirm(question: str = "Start it?", yes: str = "start the run", no: str = "nothing starts") -> bool:
+    """The last question before anything starts: yes or no, with No pre-selected (q, Esc and Ctrl-C are no too),
+    so Enter alone never starts a run."""
+    try:
+        return select(question, [("Yes", yes), ("No", no)], default=1) == 0
+    except Cancelled:
+        return False
+
+
+_cancelled = False
+
+
+def note_cancelled() -> None:
+    """A command records that the user backed out of its prompts (q, Esc, Quit): nothing started, nothing failed.
+    The home screen reads it (:func:`take_cancelled`) to come back to its menu instead of ending."""
+    global _cancelled
+    _cancelled = True
+
+
+def take_cancelled() -> bool:
+    """Whether a command backed out since the last call (and reset)."""
+    global _cancelled
+    was, _cancelled = _cancelled, False
+    return was
 
 
 def text(title: str, default: str = "", validate=None) -> str:

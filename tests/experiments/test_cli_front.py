@@ -62,7 +62,7 @@ class TestCLI(unittest.TestCase):
         for verb in ("exp", "paper", "spectrum", "spectrum-full", "calibrate", "calibrate-baselines", "startcurve",
                      "controlled", "audit", "posthoc", "disjoint"):
             self.assertIn(verb, CLI.RUN_ALIASES)
-        self.assertEqual(set(CLI.TOP_LEVEL), {"run", "setup", "show", "guide", "config", "pickle", "update"})
+        self.assertEqual(set(CLI.TOP_LEVEL), {"run", "detect", "setup", "show", "guide", "config", "pickle", "update"})
 
     def test_hedonic_setup_dry_run_is_wired(self):
         import io

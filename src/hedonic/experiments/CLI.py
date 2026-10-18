@@ -332,7 +332,7 @@ RUN_EQUIVALENTS: dict[str, str] = {"quickstart": "hedonic run exp", "overlapping
                                    "overlapping-controlled": "hedonic run controlled",
                                    "codeseg-setup": "hedonic setup"}
 # Top-level `hedonic` commands.
-TOP_LEVEL = ("run", "setup", "show", "guide", "config", "pickle", "update")
+TOP_LEVEL = ("run", "detect", "setup", "show", "guide", "config", "pickle", "update")
 
 
 def _preset_option(rest: list[str]) -> str | None:
@@ -355,52 +355,85 @@ def _run_equivalent(command: str, rest: list[str]) -> str | None:
     return None
 
 
-HEDONIC_HELP = """\
-usage: hedonic COMMAND [options]
+HELP_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("", (
+        ("hedonic", "in a terminal: the home screen (status, then a menu of what to do); elsewhere this help"),
+    )),
+    ("One network, one method (in this terminal)", (
+        ("hedonic detect [options]", "network (SBM, LFR, overlapping LFR, SNAP pair, famous, a file) x method x seed, "
+                                     "scored against its ground truth (a wizard without options; --list)"),
+    )),
+    ("Overlapping communities (SNAP networks)", (
+        ("hedonic run queue paper", "the overlap paper's experiments, one after another (--dry-run plans, --root DIR)"),
+        ("hedonic run exp [options]", "a benchmark: networks x methods x seeds (a wizard without options)"),
+        ("hedonic run paper", "the whole-graph benchmark profile (= run exp --config paper)"),
+        ("hedonic run paper-hoc", "only its Hedonic rows, at the tuned per-network settings"),
+        ("hedonic run calibrate", "calibrate Hedonic's resolution and cap per pair; writes hoc_tuned.json for --tuned"),
+        ("hedonic run calibrate-baselines --networks LIST",
+         "calibrate the eight baselines on each pair without ground truth"),
+        ("hedonic run spectrum", "ground-truth robustness spectrum of the local covers"),
+        ("hedonic run spectrum-full", "the same on complete graphs (= run spectrum --config full)"),
+        ("hedonic run startcurve --config NAME", "start-quality curve from corrupted ground-truth starts"),
+        ("hedonic run controlled --config NAME", "LFR-derived controlled-overlap grid"),
+        ("hedonic run posthoc --config FILE", "exact post-hoc stability of a ground-truth cover"),
+        ("hedonic run audit --source DIR...", "robustness of the covers a benchmark saved"),
+    )),
+    ("Disjoint communities (planted-partition SBM)", (
+        ("hedonic run disjoint [options]", "the SBM benchmark: store, figures and paper statistics (a wizard without "
+                                           "options)"),
+        ("hedonic run disjoint --preset paper", "the paper's 100-seed grid (50,000 graphs)"),
+    )),
+    ("Every run (durable: survives Ctrl-C, closed terminals and, on macOS, idle sleep)", (
+        ("hedonic run list", "runs and their progress"),
+        ("hedonic run status [NAME]", "snapshot of a run (default: latest)"),
+        ("hedonic run attach [NAME]", "live view of a running run"),
+        ("hedonic run logs [NAME]", "raw output (tmux pane or log file)"),
+        ("hedonic run stop NAME", "stop a run (explicit; never automatic)"),
+        ("hedonic run resume [NAME]", "continue an interrupted run; finished work is reused"),
+        ("hedonic run check [NAME]", "morning check: replay a sample of the results and compare"),
+        ("hedonic run queue FILE|NAME", "run the experiments of a queue file one after another (overnight)"),
+        ("hedonic run", "your favourite config (hedonic config set run NAME), else the wizard"),
+    )),
+    ("Data, runtimes and settings", (
+        ("hedonic setup [--all]", "download SNAP pairs and build the external methods (--dry-run checks the tools)"),
+        ("hedonic show methods", "overlapping methods: ready / installable / missing tools"),
+        ("hedonic show networks", "SNAP networks: vertices, edges, on disk, --remote sizes"),
+        ("hedonic show covers", "graph/cover pairs found locally"),
+        ("hedonic show table", "local network/cover statistics as a CSV"),
+        ("hedonic show metrics", "what each accuracy metric measures"),
+        ("hedonic show disjoint", "disjoint presets, grids, methods and estimates"),
+        ("hedonic pickle PAIR... | --all", "write the Game of network:cover pairs to pickles (--dry-run plans)"),
+        ("hedonic guide [TOPIC]", "a short tour of the CLI and suggested next steps"),
+        ("hedonic config [set KEY VALUE]", "per-user settings (~/.config/hedonic/config.toml)"),
+        ("hedonic update [--yes]", "compare with the latest release on PyPI; upgrade only when asked"),
+    )),
+)
+HELP_FOOTER = ("`hedonic run exp --help`, `hedonic run disjoint --help` and `hedonic setup --help` list every option.\n"
+               "`hedonic-exp list` lists the experiment modules' own commands.")
 
-  hedonic                        in a terminal: the home screen (status, then a menu of what to do); elsewhere this help
 
-Overlapping communities (SNAP networks)
-  hedonic run queue paper        the overlap paper's experiments, one after another (--dry-run plans, --root DIR)
-  hedonic run exp [options]      a benchmark: networks x methods x seeds (interactive wizard without options)
-  hedonic run paper              the whole-graph benchmark profile (= run exp --config paper)
-  hedonic run paper-hoc          only its Hedonic rows, at the tuned per-network settings
-  hedonic run calibrate          calibrate Hedonic's resolution and cap per pair; writes hoc_tuned.json for --tuned
-  hedonic run calibrate-baselines --networks LIST   calibrate the eight baselines on each pair without ground truth
-  hedonic run spectrum           ground-truth robustness spectrum of the local covers
-  hedonic run spectrum-full      the same on complete graphs (= run spectrum --config full)
-  hedonic run startcurve --config NAME   start-quality curve from corrupted ground-truth starts
-  hedonic run controlled --config NAME   LFR-derived controlled-overlap grid
-  hedonic run posthoc --config FILE      exact post-hoc stability of a ground-truth cover
-  hedonic run audit --source DIR...      robustness of the covers a benchmark saved
-Disjoint communities (planted-partition SBM)
-  hedonic run disjoint [options] the SBM benchmark: store, figures and paper statistics (wizard without options)
-  hedonic run disjoint --preset paper   the paper's 100-seed grid (50,000 graphs)
-Every run (durable: survives Ctrl-C, closed terminals and, on macOS, idle sleep)
-  hedonic run list               runs and their progress
-  hedonic run status [NAME]      snapshot of a run (default: latest)
-  hedonic run attach [NAME]      live view of a running run
-  hedonic run logs [NAME]        raw output (tmux pane or log file)
-  hedonic run stop NAME          stop a run (explicit; never automatic)
-  hedonic run resume [NAME]      continue an interrupted run; finished work is reused
-  hedonic run check [NAME]       morning check: replay a sample of the results and compare
-  hedonic run queue FILE|NAME    run the experiments of a queue file one after another (overnight)
-  hedonic run                    your favourite config (hedonic config set run NAME), else the wizard
-Data, runtimes and settings
-  hedonic setup [--all]          download SNAP pairs and build the external methods (--dry-run checks the tools)
-  hedonic show methods           overlapping methods: ready / installable / missing tools
-  hedonic show networks          SNAP networks: vertices, edges, on disk, --remote sizes
-  hedonic show covers            graph/cover pairs found locally
-  hedonic show table             local network/cover statistics as a CSV
-  hedonic show metrics           what each accuracy metric measures
-  hedonic show disjoint          disjoint presets, grids, methods and estimates
-  hedonic pickle PAIR... | --all write the Game of network:cover pairs to pickles (--dry-run plans)
-  hedonic guide [TOPIC]          a short tour of the CLI and suggested next steps
-  hedonic config [set KEY VALUE] per-user settings (~/.config/hedonic/config.toml)
-  hedonic update [--yes]         compare with the latest release on PyPI; upgrade only when asked
+def help_text(width: int = 80) -> str:
+    """The help of ``hedonic``: commands in one column, descriptions wrapped beside them, every line within ``width``;
+    a command too long for its column has its description on the next line."""
+    import textwrap
 
-`hedonic run exp --help`, `hedonic run disjoint --help` and `hedonic setup --help` list every option.
-`hedonic-exp list` lists the experiment modules' own commands."""
+    column = 33
+    lines = ["usage: hedonic COMMAND [options]"]
+    for title, rows in HELP_SECTIONS:
+        lines.append(title if title else "")
+        for command, description in rows:
+            wrapped = textwrap.wrap(description, width - column)
+            if len(command) + 2 >= column - 1:
+                lines.append(f"  {command}")
+                lines += [" " * column + line for line in wrapped]
+            else:
+                lines.append(f"  {command:<{column - 2}}{wrapped[0]}")
+                lines += [" " * column + line for line in wrapped[1:]]
+    lines += ["", *[textwrap.fill(line, width) for line in HELP_FOOTER.split("\n")]]
+    return "\n".join(lines)
+
+
+HEDONIC_HELP = help_text()
 
 
 def hedonic_main(argv: list[str] | None = None) -> int:
@@ -412,8 +445,10 @@ def hedonic_main(argv: list[str] | None = None) -> int:
 
         if home.wanted():  # a terminal; a pipe, a script or HEDONIC_PLAIN_VIEW=1 gets the help text
             return home.main()
-    if not argv or argv[0] in ("-h", "--help") or argv[:2] in (["run", "-h"], ["run", "--help"]):
-        print(HEDONIC_HELP)
+    if not argv or argv[0] in ("-h", "--help", "help") or argv[:2] in (["run", "-h"], ["run", "--help"]):
+        import shutil
+
+        print(help_text(min(100, max(60, shutil.get_terminal_size((80, 24)).columns))))  # fits this terminal
         return 0
     if argv[0] in ("-V", "--version"):
         print(_package_version())
@@ -422,6 +457,10 @@ def hedonic_main(argv: list[str] | None = None) -> int:
         from hedonic.experiments.overlapping import codeseg_setup
 
         return _call_experiment(codeseg_setup.setup_main, argv[1:])
+    if argv[0] == "detect":  # one network, one method, one seed, in this terminal
+        from hedonic.experiments import detect
+
+        return detect.main(argv[1:])
     if argv[0] == "guide":
         from hedonic.experiments.overlapping import guide
 
@@ -452,13 +491,25 @@ def hedonic_main(argv: list[str] | None = None) -> int:
 
         return info.main(argv[1:])
     if argv[0] != "run" or len(argv) < 2 or (argv[1] not in RUN_ALIASES and argv[1] not in RUN_VERBS):
-        print(f"Unknown command: {' '.join(argv)}. Try `hedonic --help`.", file=sys.stderr)
+        import difflib
+
+        if argv[0] == "run" and len(argv) >= 2:
+            close = difflib.get_close_matches(argv[1], [*RUN_ALIASES, *RUN_VERBS], n=1)
+            close = [f"run {c}" for c in close]
+        else:
+            close = difflib.get_close_matches(argv[0], TOP_LEVEL, n=1)
+        hint = f" Did you mean `hedonic {close[0]}`?" if close else ""
+        print(f"Unknown command: {' '.join(argv)}.{hint} Try `hedonic --help`.", file=sys.stderr)
         return 2
     if argv[1] in RUN_VERBS:
         from hedonic.experiments.overlapping import runmanager
 
         return runmanager.dispatch(argv[1:])
     command, rest = RUN_ALIASES[argv[1]], argv[2:]
+    shorthand = {"paper": "hedonic run exp --config paper", "paper-hoc": "hedonic run exp --config paper-hoc",
+                 "spectrum-full": "hedonic run spectrum --config full"}
+    if argv[1] in shorthand and ("-h" in rest or "--help" in rest):  # the usage below names the long form
+        print(f"`hedonic run {argv[1]}` is `{shorthand[argv[1]]}`; its options:\n")
     if argv[1] == "disjoint":  # disjoint SBM benchmark through the durable front door
         from hedonic.experiments.disjoint import front
 

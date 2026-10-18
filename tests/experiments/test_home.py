@@ -153,6 +153,128 @@ class TestWizardsAskBeforeStarting(unittest.TestCase):
         self.assertIn("not started", out.getvalue())
 
 
+class TestNothingStartsUnasked(unittest.TestCase):
+    """Fixes from the CLI/TUI swarm: no terminal and nothing typed starts nothing; Enter alone never starts; a
+    backed-out wizard is a choice (exit 0) and brings the home screen back; the menu keeps its place."""
+
+    def test_no_terminal_and_no_arguments_starts_nothing(self):
+        from hedonic.experiments.disjoint import front
+        from hedonic.experiments.overlapping import quickstart as qs
+        from hedonic.experiments.overlapping import runmanager
+
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_CONFIG": d + "/c.toml",
+                                                                        "HEDONIC_RUNS_DIR": d + "/runs"}), \
+                patch.object(tui, "interactive", return_value=False), \
+                patch.object(runmanager, "launch") as launch, patch.object(runmanager, "launch_disjoint") as dlaunch:
+            for call in (lambda: qs.main([]), lambda: CLI.hedonic_main(["run"]), lambda: front.front_main([])):
+                with redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(call(), 0)
+                self.assertIn("not started: no terminal to confirm in", out.getvalue())
+        launch.assert_not_called()
+        dlaunch.assert_not_called()
+
+    def test_the_last_question_has_no_preselected(self):
+        seen = {}
+
+        def select(title, options, default=0, help_text=""):
+            seen["default"] = default
+            return default
+        with patch.object(tui, "select", side_effect=select):
+            self.assertFalse(tui.confirm())  # Enter alone answers No
+        self.assertEqual(seen["default"], 1)
+
+    def test_a_wizard_backed_out_of_returns_to_the_menu(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        with patch.object(tui, "select", side_effect=[4]), patch.object(tui, "interactive", return_value=True), \
+                redirect_stdout(io.StringIO()) as out:  # "Quit" on the wizard's first menu
+            self.assertEqual(qs.main(["-i"]), 0)
+        self.assertIn("nothing started", out.getvalue())
+        self.assertTrue(tui.take_cancelled())
+        self.assertFalse(tui.take_cancelled())  # read once
+
+        ran, picks = [], ["Start a benchmark", "Runs", "Back to the menu", "q"]
+        defaults = []
+
+        def select(title, options, default=0, help_text=""):
+            defaults.append(default)
+            want = picks.pop(0)
+            if want == "q":
+                raise tui.Cancelled
+            return [o[0] for o in options].index(want)
+
+        def run(argv):
+            ran.append(argv)
+            if argv == ["run", "exp"]:
+                tui.note_cancelled()
+            return 0
+        with patch.object(home, "gather", return_value=home.State()), patch.object(tui, "select", side_effect=select), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(home.main(run=run), 0)
+        self.assertEqual(ran, [["run", "exp"], ["run", "list"]])  # the menu came back after the wizard
+        labels = [i.label for i in home.menu(home.State())]
+        self.assertEqual(defaults[1], labels.index("Start a benchmark"))  # the cursor stayed where it was
+        self.assertEqual(defaults[3], labels.index("Runs"))
+
+    def test_wizard_values_are_checked_at_the_prompt(self):
+        from hedonic.experiments.disjoint import front
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        self.assertEqual(qs._positive_seconds("-5"), "enter a positive number of seconds")
+        self.assertEqual(qs._positive_seconds("abc"), "enter a positive number of seconds")
+        self.assertIsNone(qs._positive_seconds("600"))
+        typed = iter(["abc", "-5", "120", "2", "0.3", "0.5", "0", "2", "0.5", "8"])
+        errors = []
+
+        def text(title, default="", validate=None):
+            while True:
+                value = next(typed)
+                problem = validate(value) if validate else None
+                if not problem:
+                    return value
+                errors.append(problem)
+        with patch.object(tui, "select", side_effect=[len(front.PRESETS)]), patch.object(tui, "text", side_effect=text), \
+                patch.object(tui, "multiselect", side_effect=lambda title, options, selected=(): list(selected)), \
+                redirect_stdout(io.StringIO()):
+            settings = front.wizard(front.resolve(front.build_parser().parse_args([])))
+        self.assertEqual((settings["nodes"], settings["communities"], settings["workers"]), (120, [2], 8))
+        self.assertEqual(len(errors), 3)  # "abc" and "-5" vertices, noise 2: each asked again
+        self.assertTrue(front.is_custom(settings))
+        self.assertIn("custom grid", front.render_plan(settings))
+        with self.assertRaisesRegex(ValueError, "invalid communities"):
+            front.parse_ints("abc", "communities")
+        with self.assertRaisesRegex(ValueError, r"--noises"):
+            front.resolve(front.build_parser().parse_args(["--noises", "2"]))
+        with self.assertRaisesRegex(ValueError, r"--nodes"):
+            front.resolve(front.build_parser().parse_args(["--nodes", "120", "--communities", "7"]))
+
+    def test_resume_leaves_a_completed_run_alone(self):
+        from hedonic.experiments.overlapping import runmanager
+
+        entry = {"name": "done-run", "kind": "benchmark", "output_dir": "/x"}
+        with patch.object(runmanager, "load_entry", return_value=entry), \
+                patch.object(runmanager, "read_progress", return_value={}), \
+                patch.object(runmanager, "effective_status", return_value="completed"), \
+                patch.object(runmanager, "cmd_resume", return_value=0) as resume, redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(runmanager.dispatch(["resume", "done-run"]), 0)
+            resume.assert_not_called()
+            self.assertIn("is completed", out.getvalue())
+            self.assertEqual(runmanager.dispatch(["resume", "done-run", "--again", "--detach"]), 0)
+            resume.assert_called_once()
+
+    def test_text_fits_by_words_and_durations_read_as_durations(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        hint = tui.strip_ansi(tui._hint("❯ Start a benchmark", "a quick default run (about a minute)", columns=40))
+        self.assertTrue(hint.endswith("…"))
+        self.assertNotIn("(a…", hint)  # cut at a word
+        self.assertEqual(tui._hint("x" * 30, "words", columns=32), "")
+        self.assertEqual([qs.fmt_duration(s) for s in (45, 720, 70921, 3 * 86400)], ["45 s", "12 min", "19 h 42 min", "3 d"])
+        self.assertEqual(qs.seeds_text([0]), "seed 0")
+        self.assertEqual(home._home_path("/private/tmp/a-very-long-folder-name-for-a-sandbox/hedonic/config.toml"),
+                         "…/hedonic/config.toml")
+
+
 @unittest.skipUnless(os.name == "posix", "needs a pty")
 class TestPty(unittest.TestCase):
     def test_a_bare_hedonic_in_a_terminal_draws_the_home_screen_and_q_restores_the_terminal(self):

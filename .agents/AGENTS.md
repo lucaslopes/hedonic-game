@@ -210,7 +210,42 @@ hedonic-exp list                       # analysis and utility commands
   the menu, runs and the wizards hand the terminal over; every wizard ends
   with a yes/no (`quickstart.confirm_start`) and resuming asks first. Keep
   each item a real command, never a screen-only action;
-  `tests/experiments/test_home.py` drives it in a pty.
+  `tests/experiments/test_home.py` drives it in a pty. The cursor returns to
+  the item chosen last, and a command the user backed out of (q, Esc, Quit:
+  `tui.note_cancelled`, read by `tui.take_cancelled`) brings the menu back
+  instead of ending the program.
+- **Nothing starts unasked.** With no arguments and no terminal (a pipe, a
+  script, `</dev/null`), `hedonic run`, `hedonic run exp` and `hedonic run
+  disjoint` print the plan and `not started: no terminal to confirm in`; flags
+  or `--yes` still run directly, so scripts and queues are unchanged. Every
+  last question (`tui.confirm`, the wizards' `Start?`, resume from the home
+  screen) has **No** pre-selected, so Enter alone never starts a run. Backing
+  out of a wizard (q, Esc, Quit) is a choice: exit 0, `nothing started`;
+  Ctrl-C is 130. Typed wizard values are checked at the prompt and asked
+  again with the reason (`tui.text(validate=)`), never left to fail at the
+  end. `hedonic run resume` on a completed run only says where its results
+  are (`--again` relaunches it to re-check its records); the queue's own
+  resume path is unchanged. Machine folders follow one rule: flag >
+  environment (`HEDONIC_NETWORKS_DIR`, `HEDONIC_OUTPUT_DIR`) > user config >
+  default.
+- **`hedonic detect` (`experiments/detect.py`, `overlapping/detect_overlap.py`).**
+  One network x one method x one seed, run in the terminal and scored
+  against the network's ground truth; `result.json` goes to
+  `<data root>/Detect/<source>-<method>-<stamp>` unless `--no-save`. A
+  network is `SOURCE:name=value,...` (`sbm`, `lfr`, `famous`, `file`), a
+  method `METHOD:name=value,...` (`hedonic`, `leiden`, `louvain`,
+  `spectral`, `label_propagation`, `infomap`, `onepass`, `mirror`); `--list`
+  prints both registries with every parameter, and the run prints its own
+  command line. `detect.py` is the same file in hedonic 1 and 2. hedonic 2
+  adds `detect_overlap.py`, which `detect._load_overlap` registers when it
+  exists: sources `snap` (a `network:cover` pair from disk, covered-induced
+  by default, `max_nodes`, `download=yes` to fetch) and `lfr_overlap`
+  (the controlled-overlap generator), `max_memberships` on `hedonic` (a
+  cover above 1), the eight baselines through the benchmark's own
+  `codeseg_reproduction._run_method` at their screened settings (unavailable,
+  with the `hedonic setup` command, until their runtime is ready), and cover
+  scores. A detection never downloads or builds by itself unless asked.
+  `tests/experiments/test_detect.py` covers both halves.
 - **Everything comes from the package.** Configs resolve through
   `resources.config_path` (a path that exists wins, then
   `hedonic/experiments/configs/`), worker scripts through

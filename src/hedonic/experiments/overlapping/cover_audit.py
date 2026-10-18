@@ -787,6 +787,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
         plan = resolve(argv, prog="hedonic-exp overlapping-cover-audit")
+        check_sources(plan)
     except SystemExit as exc:  # argparse printed the help or a usage error
         return exc.code if isinstance(exc.code, int) else 2
     except ValueError as exc:
@@ -801,6 +802,14 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, ValueError, OSError) as exc:
         print(f"hedonic-exp overlapping-cover-audit: {exc}", file=sys.stderr)
         return 1
+
+
+def check_sources(plan: dict[str, Any]) -> None:
+    """A typed --source that is not a folder is an error. Only the commands check it: a queued audit is planned
+    before the benchmark that writes its source has run."""
+    missing = [str(source) for source in plan["sources"] if not Path(source).is_dir()]
+    if missing:
+        raise ValueError(f"no such run folder: {', '.join(missing)} (--source takes the folders of benchmark runs)")
 
 
 def _front_parser() -> argparse.ArgumentParser:
@@ -834,6 +843,7 @@ def front_main(argv: list[str] | None = None) -> int:
     try:
         args = _front_parser().parse_args(argv)
         plan = resolve([arg for arg in argv if arg != "--detach"])
+        check_sources(plan)
     except SystemExit as exc:  # argparse printed the help or a usage error
         return exc.code if isinstance(exc.code, int) else 2
     except ValueError as exc:

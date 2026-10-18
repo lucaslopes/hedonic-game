@@ -3,8 +3,9 @@
 # or build it with `hedonic config set KEY VALUE`.
 
 # What a bare `hedonic run` starts: a named config (default, paper, or one of
-# the [profiles.*] below) or a path to a .json/.toml config file.
-run = "paper"
+# the [profiles.*] below) or a path to a .json/.toml config file. It always asks
+# first. Unset, a bare `hedonic run` opens the wizard.
+# run = "quick"
 
 [defaults]          # machine settings, applied to every run unless a flag overrides them
 # output_dir = "~/Databases/Hedonic/Overlap"     # the default: every run is saved under it

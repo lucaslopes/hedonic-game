@@ -166,6 +166,8 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate") -> dict[str, A
     if args.cap_minutes is not None and (args.budget is None or not args.cap_minutes > 0):
         raise ValueError("--cap-minutes must be positive and goes with --budget")
     script = expand_path(args.script).resolve() if args.script else None
+    if script is not None and not script.is_file():
+        raise ValueError(f"--script {args.script}: no such file (leave --script out to use the packaged search)")
     name = qs.parse_name(args.name or "hoc-calibration")
     root = Path(userconfig.defaults().get("output_dir") or RUNS_ROOT)
     output = expand_path(args.output_dir).resolve() if args.output_dir else expand_path(root / name).resolve()
@@ -276,7 +278,8 @@ def provision(plan: dict[str, Any], emit: Callable[[str], Any]) -> None:
 def describe(plan: dict[str, Any]) -> str:
     lazy = (f", lazy: {plan['budget']} evaluations" + (f" or {plan['cap_minutes']:g} probe min" if plan.get("cap_minutes") else "")
             if plan.get("budget") is not None else "")
-    return (f"HOC calibration ({plan['mode']} start{lazy}) · {len(searches(plan))} searches: "
+    count = len(searches(plan))
+    return (f"HOC calibration ({plan['mode']} start{lazy}) · {count} search{'' if count == 1 else 'es'}: "
             + ", ".join(s["key"] for s in searches(plan)) + f" · {plan['workers']} worker{'s' if plan['workers'] != 1 else ''}")
 
 
@@ -309,7 +312,7 @@ def plan_lines(plan: dict[str, Any]) -> list[str]:
                      + ("   [recorded]" if search["key"] in done else "")
                      + (f"   [data {data[search['network']]}]" if search["network"] in data and search["key"] not in done
                         else ""))
-    lines.append(f"  present  {len(done)} of {len(searches(plan))} searches already recorded "
+    lines.append(f"  present  {len(done)} of {len(searches(plan))} search{'' if len(searches(plan)) == 1 else 'es'} already recorded "
                  + ("(--overwrite: deleted first)" if plan["overwrite"] else "(a run resumes the rest)"))
     return lines
 

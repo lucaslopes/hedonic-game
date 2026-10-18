@@ -80,10 +80,10 @@ def _value(v) -> str:
 
 
 def save(data: dict) -> Path:
-    lines = ["# hedonic user configuration — see `hedonic config --help`", ""]
-    for key in TOP_KEYS:
-        if key in data:
-            lines.append(f"{key} = {_value(data[key])}")
+    lines = ["# hedonic user configuration — see `hedonic config --help`"]
+    top = [f"{key} = {_value(data[key])}" for key in TOP_KEYS if key in data]
+    if top:
+        lines += ["", *top]
     if data.get("defaults"):
         lines += ["", "[defaults]"] + [f"{k} = {_value(v)}" for k, v in data["defaults"].items()]
     for name, table in (data.get("profiles") or {}).items():
@@ -115,6 +115,21 @@ def _validate(section: str, name: str, value) -> None:
         fields = set(qs.Config().__dict__) - {"profile"} | {"config"}
         if name not in fields:
             raise SystemExit(f"unknown run setting {name!r}; choose from: {', '.join(sorted(fields))}")
+        default = getattr(qs.Config(), name, None)
+        number = isinstance(value, (int, float)) and not isinstance(value, bool)
+        wrong = (isinstance(default, bool) and not isinstance(value, bool)
+                 or isinstance(default, int) and not isinstance(default, bool) and not (number and value == int(value))
+                 or isinstance(default, float) and not number
+                 or isinstance(default, list) and not isinstance(value, (list, str)))
+        if wrong:
+            kind = ("true or false" if isinstance(default, bool) else "a whole number" if isinstance(default, int)
+                    else "a number" if isinstance(default, float) else "a list or a comma-separated string")
+            raise SystemExit(f"{section}.{name} must be {kind} (like {default!r}), not {value!r}")
+        if name == "seeds" and isinstance(value, str):
+            try:
+                qs.parse_seeds(value)
+            except ValueError as exc:
+                raise SystemExit(f"{section}.{name}: {exc}") from None
     elif name == "run":
         from hedonic.experiments.overlapping import quickstart as qs
 
@@ -126,8 +141,8 @@ def _validate(section: str, name: str, value) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] in ("-h", "--help"):
-        print(__doc__.strip())
+    if argv and argv[0] in ("-h", "--help"):  # the docstring without its reStructuredText marks
+        print(__doc__.strip().replace("``", "`").replace("::\n", ":\n"))
         return 0
     data = load()
     if not argv or argv[0] == "show":

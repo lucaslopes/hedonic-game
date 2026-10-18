@@ -1810,8 +1810,9 @@ def front_main(argv: list[str]) -> int:
             if not lines or lines[-1][0] != pair:
                 lines.append((pair, []))
             lines[-1][1].append(f"{item} {action}")
+        width = max(len(pair or "whole queue") for pair, _ in lines)  # the longest pair label sets the column
         for pair, parts in lines:
-            print(f"  {pair or 'whole queue':<18} " + " · ".join(parts))
+            print(f"  {pair or 'whole queue':<{width}} " + " · ".join(parts))
     check = setup_check(queue)
     _print_setup_check(check)
     problem = root_check(queue)

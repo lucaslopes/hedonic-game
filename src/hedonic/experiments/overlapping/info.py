@@ -209,8 +209,12 @@ def render_methods(rows: list[dict]) -> str:
         if r["status"] == "missing":
             out.append(style(f"  ✗ {r['key']}: {r['detail']}", "red"))
     counts = {s: sum(r["status"] == s for r in rows) for s in colour}
-    out.append(style(f"  {counts['ready']} ready · {counts['installable']} installed automatically on first use · "
-                     f"{counts['missing']} missing a system tool", "dim"))
+    parts = [f"{counts['ready']} ready"]
+    if counts["installable"]:
+        parts.append(f"{counts['installable']} not built yet (hedonic setup builds them, or the first run does)")
+    if counts["missing"]:
+        parts.append(f"{counts['missing']} missing a system tool (see above)")
+    out.append(style("  " + " · ".join(parts), "dim"))
     return "\n".join(out)
 
 
@@ -272,9 +276,21 @@ def _display_pairs(pairs: list[str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="hedonic show", description="Show the methods, the local data and the metrics.")
+    p = argparse.ArgumentParser(
+        prog="hedonic show", description="Show the methods, the local data and the metrics.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=("subjects:\n"
+                "  methods   overlapping methods: ready, installable, or missing a tool (--cache-dir)\n"
+                "  networks  SNAP networks: vertices, edges, what is on disk (--network-root; --remote: archive sizes)\n"
+                "  covers    the graph/cover pairs found locally (--network-root)\n"
+                "  metrics   what each accuracy metric measures\n"
+                "  table     analyses the local pairs, writes a CSV (--csv, --analysis-cache) and the paper's Table 1\n"
+                "            rows (--tex-output) and Figure 1 panels; --refresh re-analyses; never downloads\n"
+                "  figure    only the Figure 1 A/B/C panels (--figure-dir) from a current CSV (refreshed if stale)\n"
+                "  disjoint  the disjoint presets: grids, methods and estimates\n"
+                "every subject takes --json"))
     p.add_argument("what", choices=("methods", "networks", "metrics", "covers", "table", "figure", "disjoint"), nargs="?",
-                   default="methods")
+                   default="methods", help="what to show (default methods; see the subjects below)")
     p.add_argument("--cache-dir", default=None, help="downloads and built runtimes (default: your `hedonic config` "
                                                       "cache_dir, else ~/.cache/hedonic)")
     p.add_argument("--network-root", default=None, help="folder with local SNAP archives (default: your `hedonic "
@@ -288,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
                    help="directory for Figure 1 A/B/C TeX panels (default: next to the table fragment)")
     p.add_argument("--refresh", action="store_true", help="re-analyse local files even when the CSV cache is current")
     p.add_argument("--remote", action="store_true", help="query snap.stanford.edu for archive sizes (HEAD only)")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", help="print it as JSON")
     a = p.parse_args(argv)
     from hedonic.experiments.overlapping import userconfig
 

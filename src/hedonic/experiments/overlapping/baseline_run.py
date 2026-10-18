@@ -211,8 +211,10 @@ def searches(plan: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def describe(plan: dict[str, Any]) -> str:
-    return (f"baseline calibration ({bc.CRITERION}) · {len(searches(plan))} calibrations = {len(plan['methods'])} methods x "
-            f"{len(plan['networks'])} pairs")
+    def n(count, word):
+        return f"{count} {word}{'' if count == 1 else 's'}"
+    return (f"baseline calibration ({bc.CRITERION}) · {n(len(searches(plan)), 'calibration')} = "
+            f"{n(len(plan['methods']), 'method')} x {n(len(plan['networks']), 'pair')}")
 
 
 def replica_line(plan: dict[str, Any]) -> list[str]:

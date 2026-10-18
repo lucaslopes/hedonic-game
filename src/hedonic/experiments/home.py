@@ -45,9 +45,19 @@ class State:
     config_path: str = "~/.config/hedonic/config.toml"
 
 
-def _home_path(path: str) -> str:
+def _home_path(path: str, longest: int = 48) -> str:
+    """``~/...`` under the home folder; a long path keeps its last parts (``…/hedonic/config.toml``)."""
     home = os.path.expanduser("~")
-    return "~" + path[len(home):] if path.startswith(home) else path
+    path = "~" + path[len(home):] if path.startswith(home) else path
+    if len(path) > longest:
+        parts = path.split("/")
+        tail = parts[-1]
+        for part in reversed(parts[:-1]):
+            if len(part) + len(tail) + 3 > longest:
+                break
+            tail = f"{part}/{tail}"
+        path = "…/" + tail
+    return path
 
 
 def gather() -> State:
@@ -177,30 +187,37 @@ def main(argv: list[str] | None = None, *, run=None) -> int:
     """The home screen loop. ``run(argv) -> int`` executes a command (default: ``CLI.hedonic_main``)."""
     if run is None:
         from hedonic.experiments.CLI import hedonic_main as run
+    last = ""  # the label chosen last: the cursor comes back to it
     while True:
         state = gather()
         items = menu(state)
         print("\n".join([""] + header(state) + [""]))
+        labels = [i.label for i in items]
         try:
-            picked = items[tui.select("What would you like to do?", [(i.label, i.hint) for i in items])]
+            picked = items[tui.select("What would you like to do?", [(i.label, i.hint) for i in items],
+                                      default=labels.index(last) if last in labels else 0)]
         except tui.Cancelled:
             return 0
+        last = picked.label
         if picked.argv is None:
             return 0
         if picked.confirm:
             try:
-                if tui.select(picked.confirm, [("Yes", command_line(picked.argv)), ("No", "back to the menu")]) != 0:
+                if tui.select(picked.confirm, [("Yes", command_line(picked.argv)), ("No", "back to the menu")], default=1) != 0:
                     continue
             except tui.Cancelled:
                 continue
         print(style(f"\n  → {command_line(picked.argv)}\n", "dim"))
         sys.stdout.flush()
+        tui.take_cancelled()
         try:
             code = run(list(picked.argv))
         except KeyboardInterrupt:
             code = 130
         except SystemExit as exc:  # argparse inside a command
             code = exc.code if isinstance(exc.code, int) else 1
+        if tui.take_cancelled():  # the user backed out of a wizard: nothing started, so the menu again
+            continue
         if not picked.back:
             return int(code or 0)
         print()

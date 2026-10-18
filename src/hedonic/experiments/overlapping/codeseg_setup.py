@@ -1274,9 +1274,11 @@ def _parse_pairs(value: str | None, *, all_pairs: bool) -> list[tuple[str, str]]
 
     if all_pairs and not value:
         value = "paper"
-    if not value:
+    if value is None:
         return []
     names = [item.strip() for item in value.split(",") if item.strip()]
+    if not names:
+        raise ValueError("--pairs names no pair; e.g. --pairs dblp:top5000,amazon:top5000 (or --all)")
     out: list[tuple[str, str]] = []
     for name in names:
         for target in (PAPER_PAIRS if name.lower() == "paper" else (name,)):
@@ -1391,8 +1393,9 @@ def setup_main(argv: list[str] | None = None, *, prog: str = "hedonic setup") ->
         methods = _parse_methods(args.methods, all_methods=args.all)
         datasets = (_parse_selection(args.datasets, SNAP_DATASETS, option="--datasets", default=DEFAULT_DATASETS)
                     if args.datasets is not None and not args.skip_data else [])
-    except (ValueError, SnapLoadError, UnsupportedCoverVariant) as exc:
-        parser.error(str(exc))
+    except (ValueError, SnapLoadError, UnsupportedCoverVariant) as exc:  # one line, not the usage block
+        print(f"{prog}: error: {exc}\n(see `{prog} --help`)", file=sys.stderr)
+        return 2
     if not pairs and not methods and not datasets and args.methods is None and args.pairs is None:
         methods = list(PAPER_BASELINES)  # a bare `hedonic setup`: the paper's runtimes
     if args.skip_native:

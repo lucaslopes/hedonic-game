@@ -25,10 +25,27 @@ TOPICS: dict[str, tuple[str, str]] = {
         hedonic setup --dry-run         what `hedonic setup` would download and build, and the system tools it needs
         hedonic run exp --dry-run       the plan and time estimate of the default run
         hedonic run exp                 a wizard (arrow keys, space, enter); the first choice is the quick default run, then a yes/no
+        hedonic detect                  one network x one method x one seed, in this terminal (see `hedonic guide detect`)
 
         The default run takes about a minute: DBLP, a 5,000-vertex subgraph, seed 0, Hedonic and CoDeSEG.
         Everything runs detached, so closing the terminal or pressing Ctrl-C only closes the view.
         To reproduce the overlapping-communities paper, see `hedonic guide paper`.
+    """),
+    "detect": ("One network, one method (`hedonic detect`)", """
+        hedonic detect                                    a wizard: network, its parameters, method, its parameters, seed
+        hedonic detect --list                             every network source and method, with its parameters
+        hedonic detect --graph sbm:k=4,p_in=0.3 --method hedonic
+        hedonic detect --graph lfr:n=1000,mu=0.3 --method leiden:resolution=0.05 --seed 3
+        hedonic detect --graph famous:name=Zachary --method louvain
+        hedonic detect --graph file:path=g.txt,truth=labels.txt --method infomap
+        hedonic detect --graph lfr_overlap:n=500 --method hedonic:max_memberships=2
+        hedonic detect --graph snap:pair=amazon:top5000 --method codeseg   (a pair on disk; download=yes fetches it)
+
+        A network is SOURCE:name=value,... and a method METHOD:name=value,...; --seed seeds both. The answer is
+        scored against the network's ground truth (ARI, NMI, overlap for partitions; F1, ONMI, Omega for covers) and
+        saved as result.json under the data folder's Detect/ (--output DIR, or --no-save). The run prints its own
+        command line, so a wizard answer can be repeated or scripted. It runs here, in this terminal: for many
+        seeds or networks, use `hedonic run exp`, `hedonic run disjoint` or a queue.
     """),
     "benchmark": ("Benchmark runs (`hedonic run exp`)", """
         hedonic run exp --networks dblp,amazon --methods all --seeds 0-2 --nodes 20000
@@ -78,7 +95,8 @@ TOPICS: dict[str, tuple[str, str]] = {
     """),
     "spectrum": ("Ground-truth robustness spectrum (`hedonic run spectrum`)", """
         hedonic show covers                       present / missing / unsupported graph/cover pairs
-        hedonic run spectrum --dry-run --inspect  cohort, plan, sizes and estimates; runs nothing
+        hedonic run spectrum --dry-run            cohort and plan; runs nothing
+        hedonic run spectrum --dry-run --inspect  also sizes and estimates: loads every pair (many GB for the large ones)
         hedonic run spectrum                      wizard, then a durable run
         hedonic run spectrum-full                 the eight paper pairs on their covered graphs (= --config full)
         hedonic run spectrum --replot             rebuild figures and tables from a finished ledger
@@ -189,7 +207,7 @@ def next_steps() -> list[str]:
     root = userconfig.defaults().get("network_root") or str(NETWORKS_DIR)
     present = [r for r in gt_spectrum.discover(root) if r["status"] == "present"]
     if present:
-        steps.append(f"{len(present)} graph/cover pairs are on disk: hedonic run spectrum --dry-run --inspect")
+        steps.append(f"{len(present)} graph/cover pairs are on disk: hedonic run spectrum --dry-run")
     if not entries:
         steps.append("no runs yet: hedonic run exp   (a minute for the default experiment)")
     if not userconfig.path().is_file():

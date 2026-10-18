@@ -108,11 +108,15 @@ def plan_pair(network: str, cover: str, network_root: Path, out_dir: Path, *, fo
                            "path": str(pickle_path(out_dir, network, cover))}
     spec = _snap.SPECS.get(network)
     if spec is None:
-        return {**row, "action": "skipped", "reason": f"unknown network {network!r}"}
+        return {**row, "action": "skipped", "reason": f"unknown network {network!r}", "bad_input": True}
     try:
         variant = _snap.canonical_cover_variant(cover)
     except Exception as exc:  # noqa: BLE001
-        return {**row, "action": "skipped", "reason": str(exc)}
+        return {**row, "action": "skipped", "reason": str(exc), "bad_input": True}
+    if variant not in spec.raw_cover_files and variant not in spec.cover_files:
+        return {**row, "action": "skipped", "bad_input": True,
+                "reason": f"{network} has no {cover!r} cover; its covers: "
+                          + ", ".join(_snap.cover_variant_label(v) for v in spec.raw_cover_files)}
     base = _snap._dataset_dir(Path(network_root).expanduser(), spec)
     if _snap._first_existing(base, spec.raw_cover_files.get(variant, ())) is None and \
             _snap._first_existing(base, spec.cover_files.get(variant, ())) is None:
@@ -244,9 +248,14 @@ def format_rows(rows: list[dict[str, Any]]) -> str:
     out = [f"{'pair':<22}{'result':<10}{'pickle':>11}{'n':>13}{'m':>14}{'build':>9}{'build RSS':>12}{'reopen':>9}{'reopen RSS':>12}"]
     for r in rows:
         if r.get("status") in ("written", "checked") or r.get("action") in ("exists",):
+            def count(key):  # a pickle kept as it is was not opened: its sizes are unknown here, not zero
+                return f"{r[key]:,}" if r.get(key) is not None else "-"
+
+            def secs(key):
+                return f"{r[key]:.0f}s" if r.get(key) is not None else "-"
             out.append(f"{r['pair']:<22}{r.get('result', r.get('status', r.get('action'))):<10}{_gib(r.get('bytes')):>11}"
-                       f"{r.get('n') or 0:>13,}{r.get('m') or 0:>14,}{r.get('build_seconds', 0):>8.0f}s"
-                       f"{_gib(r.get('build_peak_rss_bytes')):>12}{r.get('load_seconds', 0):>8.0f}s"
+                       f"{count('n'):>13}{count('m'):>14}{secs('build_seconds'):>9}"
+                       f"{_gib(r.get('build_peak_rss_bytes')):>12}{secs('load_seconds'):>9}"
                        f"{_gib(r.get('load_peak_rss_bytes')):>12}")
         elif r.get("action") == "write":
             need = r.get("estimated_peak_bytes")
@@ -307,6 +316,8 @@ def main(argv: list[str] | None = None) -> int:
             row.update({k: v for k, v in _worker_call("check-one", pair, args).items() if k not in ("pair", "status")})
         rows.append(row)
     print(json.dumps(rows, indent=1) if args.json else format_rows(rows))
+    if any(r.get("bad_input") for r in rows):  # a typo in a pair is an error, not a skipped pair
+        return 2
     return 1 if any(r.get("status") == "failed" for r in rows) else 0
 
 
