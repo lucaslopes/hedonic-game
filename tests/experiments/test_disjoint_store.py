@@ -477,6 +477,36 @@ class TestDisjointFrontDoor(unittest.TestCase):
             self.assertEqual(runmanager.progress_counts(entry, prog), (16, 16))
             self.assertIn("16/16 graphs", front.snapshot(entry, prog, "completed", "*", True))
             self.assertEqual(front.check(entry, shards=4, rows=5), 0)
+            # The queue judges the run from its store: complete, and 16 graphs.
+            from hedonic.experiments.overlapping import runqueue
+
+            item = ["disjoint", "--preset", "smoke", "--workers", "2", "--name", "fg-smoke",
+                    "--output-dir", str(out)]
+            self.assertEqual(runqueue.data_state(item, fresh=True), ("complete", str(out.resolve())))
+            self.assertEqual(runqueue.unit_counts(item), (16, 16, "graphs"))
+            # A store whose Hedonic rows come from another core is refused before anything is written.
+            before = (out / "progress.json").read_bytes()
+            with _other_build(hedonic_core_sha256="0" * 64):
+                self.assertEqual(runqueue.data_state(item, fresh=True)[0], "partial")
+                code = CLI.hedonic_main(["run", "disjoint", "--preset", "smoke", "--foreground",
+                                         "--workers", "2", "--output-dir", str(out), "--name", "fg-smoke"])
+                self.assertEqual(code, 2)
+            self.assertEqual((out / "progress.json").read_bytes(), before)
+
+    def test_shipped_disjoint_queue(self):
+        from hedonic.experiments.overlapping import runqueue
+
+        with tempfile.TemporaryDirectory() as d:
+            queue = runqueue.load_queue("disjoint", root=d)
+            self.assertEqual([item["name"] for item in queue["items"]], ["disjoint-smoke", "disjoint-paper"])
+            self.assertEqual(runqueue.requirements(queue), ([], []))  # nothing to download or build
+            self.assertEqual(runqueue.data_state(queue["items"][1]["run"], fresh=True),
+                             ("missing", str(Path(d).resolve() / "disjoint-paper")))
+            bad = Path(d) / "q.toml"
+            bad.write_text('name = "q"\n[[items]]\nname = "a"\nrun = ["disjoint", "--preset", "smoke"]\n')
+            with self.assertRaises(SystemExit) as raised:
+                runqueue.load_queue(str(bad), root=d)
+            self.assertIn("needs --name", str(raised.exception))
 
     def test_default_output_uses_the_user_config(self):
         import os

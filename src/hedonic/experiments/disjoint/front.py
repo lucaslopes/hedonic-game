@@ -288,13 +288,19 @@ def store_status(settings: dict[str, Any], output: str, *, replay: bool = False)
         if store_mod.read_manifest(root) is None:
             return {}
         root = Path(root)
-        return sweep.preflight_grid(
+        found = sweep.preflight_grid(
             folder_name=root.name, max_n_nodes=settings["nodes"], n_communities=settings["communities"],
             seeds=settings["seeds"], p_in=settings["p_in"], difficulty=settings["difficulty"],
             noises=settings["noises"], partition_seeds=settings["partition_seeds"], methods=methods,
             n_runs=settings["restarts"], layout="store", output_root=root.parent, check_graphs=False,
-            spec=spec)["method_graphs"]
+            spec=spec)
+        if Path(root).resolve() == Path(output).resolve():
+            out["complete_graphs"] = found["complete_cells"] // max(1, found["cells_per_graph"])
+            out["graphs_by_k"] = found["method_graphs_by_k"]
+        return found["method_graphs"]
 
+    out["complete_graphs"] = 0
+    out["graphs_by_k"] = {}
     out["graphs"] = count(output)
     if settings.get("reuse_from"):
         if Path(settings["reuse_from"]).resolve() != Path(output).resolve():
@@ -460,18 +466,42 @@ def wizard(settings: dict[str, Any]) -> dict[str, Any]:
     return resolve(build_parser().parse_args(front_argv(settings)))
 
 
-def front_main(argv: list[str] | None = None) -> int:
-    from hedonic.experiments.overlapping import quickstart as qs
-    from hedonic.experiments.overlapping import runmanager, tui
-    from hedonic.experiments.overlapping.tui import style
-
-    argv = list(sys.argv[1:] if argv is None else argv)
+def front_parser() -> argparse.ArgumentParser:
     parser = build_parser()
     parser.add_argument("-i", "--interactive", action="store_true", help="open the wizard (default when no arguments)")
     parser.add_argument("-y", "--yes", action="store_true", help="never prompt")
     parser.add_argument("--name", help="run name (default disjoint-YYYYmmdd-HHMMSS)")
     parser.add_argument("--detach", action="store_true", help="start in the background and return")
     parser.add_argument("--foreground", action="store_true", help="run in this terminal (not recoverable)")
+    return parser
+
+
+def front_study(argv: list[str]) -> dict[str, Any]:
+    """The settings, name and store folder of `hedonic run disjoint ARGS` (a queue item), nothing run or written.
+
+    Raises ``ValueError`` on a bad argument; argparse errors exit as usual.  A queue item names its run (``--name``)
+    and so its folder; without ``--output-dir`` the folder is ``<disjoint_output_root>/<name>``.
+    """
+    from hedonic.experiments.config import ensure_not_archived_v1020
+    from hedonic.experiments.overlapping import quickstart as qs
+
+    args = front_parser().parse_args(list(argv))
+    if not args.name:
+        raise ValueError("a queued disjoint run needs --name (its store folder follows it)")
+    qs.parse_name(args.name)
+    settings = resolve(args)
+    output = str(expand_path(args.output_dir).resolve()) if args.output_dir else default_output(args.name)
+    ensure_not_archived_v1020(output, label="disjoint output")
+    return {"settings": settings, "name": args.name, "output": output}
+
+
+def front_main(argv: list[str] | None = None) -> int:
+    from hedonic.experiments.overlapping import quickstart as qs
+    from hedonic.experiments.overlapping import runmanager, tui
+    from hedonic.experiments.overlapping.tui import style
+
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = front_parser()
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:

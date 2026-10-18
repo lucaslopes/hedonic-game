@@ -85,7 +85,9 @@ TOPICS: dict[str, tuple[str, str]] = {
         ground-truth cover, auditing and scoring every return. Nothing is downloaded without --provision.
         --config NAME reads a shipped config (overlapping-gt-spectrum-NAME) or a TOML file of your own.
     """),
-    "disjoint": ("Disjoint SBM benchmark (`hedonic run disjoint`)", """
+    "disjoint": ("Disjoint SBM benchmark (`hedonic run disjoint`, `hedonic run queue disjoint`)", """
+        hedonic run queue disjoint --dry-run         the disjoint paper's queue: a smoke check, then the paper grid
+        hedonic run queue disjoint                   start it (durable, resumable; nothing to download)
         hedonic show disjoint                        presets, grids, methods and estimates
         hedonic run disjoint --preset smoke          the whole pipeline in seconds
         hedonic run disjoint --preset paper --dry-run   the paper's 50,000-graph plan, time and disk
@@ -97,6 +99,12 @@ TOPICS: dict[str, tuple[str, str]] = {
         seeds and never stored; every detector run has its own seed. The run writes a Parquet store, the
         logical-cell table, the five figures and the paper statistics (stats/summary.md). Where it goes:
         `hedonic config set disjoint_output_root PATH`. Query it: `hedonic-exp disjoint-store STORE --sql ...`.
+
+        A store keeps each method's rows while that method's identity (call, parameters, restarts and the
+        binaries it runs in) is unchanged; a run computes only the missing methods. `--dry-run` reads the store
+        and says, per method, how many graphs are current, from another build, or missing. Rows of another
+        build are refused unless recomputed (`--rerun hedonic,leiden`) or carried after a replay matches
+        (`--reuse-from STORE --reuse-methods mirror,spectral`, never across timing rules).
     """),
     "runs": ("Managing runs", """
         hedonic run list                all runs, status and progress

@@ -1414,6 +1414,7 @@ def preflight_grid(
     # rows of another build or setting ("other") or none covering the cells ("missing").
     store_root = output_root / folder_name
     method_state = {name: Counter() for name in methods}
+    by_k = {name: {k: Counter() for k in communities} for name in methods}
     current = store_mod.method_digests(spec) if spec is not None else {}
     manifest = store_mod.read_manifest(store_root) if layout == "store" else None
     legacy = store_mod.legacy_shard_digests(manifest) if manifest else {}
@@ -1472,6 +1473,7 @@ def preflight_grid(
                             else:
                                 state = "other"
                             method_state[name][state] += 1
+                            by_k[name][n_community][state] += 1
                             all_current &= state == "current"
                         if all_current:
                             complete_cells += cells_per_graph
@@ -1524,6 +1526,13 @@ def preflight_grid(
         "method_graphs": {
             name: {key: int(counter[key]) for key in ("current", "other", "missing")}
             for name, counter in method_state.items()
+        }
+        if layout == "store" and spec is not None
+        else {},
+        # The same per number of communities K: {method: {K: {"current", "other", "missing"}}}.
+        "method_graphs_by_k": {
+            name: {int(k): {key: int(c[key]) for key in ("current", "other", "missing")} for k, c in table.items()}
+            for name, table in by_k.items()
         }
         if layout == "store" and spec is not None
         else {},

@@ -45,7 +45,7 @@ class TestShippedQueue(_Isolated):
         self.assertIn("paper", runqueue.shipped_queues())
         self.assertEqual(runqueue.queue_file("paper"), CONFIG_DIR / "queue-paper.toml")
         self.assertEqual(runqueue.queue_file("queue-paper"), CONFIG_DIR / "queue-paper.toml")
-        with self.assertRaisesRegex(SystemExit, "shipped queues: paper"):
+        with self.assertRaisesRegex(SystemExit, "shipped queues: disjoint, paper"):
             runqueue.queue_file("nope")
 
     def test_root_is_substituted_everywhere_and_every_item_writes_under_it(self):

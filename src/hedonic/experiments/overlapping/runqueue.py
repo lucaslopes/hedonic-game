@@ -100,6 +100,10 @@ def _check_verb_arguments(verb: str, args: list[str], run: list[str]) -> None:
         from hedonic.experiments.overlapping import baseline_run
 
         baseline_run.front_study(args)
+    elif verb == "disjoint":
+        from hedonic.experiments.disjoint import front
+
+        front.front_study(args)
 
 
 def _absolute_config(run: list[str]) -> list[str]:
@@ -789,6 +793,38 @@ def _controlled_state(args: list[str]) -> tuple[str, str]:
     return ("partial" if int(progress.get("done") or 0) else "missing"), plan["folder"]
 
 
+DISJOINT_OUTPUTS = ("plot_table.parquet", "figures", "stats/summary.md")
+
+
+def _disjoint_state(args: list[str]) -> tuple[str, str]:
+    """A disjoint SBM run: complete when every graph holds current rows of every method (each method's identity,
+    `disjoint.store`) and the table, figures and statistics were written after them; partial when some rows are
+    current (the run keeps them and computes the rest), missing otherwise. Rows of another build count as missing."""
+    from hedonic.experiments.disjoint import front
+
+    study = front.front_study(args)
+    settings, folder = study["settings"], study["output"]
+    status = front.store_status(settings, folder)
+    total = int(front.plan(settings)["graphs"])
+    done = int(status.get("complete_graphs") or 0)
+    per_k = total // max(1, len(settings["communities"]))
+    parts = []
+    for method in settings["methods"]:
+        table = (status.get("graphs_by_k") or {}).get(method) or {}
+        parts.append((front.METHOD_LABELS.get(method, method), "K values (all graphs current)",
+                      [int((table.get(k) or {}).get("current", 0)) >= per_k for k in settings["communities"]]))
+    _note(folder, done, total, "graphs", parts, stale=status["refused"] or "")
+    if status["refused"]:
+        return "partial", folder  # a start refuses it with the reason; never judged complete
+    store = Path(folder)
+    finished = done == total and all((store / item).exists() for item in DISJOINT_OUTPUTS)
+    if finished and (store / "manifest.json").stat().st_mtime > (store / "plot_table.parquet").stat().st_mtime:
+        finished = False  # rows changed after the table: the run writes the table, figures and statistics again
+    if finished:
+        return "complete", folder
+    return ("partial" if done or any(c.get("current") for c in status["graphs"].values()) else "missing"), folder
+
+
 def _controlled_grid(cc, config: str) -> dict[str, list[str]]:
     """The values of the study's three loops, read from its config's arguments (empty when it does not name them)."""
     try:
@@ -831,6 +867,8 @@ def _data_state(run: list[str]) -> tuple[str, str]:
         return _calibrate_state(args)
     if verb == "calibrate-baselines":
         return _baselines_state(args)
+    if verb == "disjoint":
+        return _disjoint_state(args)
     return "unknown", ""  # no data check for this kind: the registry decides
 
 

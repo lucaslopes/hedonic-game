@@ -1,0 +1,29 @@
+# The disjoint paper's experiment queue: the SBM benchmark of "Robustness of community structures" (Physica A),
+# with Hedonic (this package's native core) and Leiden (stock igraph's CPM Leiden) next to the four reference
+# methods (ground truth, Mirror, One Pass, spectral clustering).
+#
+#   hedonic run queue disjoint --dry-run    # the plan, and what the store already holds per method
+#   hedonic run queue disjoint              # start (durable: closing the terminal does not stop it)
+#   hedonic run status disjoint-queue       # progress; `hedonic run attach disjoint-queue` opens the live tree
+#   hedonic run stop disjoint-queue         # stop; run the same `hedonic run queue disjoint` again to continue
+#
+# {root} is the folder every run writes into: `--root DIR`, by default <output_dir>/disjoint-queue. Nothing is
+# downloaded: the 50,000 graphs are regenerated from their seeds. Running the queue again skips a store whose rows are
+# current for every method and resumes the rest; a store whose rows came from another build is refused with the
+# reason (recompute those methods with --rerun, or start a new folder).
+
+name = "disjoint-queue"
+
+[[items]]
+name = "disjoint-smoke"
+short = "smoke"
+title = "pipeline check"
+about = "The whole pipeline at small scale (16 graphs of 120 vertices): store, logical-cell table, the five figures and the statistics. Seconds."
+run = ["disjoint", "--preset", "smoke", "--name", "disjoint-smoke", "--output-dir", "{root}/disjoint-smoke", "--yes"]
+
+[[items]]
+name = "disjoint-paper"
+short = "paper"
+title = "the paper's SBM grid"
+about = "5 K x 10 p_in x 10 difficulties x 100 network seeds = 50,000 graphs of 1,020 vertices; noisy starts at 5 noise levels x 10 seeds; 10 restarts of Leiden and Hedonic per start. Writes the store, the logical-cell table, the five figures (gt_robustness, noise, n_communities, acc_efficiency, acc_robustness) and every statistic of the Empirical Analysis (stats/)."
+run = ["disjoint", "--preset", "paper", "--name", "disjoint-paper", "--output-dir", "{root}/disjoint-paper", "--yes"]
