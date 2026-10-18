@@ -72,7 +72,7 @@ src/hedonic/
     ├── CLI.py           # `hedonic` and `hedonic-exp`; COMMANDS is the registry
     ├── config.py        # DATA_ROOT, RUNS_ROOT, NETWORKS_DIR, codeseg_cache_dir()
     ├── resources.py     # shipped configs and worker scripts (package data)
-    ├── runtime.py       # the identity every record carries (version, SHA-256 of the core)
+    ├── runtime.py       # the identity every record carries (release series, digest of the core's sources)
     ├── configs/         # run configs and the paper queue (queue-paper.toml)
     ├── workers/         # scripts external methods run in their own environments
     ├── disjoint/        # SBM sweep, Parquet result store, `hedonic run disjoint`
@@ -166,6 +166,7 @@ hedonic guide                          # state-aware tour of the commands
 hedonic setup --all [--dry-run]        # SNAP pairs and the eight baselines' runtimes
 hedonic run exp [--dry-run]            # benchmark front door (wizard in a terminal)
 hedonic run queue paper --root DIR     # the paper's queue, pair by pair; --dry-run, --report
+hedonic run queue disjoint             # the disjoint paper (smoke, then the 100-seed grid)
 hedonic run list|status|attach|logs|stop|resume|check
 hedonic show methods|networks|covers|metrics
 hedonic-exp list                       # analysis and utility commands
@@ -176,9 +177,13 @@ hedonic-exp list                       # analysis and utility commands
   `hedonic/experiments/configs/`), worker scripts through
   `resources.worker_path`. Never reach the repository with
   `Path(__file__).parents[N]`, and never require a file outside the package.
-- **Paths.** Data defaults to `~/hedonic-data` (`HEDONIC_DATA_DIR`; SNAP
-  files under `networks/` or `HEDONIC_NETWORKS_DIR`), runs to
-  `~/hedonic-runs` (`config.RUNS_ROOT`, `HEDONIC_OUTPUT_DIR`). External
+- **Paths.** Everything defaults to one folder, `~/Databases/Hedonic`
+  (`config.DATA_ROOT`, `HEDONIC_DATA_DIR`): SNAP files under `Networks/`
+  (`HEDONIC_NETWORKS_DIR`), overlapping runs under `Overlap/`
+  (`config.RUNS_ROOT`, `HEDONIC_OUTPUT_DIR`; the paper queue in
+  `Overlap/paper-queue`), disjoint runs under `Disjoint/`
+  (`config.DISJOINT_RUNS_ROOT`, `HEDONIC_DISJOINT_OUTPUT_DIR`), pickles under
+  `Pickles/`. Tests point these at temporary folders. External
   runtimes live in `config.codeseg_cache_dir()`: `DIR/codeseg` for a `--cache-dir DIR` flag (the
   same for `hedonic setup` and `hedonic run exp`), else
   `HEDONIC_CODESEG_CACHE`, else the user config's `cache_dir/codeseg`, else
@@ -189,12 +194,34 @@ hedonic-exp list                       # analysis and utility commands
   baselines; an unavailable method's message names `hedonic setup --methods
   NAME`. CoDeSEG has no licence file and is never vendored; CDlib runs only
   in its locked environment, never in the hedonic process.
-- **Identity.** Records carry `runtime.runtime_versions()` (hedonic version,
-  SHA-256 of the compiled core); resume checks refuse another build's
-  records. There is no igraph version pin and no protocol lock file.
+- **Identity.** A record's identity names Hedonic by `runtime.build_identity()`:
+  the release series (`major.minor`, so `2.0.0.devN`, `rcN` and patch
+  releases share it) and `hedonic._core.source_sha256`, the digest of the C
+  sources that `setup.py` embeds at build time (rounding is fixed by the
+  source, so every wheel of one source computes the same results). The full
+  version and the compiled bytes' SHA-256 stay in `runtime_versions()` as
+  provenance only. A change of the Python layer that changes results bumps
+  the minor version. Every study checks it before reusing work: a
+  calibration search (`build`), a start-quality key (`code=`), the
+  spectrum's runtime identity, a benchmark unit's `config_digest`, the
+  controlled study's environment, and the disjoint store's per-method
+  identity (`store.method_identity`: call, parameters, runs, `ROW_CODE`,
+  runtime fields; a store holding another identity is refused before any
+  write, `--rerun` / `--reuse-from` resolve it). There is no igraph version
+  pin and no protocol lock file.
+- **Baseline calibration.** `hedonic run calibrate-baselines` takes
+  `--method-budget M=N[:MIN]` (the paper queue: ANGEL at 3 settings, 60 min
+  per pair), `--transfer PAIRS` (not searched: each searched method takes the
+  nearest calibrated pair's setting, same network first, else nearest
+  density, K scaled by n for BigCLAM and NEO-K-Means), `--transfer-missing`
+  (the same for a search that ended without a setting) and `--adopt-from DIR`
+  (copy an earlier calibration's finished searches and its ledgers; the
+  source is never changed). Every transferred or adopted entry names its
+  source; report them as such.
 - **Durable runs.** Every `hedonic run` kind runs detached (tmux, else a
   detached process), writes `progress.json`, survives a closed terminal, and
-  resumes from its files. A queue judges each item, and each pair of a
+  resumes from its files. `--foreground` runs the same worker in the
+  terminal and registers it under its `--name`. A queue judges each item, and each pair of a
   by-pair item, from the files on disk; never reorder queue items to change
   the pair order (that is `pairs` in the queue file).
 - **Memory.** Detector runs whose time or memory is a result run one at a

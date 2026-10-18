@@ -70,6 +70,8 @@ TOPICS: dict[str, tuple[str, str]] = {
         The runs can also be started one by one:
         hedonic run calibrate --networks dblp:top5000 --mode auto   re-tune Hedonic's (gamma, cap); writes hoc_tuned.json
         hedonic run calibrate-baselines --networks PAIRS --methods all   label-free baseline calibration
+            (--method-budget angel=3:60, --transfer PAIRS, --adopt-from DIR: the queue's budget, unsearched pairs
+            that take the nearest calibrated pair's setting, and searches copied from an earlier calibration)
         hedonic run exp --config paper-benchmark --tuned FILE[,FILE]     the benchmark at the calibrated settings
         hedonic run audit --source RUN          exact robustness of the covers a run saved without --robustness
     """),
