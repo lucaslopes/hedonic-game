@@ -19,6 +19,7 @@ from hedonic.experiments.overlapping.tui import style
 
 TOPICS: dict[str, tuple[str, str]] = {
     "start": ("First steps", """
+        hedonic                         in a terminal: the home screen (where things stand, then a menu)
         hedonic show methods            which of the nine methods (Hedonic and eight baselines) can run here
         hedonic show covers             which SNAP graph/cover pairs are on disk
         hedonic setup --dry-run         what `hedonic setup` would download and build, and the system tools it needs

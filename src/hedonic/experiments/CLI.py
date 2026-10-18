@@ -358,6 +358,8 @@ def _run_equivalent(command: str, rest: list[str]) -> str | None:
 HEDONIC_HELP = """\
 usage: hedonic COMMAND [options]
 
+  hedonic                        in a terminal: the home screen (status, then a menu of what to do); elsewhere this help
+
 Overlapping communities (SNAP networks)
   hedonic run queue paper        the overlap paper's experiments, one after another (--dry-run plans, --root DIR)
   hedonic run exp [options]      a benchmark: networks x methods x seeds (interactive wizard without options)
@@ -405,6 +407,11 @@ def hedonic_main(argv: list[str] | None = None) -> int:
     if (refused := _posix_only() or _cli_extra()) is not None:
         return refused
     argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        from hedonic.experiments import home
+
+        if home.wanted():  # a terminal; a pipe, a script or HEDONIC_PLAIN_VIEW=1 gets the help text
+            return home.main()
     if not argv or argv[0] in ("-h", "--help") or argv[:2] in (["run", "-h"], ["run", "--help"]):
         print(HEDONIC_HELP)
         return 0

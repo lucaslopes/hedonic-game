@@ -188,6 +188,7 @@ interpreter. Do not add a second audit implementation.
 ## Experiments
 
 ```bash
+hedonic                                # in a terminal: the home screen (status + menu); elsewhere the help
 hedonic guide                          # state-aware tour of the commands
 hedonic setup --all [--dry-run]        # SNAP pairs and the eight baselines' runtimes
 hedonic run exp [--dry-run]            # benchmark front door (wizard in a terminal)
@@ -198,6 +199,16 @@ hedonic show methods|networks|covers|metrics
 hedonic-exp list                       # analysis and utility commands
 ```
 
+- **Home screen (`experiments/home.py`).** A bare `hedonic` opens it only when
+  stdin and stdout are a terminal and `HEDONIC_PLAIN_VIEW` is unset; otherwise
+  (and for `--help`, always) it prints `HEDONIC_HELP`, so scripts are unchanged.
+  The header reads local state only (pair files present, `info.method_status`,
+  the run registry; a queue's progress is not counted). Every menu item is a
+  `hedonic` argv that is printed before `CLI.hedonic_main` runs it: views
+  (`back=True`: lists, `show`, `setup --dry-run`, `run queue paper --dry-run`,
+  `config show`, `update`) return to the menu, runs and the wizards hand the
+  terminal over. Resuming asks first. Keep each item a real command, never a
+  screen-only action; `tests/experiments/test_home.py` drives it in a pty.
 - **Everything comes from the package.** Configs resolve through
   `resources.config_path` (a path that exists wins, then
   `hedonic/experiments/configs/`), worker scripts through
