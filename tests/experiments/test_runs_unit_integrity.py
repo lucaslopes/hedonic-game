@@ -124,7 +124,8 @@ class TestCheck(unittest.TestCase):
 class TestScan(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.cfg = qs.Config(networks=["dblp"], methods=["codeseg", "fox"], seeds=[0, 1], save_covers=True,
+        self.cfg = qs.Config(networks=["dblp"], methods=["codeseg", "fox"], seeds=[0, 1], replication="all",  # every seed of FOX/CliquePerc too
+                              save_covers=True,
                              output_dir=self._tmp.name, cache_dir=self._tmp.name)
         self.plan = qs.build_plan(self.cfg, {})
         patcher = mock.patch.object(qs, "unit_digest", return_value=DIGEST)
@@ -202,7 +203,8 @@ class TestWorkerScan(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.cfg = qs.Config(networks=["dblp"], methods=["codeseg", "fox"], seeds=[0, 1], save_covers=True,
+        self.cfg = qs.Config(networks=["dblp"], methods=["codeseg", "fox"], seeds=[0, 1], replication="all",  # every seed of FOX/CliquePerc too
+                              save_covers=True,
                              output_dir=self._tmp.name, cache_dir=self._tmp.name)
         self.plan = qs.build_plan(self.cfg, {})
         self.prog = {"plan": [{"network": n, "seed": s, "method": m.key, "label": m.label, "status": "pending",
@@ -257,7 +259,8 @@ class TestWorkerRun(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.cfg = qs.Config(networks=["dblp"], methods=["codeseg", "fox"], seeds=[0, 1], save_covers=True,
+        self.cfg = qs.Config(networks=["dblp"], methods=["codeseg", "fox"], seeds=[0, 1], replication="all",  # every seed of FOX/CliquePerc too
+                              save_covers=True,
                              output_dir=self._tmp.name, cache_dir=self._tmp.name, order="seed,method,network")
         self.entry = {"name": "t", "config": self.cfg.__dict__, "output_dir": self._tmp.name}
         for patcher in (mock.patch.object(qs, "unit_digest", return_value=DIGEST),
@@ -322,7 +325,8 @@ class TestWorkerRunWithCovers(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.cfg = qs.Config(networks=["dblp:all", "dblp:top5000"], methods=["hedonic", "clique_percolation"], seeds=[0, 1], nodes=0,
+        self.cfg = qs.Config(networks=["dblp:all", "dblp:top5000"], methods=["hedonic", "clique_percolation"], seeds=[0, 1], replication="all",  # every seed of FOX/CliquePerc too
+                              nodes=0,
                              save_covers=True, induce="covered", output_dir=self._tmp.name, cache_dir=self._tmp.name,
                              order="seed,network,method")
         self.entry = {"name": "t", "config": self.cfg.__dict__, "output_dir": self._tmp.name}

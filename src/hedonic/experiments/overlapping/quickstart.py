@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hedonic.experiments.config import RUNS_ROOT, codeseg_cache_dir, expand_path
-from hedonic.experiments.overlapping import snap, tui
+from hedonic.experiments.overlapping import replication, snap, tui
 from hedonic.experiments.overlapping.tui import style
 
 # --------------------------------------------------------------------------- catalogue
@@ -148,6 +148,7 @@ class Config:
     tuned: str = ""                         # calibration file (hoc_tuned.json) laid over the HOC rows of method_params
     robustness: bool = False                # audit every saved cover (robustness/cover_audit.jsonl): needs covers, full graphs
     induce: str = "full"                    # "covered": every method sees only the subgraph induced by the cover's vertices
+    replication: str = "auto"               # "auto": a deterministic method runs once (lowest seed); "all": every seed
 
     def command(self) -> str:
         allowed = {"output_dir", "cache_dir", "network_root", "json"} | ({"tuned", "method_params"} if self.tuned else set())
@@ -187,6 +188,8 @@ class Config:
             parts.append("--robustness")
         if self.induce != "full":
             parts += ["--induce", self.induce]
+        if self.replication != "auto":
+            parts += ["--replication", self.replication]
         return " ".join(shlex.quote(p) if " " in p and p != "hedonic run exp" else p for p in parts)
 
     def pretty_command(self) -> str:
@@ -416,7 +419,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "the whole graph, answers filtered to the cover's vertices when scoring)")
     p.add_argument("--nodes", type=int, default=None, help="vertices of the induced subgraph; 0 = full graph (default 5000)")
     p.add_argument("--full", action="store_true", help="shorthand for --nodes 0")
-    p.add_argument("--seeds", default=None, help="e.g. 0 | 0-4 | 0,3,7 (default 0)")
+    p.add_argument("--seeds", default=None,
+                   help="e.g. 0 | 0-4 | 0,3,7 (default 0); a deterministic method runs only at the lowest (see --replication)")
+    once = ", ".join(m.label.split(" (")[0] for m in METHODS + CONTROLS if replication.kind(m.key) == "deterministic")
+    p.add_argument("--replication", choices=replication.MODES, default=None,
+                   help=f"auto (default): a deterministic method ({once}) runs once per network, at the lowest seed, since "
+                        "more seeds repeat its cover; the others run at every seed. all: every method at every seed (an "
+                        "audit of determinism). Both modes share their records")
     p.add_argument("--preset", choices=("screened", "registry", "paper"), default=None,
                    help="screened = most accurate setting within 10 min on full DBLP; registry = registry/paper "
                         "defaults ('paper' is accepted as an old spelling)")
@@ -506,6 +515,11 @@ def _config_from_mapping(data: dict, source: str) -> Config:
             value = value.split(",")
         if key == "order":  # "seed,method,network" or ["seed", "method", "network"], outermost loop first
             value = parse_order(value, f"order in {path}")
+        if key == "replication":
+            try:
+                value = replication.check_mode(value)
+            except ValueError as exc:
+                raise ValueError(f"{exc} (in {path})") from None
         setattr(cfg, key, value)
     if cfg.induce not in ("full", "covered"):
         raise ValueError(f"induce in {path} must be full or covered; got {cfg.induce!r}")
@@ -548,6 +562,8 @@ def config_from_args(a: argparse.Namespace) -> Config:
         cfg.nodes = a.nodes
     if a.seeds is not None:
         cfg.seeds = parse_seeds(a.seeds)
+    if a.replication is not None:
+        cfg.replication = a.replication
     for key in ("preset", "timeout", "output_dir", "cache_dir", "network_root"):
         if getattr(a, key) is not None:
             setattr(cfg, key, getattr(a, key))
@@ -647,7 +663,7 @@ def wizard(cfg: Config) -> Config:
         cfg.timeout = float(tui.text("Per-run timeout [s]", f"{cfg.timeout:g}", lambda v: _check(float, v)))
         cfg.output_dir = tui.text("Save runs and results in", cfg.output_dir)
         cfg.cache_dir = tui.text("Cache for downloads and built tools", cfg.cache_dir)
-        runs = len(cfg.networks) * len(cfg.seeds) * len(cfg.methods)
+        runs = len(build_plan(cfg, {}))
         size = "full graph" if not cfg.nodes else f"{cfg.nodes:,} vertices"
         print()
         print(style("  Summary", "bold"))
@@ -874,17 +890,42 @@ def prepare(cfg: Config, say) -> tuple[Path | None, dict[str, str]]:
     return binary, unavailable
 
 
+def planned_seeds(cfg: Config, method: str) -> list[int]:
+    """The seeds ``method`` runs at in this run: all of them, or the lowest for a deterministic method
+    (``replication.planned_seeds`` under ``cfg.replication``)."""
+    return replication.planned_seeds(method, cfg.seeds, cfg.replication)
+
+
 def build_plan(cfg: Config, unavailable: dict[str, str]) -> list[tuple[str, int, Method]]:
-    """All (network, seed, method) runs, nested in ``cfg.order`` (outermost first)."""
+    """The (network, seed, method) runs, nested in ``cfg.order`` (outermost first).
+
+    A method runs at the seeds of ``planned_seeds``: under ``replication = "auto"`` a deterministic method runs once per
+    network, at the lowest seed, because more seeds would repeat its cover. The plan only leaves units out; a unit's
+    arguments, identity and folder never depend on the replication, so both modes share their records.
+    """
     import itertools
 
     axes = {"network": cfg.networks, "seed": cfg.seeds, "method": [m for m in cfg.methods if m not in unavailable]}
+    seeds = {m: set(planned_seeds(cfg, m)) for m in axes["method"]}
     names = cfg.order.split(",")
     plan = []
     for combo in itertools.product(*(axes[n] for n in names)):
         point = dict(zip(names, combo))
-        plan.append((point["network"], point["seed"], BY_KEY[point["method"]]))
+        if point["seed"] in seeds[point["method"]]:
+            plan.append((point["network"], point["seed"], BY_KEY[point["method"]]))
     return plan
+
+
+def replication_text(cfg: Config) -> str:
+    """How many runs each method gets, for plan and result headings ('' when that is one per seed for all)."""
+    if len(cfg.seeds) < 2:
+        return ""
+    once = [BY_KEY[m].label.split(" (")[0] for m in cfg.methods if len(planned_seeds(cfg, m)) == 1]
+    if cfg.replication == "all":
+        return "replication all: every method at every seed"
+    if not once:
+        return ""
+    return f"deterministic, one run at seed {min(cfg.seeds)}: {', '.join(once)}"
 
 
 def scan_command(cfg: Config, name: str | None) -> int:
@@ -943,6 +984,7 @@ def render_plan(cfg: Config) -> str:
 
     lines = [style(f"  {len(plan)} runs", "bold") + f" · order {cfg.order.replace(',', ' → ')}",
              wrap(describe(cfg)),
+             *([wrap(replication_text(cfg))] if replication_text(cfg) else []),
              style(wrap(environment_line()), "dim"),
              style(wrap(f"estimated time ~{fmt_time(total)} on an M1-Max-class machine: a rough guide from the screening "
                         f"and saved timings, refined live while running. Downloads and first-use builds are not "
@@ -1145,7 +1187,8 @@ def open_stage(cfg: Config):
         return None
     from hedonic.experiments.overlapping import cover_audit
 
-    return cover_audit.Stage(cfg.output_dir, cfg.networks, cfg.methods, cfg.seeds, cfg.network_root, cfg.induce)
+    return cover_audit.Stage(cfg.output_dir, cfg.networks, cfg.methods, cfg.seeds, cfg.network_root, cfg.induce,
+                             cfg.replication)
 
 
 def attach_robustness(stage, net: str, seed: int, m: Method, rec: dict) -> bool:
@@ -1253,7 +1296,8 @@ def environment_line() -> str:
 def describe(cfg: Config) -> str:
     size = graph_text(cfg)
     return (f"{', '.join(NETWORKS[n][0] for n in cfg.networks)} · {size} · seeds {','.join(map(str, cfg.seeds))}"
-            f" · preset {cfg.preset} · {cfg.threads} threads" + (" · + robustness" if cfg.robustness else ""))
+            f" · preset {cfg.preset} · {cfg.threads} threads" + (" · + robustness" if cfg.robustness else "")
+            + (" · replication all" if cfg.replication == "all" else ""))
 
 
 # --------------------------------------------------------------------------- results
@@ -1263,7 +1307,9 @@ def summarise(records: list[dict], cfg: Config) -> list[dict]:
         for key in cfg.methods:
             recs = [r for r in records if r["network"] == net and r["method_key"] == key]
             done = [r for r in recs if r.get("status") == "completed"]
+            planned = planned_seeds(cfg, key)
             row = {"network": net, "method": key, "label": BY_KEY[key].label, "completed": len(done), "runs": len(recs),
+                   "replication": replication.kind(key), "planned_runs": len(planned),
                    "status": "completed" if done and len(done) == len(recs) else
                              (recs[-1].get("status") if recs else "not run"),
                    "reason": None if done else (recs[-1].get("reason") if recs else None)}
@@ -1273,6 +1319,7 @@ def summarise(records: list[dict], cfg: Config) -> list[dict]:
                 vals = [float(v) for v in vals if isinstance(v, (int, float))]
                 row[metric] = statistics.fmean(vals) if vals else None
                 row[metric + "_sd"] = statistics.stdev(vals) if len(vals) > 1 else None
+            row["sd_note"] = "n/a: one planned run" if len(planned) == 1 else None  # no spread to report, not a missing one
             rows.append(row)
     return rows
 
@@ -1310,6 +1357,8 @@ def _render_tables(rows: list[dict], cfg: Config, show_sd: bool) -> str:
         size = graph_text(cfg)
         seeds = (f"mean ± sd over {len(cfg.seeds)} seeds" if many else
                  f"mean over {len(cfg.seeds)} seeds (± sd in summary.json)" if multi else f"seed {cfg.seeds[0]}")
+        if multi and any(r.get("planned_runs") == 1 for r in block):
+            seeds += f"; a deterministic method: its one run (seed {min(cfg.seeds)})"
         out.append("\n" + style(f"  {NETWORKS[net][0]} · {size} · {seeds}", "bold"))
         best = {k: max((r[k] for r in block if r[k] is not None), default=None) for k, _ in columns_}
         fastest = min((r["detection_seconds"] for r in block if r["detection_seconds"] is not None), default=None)
@@ -1354,6 +1403,9 @@ def _render_tables(rows: list[dict], cfg: Config, show_sd: bool) -> str:
     out.append(style("  best per column in green, fastest in cyan · time = detection only", "dim"))
     out.append(style("  F1 sym. = symmetric best-match F1 · ONMI = LFK overlapping NMI · all metrics: hedonic show metrics",
                      "dim"))
+    if multi and any(r.get("planned_runs") == 1 for r in rows):
+        out.append(style("  runs = completed / planned: a deterministic method runs once (more seeds repeat its cover), "
+                         "so it has no ± sd", "dim"))
     if cfg.robustness:
         out.append(style("  Robust. = share of vertices with no profitable move, averaged over log10(resolution) from "
                          "1e-4 to 1 (saved cover, open labels)", "dim"))

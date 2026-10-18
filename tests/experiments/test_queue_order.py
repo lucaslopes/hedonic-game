@@ -54,6 +54,7 @@ class TestOrderKey(unittest.TestCase):
     def test_every_nesting_walks_the_same_units_with_the_outermost_loop_slowest(self):
         base = qs.load_config("paper")
         base.networks, base.methods, base.seeds = ["dblp", "amazon"], ["codeseg", "fox", "clique_percolation"], [0, 1]
+        base.replication = "all"  # the nesting, not the replication rule: every method at every seed
         units = None
         for order in itertools.permutations(("network", "seed", "method")):
             base.order = ",".join(order)
@@ -70,6 +71,7 @@ class TestOrderKey(unittest.TestCase):
     def test_seed_major_runs_one_seed_on_every_method_and_network_before_the_next(self):
         base = qs.load_config("paper")
         base.networks, base.methods, base.seeds, base.order = ["dblp", "amazon"], ["clique_percolation", "angel"], [0, 1], "seed,method,network"
+        base.replication = "all"
         plan = [(n, s, m.key) for n, s, m in qs.build_plan(base, {})]
         self.assertEqual(plan, [("dblp", 0, "clique_percolation"), ("amazon", 0, "clique_percolation"), ("dblp", 0, "angel"), ("amazon", 0, "angel"),
                                 ("dblp", 1, "clique_percolation"), ("amazon", 1, "clique_percolation"), ("dblp", 1, "angel"), ("amazon", 1, "angel")])
@@ -83,7 +85,7 @@ class TestShippedBenchmark(unittest.TestCase):
         self.assertEqual(cfg.methods[0], "hedonic")
         self.assertEqual(len(cfg.methods), 9)
         self.assertTrue(cfg.robustness and cfg.save_covers)
-        self.assertEqual(len(qs.build_plan(cfg, {})), 8 * 9 * 10)
+        self.assertEqual(len(qs.build_plan(cfg, {})), 8 * (4 * 10 + 5))  # 5 deterministic methods run once per pair
 
     def test_the_queue_item_reads_that_file_and_the_queue_still_loads(self):
         with tempfile.TemporaryDirectory() as tmp:

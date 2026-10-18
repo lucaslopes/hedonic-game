@@ -52,6 +52,7 @@ from hedonic.experiments.config import NETWORKS_DIR, RUNS_ROOT, expand_path
 from hedonic.experiments.runtime import runtime_versions
 from hedonic.experiments.overlapping import gt_posthoc as ph
 from hedonic.experiments.overlapping import quickstart as qs
+from hedonic.experiments.overlapping import replication
 from hedonic.experiments.overlapping import robustness as rb
 from hedonic.experiments.overlapping import snap
 from hedonic.experiments.overlapping import stability as st
@@ -105,7 +106,12 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
                         help="benchmark run folders holding runs/ and covers/ (the first folder with a unit's record wins)")
     parser.add_argument("--networks", default=DEFAULT_NETWORKS, help=f"comma list (default {DEFAULT_NETWORKS})")
     parser.add_argument("--methods", help="comma list of method keys (default: those found in the sources)")
-    parser.add_argument("--seeds", default=DEFAULT_SEEDS, help=f"seeds, e.g. 0-9 (default {DEFAULT_SEEDS})")
+    parser.add_argument("--seeds", default=DEFAULT_SEEDS,
+                        help=f"seeds, e.g. 0-9 (default {DEFAULT_SEEDS}); a deterministic method is audited at the lowest "
+                             "only, as the benchmark runs it (see --replication)")
+    parser.add_argument("--replication", choices=replication.MODES, default=replication.DEFAULT_MODE,
+                        help="auto (default): expect a deterministic method's cover at the lowest seed only, as `hedonic "
+                             "run exp` plans it; all: at every seed (a benchmark run with --replication all)")
     parser.add_argument("--profiles", default=",".join(PROFILES),
                         help="cover (every method), labelled (HOC only, exact labels) or both (default)")
     parser.add_argument("--cap", default=DEFAULT_CAP,
@@ -182,7 +188,7 @@ def resolve(argv: list[str], prog: str = "hedonic run audit") -> dict[str, Any]:
     root = Path(userconfig.defaults().get("output_dir") or RUNS_ROOT)
     output = expand_path(args.output_dir).resolve() if args.output_dir else expand_path(root / name).resolve()
     return {"sources": sources, "networks": networks, "methods": methods, "seeds": seeds, "profiles": profiles,
-            "induce": args.induce,
+            "induce": args.induce, "replication": args.replication,
             "cap": parse_cap(args.cap), "name": name, "output": output, "overwrite": bool(args.overwrite),
             "dry_run": bool(args.dry_run),
             "workers": max(1, int(args.workers or min(8, os.cpu_count() or 1))),
@@ -210,9 +216,16 @@ def key_of(network: str, seed: int, method: str, profile: str) -> str:
 
 
 def conditions(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    """Every audit of the plan, methods outermost in the order given (so an interruption costs the last ones)."""
+    """Every audit of the plan, methods outermost in the order given (so an interruption costs the last ones).
+
+    A method is audited at the seeds the benchmark runs it at (``replication.planned_seeds``): under ``replication =
+    "auto"`` a deterministic method has one cover per network, at the lowest seed. Covers of other seeds that an older
+    run left on disk are not expected, and not audited."""
     out = []
+    mode = plan.get("replication", replication.DEFAULT_MODE)
     for method, network, seed in itertools.product(plan["methods"], plan["networks"], plan["seeds"]):
+        if seed not in replication.planned_seeds(method, plan["seeds"], mode):
+            continue
         for profile in plan["profiles"]:
             if profile == "labelled" and method not in LABELLED_METHODS:
                 continue
@@ -237,8 +250,11 @@ def find_record(plan: dict[str, Any], network: str, seed: int, method: str) -> t
 
 
 def describe(plan: dict[str, Any]) -> str:
-    return (f"cover audit · {len(plan['networks'])} networks × {len(plan['methods'])} methods × {len(plan['seeds'])} "
-            f"seeds · {len(conditions(plan)):,} audits ({'+'.join(plan['profiles'])})")
+    once = [m for m in plan["methods"] if len(replication.planned_seeds(m, plan["seeds"], plan.get("replication", "auto"))) == 1]
+    seeds = f"{len(plan['seeds'])} seeds" + (f" (deterministic methods: seed {min(plan['seeds'])} only)"
+                                             if once and len(plan["seeds"]) > 1 else "")
+    return (f"cover audit · {len(plan['networks'])} networks × {len(plan['methods'])} methods × {seeds} · "
+            f"{len(conditions(plan)):,} audits ({'+'.join(plan['profiles'])})")
 
 
 def plan_lines(plan: dict[str, Any]) -> list[str]:
@@ -692,11 +708,12 @@ class Stage:
     """
 
     def __init__(self, output_dir: str | Path, networks: list[str], methods: list[str], seeds: list[int],
-                 network_root: str | Path | None = None, induce: str | None = None):
+                 network_root: str | Path | None = None, induce: str | None = None,
+                 replication_mode: str = replication.DEFAULT_MODE):
         out = expand_path(output_dir).resolve()
         argv = ["--source", str(out), "--networks", ",".join(networks), "--methods", ",".join(methods),
                 "--seeds", ",".join(str(seed) for seed in seeds), "--output-dir", str(out / STAGE_DIR),
-                "--name", "robustness"]
+                "--name", "robustness", "--replication", replication_mode]
         if network_root:
             argv += ["--network-root", str(network_root)]
         if induce:
@@ -803,7 +820,9 @@ def launch_argv(plan: dict[str, Any]) -> list[str]:
     return ["--source", *map(str, plan["sources"]), "--networks", ",".join(plan["networks"]),
             "--methods", ",".join(plan["methods"]), "--seeds", ",".join(map(str, plan["seeds"])),
             "--profiles", ",".join(plan["profiles"]), "--cap", str(plan["cap"]), "--workers", str(plan["workers"]),
-            "--network-root", str(plan["network_root"]), "--name", plan["name"], "--output-dir", str(plan["output"])]
+            "--network-root", str(plan["network_root"]), "--name", plan["name"], "--output-dir", str(plan["output"]),
+            "--replication", plan.get("replication", replication.DEFAULT_MODE),
+            *(["--induce", plan["induce"]] if plan.get("induce") else [])]
 
 
 def front_main(argv: list[str] | None = None) -> int:

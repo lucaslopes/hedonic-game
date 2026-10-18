@@ -1,7 +1,9 @@
 """Chapter 6 joint plots: accuracy against detection time and accuracy against cover robustness.
 
 One row per network, two panels per row, one marker per method. Every seed is a faint point; the solid marker is the
-mean over seeds with a 95% Student-t interval on both axes. Accuracy and time come from the benchmark records
+mean over seeds with a 95% Student-t interval on both axes. A deterministic method runs once per network (its lowest seed;
+``replication``), so it is one point with no interval: records of its other seeds that an older run left are not read
+unless ``--replication all``. Accuracy and time come from the benchmark records
 (``hedonic run paper`` / ``paper-hoc``); robustness comes from the audit of the same covers, which those runs write
 to ``RUN_DIR/robustness`` (``--robustness``; ``hedonic run audit`` writes the same ledger for a run that lacks it, and
 ``--audit`` names such a folder): the share of the resolution range [1e-4, 1], on a log axis, at which a vertex's memberships are
@@ -32,6 +34,7 @@ from scipy.stats import t as student_t  # noqa: E402
 from hedonic.experiments.config import OUTPUT_DIR, expand_path  # noqa: E402
 from hedonic.experiments.overlapping import cover_audit  # noqa: E402
 from hedonic.experiments.overlapping import quickstart as qs  # noqa: E402
+from hedonic.experiments.overlapping import replication  # noqa: E402
 
 DEFAULT_METRIC = "f1"
 MEASURES = {"log": "stable_measure_log", "linear": "stable_measure_linear"}
@@ -41,14 +44,18 @@ MARKERS = ["o", "s", "^", "v", "D", "P", "X", "<", ">", "h"]
 METRIC_LABEL = dict(qs.COLUMNS)
 RUNNER_TO_KEY = {method.runner: method.key for method in qs.METHODS + qs.CONTROLS}  # controls: supervised references
 ROW_FIELDS = ["network", "seed", "method", "accuracy", "seconds", "robustness"]
-AGG_FIELDS = ["network", "method", "n", "accuracy_mean", "accuracy_ci95", "seconds_mean", "seconds_ci95",
+AGG_FIELDS = ["network", "method", "replication", "n", "accuracy_mean", "accuracy_ci95", "seconds_mean", "seconds_ci95",
               "n_robustness", "robustness_mean", "robustness_ci95"]
 
 
 # --------------------------------------------------------------------------- data
 def load_benchmark(folders: Sequence[Path], metric: str, networks: Sequence[str] | None = None,
-                   methods: Sequence[str] | None = None) -> tuple[list[dict[str, Any]], int]:
+                   methods: Sequence[str] | None = None,
+                   replication_mode: str = replication.DEFAULT_MODE) -> tuple[list[dict[str, Any]], int]:
     """Accuracy and detection time of every completed unit; the first folder holding a unit wins.
+
+    Under ``replication_mode = "auto"`` a deterministic method keeps only its lowest seed per network, as the benchmark
+    plans it (more seeds would repeat its cover, and repeated points would fake a zero-width interval).
 
     Returns the rows and the number of units skipped because they did not complete or lack the metric.
     """
@@ -69,7 +76,12 @@ def load_benchmark(folders: Sequence[Path], metric: str, networks: Sequence[str]
                 continue
             rows[unit] = {"network": unit[0], "seed": unit[1], "method": key, "accuracy": float(value),
                           "seconds": float(record["detection_seconds"]), "robustness": None}
-    return list(rows.values()), skipped
+    seeds: dict[tuple[str, str], list[int]] = {}
+    for network, seed, key in rows:
+        seeds.setdefault((network, key), []).append(seed)
+    kept = [row for (network, seed, key), row in rows.items()
+            if seed in replication.planned_seeds(key, seeds[network, key], replication_mode)]
+    return kept, skipped
 
 
 def load_robustness(folders: Sequence[Path], measure: str, policy: str) -> dict[tuple[str, int, str], float]:
@@ -111,7 +123,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         accuracy = [m["accuracy"] for m in members]
         seconds = [m["seconds"] for m in members]
         robust = [m["robustness"] for m in members if m["robustness"] is not None]
-        out.append({"network": network, "method": method, "n": len(members),
+        out.append({"network": network, "method": method, "replication": replication.kind(method), "n": len(members),
                     "accuracy_mean": statistics.fmean(accuracy), "accuracy_ci95": ci95(accuracy),
                     "seconds_mean": statistics.fmean(seconds), "seconds_ci95": ci95(seconds),
                     "n_robustness": len(robust), "robustness_mean": statistics.fmean(robust) if robust else None,
@@ -147,20 +159,23 @@ def plot(rows: list[dict[str, Any]], aggregates: list[dict[str, Any]], *, metric
             agg = next((a for a in aggregates if a["network"] == network and a["method"] == method.key), None)
             if not seeds or agg is None:
                 continue
-            axes[r][0].scatter([s["seconds"] for s in seeds], [s["accuracy"] for s in seeds], s=14, alpha=0.3,
-                               color=colour, marker=marker, linewidths=0)
+            single = len(seeds) == 1  # one run (a deterministic method): its point, without an interval
+            if not single:
+                axes[r][0].scatter([s["seconds"] for s in seeds], [s["accuracy"] for s in seeds], s=14, alpha=0.3,
+                                   color=colour, marker=marker, linewidths=0)
             axes[r][0].errorbar(agg["seconds_mean"], agg["accuracy_mean"], xerr=_bar(agg["seconds_ci95"]),
                                 yerr=_bar(agg["accuracy_ci95"]), color=colour, marker=marker, markersize=8,
-                                markeredgecolor="black", markeredgewidth=0.6, capsize=2.5, linewidth=1.0,
-                                label=method.label)
+                                markeredgecolor="black", markeredgewidth=0.6, capsize=0 if single else 2.5,
+                                linewidth=1.0, label=method.label)
             audited = [s for s in seeds if s["robustness"] is not None]
             if audited and agg["robustness_mean"] is not None:
-                axes[r][1].scatter([s["robustness"] for s in audited], [s["accuracy"] for s in audited], s=14,
-                                   alpha=0.3, color=colour, marker=marker, linewidths=0)
+                if len(audited) > 1:
+                    axes[r][1].scatter([s["robustness"] for s in audited], [s["accuracy"] for s in audited], s=14,
+                                       alpha=0.3, color=colour, marker=marker, linewidths=0)
                 axes[r][1].errorbar(agg["robustness_mean"], statistics.fmean(s["accuracy"] for s in audited),
                                     xerr=_bar(agg["robustness_ci95"]), yerr=_bar(ci95([s["accuracy"] for s in audited])),
                                     color=colour, marker=marker, markersize=8, markeredgecolor="black",
-                                    markeredgewidth=0.6, capsize=2.5, linewidth=1.0)
+                                    markeredgewidth=0.6, capsize=2.5 if len(audited) > 1 else 0, linewidth=1.0)
         label = qs.NETWORKS[network][0]
         axes[r][0].set_xscale("log")
         axes[r][0].set_xlabel("Detection time (s, log scale)")
@@ -186,13 +201,13 @@ def plot(rows: list[dict[str, Any]], aggregates: list[dict[str, Any]], *, metric
 
 # --------------------------------------------------------------------------- CLI
 def smoke_rows() -> list[dict[str, Any]]:
-    """Synthetic rows (no benchmark needed): two networks, four methods, five seeds."""
+    """Synthetic rows (no benchmark needed): two networks, four methods, five seeds (one for a deterministic method)."""
     rng = random.Random(0)
     rows = []
     for network in ("dblp", "amazon"):
         for method, (acc, sec, rob) in {"hedonic": (0.45, 40, 0.80), "codeseg": (0.40, 6, 0.55),
                                         "clique_percolation": (0.42, 9, 0.35), "bigclam": (0.30, 580, 0.25)}.items():
-            for seed in range(5):
+            for seed in replication.planned_seeds(method, range(5)):
                 rows.append({"network": network, "seed": seed, "method": method,
                              "accuracy": acc + rng.gauss(0, 0.01), "seconds": sec * math.exp(rng.gauss(0, 0.08)),
                              "robustness": min(1.0, max(0.0, rob + rng.gauss(0, 0.02)))})
@@ -217,6 +232,9 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=[name for name, _ in cover_audit.POLICIES], help="action space of the audit")
     parser.add_argument("--formats", default="pdf,png", help="figure formats (default pdf,png)")
     parser.add_argument("--output-dir", help="folder for the figure and CSVs (default <OUTPUT_DIR>/overlapping/benchmark_tradeoffs)")
+    parser.add_argument("--replication", choices=replication.MODES, default=replication.DEFAULT_MODE,
+                        help="auto (default): a deterministic method is its lowest seed's run (one point, no interval), as "
+                             "the benchmark plans it; all: every seed on disk")
     parser.add_argument("--smoke", action="store_true", help="draw synthetic rows; needs no benchmark")
     return parser
 
@@ -233,7 +251,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         networks = [n for n in (args.networks or "").split(",") if n] or None
         methods = [m for m in (args.methods or "").split(",") if m] or None
-        rows, skipped = load_benchmark([expand_path(f) for f in args.benchmark], args.metric, networks, methods)
+        rows, skipped = load_benchmark([expand_path(f) for f in args.benchmark], args.metric, networks, methods,
+                                       args.replication)
         folders = [expand_path(f) for f in [*args.benchmark, *(args.audit or [])]]  # a run's own ledger first
         join(rows, load_robustness(folders, args.measure, args.policy))
     if not rows:

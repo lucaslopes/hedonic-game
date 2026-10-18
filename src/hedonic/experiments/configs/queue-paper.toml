@@ -57,5 +57,5 @@ name = "benchmark"
 by_pair = true
 short = "benchmark"
 title = "accuracy, time and robustness"
-about = "Hedonic and eight baselines on the subgraph each cover induces, seeds 0-9, one detector at a time (time and memory are results). Each saved cover is audited for robustness right after its run."
+about = "Hedonic and eight baselines on the subgraph each cover induces, one detector at a time (time and memory are results): seeds 0-9 for Hedonic, ANGEL, Ego-Splitting and CoDeSEG, one run (seed 0) for the deterministic baselines. Each saved cover is audited for robustness right after its run."
 run = ["exp", "--config", "paper-benchmark", "--tuned", "{root}/hedonic-calibration/hoc_tuned.json,{root}/baseline-calibration/baseline_tuned.json", "--name", "benchmark", "--output-dir", "{root}/benchmark", "--yes"]

@@ -202,6 +202,21 @@ hedonic-exp list                       # analysis and utility commands
   deprecation notice (`RUN_EQUIVALENTS`). `overlapping/guide.py` (`TOPICS`) is
   user documentation: change it with any flag or verb it names. No help
   text advertises a removed feature.
+- **Replication.** `overlapping/replication.py` (`REPLICATION`) is the one
+  table of how each overlap method behaves under a seed: `deterministic` (one
+  run per setting is the result), `seeded` (the seed reaches the program) or
+  `replicas` (stochastic, no seed reaches it); `calibration_kind` overrides it
+  for the baseline calibration's own settings. `baseline_calibration`
+  re-exports it, and the benchmark plans from it: `quickstart.build_plan`
+  runs a deterministic method only at the lowest seed of the plan unless the
+  run asks `replication = "all"` (`--replication all`). Everything that
+  counts or reads units goes through that plan (the scan, `_final_check`,
+  `runqueue.data_state`/`unit_counts`, `queuebuild.benchmark`,
+  `cover_audit.conditions` for the stage and `hedonic run audit`, the tables,
+  `hedonic run check`, `plots/benchmark_tradeoffs.py`), and the setting never
+  enters a unit's arguments, digest or folder. Classify a new method there,
+  from runs at the benchmark's own settings (threads included): CoDeSEG
+  repeats at one thread but not at all cores.
 - **Hedonic only through `Game.community_hedonic`.** The method's key is
   `hedonic` (runner `hedonic_local`). The 1.x multilevel phase and the
   multi-phase variants are refused with a message saying they are not
