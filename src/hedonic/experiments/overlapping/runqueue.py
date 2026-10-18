@@ -1658,10 +1658,11 @@ def setup_check(queue: dict) -> dict:
 
     pairs, methods = requirements(queue)
     root = snap.networks_root()
+    roots = item_network_roots(queue)
     missing_pairs = []
     for target in pairs:
         try:
-            found = snap.pair_files(*snap.split_pair(target), root=root)
+            found = snap.pair_files(*snap.split_pair(target), root=roots.get(target, root))
         except Exception:  # noqa: BLE001 - an unknown pair is the queue's own error, reported elsewhere
             found = None
         if found is None:
@@ -1676,11 +1677,37 @@ def setup_check(queue: dict) -> dict:
         if missing_methods:
             parts += ["--methods", ",".join(missing_methods)]
         command = " ".join(parts)
-    return {"network_root": str(root), "pairs": pairs, "methods": methods, "missing_pairs": missing_pairs,
-            "missing_methods": missing_methods, "command": command}
+    others = sorted({str(r) for t, r in roots.items() if t in missing_pairs and Path(r) != Path(root)})
+    if command and others:
+        command += " --network-root " + others[0] if len(others) == 1 else ""
+    return {"network_root": str(root) if not others else ", ".join([str(root), *others]), "pairs": pairs,
+            "methods": methods, "missing_pairs": missing_pairs, "missing_methods": missing_methods, "command": command}
+
+
+def item_network_roots(queue: dict) -> dict[str, Path]:
+    """{pair: the network root an item names with --network-root}, for the pairs of items that name one."""
+    from hedonic.experiments.config import expand_path
+
+    out: dict[str, Path] = {}
+    for item in queue["items"]:
+        run = item["run"]
+        named = _option(run, "--network-root")
+        if not named:
+            continue
+        try:
+            targets = item_targets(run)
+        except (SystemExit, ValueError):
+            targets = []
+        if run[0] in ("calibrate", "calibrate-baselines"):
+            targets = targets or _listed(_option(run, "--networks"))
+        for target in targets:
+            out.setdefault(pair_id(target), expand_path(named))
+    return out
 
 
 def _print_setup_check(check: dict) -> None:
+    if not check["pairs"] and not check["methods"]:
+        return  # a queue with no network and no external method (the disjoint paper) needs no setup
     if not check["command"]:
         print(style(f"setup: the {len(check['pairs'])} pairs are under {check['network_root']} and the "
                     f"{len(check['methods'])} methods are ready", "dim"))

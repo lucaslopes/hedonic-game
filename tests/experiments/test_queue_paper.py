@@ -113,6 +113,31 @@ class TestSetupCheck(_Isolated):
             check = runqueue.setup_check(queue)
         self.assertIsNone(check["command"])
 
+    def test_an_items_network_root_is_where_its_pairs_are_looked_for(self):
+        queue = runqueue.load_queue("paper", root=str(self.root / "q"))
+        elsewhere = self.root / "elsewhere"
+        for item in queue["items"]:
+            if item["run"][0] == "calibrate-baselines":
+                item["run"] = [*item["run"], "--network-root", str(elsewhere)]
+        roots = runqueue.item_network_roots(queue)
+        self.assertEqual(set(roots), set(PAIRS))
+        self.assertEqual(set(roots.values()), {elsewhere})
+        seen = []
+
+        def pair_files(network, cover, root=None):
+            seen.append(Path(root))
+            return None
+        with patch("hedonic.experiments.overlapping.snap.pair_files", pair_files):
+            check = runqueue.setup_check(queue)
+        self.assertEqual(set(seen), {elsewhere})
+        self.assertIn("--network-root " + str(elsewhere), check["command"])
+
+    def test_a_queue_that_needs_nothing_prints_no_setup_line(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            runqueue._print_setup_check({"pairs": [], "methods": [], "command": None, "network_root": "x"})
+        self.assertEqual(out.getvalue(), "")
+
     def test_the_setup_cache_follows_the_environment_then_the_user_config(self):
         self.assertEqual(cs.default_cache_dir(), self.root / "cache")
         with patch.dict(os.environ, {"HEDONIC_CODESEG_CACHE": ""}), \
