@@ -10,20 +10,20 @@ from ._game.evaluation import (
     evaluate_against as _evaluate_against,
 )
 from ._game.memberships import (
+    as_overlapping_init as _as_overlapping_init_impl,
     memberships_as_cover as _memberships_as_cover,
     normalize_membership as _normalize_membership_impl,
     validate_membership as _validate_membership,
 )
 
 
-# Keywords of the igraph-fork releases (0.1, 1.5) that the C core removed, and
-# what replaces them.
+# Keywords of hedonic 1.x that 2.0 removed, and what replaces them.
 _REMOVED_ARGUMENTS = {
-    "n_iterations": "every call runs until no vertex can improve (the old n_iterations=-1)",
+    "n_iterations": "every call runs until no vertex can improve (the 1.x n_iterations=-1)",
     "local_move_only": "every call is local moving; for full Leiden use igraph's Graph.community_leiden",
-    "beta": "Leiden's refinement is not part of hedonic",
-    "debug_trace": "traces are not part of hedonic",
-    "phase_policy": "overlapping covers are hedonic 2",
+    "beta": "Leiden's refinement is not part of hedonic 2.0",
+    "debug_trace": "traces are not part of hedonic 2.0",
+    "phase_policy": "pass a partition as initial_membership to warm-start a cover",
     "ensure_equilibrium": "every call returns an equilibrium",
 }
 
@@ -39,7 +39,7 @@ def _removed_arguments(removed: dict) -> str:
         parts.append(f"got an unexpected keyword argument{plural} {listed}")
     if known:
         notes = "; ".join(f"{name}: {_REMOVED_ARGUMENTS[name]}" for name in known)
-        parts.append(f"no longer takes {', '.join(known)} (removed with the C core; {notes})")
+        parts.append(f"no longer takes {', '.join(known)} (removed in 2.0; {notes})")
     return "community_hedonic() " + "; it also ".join(parts)
 
 
@@ -109,6 +109,91 @@ class Game(Graph):
             return
         self._memberships = self._normalize_membership(value)
 
+
+    def stable_intervals(
+        self, memberships=None, *, max_memberships=None, allow_isolation=False,
+        edge_weights=None, atol=1e-10, rtol=1e-9, vertices=None,
+    ):
+        """Audit a fixed cover's stable resolutions on [0, 1].
+
+        Parameters
+        ----------
+        memberships:
+            Per-vertex label lists, a flat partition, or an igraph cover;
+            defaults to ``self.memberships``. Repeated labels count once,
+            gaps are renumbered in label order, and input rows are not
+            mutated. Every vertex needs a label; complete uncovered vertices
+            with private labels before calling.
+        max_memberships:
+            Maximum labels in a deviation. Defaults to the largest row and
+            cannot be smaller than it.
+        allow_isolation:
+            Whether a deviation may use a fresh label with score zero.
+        edge_weights:
+            Non-negative finite weights or an edge attribute name (``"weight"``).
+            None is ones, as in ``community_hedonic``: audit with the weights
+            the detector was given.
+        atol, rtol:
+            Heuristic tolerance ``atol + rtol * max(1, abs(current_utility))``.
+            This is independent of the detector's certified rounding bound.
+        vertices:
+            A range or sequence of vertex indices; defaults to all vertices.
+            Output follows this order, including repeated indices, so ranges
+            can be split across processes.
+
+        Returns
+        -------
+        list[list[tuple[float, float]]]
+            Sorted, disjoint, closed stable intervals for each selected
+            vertex. Empty lists mean never stable. Only unit node weights
+            and undirected graphs without self-loops are supported.
+
+        See Also
+        --------
+        regrets, hedonic.stability.stable_fraction,
+        hedonic.stability.stable_measures, hedonic.stability.nash_window
+        """
+        from ._audit import stable_intervals
+
+        return stable_intervals(
+            self, memberships, max_memberships=max_memberships,
+            allow_isolation=allow_isolation, edge_weights=edge_weights,
+            atol=atol, rtol=rtol, vertices=vertices,
+        )
+
+    def regrets(
+        self, resolutions, memberships=None, *, max_memberships=None,
+        allow_isolation=False, edge_weights=None, atol=1e-10, rtol=1e-9,
+        vertices=None,
+    ):
+        """Audit the best-response regret of a fixed cover on a resolution grid.
+
+        Parameters
+        ----------
+        resolutions:
+            One-dimensional sequence of finite resolutions in [0, 1].
+        memberships, max_memberships, allow_isolation, edge_weights, atol, rtol, vertices:
+            As in :meth:`stable_intervals`. Memberships default to the stored
+            labelled state; the cap defaults to its largest row. Node weights
+            are unit only.
+
+        Returns
+        -------
+        hedonic.stability.RegretResult
+            ``regret`` and ``tolerance`` NumPy arrays, shaped
+            ``(len(vertices), len(resolutions))``. Regret is the best utility
+            minus current utility, clamped to zero when at most 1e-15.
+            A vertex is stable where ``regret <= tolerance``. The grid sums
+            evaluated scores, so rounding near interval endpoints can differ
+            from :meth:`stable_intervals`' affine coefficient sums.
+        """
+        from ._audit import regrets
+
+        return regrets(
+            self, resolutions, memberships, max_memberships=max_memberships,
+            allow_isolation=allow_isolation, edge_weights=edge_weights,
+            atol=atol, rtol=rtol, vertices=vertices,
+        )
 
     def _memberships_as_cover(self) -> list[list[int]]:
         """Convert the stored per-vertex memberships to community lists."""
@@ -258,6 +343,12 @@ class Game(Graph):
             name=name,
         )
 
+    @staticmethod
+    def _as_overlapping_init(
+        membership: list[int] | list[list[int]],
+    ) -> list[list[int]]:
+        """Normalize flat or nested membership to list-of-lists (per vertex)."""
+        return _as_overlapping_init_impl(membership)
 
     def community_hedonic(
         self,
@@ -274,9 +365,10 @@ class Game(Graph):
         n_communities: int | None = None,
         **removed,
     ):
-        """Community detection with the CPM hedonic game.
+        """Community detection with the CPM hedonic game, disjoint or overlapping.
 
-        Each vertex is an agent that moves to the community it prefers, one
+        Each vertex is an agent that moves to the community (or, for covers,
+        the set of at most ``max_memberships`` communities) it prefers, one
         vertex at a time, until no vertex can improve: every vertex is
         visited, in a random order, and revisited after a neighbour moves.
         A move is taken only when its computed gain exceeds a rigorous bound
@@ -284,11 +376,14 @@ class Game(Graph):
         every call terminates. At return no unilateral deviation raises a
         vertex's exact payoff by more than
         ``_hedonic_provenance["equilibrium_slack"]`` times the total edge
-        weight. The slack is 0 whenever no deviation's exact gain can be
-        positive: always when the arithmetic is exact (for instance unit
-        weights at resolution 0, 1/2 or 1), and often otherwise; the result
-        is then an exact Nash equilibrium. The result is an equilibrium
-        reached from the start, not the best partition: from singletons at resolution 0, for instance, a connected
+        weight. For a partition the slack is 0 whenever no deviation's exact
+        gain can be positive: always when the arithmetic is exact (for
+        instance unit weights at resolution 0, 1/2 or 1), and often
+        otherwise; the result is then an exact Nash equilibrium. Covers,
+        whose payoffs divide by square roots, keep a tiny positive slack
+        (about 1e-15 on small graphs, less on large ones). The result
+        is an equilibrium reached from the start, not the best partition or
+        cover: from singletons at resolution 0, for instance, a connected
         graph need not end as one community. The computation runs in this
         package's C core (``hedonic._core``). Every argument after
         ``initial_membership`` is keyword-only.
@@ -304,36 +399,41 @@ class Game(Graph):
             The start. ``None`` (the default) is the singleton start, a
             random start with ``max_communities``, or a feasible round-robin
             start when a community-count limit is set. Otherwise one entry
-            per vertex: a community label, or a list of labels (a cover, which
-            is projected as below); labels are non-negative integers, and labels with
+            per vertex: a community label (a partition) or a list of labels
+            (a cover); labels are non-negative integers, and labels with
             gaps are renumbered in their order (0, 2, 5 become 0, 1, 2). A
             list, tuple or NumPy array is accepted, as is an igraph
             ``VertexClustering`` or ``VertexCover`` of a graph with the same
             vertices. A label repeated in a row counts once. To continue from
             the previous result, pass ``initial_membership=g.memberships``.
-            A vertex with more than one label keeps the one it prefers,
-            ranked by the payoff of belonging to each community alone,
-            evaluated on the start as given (ties to the larger community,
-            then the smaller label); the detector then moves from there to an
-            equilibrium. A cover thus becomes the partition in which every
-            vertex keeps its preferred community.
+            A vertex with more labels than ``max_memberships`` keeps the
+            ``max_memberships`` it prefers, ranked by the payoff of belonging
+            to each community alone, evaluated on the start as given (ties
+            to the larger community, then the smaller label); the detector
+            then moves from there to an equilibrium. A cover passed to a
+            partition call (``max_memberships=1``) thus becomes the partition
+            in which every vertex keeps its preferred community.
             ``_hedonic_provenance["projected_vertices"]`` counts the vertices
             that had to choose.
         max_communities :
-            Initialization only: when ``initial_membership`` is ``None``,
-            random start over ``[0, max_communities)``
+            Initialization only: when ``initial_membership`` is ``None`` and
+            ``max_memberships == 1``, random start over ``[0, max_communities)``
             (labels a draw leaves unused are dropped and the rest renumbered
             in order).
-            It has no effect with a supplied start, or when community-count limits select a feasible default start;
+            It has no effect with a supplied start, with overlapping defaults,
+            or when community-count limits select a feasible default start;
             ``_hedonic_provenance["max_communities_effect"]`` records which
             case applied. It is not an output constraint (see
             ``max_total_communities``/``n_communities``), but without
             ``allow_isolation`` no vertex can open a new community, so the
             result then has at most ``max_communities`` communities.
         max_memberships :
-            Communities per vertex: ``1``, a partition (``VertexClustering``),
-            the only value hedonic 1 accepts. Overlapping covers
-            (``max_memberships > 1``) are hedonic 2.
+            Per-vertex cap. ``1`` (default) gives a partition
+            (``VertexClustering``); ``> 1`` gives an overlapping cover
+            (``VertexCover``) in which each vertex belongs to at most this
+            many communities. ``-1`` removes the practical per-vertex cap (the
+            effective cap is the vertex count, recorded in
+            ``_hedonic_provenance``).
         resolution :
             CPM resolution γ. Defaults to the weighted density, the total
             edge weight ``W`` over the number of vertex pairs (the density of
@@ -345,8 +445,8 @@ class Game(Graph):
             Allow a vertex to open a new, empty community.
         edge_weights :
             Optional edge weights (a sequence of real numbers in edge order,
-            or an edge-attribute name), finite. Negative weights are
-            accepted as long as ``W > 0``. An edge
+            or an edge-attribute name), finite; non-negative for covers. A
+            partition accepts negative weights as long as ``W > 0``. An edge
             attribute named ``"weight"`` is not used unless named here.
             Booleans, strings, complex numbers, ``None`` and dicts are
             refused. The sum of their absolute values must stay below about
@@ -366,8 +466,8 @@ class Game(Graph):
             Optional vertex weights ``w_v`` (a sequence of real numbers in
             vertex order, or a vertex-attribute name), finite and
             non-negative. They enter the crowding term ``γ w_u w_v``; unit
-            weights are the default. ``|resolution| x N²``, for the total
-            vertex weight ``N``, must stay below about 4e304.
+            weights are the default. ``|resolution| x N² x max_memberships``,
+            for the total vertex weight ``N``, must stay below about 4e304.
         max_total_communities :
             Optional upper bound on the number of occupied communities of the
             result and of every state visited.
@@ -375,11 +475,17 @@ class Game(Graph):
             Optional exact number of occupied communities. Without a start
             state, a deterministic round-robin start occupies all ``K``
             labels. A start state that violates either count limit (after
-            its projection to one label per vertex) is rejected.
+            its projection to ``max_memberships``) is rejected.
 
         Returns
         -------
-        VertexClustering.
+        VertexClustering if ``max_memberships == 1``, else VertexCover.
+
+        A cover has one community per occupied label, and two labels may
+        have the same members: they are different coalitions of the game
+        (each counts in every member's utility and in the potential), so
+        they are kept. To compare with a reference cover, deduplicate the
+        bodies first, e.g. ``set(map(frozenset, cover))``.
 
         The result carries ``_hedonic_provenance`` (versions, effective
         parameters, count mode) and ``_hedonic_native_quality``:
@@ -390,6 +496,12 @@ class Game(Graph):
         memberships are also stored in ``self.memberships``; pass
         ``initial_membership=g.memberships`` to continue from them.
 
+        Every vertex of a cover keeps at least one community: the actions are
+        the non-empty sets of at most ``max_memberships`` labels (with
+        ``allow_isolation`` one of them is a new community of its own, worth
+        0). A cover can return two labels with the same members; they are
+        kept apart, as the equilibrium is a statement about labels.
+
         The binding holds the GIL for the whole call, so calls from several
         threads are safe but run one at a time (use processes to run them in
         parallel); with ``seed=None`` they also share the ``random`` module's
@@ -399,9 +511,9 @@ class Game(Graph):
             raise TypeError(
                 "community_hedonic() takes initial_membership as its only "
                 f"positional argument ({len(positional)} more given); pass "
-                "the others by keyword. They are keyword-only (in the igraph-fork "
-                "releases the fourth positional argument was n_iterations, which "
-                "the C core removed)"
+                "the others by keyword. In 2.0 they are keyword-only (in 1.x "
+                "the fourth positional argument was n_iterations, which 2.0 "
+                "removed)"
             )
         if removed:
             raise TypeError(_removed_arguments(removed))
@@ -430,5 +542,5 @@ def _documented_signature(function) -> inspect.Signature:
 
 
 # help() and IDEs show the keyword-only options; *positional and **removed
-# exist only to explain calls written for the igraph-fork releases.
+# exist only to explain 1.x calls.
 Game.community_hedonic.__signature__ = _documented_signature(Game.community_hedonic)

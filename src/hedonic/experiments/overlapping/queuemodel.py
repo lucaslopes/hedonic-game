@@ -1,16 +1,16 @@
 """What a queue is made of, as a tree a viewer can open and close.
 
-Every run of a queue counts *units* (a graph, a detector run). A unit has coordinates, one value per nested loop that
-produced it (block size, noise, seed...), and is done or not. ``Family`` holds the units of one kind with the loops that
-generate them, in the order the loops nest; ``RunModel`` holds a run's families. ``run_node`` and ``queue_node`` turn
-them into ``Node`` rows (queue > run > outer loop > loop > unit), each with its counts, an ETA and a text that says what
-the number counts (``40 graphs = 2 block sizes x 4 noises x 5 seeds``), so a count is never a bare figure.
+Every run of a queue counts *units* (a detector run, an audit step, a search). A unit has coordinates, one value per
+nested loop that produced it (pair, action policy, resolution, seed...), and is done or not. ``Family`` holds the units
+of one kind with the loops that generate them, in the order the loops nest; ``RunModel`` holds a run's families.
+``run_node`` and ``queue_node`` turn them into ``Node`` rows (queue > run > pair > loop > loop > unit), each with its
+counts, an ETA and a text that says what the number counts (``130 detector runs = 2 action policies x 13 resolutions x
+5 seeds``), so a count is never a bare figure.
 
-A parent's count is always the sum of its children's, and its ETA the sum of theirs (the runs of a queue and the groups
-of a run execute one after another; side-by-side workers are inside a unit's cost).
+A parent's count is always the sum of its children's, and its ETA the sum of theirs (the runs of a queue, the pairs of
+a run and the units of a pair execute one after another; side-by-side workers are inside a unit's cost).
 
-Nothing here reads files or draws: ``runqueue`` builds the nodes, ``queuetui`` draws them. A run without a model (every
-disjoint run of hedonic 1) is a single row with the run's own counts and ETA.
+Nothing here reads files or draws: the state checks of ``runqueue`` fill the models, ``queuetui`` draws the nodes.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ class RunModel:
 class Node:
     key: tuple
     label: str
-    status: str = ""  # "done" | "running" | "partial" | "pending" | "failed" | "stopped"
+    status: str = ""  # "done" | "running" | "partial" | "pending" | "failed" | "stopped" | "awaiting"
     done: int = 0
     total: int = 0
     noun: str = ""
@@ -98,6 +98,11 @@ class Node:
 
 
 # --------------------------------------------------------------------------- words
+def _public(pair: str) -> str:
+    """A pair as users read it: the stable ``top5000`` ID is shown as ``top5k``."""
+    return f"{pair[:-7]}top5k" if str(pair).endswith(":top5000") else str(pair)
+
+
 def span(values: list[str], limit: int = 8) -> str:
     """``a, b, c`` for a few values, ``a, b, c ... z`` for many."""
     if len(values) <= limit:
@@ -218,18 +223,19 @@ def _describe(family: Family, level: int, value: str, group: list[Unit], done: i
 def mark_running(families: list[Family]) -> None:
     """Flag the units a live run is working on: the next ``parallel`` unfinished units, in the order the runner takes them.
 
-    A builder that knows better (one that reads its running unit from the worker's progress file) flags its own, and
-    then nothing is added. Between families the one working is the one whose first unfinished unit belongs to the
-    earliest value of the outermost loop (those go one after another); the units flagged share that value.
+    A builder that knows better (the benchmark reads its running unit from the worker's progress file, the spectrum
+    audit from the stage line) flags its own, and then nothing is added. Between families the one working is the one
+    whose first unfinished unit belongs to the earliest pair (a pair is audited before its detector runs, and pairs go
+    one after another); the units flagged are those of that pair only, since a pair's graph is loaded once.
     """
     if any(unit.running for family in families for unit in family.units):
         return
-    outer = {value: place for place, value in enumerate(dict.fromkeys(u.coords[0] for f in families for u in f.units))}
+    pairs = {pair: place for place, pair in enumerate(dict.fromkeys(u.coords[0] for f in families for u in f.units))}
     best = None
     for index, family in enumerate(families):
         first = next((unit for unit in family.units if not unit.done), None)
-        if first is not None and (best is None or (outer[first.coords[0]], index) < best[0]):
-            best = ((outer[first.coords[0]], index), family, first)
+        if first is not None and (best is None or (pairs[first.coords[0]], index) < best[0]):
+            best = ((pairs[first.coords[0]], index), family, first)
     if best is None:
         return
     _, family, first = best
@@ -320,27 +326,27 @@ def run_node(index: int, name: str, title: str, status: str, model: RunModel | N
         return node
     if status == "running":
         mark_running(model.families)
-    by_outer: dict[str, list[tuple[Family, Node]]] = {}
+    by_pair: dict[str, list[tuple[Family, Node]]] = {}
     for family in model.families:
         if family.units:
             for child in family_nodes(family, family.units, 0, ('run', name, family.key)):
-                by_outer.setdefault(child.label, []).append((family, child))
-    for label, entries in by_outer.items():
+                by_pair.setdefault(child.label, []).append((family, child))
+    for label, entries in by_pair.items():
         if len(entries) == 1:
             node.children.append(entries[0][1])
             continue
-        group = Node(key=("run", name, "group", label), label=label, noun="steps")
-        for family, child in entries:  # several kinds of unit under one value: a node per kind, in the order they run
+        pair = Node(key=("run", name, "pair", label), label=label, noun="steps")
+        for family, child in entries:  # several kinds of unit under one pair: a node per kind, in the order they run
             child.label = family.noun
-            child.key = group.key + (family.key,)
-            group.children.append(child)
-        _aggregate(group, group.children)
-        group.detail = [f"{label}: " + " + ".join(f"{c.total:,} {c.label}" for c in group.children)
-                        + f" = {group.total:,} steps ({group.done:,} done)"]
+            child.key = pair.key + (family.key,)
+            pair.children.append(child)
+        _aggregate(pair, pair.children)
+        pair.detail = [f"{label}: " + " + ".join(f"{c.total:,} {c.label}" for c in pair.children)
+                       + f" = {pair.total:,} steps ({pair.done:,} done)"]
         for family, child in entries:
-            group.detail += [f"{family.noun}: {family.what}"]
-            group.detail += ["  " + line for line in explain(family, 1, [u for u in family.units if u.coords[0] == label])]
-        node.children.append(group)
+            pair.detail += [f"{family.noun}: {family.what}"]
+            pair.detail += ["  " + line for line in explain(family, 1, [u for u in family.units if u.coords[0] == label])]
+        node.children.append(pair)
     _aggregate(node, node.children)
     node.status = "done" if node.total and node.done >= node.total else status
     if node.status == "done" and not node.took and took:  # no unit recorded a time: the run's own clock is what there is
@@ -366,8 +372,10 @@ def run_node(index: int, name: str, title: str, status: str, model: RunModel | N
 
 
 # --------------------------------------------------------------------------- the queue
-def queue_node(name: str, runs: list[Node], status: str = "", file: str = "") -> Node:
-    """The root: its count is runs finished of runs, its ETA the sum of the runs' (they execute one after another)."""
+def queue_node(name: str, runs: list[Node], status: str = "", file: str = "", order: list[str] | None = None) -> Node:
+    """The root: its count is runs finished of runs, its ETA the sum of the runs' (they execute one after another).
+
+    ``order`` is the queue's pairs when it runs pair by pair: the runs then take turns on each pair in that order."""
     root = Node(key=("queue",), label=f"queue {name}", status=status, noun="runs", depth=0)
     root.children = runs
     for run in runs:
@@ -379,9 +387,12 @@ def queue_node(name: str, runs: list[Node], status: str = "", file: str = "") ->
     root.took = sum(r.took for r in runs)
     root.took_missing = sum(r.took_missing for r in runs if r.status == "done")
     root.basis = max((r.basis for r in runs if r.status != "done"), key=RANK.__getitem__, default="")
-    how = [f"{len(runs)} runs execute one after another, each with every worker."]
+    how = ([f"{len(runs)} runs, each with every worker. The runs that go by pair take turns on one pair at a time: the whole "
+            "block on the first pair, then on the next, in this order:", "  " + " > ".join(_public(o) for o in order)]
+           if order else [f"{len(runs)} runs execute one after another, each with every worker."])
     root.detail = [f"queue {name}" + (f" · {file}" if file else ""), *how,
-                   "The queue's ETA is the sum of its runs' ETAs, a run's is the sum of its parts'.",
+                   "The queue's ETA is the sum of its runs' ETAs, a run's is the sum of its pairs', a pair's is the sum of"
+                   " its units'.",
                    "ETA marks: 17:33 measured · ~17:33 estimated from other work or a planning constant · "
                    "≥17:33 only part of the work has an estimate · ? no estimate at all.", ""]
     for number, run in enumerate(runs, 1):

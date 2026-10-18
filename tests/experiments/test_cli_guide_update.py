@@ -53,6 +53,7 @@ class TestGuide(unittest.TestCase):
     def test_named_queues_and_configs_are_shipped(self):
         import re
 
+        from hedonic.experiments.overlapping import quickstart as qs
         from hedonic.experiments.overlapping import runqueue
         from hedonic.experiments.resources import config_path
 
@@ -62,14 +63,14 @@ class TestGuide(unittest.TestCase):
             for name in re.findall(r"--config ([\w.-]+)", text):
                 if name in ("NAME", "FILE") or name.endswith(".toml"):  # placeholders and the user's own files
                     continue
-                self.assertTrue(config_path(name).is_file(), name)
+                spectrum = config_path(f"overlapping-gt-spectrum-{name}")  # `hedonic run spectrum --config NAME`
+                self.assertTrue(name in qs.PROFILES or config_path(name).is_file() or spectrum.is_file(), name)
 
     def test_no_topic_or_help_names_what_2_0_removed(self):
         removed = ("1006", "docs/", "--script", "1.0.0.", "youtube-hoc", "spectrum-tuned", "lucas-igraph",
                    "hoc_multilevel", "multi-phase")
         for _, text in guide.TOPICS.values():
-            self.assertNotIn("codeseg-setup", text)  # neither the old runtime setup
-            self.assertNotIn("hedonic setup", text)  # nor its hedonic 2 front door
+            self.assertNotIn("codeseg-setup", text)  # the guide names `hedonic setup`
         texts = [text for _, text in guide.TOPICS.values()]
         for argv in (["--help"], ["run", "--help"]):
             out = io.StringIO()

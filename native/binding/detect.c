@@ -38,6 +38,7 @@ PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds) {
     start_rows_t start = { NULL, NULL, -1 };
     int have_start = 0;
     hig_int *membership = NULL, nb_clusters = 0;
+    hig_cover_t start_cover = { 0, NULL, NULL }, cover = { 0, NULL, NULL };
     double quality = 0.0, slack = 0.0;
     hig_error_t status;
     PyObject *result = NULL;
@@ -49,10 +50,8 @@ PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds) {
                                      &max_total_obj, &n_communities_obj)) {
         return NULL;
     }
-    if (max_memberships != 1) {
-        PyErr_SetString(PyExc_ValueError,
-                        "hedonic 1 detects partitions only (max_memberships=1); "
-                        "overlapping covers are hedonic 2");
+    if (max_memberships < 1) {
+        PyErr_SetString(PyExc_ValueError, "max_memberships must be an integer >= 1, or -1");
         return NULL;
     }
     options = (hig_options_t) {
@@ -101,7 +100,7 @@ PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds) {
     hig_rng = rng_callbacks(&rng_state);
     options.rng = &hig_rng;
 
-    {
+    if (max_memberships == 1) {
         PyObject *list;
         membership = PyMem_Calloc(n > 0 ? (size_t) n : 1, sizeof(hig_int));
         if (!membership) {
@@ -125,8 +124,26 @@ PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds) {
         if (list) {
             result = Py_BuildValue("(NLdd)", list, (long long) nb_clusters, quality, slack);
         }
+    } else {
+        PyObject *rows, *clusters;
+        if (have_start) {
+            start_cover = (hig_cover_t) { n, start.offset, start.labels };
+        }
+        status = hig_cover(&graph, &options, have_start ? &start_cover : NULL, &cover,
+                           &nb_clusters, &quality, &slack);
+        start_rows_release(&start);
+        if (status != HIG_SUCCESS) {
+            raise_error(status);
+            goto done;
+        }
+        graph_edges_release(&edges);
+        if (cover_lists(&cover, nb_clusters, &rows, &clusters) == 0) {
+            result = Py_BuildValue("(NNLdd)", rows, clusters, (long long) nb_clusters, quality,
+                                   slack);
+        }
     }
 done:
+    hig_cover_free(&cover);
     PyMem_Free(membership);
     start_rows_release(&start);
     if (rng_release(&rng_state) < 0) {

@@ -57,9 +57,9 @@ def test_a_call_ignores_the_stored_state_unless_it_is_passed():
     calls = []
 
     with patch(NATIVE, side_effect=_fake_native(calls)):
-        game.community_hedonic(resolution=0.5)
-        game.community_hedonic(game.memberships, resolution=0.5)
-    assert calls == [[0, 1, 2], [0, 1, 2]]
+        game.community_hedonic(max_memberships=2, resolution=0.5)
+        game.community_hedonic(game.memberships, max_memberships=2, resolution=0.5)
+    assert calls == [[[0], [1], [2]], [[0], [1], [2]]]
     assert game.memberships == [[0], [1], [2]]
 
 
@@ -87,8 +87,9 @@ def test_an_invalid_start_never_reaches_the_detector(value):
 def test_a_start_with_label_gaps_is_renumbered_in_label_order():
     calls = []
     with patch(NATIVE, side_effect=_fake_native(calls)):
+        _game().community_hedonic([[0], [0, 7], [7]], max_memberships=2, resolution=0.5)
         _game().community_hedonic([5, 9, 5], resolution=0.5)
-    assert calls == [[0, 1, 0]]
+    assert calls == [[[0], [0, 1], [1]], [0, 1, 0]]
 
 
 def test_a_cover_start_keeps_each_vertex_preferred_labels():
@@ -100,16 +101,19 @@ def test_a_cover_start_keeps_each_vertex_preferred_labels():
         result = game.community_hedonic(rows, resolution=0.5)
         # Weight 5 on the edge 2-3 makes the tail's community preferred.
         game.community_hedonic(rows, resolution=0.5, edge_weights=[1, 1, 1, 5, 1])
-    assert calls == [[0, 0, 0, 1, 1], [0, 0, 1, 1, 1]]
+        game.community_hedonic([[0, 1, 2]] * 5, max_memberships=2, resolution=0.0)
+    assert calls[:2] == [[0, 0, 0, 1, 1], [0, 0, 1, 1, 1]]
+    # Equal payoffs and sizes: the smaller labels stay.
+    assert calls[2] == [[0, 1]] * 5
     assert result._hedonic_provenance["projected_vertices"] == 1
     assert result._hedonic_provenance["initialization"] == "initial_membership, projected to max_memberships"
 
 
 def test_a_partition_from_a_cover_is_an_equilibrium():
     game = Game(ig.Graph.Famous("Zachary"))
-    cover = [sorted({v % 4, (v + 1) % 4}) if v % 2 == 0 else [v % 4] for v in range(34)]
-    game.memberships = cover
-    assert any(len(row) > 1 for row in game.memberships)
+    game.community_hedonic(max_memberships=4, seed=0)
+    cover = game.memberships
+    assert any(len(row) > 1 for row in cover)
     result = game.community_hedonic(cover, seed=0)
     again = game.community_hedonic(list(result.membership), seed=1)
     assert again.membership == result.membership
@@ -165,3 +169,19 @@ def test_evaluate_against_requires_state_ground_truth_and_known_method():
         game.evaluate_against(None)
     with pytest.raises(ValueError, match="Unknown evaluation method"):
         game.evaluate_against([[0, 1], [2]], method="rand")
+
+
+def test_a_cover_keeps_labels_with_identical_members():
+    """Two labels with the same members are two coalitions of the game: the cover keeps both (documented)."""
+    import igraph as ig
+    from hedonic import Game
+
+    for seed in range(50):
+        g = Game(ig.Graph.Erdos_Renyi(30, 0.2))
+        cover = g.community_hedonic(resolution=0.05, max_memberships=3, seed=seed)
+        bodies = [frozenset(c) for c in cover]
+        if len(set(bodies)) < len(bodies):
+            occupied = {label for row in g.memberships for label in row}
+            assert len(bodies) == len(occupied)  # one community per occupied label, duplicates included
+            return
+    raise AssertionError("no cover with duplicate bodies in 50 seeds")

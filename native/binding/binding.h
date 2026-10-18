@@ -21,14 +21,14 @@
  *
  *   _core.c         the module, its exception and the error mapping
  *   random.c        the caller's random.Random as the core's generator
- *   arguments.c     buffers, the graph and limits of partition()
- *   plain.c         partition() over plain Python data (and its traced form
- *                   _trace_partition(), for tests)
+ *   arguments.c     buffers, the graph and limits of partition()/cover()
+ *   plain.c         partition() and cover() over plain Python data (and their
+ *                   traced forms _trace_partition() and _trace_cover(), for tests)
  *   graph_edges.c   the edges of an igraph.Graph, borrowed when possible
  *   start_rows.c    the start state of detect(), checked
  *   results.c       the result lists of detect()
  *   detect.c        detect(), what Game.community_hedonic calls
- *   checking.c      _verify_partition(), for tests
+ *   checking.c      _verify_partition() and _verify_cover(), for tests
  *
  * The GIL is held throughout: interruption checks and, for a generator that
  * is not an exact random.Random, every random number are Python calls.
@@ -96,11 +96,14 @@ int optional_limit(PyObject *obj, hig_int *limit, const char *name);
 /* ---- plain.c --------------------------------------------------------------- */
 
 PyObject *py_partition(PyObject *self, PyObject *args, PyObject *kwds);
+PyObject *py_cover(PyObject *self, PyObject *args, PyObject *kwds);
 PyObject *py_trace_partition(PyObject *self, PyObject *args, PyObject *kwds);
+PyObject *py_trace_cover(PyObject *self, PyObject *args, PyObject *kwds);
 
 /* ---- checking.c ------------------------------------------------------------ */
 
 PyObject *py_verify_partition(PyObject *self, PyObject *args, PyObject *kwds);
+PyObject *py_verify_cover(PyObject *self, PyObject *args, PyObject *kwds);
 
 /* ---- graph_edges.c --------------------------------------------------------- */
 
@@ -133,9 +136,17 @@ int read_start_rows(PyObject *obj, Py_ssize_t n, hig_int max_memberships, start_
 /* ---- results.c ------------------------------------------------------------- */
 
 PyObject *int_list(const hig_int *values, hig_int count);
+int cover_lists(const hig_cover_t *cover, hig_int nb_clusters, PyObject **rows_out,
+                PyObject **clusters_out);
 
 /* ---- detect.c -------------------------------------------------------------- */
 
 PyObject *py_detect(PyObject *self, PyObject *args, PyObject *kwds);
+
+
+/* ---- audit.c: immutable prepared state and fixed-cover queries ---- */
+PyObject *py_audit_prepare(PyObject *self, PyObject *args, PyObject *kwds);
+PyObject *py_audit_intervals(PyObject *self, PyObject *args, PyObject *kwds);
+PyObject *py_audit_regrets(PyObject *self, PyObject *args, PyObject *kwds);
 
 #endif

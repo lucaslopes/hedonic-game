@@ -2,12 +2,12 @@
 
     python tools/release_version.py [REF_NAME]
 
-pyproject.toml holds the version being released (1.0.0). A tag names that
+pyproject.toml holds the version being released (2.0.0). A tag names that
 version or one of its pre-releases:
 
-    v1.0.0          the release                        -> PyPI
-    v1.0.0rc1       a release candidate (pip --pre)    -> PyPI
-    v1.0.0.dev1     a trial upload                     -> TestPyPI
+    v2.0.0          the release                        -> PyPI
+    v2.0.0rc1       a release candidate (pip --pre)    -> PyPI
+    v2.0.0.dev1     a trial upload                     -> TestPyPI
 
 On a tag (GITHUB_REF_TYPE=tag, or REF_NAME given) this checks the tag against
 the version in pyproject.toml, writes the tag's version into pyproject.toml so
