@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from hedonic.experiments import CLI
 from hedonic.experiments.overlapping import baseline_calibration as bc
+from hedonic.experiments.overlapping import replication
 from hedonic.experiments.overlapping import baseline_run as br
 from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.overlapping import runqueue
@@ -257,10 +258,15 @@ class TestReplicas(unittest.TestCase):
             self.assertNotIn(method, ctx.replicates)
 
     def test_the_registered_policy(self):
+        # one table for the calibration and the benchmark (``replication``); CoDeSEG's runs are replicas at the benchmark's
+        # thread count but repeat at the calibration's one thread
+        self.assertIs(bc.REPLICATION, replication.REPLICATION)
         self.assertEqual({m: (i["kind"], i["runs"]) for m, i in REGISTERED.items()},
-                         {"clique_percolation": ("deterministic", 1), "angel": ("seeded", 10), "ncgame": ("deterministic", 1),
-                          "codeseg": ("deterministic", 1), "ego_splitting": ("seeded", 10), "bigclam": ("deterministic", 1),
-                          "fox": ("deterministic", 1), "neo_kmeans": ("deterministic", 1)})
+                         {"hedonic": ("seeded", 10), "clique_percolation": ("deterministic", 1), "angel": ("seeded", 10),
+                          "ncgame": ("deterministic", 1), "codeseg": ("replicas", 10), "ego_splitting": ("seeded", 10),
+                          "bigclam": ("deterministic", 1), "fox": ("deterministic", 1), "neo_kmeans": ("deterministic", 1),
+                          "disjoint_oracle": ("deterministic", 1)})
+        self.assertEqual([m for m, i in REGISTERED.items() if i.get("calibration_kind", i["kind"]) == "replicas"], [])
 
     def test_runner_params_keep_only_what_the_runner_reads(self):
         self.assertEqual(bc.runner_params("fox", bc.FOX_FIXED), {"wcc_threshold": 0.1, "queue_size": 1})

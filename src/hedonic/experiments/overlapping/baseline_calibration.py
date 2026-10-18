@@ -64,6 +64,7 @@ from typing import Any, Callable, Sequence
 import igraph as ig
 
 from hedonic.experiments.config import codeseg_cache_dir
+from hedonic.experiments.overlapping import replication
 
 PROTOCOL = "baseline-calibration-v1"
 CRITERION = "heldout-pair-loglik-v1"
@@ -100,28 +101,9 @@ RUNNER_KEYS: dict[str, tuple[str, ...]] = {
     "codeseg": ("tau", "alpha", "iterations"),
 }
 
-# How the implementation the benchmark calls behaves under a seed (read from the adapters, not from the papers' claims):
-# "deterministic" = one run per setting is the result; "seeded" = the seed reaches the program, so a seed list is a real
-# replication; "replicas" = the program is stochastic but the runner's seed does not reach it, so repeated runs are
-# independent replicas that a seed number does not reproduce. ``runs`` is the number of benchmark runs recommended.
-REPLICATION: dict[str, dict[str, Any]] = {
-    "clique_percolation": {"kind": "deterministic", "runs": 1, "note": "the adapter ignores the seed"},
-    "angel": {"kind": "seeded", "runs": 10,
-              "note": "its label propagation draws from the module-level random; the worker seeds it from the request, so "
-                      "a seed reproduces a run (unseeded, two runs on one graph gave 38 and 39 communities)"},
-    "ncgame": {"kind": "deterministic", "runs": 1, "note": "the authors describe no stochastic process"},
-    "codeseg": {"kind": "deterministic", "runs": 1,
-                "note": "the runner classes it deterministic and passes no seed (one thread); repeat only as an audit"},
-    "ego_splitting": {"kind": "seeded", "runs": 10,
-                      "note": "the Louvain step of the persona graph takes the seed as random_state"},
-    "bigclam": {"kind": "deterministic", "runs": 1,
-                "note": "no seed reaches the SNAP program, but repeated runs gave identical covers (all 95 replicated "
-                        "settings of baseline-paper scored identically); one run per setting"},
-    "fox": {"kind": "deterministic", "runs": 1,
-            "note": "no seed is passed; on one thread with queue size 1 repeated runs gave identical covers"},
-    "neo_kmeans": {"kind": "deterministic", "runs": 1,
-                   "note": "the adapter ignores the seed, but repeated runs gave identical covers; one run per setting"},
-}
+# How the implementation the benchmark calls behaves under a seed, and how many benchmark runs that makes: one table, in
+# ``replication`` (the benchmark plans its runs from it too). Re-exported here, the calibration's own name for it.
+REPLICATION = replication.REPLICATION
 DEFAULT_REPLICATES = 3  # replicas per setting when a score selects a parameter of a "replicas" method
 
 
@@ -892,7 +874,7 @@ SENSITIVITY_OPTIONS: dict[str, dict[str, Any]] = {"ncgame": {"sensitivity": (0.0
 
 def with_replicates(ctx: Context, replicates: int = DEFAULT_REPLICATES) -> Context:
     """Average ``replicates`` independent runs per setting for the methods whose runs are replicas (REPLICATION)."""
-    ctx.replicates = {m: int(replicates) for m, info in REPLICATION.items() if info["kind"] == "replicas"} \
+    ctx.replicates = {m: int(replicates) for m in REPLICATION if replication.calibration_kind(m) == "replicas"} \
         if replicates > 1 else {}
     return ctx
 

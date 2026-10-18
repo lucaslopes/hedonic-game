@@ -264,7 +264,10 @@ AUDIT_FRESH_SECONDS = 120.0  # a progress report older than this is not trusted 
 
 def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], progress: dict,
               now: float | None = None) -> qm.RunModel:
-    """The benchmark: one detector run per (pair, method, seed), executed in ``cfg.order``.
+    """The benchmark: one detector run per planned (pair, method, seed), executed in ``cfg.order``.
+
+    ``units`` is the run's plan (``quickstart.build_plan``), so a deterministic method has one unit per pair (its lowest
+    seed) unless the run asks for every seed, and nothing is priced for seeds the run will not execute.
 
     A finished unit's recorded ``seconds`` is the whole unit (detection, the robustness audit of its cover, scoring), so a
     cell with finished units is priced from them. A cell with none is priced by the planning constant, which is the
@@ -278,7 +281,8 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
     pair_dim = qm.Dim("pair", "pairs", about="a network with one ground-truth cover; the detectors see the covered subgraph "
                       "and are scored against that cover")
     method_dim = qm.Dim("method", "methods", about="the community-detection method (Hedonic is HOC-local at its calibrated settings)")
-    seed_dim = qm.Dim("seed", "seeds", "seed {}", about="the method's random seed")
+    seed_dim = qm.Dim("seed", "seeds", "seed {}", about="the method's random seed; a deterministic method runs once per pair, "
+                      "at the lowest seed (the run's replication, see `hedonic run exp --help`)")
     measured: dict[tuple[str, str], list[float]] = {}
     for row in progress.get("plan") or []:
         if row.get("status") == "completed" and isinstance(row.get("seconds"), (int, float)):
@@ -535,7 +539,7 @@ def baselines(plan: dict, searches: list[dict], results: dict[str, dict]) -> qm.
 
 def decorate_baselines(node: qm.Node, plan: dict, results: dict[str, dict]) -> None:
     """Add, under every method of the calibration tree, a row per setting it tried (read from the ledger)."""
-    from hedonic.experiments.overlapping.baseline_calibration import REPLICATION
+    from hedonic.experiments.overlapping import replication
 
     folder = Path(plan["output"])
     replicas = max(1, int(plan.get("replicates") or 1))
@@ -555,7 +559,7 @@ def decorate_baselines(node: qm.Node, plan: dict, results: dict[str, dict]) -> N
         groups = settings_of(records)
         res = results.get(f"{method}/{target}") or {}
         chosen = res.get("runner_params") or res.get("params") or {}
-        want = replicas if REPLICATION.get(method, {}).get("kind") == "replicas" else 1
+        want = replicas if replication.calibration_kind(method) == "replicas" else 1
         best = max(((statistics.fmean([r["score"] for r in g if r.get("score") is not None] or [float("-inf")]), k)
                     for k, g in groups.items()), default=None)
         for index, (key, group) in enumerate(groups.items(), 1):

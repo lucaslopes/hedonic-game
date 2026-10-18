@@ -10,8 +10,9 @@ Hedonic, so a queue can have it as a step before the benchmark:
 For each pair the graph ``G[S]`` (the subgraph induced by the vertices the cover contains) is loaded once, and each method is
 calibrated on it by its own function (searched parameters: CliquePerc ``k``, ANGEL ``phi``, BigCLAM and NEO-K-Means ``K``;
 the others take the authors' published values). Nothing reads the ground-truth communities: the context a calibration
-receives has no cover (``baseline_calibration.Context``). A method whose runs are replicas (BigCLAM, NEO-K-Means, FOX; see
-``baseline_calibration.REPLICATION``) is run ``--replicates`` times per setting and scored by the mean.
+receives has no cover (``baseline_calibration.Context``). A method whose runs under the calibration's settings are replicas
+(``replication.calibration_kind``; none of the registered methods now) is run ``--replicates`` times per setting and scored
+by the mean.
 
 The run folder holds ``baseline_tuned.json`` (``complete`` once every method of every pair has a record; ``settings`` is
 ``{method: {network:cover: method_params}}``, exactly the parameters the benchmark runner reads, which ``--tuned`` lays over
@@ -33,6 +34,7 @@ from typing import Any, Callable
 
 from hedonic.experiments.config import RUNS_ROOT, expand_path
 from hedonic.experiments.overlapping import baseline_calibration as bc
+from hedonic.experiments.overlapping import replication
 from hedonic.experiments.overlapping import parallel
 from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.runtime import runtime_versions
@@ -166,7 +168,7 @@ def describe(plan: dict[str, Any]) -> str:
 
 def replica_line(plan: dict[str, Any]) -> list[str]:
     """The replica policy, only when a method of the plan has runs that are replicas of one another."""
-    replicated = [m for m in plan["methods"] if bc.REPLICATION[m]["kind"] == "replicas"]
+    replicated = [m for m in plan["methods"] if replication.calibration_kind(m) == "replicas"]
     if plan["replicates"] > 1 and replicated:
         return [f"  replicas {plan['replicates']} per setting for {', '.join(replicated)} (their seed does not reach the program)"]
     return []
