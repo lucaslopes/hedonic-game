@@ -108,6 +108,22 @@ class TestCoDeSEGSetup(unittest.TestCase):
             plan = json.loads(out.getvalue().strip().splitlines()[-1])
             self.assertEqual((plan["pairs"], plan["methods"]), ([], list(codeseg_setup.PAPER_BASELINES)))
 
+    def test_setup_and_the_runs_read_one_cache_dir_the_same_way(self):
+        from hedonic.experiments.config import codeseg_cache_dir
+
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ):
+            os.environ.pop("HEDONIC_CODESEG_CACHE", None)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                codeseg_setup.setup_main(["--dry-run", "--cache-dir", str(Path(temporary) / "cache")])
+            expected = Path(temporary) / "cache" / "codeseg"
+            self.assertIn(f"cache {expected}", out.getvalue())
+            self.assertEqual(codeseg_cache_dir(Path(temporary) / "cache"), expected)  # `hedonic run exp --cache-dir`
+            config = Path(temporary) / "config.toml"
+            config.write_text(f'[defaults]\ncache_dir = "{Path(temporary) / "cache"}"\n')
+            os.environ["HEDONIC_CONFIG"] = str(config)
+            self.assertEqual(codeseg_cache_dir().resolve(), expected.resolve())  # the user config's cache_dir
+
     def test_required_tools_name_what_each_method_needs(self):
         rows = {row["tool"]: row for row in codeseg_setup.required_tools(
             ["fox", "bigclam", "angel", "codeseg", "hedonic"], build=True, fox_cxx=None, manifest={})}

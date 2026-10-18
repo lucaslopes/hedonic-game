@@ -179,7 +179,8 @@ hedonic-exp list                       # analysis and utility commands
 - **Paths.** Data defaults to `~/hedonic-data` (`HEDONIC_DATA_DIR`; SNAP
   files under `networks/` or `HEDONIC_NETWORKS_DIR`), runs to
   `~/hedonic-runs` (`config.RUNS_ROOT`, `HEDONIC_OUTPUT_DIR`). External
-  runtimes live in `config.codeseg_cache_dir()`: a `--cache-dir` flag, else
+  runtimes live in `config.codeseg_cache_dir()`: `DIR/codeseg` for a `--cache-dir DIR` flag (the
+  same for `hedonic setup` and `hedonic run exp`), else
   `HEDONIC_CODESEG_CACHE`, else the user config's `cache_dir/codeseg`, else
   `~/.cache/hedonic/codeseg`. Machine settings are in
   `~/.config/hedonic/config.toml` (`hedonic config`). Never hard-code a home

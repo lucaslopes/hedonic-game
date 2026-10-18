@@ -1325,8 +1325,10 @@ def _setup_parser(prog: str = "hedonic setup") -> argparse.ArgumentParser:
     parser.add_argument("--network-root", default=str(NETWORKS_DIR),
                         help="where the SNAP files go (default: the user config's network_root, "
                              "HEDONIC_NETWORKS_DIR, else ~/hedonic-data/networks)")
-    parser.add_argument("--cache-dir", default=str(default_cache_dir()),
-                        help="where sources, builds and the CDlib environment go (default ~/.cache/hedonic/codeseg)")
+    parser.add_argument("--cache-dir", default=None,
+                        help="the cache folder, as for `hedonic run exp --cache-dir` and the user config's cache_dir: "
+                             "sources, builds and the CDlib environment go to CACHE_DIR/codeseg, where the runs look "
+                             "(default: the user config's cache_dir, else ~/.cache/hedonic)")
     parser.add_argument("--manifest", default=None, help="setup manifest (default <cache-dir>/setup_manifest.json)")
     parser.add_argument("--offline", action="store_true", help="never download or clone; inspect existing resources only")
     parser.add_argument("--no-build", action="store_true", help="fetch sources but do not compile them")
@@ -1397,7 +1399,7 @@ def setup_main(argv: list[str] | None = None, *, prog: str = "hedonic setup") ->
         methods = [m for m in methods if m in IN_PROCESS_METHODS or m in CDLIB_METHODS or m == "ncgame"]
     quiet = bool(args.json)
     network_root = expand_path(args.network_root)
-    cache_dir = expand_path(args.cache_dir)
+    cache_dir = codeseg_cache_dir(args.cache_dir) if args.cache_dir else default_cache_dir()
     build = not args.no_build
     # The CDlib project lives under the same cache, so the runners and this setup agree on it.
     os.environ["HEDONIC_CODESEG_CACHE"] = str(cache_dir)
