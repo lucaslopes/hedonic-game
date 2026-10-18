@@ -1,10 +1,9 @@
-"""The public surface of hedonic 1.
+"""The public surface of hedonic 2.0.
 
 ``Game.community_hedonic`` always runs local moving until no vertex can
 improve, so it takes no iteration budget and no other detector's options;
-it detects partitions only; seeded calls replay; importing the package runs
-no check on igraph's version; results carry a fixed provenance record;
-``hedonic.metrics`` scores partitions against covers.
+seeded calls replay; importing the package runs no check on igraph's version;
+results carry a fixed provenance record; ``hedonic.metrics`` scores covers.
 """
 
 from __future__ import annotations
@@ -54,10 +53,13 @@ TWO_CLIQUES_TRUTH = [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]]
 
 class TestRemovedKeywords(unittest.TestCase):
     def test_each_removed_keyword_raises_type_error(self):
-        for name, value in REMOVED_KEYWORDS.items():
-            with self.subTest(name=name):
-                with self.assertRaisesRegex(TypeError, name):
-                    _karate().community_hedonic(max_memberships=1, **{name: value})
+        for max_memberships in (1, 2):
+            for name, value in REMOVED_KEYWORDS.items():
+                with self.subTest(name=name, max_memberships=max_memberships):
+                    with self.assertRaisesRegex(TypeError, name):
+                        _karate().community_hedonic(
+                            max_memberships=max_memberships, **{name: value}
+                        )
 
     def test_removed_names_are_gone(self):
         game_module = sys.modules["hedonic.Game"]
@@ -66,21 +68,16 @@ class TestRemovedKeywords(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(game_module, name))
                 self.assertFalse(hasattr(hedonic, name))
-        self.assertEqual(hedonic.__all__, ["Game", "metrics"])
+        self.assertEqual(hedonic.__all__, ["Game", "metrics", "stability"])
 
     def test_results_carry_no_removed_attributes(self):
-        result = _karate().community_hedonic(max_memberships=1, seed=0)
-        for name in ("_hedonic_raw_memberships", "_hedonic_algorithm_identity",
-                     "_hedonic_token_preflight", "_hedonic_disjoint_stage"):
-            with self.subTest(name=name):
-                self.assertFalse(hasattr(result, name))
-        self.assertNotIn("debug_trace", getattr(result, "_params", None) or {})
-
-    def test_covers_are_refused(self):
-        for max_memberships in (2, 3, -1):
-            with self.subTest(max_memberships=max_memberships):
-                with self.assertRaisesRegex(ValueError, "partitions only"):
-                    _karate().community_hedonic(max_memberships=max_memberships, seed=0)
+        for max_memberships in (1, 3):
+            result = _karate().community_hedonic(max_memberships=max_memberships, seed=0)
+            for name in ("_hedonic_raw_memberships", "_hedonic_algorithm_identity",
+                         "_hedonic_token_preflight", "_hedonic_disjoint_stage"):
+                with self.subTest(name=name, max_memberships=max_memberships):
+                    self.assertFalse(hasattr(result, name))
+            self.assertNotIn("debug_trace", getattr(result, "_params", None) or {})
 
 
 class TestSeedReplay(unittest.TestCase):
@@ -90,6 +87,10 @@ class TestSeedReplay(unittest.TestCase):
             dict(max_memberships=1, resolution=0.05, allow_isolation=True),
             dict(max_memberships=1, max_communities=4),
             dict(max_memberships=1, n_communities=3, resolution=0.05),
+            dict(max_memberships=3, resolution=0.1),
+            dict(max_memberships=3, resolution=0.1, max_total_communities=5),
+            dict(max_memberships=-1, resolution=0.05,
+                 node_weights=[1.0 + v % 3 for v in range(34)]),
         ]
         for kwargs in cases:
             for seed in (0, 1, 12345):
@@ -100,7 +101,9 @@ class TestSeedReplay(unittest.TestCase):
                     b = _karate().community_hedonic(initial_membership=None, seed=seed,
                                                     **kwargs)
                     self.assertEqual(a.membership, b.membership)
-                    self.assertEqual(a.quality, b.quality)
+                    quality = (lambda r: r.quality if isinstance(r, ig.VertexClustering)
+                               else r._hedonic_native_quality)
+                    self.assertEqual(quality(a), quality(b))
 
     def test_different_seeds_can_differ(self):
         results = {
@@ -138,7 +141,8 @@ class TestNoVersionCheckOnImport(unittest.TestCase):
 
 class TestProvenance(unittest.TestCase):
     def test_keys(self):
-        for kwargs in (dict(), dict(n_communities=3), dict(seed=2)):
+        for kwargs in (dict(), dict(max_memberships=3, resolution=0.1),
+                       dict(n_communities=3), dict(max_memberships=-1, seed=2)):
             with self.subTest(**kwargs):
                 result = _karate().community_hedonic(**kwargs)
                 provenance = result._hedonic_provenance
@@ -149,13 +153,13 @@ class TestProvenance(unittest.TestCase):
     def test_values_follow_the_call(self):
         game = _karate()
         game.vs["w"] = [1.0] * 34
-        part = game.community_hedonic(
-            initial_membership=None, resolution=0.1, seed=4,
+        cover = game.community_hedonic(
+            initial_membership=None, max_memberships=-1, resolution=0.1, seed=4,
             allow_isolation=True, node_weights="w", max_total_communities=8,
         )
-        provenance = part._hedonic_provenance
-        self.assertEqual(provenance["max_memberships"], 1)
-        self.assertEqual(provenance["effective_max_memberships"], 1)
+        provenance = cover._hedonic_provenance
+        self.assertEqual(provenance["max_memberships"], -1)
+        self.assertEqual(provenance["effective_max_memberships"], 34)
         self.assertEqual(provenance["count_constraint"], "at_most")
         self.assertEqual(provenance["max_total_communities"], 8)
         self.assertIsNone(provenance["n_communities"])
@@ -168,7 +172,9 @@ class TestProvenance(unittest.TestCase):
         self.assertEqual(provenance["seed"], 4)
         self.assertEqual(provenance["rng"], "seeded")
         self.assertEqual(provenance["equilibrium_notion"], "count_constrained")
-        self.assertEqual(provenance["occupied_communities"], len(set(part.membership)))
+        self.assertEqual(provenance["occupied_communities"],
+                         len({c for row in cover.membership for c in row}))
+        self.assertEqual(cover._hedonic_native_quality, cover._params["quality"])
 
 
 class TestMetrics(unittest.TestCase):
@@ -288,14 +294,17 @@ class Block:
             raise ImportError("blocked: " + name)
 sys.meta_path.insert(0, Block())
 import igraph as ig
-from hedonic import Game, metrics
+from hedonic import Game, metrics, stability
 g = Game(ig.Graph.Famous("Zachary"))
 part = g.community_hedonic(max_memberships=1, seed=0)
-print(len(part.membership),
+cover = g.community_hedonic(max_memberships=3, seed=0)
+intervals = g.stable_intervals()
+regrets = g.regrets([0.1, g.density()])
+print(len(part.membership), len(intervals), regrets.regret.shape,
       round(metrics.evaluate_cover([[0, 1]], [[0, 1]], 2, one_to_one=False)["f1"], 3))
 """
         out = subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)
-        self.assertEqual(out.stdout.split(), ["34", "1.0"])
+        self.assertEqual(out.stdout.split(), ["34", "34", "(34,", "2)", "1.0"])
 
 
 class TestMaxCommunitiesStart(unittest.TestCase):

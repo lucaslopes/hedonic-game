@@ -1,19 +1,58 @@
-"""Forked one-shot workers, the cross-process core budget and the free-memory floor (``overlapping.parallel``).
+"""Forked one-shot workers and the cross-process core budget, plus the equivalence of the parallel runners.
 
-In hedonic 1 the durable-run worker's memory guard reads the same free-memory figure; the workers and slots stay the
-shared machinery they were, tested here on toy functions.
+Every runner that takes ``--workers`` must give the same records with 1 worker as with several; these tests run the
+real shipped study code on small graphs both ways and compare what is stored.
 """
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import tempfile
+import textwrap
 import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import igraph as ig
+
+from hedonic.experiments.overlapping import calibrate as cal
+from hedonic.experiments.overlapping import controlled_overlap_config as wrapper
 from hedonic.experiments.overlapping import parallel
+from hedonic.experiments.overlapping import start_quality as sq
+
+
+# The start-quality fixtures (as tests/test_start_quality.py of the 1.x tree): two overlapping cliques,
+# A = {0,1,2,3} and B = {3,4,5,6,7}; vertex 3 is in both.
+GT = [[0, 1, 2, 3], [3, 4, 5, 6, 7]]
+N = 8
+
+
+def tiny_graph() -> ig.Graph:
+    edges = [(a, b) for a in range(4) for b in range(a + 1, 4)]
+    edges += [(a, b) for a in range(3, 8) for b in range(a + 1, 8)]
+    return ig.Graph(n=N, edges=edges)
+
+
+def tiny_job():
+    """A real ``gt_spectrum.Job`` on the tiny graph (only the prepared dataset is stubbed)."""
+    from types import SimpleNamespace
+
+    from hedonic.experiments.overlapping import gt_spectrum as gs
+
+    prepared = SimpleNamespace(dataset=SimpleNamespace(graph=tiny_graph(), cover=GT))
+    return gs.Job("tiny", "top5000", prepared, None)
+
+
+def plan_for(folder, *, levels, seeds, cap=2, gamma=0.5, overwrite=False, phase="local") -> dict:
+    return {"config": None, "phase": phase, "networks": ["tiny"], "seeds": list(seeds), "levels": list(levels),
+            "output": Path(folder), "settings": {"tiny": {"cap": cap, "gamma": gamma, "source": "test"}},
+            "dry_run": False, "overwrite": overwrite}
+
+
 
 
 def _square(x):
@@ -204,6 +243,194 @@ class TestSlots(unittest.TestCase):
             finally:
                 os.kill(pid, 9)
                 os.waitpid(pid, 0)
+
+
+FAKE_SLOW_SCRIPT = textwrap.dedent('''
+    import json, sys, time
+    from pathlib import Path
+    a = sys.argv
+    get = lambda flag: a[a.index(flag) + 1]
+    net, phase, out = get("--instance"), get("--phase"), Path(get("--out"))
+    out.mkdir(parents=True, exist_ok=True)
+    mark = out / f"{net}-{phase}.span"
+    start = time.time()
+    time.sleep(0.8)
+    mark.write_text(json.dumps([start, time.time(), a[1:]]))
+    gamma = 0.125 if phase == "local" else 0.0625
+    record = {"kind": "tune", "instance": {"spec": net}, "phase": phase,
+              "snap": {"fraction": "1/8", "kept": True},
+              "final": {"gamma": gamma, "M": 6, "f1_median": 0.5, "onmi_median": 0.6, "f1_sd": 0.0,
+                        "confirm_seeds": [0]},
+              "detector_evaluations": 1, "wall_hours": 0.0}
+    with (out / "searches.jsonl").open("a") as fh:
+        fh.write(json.dumps(record) + "\\n")
+''')
+
+
+class TestParallelCalibration(unittest.TestCase):
+    def plan(self, tmp: str, *extra: str) -> dict:
+        script = Path(tmp) / "slow_tune.py"
+        script.write_text(FAKE_SLOW_SCRIPT)
+        return cal.resolve(["--script", str(script), "--output-dir", str(Path(tmp) / "cal"), "--name", "cal-par", *extra])
+
+    def test_workers_share_one_budget_and_are_replayed_by_a_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = self.plan(tmp, "--workers", "4")
+            self.assertEqual(plan["workers"], 4)
+            for search in cal.searches(plan):
+                argv = cal.search_argv(plan, search)
+                self.assertEqual(argv[argv.index("--jobs") + 1], "4")
+                self.assertEqual(argv[argv.index("--slot-count") + 1], "4")
+                self.assertEqual(argv[argv.index("--slot-dir") + 1], str(plan["output"] / "ledger" / "slots"))
+            self.assertEqual(cal.resolve(cal.launch_argv(plan))["workers"], 4)
+            one = self.plan(tmp, "--workers", "1")
+            self.assertNotIn("--jobs", cal.search_argv(one, cal.searches(one)[0]))
+            with self.assertRaises(ValueError):
+                self.plan(tmp, "--workers", "0")
+
+    def test_the_four_searches_run_side_by_side(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = self.plan(tmp, "--workers", "4", "--networks", "dblp,amazon,youtube,livejournal")
+            lines: list[str] = []
+            events: list[dict] = []
+            started = time.time()
+            code = cal.run_calibration(plan, emit=lines.append, progress=events.append)
+            elapsed = time.time() - started
+            self.assertEqual(code, 0)
+            self.assertEqual(cal.state_of(plan), "complete")
+            spans = [json.loads(path.read_text()) for path in (plan["output"] / "ledger").glob("*.span")]
+            self.assertEqual(len(spans), 4)
+            self.assertLess(max(s[0] for s in spans), min(s[1] for s in spans))  # all four were alive at the same moment
+            self.assertLess(elapsed, 4 * 0.8)  # one after another would take at least 3.2 s
+            self.assertTrue(any(line.startswith("[hedonic/dblp] ") for line in lines))  # interleaved lines say whose they are
+            self.assertEqual(sorted(e["key"] for e in events if e["type"] == "unit"), sorted(s["key"] for s in cal.searches(plan)))
+            self.assertEqual(max(e["done"] for e in events if e["type"] == "unit"), 4)
+            data = cal.read_tuned(plan)
+            self.assertTrue(data["complete"])
+            self.assertEqual(set(data["searches"]), {s["key"] for s in cal.searches(plan)})
+
+    def test_one_worker_is_the_old_one_at_a_time_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = self.plan(tmp, "--workers", "1", "--phases", "local")
+            lines: list[str] = []
+            self.assertEqual(cal.run_calibration(plan, emit=lines.append), 0)
+            spans = sorted(json.loads(path.read_text())[:2] for path in (plan["output"] / "ledger").glob("*.span"))
+            self.assertLessEqual(spans[0][1], spans[1][0] + 0.05)  # the second search started after the first ended
+            self.assertFalse(any(line.startswith("[") for line in lines))
+
+    def test_a_failing_search_does_not_discard_the_others(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = self.plan(tmp, "--workers", "4")
+            Path(plan["script"]).write_text(FAKE_SLOW_SCRIPT.replace(
+                'net, phase, out = get("--instance"), get("--phase"), Path(get("--out"))',
+                'net, phase, out = get("--instance"), get("--phase"), Path(get("--out"))\n'
+                'if (net, phase) == ("amazon", "local"): sys.exit(3)'))
+            with self.assertRaises(RuntimeError):
+                cal.run_calibration(plan, emit=lambda _: None)
+            self.assertEqual(cal.recorded(plan), {"hedonic/dblp"})
+            self.assertEqual(cal.state_of(plan), "partial")
+
+
+class TestStartQualityWorkers(unittest.TestCase):
+    def run_with(self, folder: str, workers: int) -> list[dict]:
+        job = tiny_job()
+        plan = plan_for(folder, levels=[0.0, 0.5, "random"], seeds=[0, 1, 2])
+        plan["workers"] = workers
+        lines: list[str] = []
+        self.assertEqual(sq.run_study(plan, loader=lambda network: job, emit=lines.append), 0)
+        self.assertEqual([line.split()[0] for line in lines if line.startswith("[")], [f"[{i}/9]" for i in range(1, 10)])
+        return [json.loads(line) for line in (Path(folder) / sq.RESULTS_NAME).read_text().splitlines()]
+
+    def test_records_do_not_depend_on_the_number_of_workers(self):
+        with tempfile.TemporaryDirectory() as one, tempfile.TemporaryDirectory() as several:
+            sequential = {r["key"]: r for r in self.run_with(one, 1)}
+            parallel_records = {r["key"]: r for r in self.run_with(several, 3)}
+        self.assertEqual(set(sequential), set(parallel_records))
+        self.assertEqual(len(sequential), 9)
+        for key, record in sequential.items():
+            other = parallel_records[key]
+            self.assertEqual(record["workers"], 1)
+            self.assertEqual(other["workers"], 3)
+            for field in ("seconds", "workers", "runtime"):
+                record.pop(field), other.pop(field)
+            self.assertEqual(record, other, key)
+
+    def test_a_rerun_with_workers_skips_what_is_recorded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.run_with(folder, 2)
+            job = tiny_job()
+            plan = plan_for(folder, levels=[0.0, 0.5, "random"], seeds=[0, 1, 2])
+            plan["workers"] = 4
+            lines: list[str] = []
+            sq.run_study(plan, loader=lambda network: self.fail("loaded a graph with nothing to run"), emit=lines.append)
+            self.assertIn("9 already", lines[0])
+
+    def test_workers_flag_is_planned_and_replayed(self):
+        plan = sq.resolve(["--networks", "dblp", "--seeds", "0", "--levels", "0", "--workers", "3"])
+        self.assertEqual(plan["workers"], 3)
+        self.assertEqual(sq.resolve(sq.launch_argv(plan))["workers"], 3)
+        self.assertIn("workers  3", "\n".join(sq.plan_lines(plan)))
+        with self.assertRaises(ValueError):
+            sq.resolve(["--networks", "dblp", "--workers", "0"])
+
+
+GRID = ["--n", "40", "--mus", "0.2,0.4", "--overlap-fractions", "0.1,0.2", "--overlap-memberships", "2",
+        "--secondary-edge-probabilities", "0.2", "--graph-seeds", "0,1", "--phases", "local",
+        "--max-memberships", "1,gt", "--starts", "singleton,gt-primary", "--resolution-multipliers", "1",
+        "--timeout-per-run", "30"]
+
+
+def _strip_times(value):
+    if isinstance(value, dict):
+        return {k: _strip_times(v) for k, v in value.items() if "elapsed_seconds" not in k}
+    if isinstance(value, list):
+        return [_strip_times(v) for v in value]
+    return value
+
+
+class TestControlledWorkers(unittest.TestCase):
+    def run_with(self, folder: str, *extra: str) -> tuple[dict, list[str]]:
+        output = Path(folder) / "controlled.json"
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = wrapper.main([*GRID, "--output", str(output), *extra])
+        self.assertEqual(code, 0)
+        return json.loads(output.read_text()), buffer.getvalue().splitlines()
+
+    def test_the_output_does_not_depend_on_the_number_of_workers(self):
+        with tempfile.TemporaryDirectory() as one, tempfile.TemporaryDirectory() as several:
+            sequential, seq_lines = self.run_with(one, "--workers", "1")
+            concurrent, par_lines = self.run_with(several, "--workers", "3")
+            self.assertTrue((Path(several) / "controlled.execution.json").is_file())
+            self.assertFalse((Path(one) / "controlled.execution.json").exists())
+            self.assertEqual(json.loads((Path(several) / "controlled.execution.json").read_text())["workers"], 3)
+        self.assertEqual(len(sequential["instances"]), 8)
+        self.assertEqual(_strip_times(sequential), _strip_times(concurrent))  # identity, protocol, instances, summaries
+        progress = lambda lines: [line for line in lines if line.startswith("completed instance")]
+        self.assertEqual(len(progress(seq_lines)), 8)
+        self.assertEqual(len(progress(par_lines)), 8)  # once each: the study's own lines are dropped, the wrapper's kept
+        self.assertEqual([line.split(":")[0] for line in progress(par_lines)],
+                         [f"completed instance {i}/8" for i in range(1, 9)])
+        self.assertTrue(any(line.startswith("wrote ") for line in par_lines))
+
+    def test_the_workers_key_of_a_config_is_not_passed_to_the_study(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "grid.toml"
+            output = Path(tmp) / "out.json"
+            config.write_text('[overlapping_controlled]\nn = 40\nmus = "0.2,0.4"\noverlap-fractions = "0.1"\n'
+                              'graph-seeds = "0"\nphases = "local"\nmax-memberships = "2"\nstarts = "singleton"\n'
+                              'resolution-multipliers = "1"\ntimeout-per-run = 30.0\nworkers = 2\n'
+                              f'output = "{output}"\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(wrapper.main(["--config", str(config)]), 0)
+            self.assertEqual(json.loads((Path(tmp) / "out.execution.json").read_text())["workers"], 2)
+            plan = wrapper.study_plan([*wrapper.config_arguments(str(config)), "--output", str(output)])
+            self.assertEqual((plan["workers"], plan["groups"]), (2, 2))
+
+    def test_the_study_module_itself_is_untouched(self):
+        # The tracked v2 evidence is bound to this file's SHA-256; the parallel path lives in the wrapper.
+        source = Path(wrapper.controlled_overlap.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("parallel", source)
 
 
 if __name__ == "__main__":

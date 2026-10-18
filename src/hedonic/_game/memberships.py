@@ -178,3 +178,12 @@ def normalize_membership(
             + (f" (label {missing} is unused)" if missing is not None else "")
         )
     return rows
+
+
+def as_overlapping_init(
+    membership: list[int] | list[list[int]],
+) -> list[list[int]]:
+    """Normalize flat or nested membership to per-vertex lists."""
+    if membership and isinstance(membership[0], (list, tuple)):
+        return [list(map(int, entry)) for entry in membership]
+    return [[int(community)] for community in membership]
