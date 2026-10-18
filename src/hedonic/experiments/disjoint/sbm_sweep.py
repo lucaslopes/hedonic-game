@@ -916,6 +916,7 @@ def _graph_store(
     resume: bool = False,
     legacy: dict[str, dict[str, str]] | None = None,
     carry: dict[str, Any] | None = None,
+    recompute: dict[str, Iterable[str]] | None = None,
 ) -> str:
     """Generate one graph, run the methods whose rows are missing, write its shard.
 
@@ -931,6 +932,8 @@ def _graph_store(
     methods this run does not name; only the rest is computed.  ``carry`` (``root``, ``methods``,
     ``legacy``) takes a method's rows from another store instead, when that store's shard has them
     for the same graph fingerprint and cells; the caller has verified them by replay.
+    ``recompute`` ({method: sources}) names rows that carry the current identity but were written
+    by another source the run did not adopt (a rerun method): they are computed again.
     Returns ``"skipped"``, ``"written"`` or ``"carried"`` (written with no detector run).
     """
     noises = [float(value) for value in noises]
@@ -943,18 +946,25 @@ def _graph_store(
         "network_seed": int(network_seed),
     }
     current = store_mod.method_digests(spec)
+    aliases = store_mod.identity_aliases(spec)
     path = Path(store_root) / store_mod.shard_relative_path(**keys)
     stored = (store_mod.shard_methods(path, legacy) if path.is_file() else None) or {}
 
-    def complete(entry: dict | None, name: str, identity: str | None) -> bool:
-        if not entry or (identity is not None and entry.get("identity") != identity):
+    def source_of(name: str) -> dict:
+        source = store_mod.method_source(name, spec["runtime"])
+        return {} if source is None else {"source": source}
+
+    def complete(entry: dict | None, name: str, check_identity: bool) -> bool:
+        if not entry or (check_identity and entry.get("identity") not in aliases[name]):
             return False
+        if check_identity and entry.get("source") in (recompute or {}).get(name, ()):
+            return False  # another source's rows of a rerun method
         return not _uses_initial_membership(methods[name]) or store_mod.covers_cells(
             entry, noises, partition_seeds
         )
 
     todo = [
-        name for name in methods if not (resume and complete(stored.get(name), name, current[name]))
+        name for name in methods if not (resume and complete(stored.get(name), name, True))
     ]
     if not todo:
         return "skipped", None
@@ -979,13 +989,19 @@ def _graph_store(
     kept = [name for name in stored if name not in todo]
     rows: list[dict[str, Any]] = store_mod.read_shard_rows(path, kept) if kept else []
     methods_meta: dict[str, dict[str, Any]] = {name: stored[name] for name in kept}
+    for name in kept:
+        # Rows of this build written under the identity rule before the fingerprint: same rows,
+        # recorded under the current identity and with the source that wrote them.
+        entry = methods_meta[name]
+        if name in current and entry.get("identity") in aliases[name] and entry.get("identity") != current[name]:
+            methods_meta[name] = dict(entry, identity=current[name], **({} if "source" in entry else source_of(name)))
     if any(row.get("graph_sha256") != graph_sha for row in rows):
         raise RuntimeError(f"{path}: stored rows belong to another graph (fingerprint differs)")
     carried_any = False
     if carry:
         source = Path(carry["root"]) / store_mod.shard_relative_path(**keys)
         offered = (store_mod.shard_methods(source, carry.get("legacy")) if source.is_file() else None) or {}
-        take = [name for name in todo if name in carry["methods"] and complete(offered.get(name), name, None)]
+        take = [name for name in todo if name in carry["methods"] and complete(offered.get(name), name, False)]
         if take:
             taken = store_mod.read_shard_rows(source, take)
             if any(row.get("graph_sha256") != graph_sha for row in taken):
@@ -1000,13 +1016,15 @@ def _graph_store(
                     row["partition"] = None
                 rows.append(row)
             for name in take:
-                methods_meta[name] = dict(cells_meta, identity=current[name], carried_from=str(carry["root"]))
+                source = offered[name].get("source") or (carry.get("sources") or {}).get(name)
+                methods_meta[name] = dict(cells_meta, identity=current[name], carried_from=str(carry["root"]),
+                                          **({"source": source} if source else {}))
             todo = [name for name in todo if name not in take]
             carried_any = True
     computed = bool(todo)
     for method_name in todo:
         method_info = methods[method_name]
-        methods_meta[method_name] = dict(cells_meta, identity=current[method_name])
+        methods_meta[method_name] = dict(cells_meta, identity=current[method_name], **source_of(method_name))
         runs = _method_n_runs(method_name, spec["n_runs"])
         if _uses_initial_membership(method_info):
             cells = [(noise, seed) for noise in noises for seed in partition_seeds]
@@ -1415,7 +1433,7 @@ def preflight_grid(
     store_root = output_root / folder_name
     method_state = {name: Counter() for name in methods}
     by_k = {name: {k: Counter() for k in communities} for name in methods}
-    current = store_mod.method_digests(spec) if spec is not None else {}
+    current = store_mod.identity_aliases(spec) if spec is not None else {}
     manifest = store_mod.read_manifest(store_root) if layout == "store" else None
     legacy = store_mod.legacy_shard_digests(manifest) if manifest else {}
     for n_community in communities:
@@ -1468,7 +1486,7 @@ def preflight_grid(
                             )
                             if not covered:
                                 state = "missing"
-                            elif entry.get("identity") == current[name]:
+                            elif entry.get("identity") in current[name]:
                                 state = "current"
                             else:
                                 state = "other"
@@ -1817,13 +1835,25 @@ def _main_store(
                     f"rows of {', '.join(names)} in {source} are not what this build computes:\n  {shown}"
                 )
             print(f"[disjoint] {report['rows_checked']} replayed row(s) match; carrying them")
-            carry = {"root": str(source), "methods": names, "legacy": report["legacy"]}
+            source_runtime = (store_mod.read_manifest(source) or {}).get("spec", {}).get("runtime") or {}
+            carry = {"root": str(source), "methods": names, "legacy": report["legacy"],
+                     "sources": {name: store_mod.method_source(name, source_runtime) for name in names}}
             carried = {
                 "source": str(source),
                 "methods": names,
                 "graphs_replayed": report["graphs_checked"],
                 "rows_replayed": report["rows_checked"],
             }
+        # Rows another source wrote under this build's fingerprint (hedonic 1 and 2 share a store)
+        # are kept only after a sample of them replays exactly with this build.
+        # A rerun method's rows of another source are recomputed instead (``recompute``).
+        skip = set(rerun) | set(reuse[1] if reuse else ())
+        recompute = {name: sources for name, sources in store_mod.foreign_sources(store_root, spec).items()
+                     if name in skip}
+        adopted = store_mod.check_adoption(store_root, spec, skip=skip)
+        for adoption in adopted:
+            print(f"[disjoint] {adoption['method']}: {adoption['graphs']} graph(s) written by core source "
+                  f"{str(adoption['source'])[:16]}; {adoption['rows_replayed']} replayed row(s) match, keeping them")
         # Held until this process exits (also on kill): one writer per store.
         lock, stale = store_mod.acquire_writer_lock(store_root)
         manifest = store_mod.prepare_store(
@@ -1833,6 +1863,7 @@ def _main_store(
             store_mod.invocation_environment(workers),
             rerun=rerun,
             carried=carried,
+            adopted=adopted,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
@@ -1857,6 +1888,7 @@ def _main_store(
             resume=resume or bool(carry),
             legacy=legacy,
             carry=carry,
+            recompute=recompute,
         )
         for k in grid["n_communities"]
         for p_in in grid["p_in"]
