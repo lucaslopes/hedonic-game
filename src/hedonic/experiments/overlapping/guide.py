@@ -23,10 +23,25 @@ TOPICS: dict[str, tuple[str, str]] = {
         hedonic run disjoint --preset smoke --dry-run   the plan of the smoke run
         hedonic run disjoint --preset smoke      the whole pipeline in seconds (store, table, figures, statistics)
         hedonic run queue disjoint --dry-run     the disjoint paper's queue and what is already done
+        hedonic detect                           one network x one method x one seed, here (`hedonic guide detect`)
 
         This release (1.x) reproduces the disjoint paper (the Physica A SBM benchmark). Everything runs
         detached, so closing the terminal or pressing Ctrl-C only closes the view. The overlapping-communities
         experiments come with release 2.
+    """),
+    "detect": ("One network, one method (`hedonic detect`)", """
+        hedonic detect                                    a wizard: network, its parameters, method, its parameters, seed
+        hedonic detect --list                             every network source and method, with its parameters
+        hedonic detect --graph sbm:k=4,p_in=0.3 --method hedonic
+        hedonic detect --graph lfr:n=1000,mu=0.3 --method leiden:resolution=0.05 --seed 3
+        hedonic detect --graph famous:name=Zachary --method louvain
+        hedonic detect --graph file:path=g.txt,truth=labels.txt --method infomap
+
+        A network is SOURCE:name=value,... and a method METHOD:name=value,...; --seed seeds both. The answer is
+        scored against the network's ground truth (ARI, NMI, overlap) and saved as result.json under the data
+        folder's Detect/ (--output DIR, or --no-save). The run prints its own command line, so a wizard answer can
+        be repeated or scripted. It runs here, in this terminal: for many seeds or networks, use
+        `hedonic run disjoint` or a queue.
     """),
     "disjoint": ("Disjoint SBM benchmark (`hedonic run disjoint`, `hedonic run queue disjoint`)", """
         hedonic run queue disjoint --dry-run         the disjoint paper's queue: a smoke check, then the paper grid

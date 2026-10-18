@@ -55,7 +55,7 @@ class TestCLI(unittest.TestCase):
     def test_the_run_aliases_and_top_level_commands(self):
         self.assertEqual(set(CLI.RUN_VERBS), {"list", "status", "attach", "logs", "stop", "resume", "check", "queue"})
         self.assertEqual(CLI.RUN_ALIASES, {"disjoint": "disjoint"})
-        self.assertEqual(set(CLI.TOP_LEVEL), {"run", "show", "guide", "config", "update"})
+        self.assertEqual(set(CLI.TOP_LEVEL), {"run", "detect", "show", "guide", "config", "update"})
 
     def test_the_overlap_verbs_fail_and_name_hedonic_2(self):
         import io

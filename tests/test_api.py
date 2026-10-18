@@ -259,7 +259,7 @@ class TestMetrics(unittest.TestCase):
 class TestLeanInstall(unittest.TestCase):
     """``pip install hedonic`` is the library alone: igraph and numpy."""
 
-    CLI_ONLY = ("scipy", "pandas", "matplotlib", "pyarrow", "duckdb", "tqdm")
+    CLI_ONLY = ("scipy", "pandas", "matplotlib", "networkx", "pyarrow", "duckdb", "tqdm")
 
     def test_the_base_dependencies_are_igraph_and_numpy(self):
         import re

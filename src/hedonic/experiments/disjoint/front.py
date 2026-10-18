@@ -81,10 +81,26 @@ def parse_floats(value: str) -> list[float]:
     return sorted(dict.fromkeys(out))
 
 
-def parse_ints(value: str) -> list[int]:
-    from hedonic.experiments.overlapping import common
+def parse_ints(value: str, what: str = "seeds") -> list[int]:
+    """``0-4`` or ``2,3,5``; ``what`` names the values in an error (``communities``, ``seeds``)."""
+    from hedonic.experiments.overlapping import common as qs
 
-    return common.parse_seeds(value)
+    try:
+        return qs.parse_seeds(value)
+    except ValueError:
+        raise ValueError(f"invalid {what} {value!r}; use e.g. 2, 2-6 or 2,4,6 (non-negative integers)") from None
+
+
+# The sweep's own names in its validation messages, and the flags a user typed for them.
+FLAG_NAMES = (("max_n_nodes", "--nodes"), ("n_communities", "--communities"), ("partition_seeds", "--partition-seeds"),
+              ("n_runs", "--restarts"), ("p_in", "--p-in"), ("difficulty values", "--difficulty values"),
+              ("noise values", "--noises values"))
+
+
+def _flag_names(message: str) -> str:
+    for internal, flag in FLAG_NAMES:
+        message = message.replace(internal, flag)
+    return message
 
 
 def parse_methods(value: str) -> list[str]:
@@ -154,7 +170,8 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     settings = {
         "preset": preset,
         "nodes": int(args.nodes if args.nodes is not None else base["max_n_nodes"]),
-        "communities": parse_ints(args.communities) if args.communities else list(base["n_communities"]),
+        "communities": (parse_ints(args.communities, "communities") if args.communities
+                        else list(base["n_communities"])),
         "p_in": parse_floats(args.p_in) if args.p_in else list(base["p_in"]),
         "difficulty": parse_floats(args.difficulty) if args.difficulty else list(base["difficulty"]),
         "seeds": parse_ints(args.seeds) if args.seeds else list(base["seeds"]),
@@ -180,13 +197,28 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--workers must be at least 1")
     if settings["partition_seeds"] < 1 or settings["restarts"] < 1:
         raise ValueError("--partition-seeds and --restarts must be at least 1")
-    sweep.validate_grid(
-        max_n_nodes=settings["nodes"], n_communities=settings["communities"], p_in=settings["p_in"],
-        difficulty=settings["difficulty"], noises=settings["noises"],
-        partition_seeds=settings["partition_seeds"], methods=sweep._parse_methods(settings["methods"]),
-        n_runs=settings["restarts"],
-    )
+    if any(not 0 <= x <= 1 for x in settings["noises"]):
+        raise ValueError("--noises are fractions of the vertices whose start label is redrawn: values in [0, 1]")
+    try:
+        sweep.validate_grid(
+            max_n_nodes=settings["nodes"], n_communities=settings["communities"], p_in=settings["p_in"],
+            difficulty=settings["difficulty"], noises=settings["noises"],
+            partition_seeds=settings["partition_seeds"], methods=sweep._parse_methods(settings["methods"]),
+            n_runs=settings["restarts"],
+        )
+    except ValueError as exc:
+        raise ValueError(_flag_names(str(exc))) from None
     return settings
+
+
+GRID_KEYS = ("nodes", "communities", "p_in", "difficulty", "seeds", "noises", "partition_seeds", "methods",
+             "restarts", "partitions")
+
+
+def is_custom(settings: dict[str, Any]) -> bool:
+    """True when the grid differs from its preset's (the plan then says custom, not the preset's one-liner)."""
+    base = resolve(build_parser().parse_args(["--preset", settings["preset"]]))
+    return any(settings[k] != base[k] for k in GRID_KEYS)
 
 
 def default_workers() -> int:
@@ -387,7 +419,7 @@ def _human_bytes(n: float) -> str:
 
 
 def render_plan(settings: dict[str, Any], output: str | None = None) -> str:
-    from hedonic.experiments.overlapping import common
+    from hedonic.experiments.overlapping import common as qs
     from hedonic.experiments.overlapping.tui import style
 
     info = plan(settings)
@@ -397,8 +429,11 @@ def render_plan(settings: dict[str, Any], output: str | None = None) -> str:
         return ", ".join(fmt.format(x) for x in xs) if len(xs) <= 6 else \
             f"{fmt.format(xs[0])} … {fmt.format(xs[-1])} ({len(xs)} values)"
 
+    title = (style(f"  disjoint SBM · custom grid", "bold") + style(f"  (starting from preset {settings['preset']})", "dim")
+             if is_custom(settings) else
+             style(f"  disjoint SBM · preset {settings['preset']}", "bold") + style(f"  {PRESETS[settings['preset']][1]}", "dim"))
     lines = [
-        style(f"  disjoint SBM · preset {settings['preset']}", "bold") + style(f"  {PRESETS[settings['preset']][1]}", "dim"),
+        title,
         (f"  graphs      {info['graphs']:,}  = K {span(settings['communities'])} × p {span(settings['p_in'])} × "
         f"λ {span(settings['difficulty'])} × {len(settings['seeds'])} network seeds"),
         (f"  per graph   {settings['nodes']:,} vertices · noises {span(settings['noises'])} × "
@@ -406,7 +441,7 @@ def render_plan(settings: dict[str, Any], output: str | None = None) -> str:
         f"  methods     {', '.join(METHOD_LABELS[m] for m in settings['methods'])}",
         (f"  results     {info['rows']:,} detector runs ({info['rows_per_graph']:,} per graph) · "
         f"partitions {settings['partitions']}"),
-        (f"  estimate    {'under a minute' if info['seconds'] < 60 else '~' + common.fmt_time(info['seconds'])} with {settings['workers']} workers · "
+        (f"  estimate    {'under a minute' if info['seconds'] < 60 else '~' + qs.fmt_duration(info['seconds'])} with {settings['workers']} workers · "
         f"~{_human_bytes(info['bytes'])} on disk"),
     ]
     if output:
@@ -447,23 +482,52 @@ def wizard(settings: dict[str, Any]) -> dict[str, Any]:
     choice = keys[tui.select("Which disjoint run?", labels, default=1)]
     args = build_parser().parse_args(["--preset", "smoke" if choice == "custom" else choice])
     settings = resolve(args)
-    if choice == "custom":
-        def ask(title, current, parse):
-            return parse(tui.text(title, current))
+    def ask(title, current, parse, check=lambda v: None):
+        """A typed value, asked again (with the reason) until it parses and passes ``check``."""
+        def validate(raw):
+            try:
+                return check(parse(raw))
+            except ValueError as exc:
+                return str(exc)
+        return parse(tui.text(title, current, validate))
 
-        flags = dict(zip(front_argv(settings)[::2], front_argv(settings)[1::2]))
-        settings["nodes"] = ask("Vertices per graph", flags["--nodes"], int)
-        settings["communities"] = ask("Numbers of communities K", flags["--communities"], parse_ints)
-        settings["p_in"] = ask("Within-community probabilities p", flags["--p-in"], parse_floats)
-        settings["difficulty"] = ask("Difficulties λ = q/p", flags["--difficulty"], parse_floats)
-        settings["seeds"] = ask("Network seeds", flags["--seeds"], parse_ints)
-        settings["noises"] = ask("Noise levels", flags["--noises"], parse_floats)
-        names = list(_sweep().METHODS)
-        picked = tui.multiselect("Methods", [(n, METHOD_LABELS[n]) for n in names],
-                                 selected=[names.index(m) for m in settings["methods"]])
-        settings["methods"] = [names[i] for i in picked] or settings["methods"]
-    settings["workers"] = int(tui.text(f"Workers (graphs in parallel; {os.cpu_count()} CPUs)", str(settings["workers"])))
-    return resolve(build_parser().parse_args(front_argv(settings)))
+    def positive(name):
+        return lambda v: None if v > 0 else f"{name} must be a positive integer"
+
+    def fractions(name):
+        return lambda vs: None if all(0 <= v <= 1 for v in vs) else f"{name} are values in [0, 1]"
+
+    def number(raw):
+        try:
+            return int(raw)
+        except ValueError:
+            raise ValueError(f"{raw!r} is not a whole number") from None
+
+    while True:
+        if choice == "custom":
+            flags = dict(zip(front_argv(settings)[::2], front_argv(settings)[1::2]))
+            settings["nodes"] = ask("Vertices per graph", flags["--nodes"], number, positive("vertices per graph"))
+            settings["communities"] = ask("Numbers of communities K", flags["--communities"],
+                                          lambda v: parse_ints(v, "communities"),
+                                          lambda ks: None if min(ks) >= 1 else "K must be at least 1")
+            settings["p_in"] = ask("Within-community probabilities p", flags["--p-in"], parse_floats,
+                                   fractions("probabilities"))
+            settings["difficulty"] = ask("Difficulties λ = q/p", flags["--difficulty"], parse_floats,
+                                         lambda vs: None if min(vs) >= 0 else "difficulties are non-negative")
+            settings["seeds"] = ask("Network seeds", flags["--seeds"], parse_ints)
+            settings["noises"] = ask("Noise levels (fraction of start labels redrawn)", flags["--noises"],
+                                     parse_floats, fractions("noise levels"))
+            names = list(_sweep().METHODS)
+            picked = tui.multiselect("Methods", [(METHOD_LABELS[n], n.lower()) for n in names],
+                                     selected=[names.index(m) for m in settings["methods"]])
+            settings["methods"] = [names[i] for i in picked] or settings["methods"]
+        settings["workers"] = ask(f"Workers (graphs in parallel; {os.cpu_count()} CPUs)", str(settings["workers"]),
+                                  number, positive("workers"))
+        try:  # what only the whole grid can check (K must divide the vertices, ...)
+            return resolve(build_parser().parse_args(front_argv(settings)))
+        except ValueError as exc:
+            print(tui.style(f"  {exc}; change the settings", "yellow"))
+            choice = "custom"
 
 
 def front_parser() -> argparse.ArgumentParser:
@@ -483,12 +547,12 @@ def front_study(argv: list[str]) -> dict[str, Any]:
     and so its folder; without ``--output-dir`` the folder is ``<disjoint_output_root>/<name>``.
     """
     from hedonic.experiments.config import ensure_not_archived_v1020
-    from hedonic.experiments.overlapping import common
+    from hedonic.experiments.overlapping import common as qs
 
     args = front_parser().parse_args(list(argv))
     if not args.name:
         raise ValueError("a queued disjoint run needs --name (its store folder follows it)")
-    common.parse_name(args.name)
+    qs.parse_name(args.name)
     settings = resolve(args)
     output = str(expand_path(args.output_dir).resolve()) if args.output_dir else default_output(args.name)
     ensure_not_archived_v1020(output, label="disjoint output")
@@ -496,7 +560,7 @@ def front_study(argv: list[str]) -> dict[str, Any]:
 
 
 def front_main(argv: list[str] | None = None) -> int:
-    from hedonic.experiments.overlapping import common
+    from hedonic.experiments.overlapping import common as qs
     from hedonic.experiments.overlapping import runmanager, tui
     from hedonic.experiments.overlapping.tui import style
 
@@ -507,12 +571,16 @@ def front_main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         return int(exc.code or 0)
     try:
-        if args.name:
-            common.parse_name(args.name)
+        if args.name is not None:
+            qs.parse_name(args.name)
         settings = resolve(args)
-        if (args.interactive or (not argv and tui.interactive())) and not args.yes:
+        asked = (args.interactive or (not argv and tui.interactive())) and not args.yes
+        if not argv and not tui.interactive():  # nothing typed and nobody to ask: never start on our own
+            print(render_plan(settings))
+            print(style("  not started: no terminal to confirm in; add --yes (or the run's flags) to start", "yellow"))
+            return 0
+        if asked:
             settings = wizard(settings)
-            print(style("  equivalent: hedonic run disjoint " + " ".join(front_argv(settings)), "dim"))
         name = args.name or runmanager.new_name("disjoint")
         output = str(expand_path(args.output_dir).resolve()) if args.output_dir else default_output(name)
         from hedonic.experiments.config import ensure_not_archived_v1020
@@ -521,7 +589,11 @@ def front_main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"hedonic run disjoint: error: {exc}\n(see `hedonic run disjoint --help`)", file=sys.stderr)
         return 2
-    except (tui.Cancelled, KeyboardInterrupt):
+    except tui.Cancelled:  # q, Esc or Quit: a choice, not a failure
+        print(style("\n  nothing started", "yellow"))
+        tui.note_cancelled()
+        return 0
+    except KeyboardInterrupt:
         print(style("\n  cancelled", "yellow"))
         return 130
     print(render_plan(settings, output))
@@ -529,6 +601,9 @@ def front_main(argv: list[str] | None = None) -> int:
     if args.dry_run or status["graphs"] or status["source"] or status["refused"]:
         print(render_store_status(settings, output, status))
     if args.dry_run:
+        return 0
+    if asked and not status["refused"] and not tui.confirm():
+        print(style("  not started", "yellow"))
         return 0
     if status["refused"]:
         # Refused before anything is written or registered.
@@ -558,7 +633,7 @@ def work(name: str, entry: dict, prog: dict, progress_file: Path | None = None) 
     """Run the sweep into the store, then table, figures and statistics; mirror progress."""
     from hedonic.experiments.disjoint import paper_stats
     from hedonic.experiments.disjoint import store as store_mod
-    from hedonic.experiments.overlapping import common
+    from hedonic.experiments.overlapping import common as qs
     from hedonic.experiments.overlapping import runmanager
     from hedonic.experiments.overlapping.tui import style
 
@@ -568,12 +643,12 @@ def work(name: str, entry: dict, prog: dict, progress_file: Path | None = None) 
     ppath = progress_file or runmanager.progress_path(entry)
     prog.update({"name": name, "kind": "disjoint", "status": "running", "stage": "sweep", "pid": os.getpid(),
                  "started": time.time(), "updated": time.time(), "describe": describe(settings),
-                 "command": entry["command"], "environment": common.environment(), "plan": [],
+                 "command": entry["command"], "environment": qs.environment(), "plan": [],
                  "graphs": plan(settings)["graphs"], "done": 0, "written": 0, "skipped": 0,
                  "by_k": {}, "methods": {}, "recent": []})
     runmanager.write_json(ppath, prog)
     print(style(f"hedonic run {name}", "bold") + " · " + describe(settings))
-    print(style(common.environment_line(), "dim"))
+    print(style(qs.environment_line(), "dim"))
     print(style("Ctrl-C does not stop this run. Detach: Ctrl-b d · stop: hedonic run stop " + name, "dim"), flush=True)
     last = [0.0]
 
@@ -649,7 +724,7 @@ def work(name: str, entry: dict, prog: dict, progress_file: Path | None = None) 
 
 # --------------------------------------------------------------------------- viewer and check
 def snapshot(entry: dict, prog: dict, status: str, frame: str, table: bool) -> str:
-    from hedonic.experiments.overlapping import common
+    from hedonic.experiments.overlapping import common as qs
     from hedonic.experiments.overlapping import runmanager
     from hedonic.experiments.overlapping import tui
     from hedonic.experiments.overlapping.tui import style
@@ -668,12 +743,12 @@ def snapshot(entry: dict, prog: dict, status: str, frame: str, table: bool) -> s
     total, done = prog.get("graphs") or plan(entry["settings"])["graphs"], prog.get("done", 0)
     started = prog.get("started", entry["created"])
     end = prog.get("finished") or (time.time() if status == "running" else prog.get("updated", time.time()))
-    tail = f"  {done:,}/{total:,} graphs · elapsed {common.fmt_time(end - started)}"
+    tail = f"  {done:,}/{total:,} graphs · elapsed {qs.fmt_time(end - started)}"
     recent = prog.get("recent") or []
     if status == "running" and prog.get("stage") == "sweep" and len(recent) >= 2:
         window = max(1.0, time.time() - recent[0]) if len(recent) > 1 else 1.0
         rate = len(recent) / window
-        tail += f" · {rate * 3600:,.0f}/h · ETA ~{common.fmt_time((total - done) / rate)}"
+        tail += f" · {rate * 3600:,.0f}/h · ETA ~{qs.fmt_time((total - done) / rate)}"
     lines.append("  " + runmanager.progress_bar(done, total, 36, G) + tail)
     if prog.get("skipped"):
         lines.append(style(f"  {prog['skipped']:,} graphs were already complete (resumed)", "dim"))

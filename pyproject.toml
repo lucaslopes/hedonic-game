@@ -35,6 +35,7 @@ cli = [
     "pyarrow>=14; sys_platform != 'win32'",
     "duckdb>=1.0; sys_platform != 'win32'",
     "tqdm>=4.60; sys_platform != 'win32'",
+    "networkx>=3.0; sys_platform != 'win32'",  # LFR graphs in `hedonic detect`
 ]
 # The igraph-fork releases' name of the same extra.
 experiments = ["hedonic[cli]"]

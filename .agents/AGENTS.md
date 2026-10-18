@@ -187,7 +187,9 @@ From `pyproject.toml` (Python >= 3.12):
 ## The `hedonic` front door
 
 ```bash
-hedonic guide [TOPIC]                  # start, disjoint, runs, config, update
+hedonic                                # in a terminal: the home screen (status + menu); elsewhere the help
+hedonic detect [--list]                # one network x one method x one seed, in this terminal
+hedonic guide [TOPIC]                  # start, detect, disjoint, runs, config, update
 hedonic show disjoint [--json]         # presets, grids, methods, estimates
 hedonic run disjoint [--preset smoke|paper] [flags] [--dry-run]
 hedonic run queue disjoint [--dry-run|--report] [--root DIR]
@@ -204,6 +206,30 @@ Contracts to keep when changing it:
   `audit`, ...) and the overlap `hedonic show` topics exit 2 with a message
   naming hedonic 2; a registered run of a removed kind is refused the same
   way. Keep them failing loudly, never silently.
+- **Home screen (`experiments/home.py`, the same file as hedonic 2's).** A
+  bare `hedonic` opens it only when stdin and stdout are a terminal and
+  `HEDONIC_PLAIN_VIEW` is unset; otherwise it prints `HEDONIC_HELP`. It asks
+  the CLI which commands exist (`home._commands`: `TOP_LEVEL`, the run verbs,
+  the bundled `queue-*.toml`) and offers only those, so this line shows
+  Detect, the disjoint queue's plan, the disjoint benchmark, runs, presets,
+  the guide, settings and the update check. Every item is a `hedonic` argv,
+  printed before it runs; views come back to the menu, and a wizard the user
+  backed out of (`tui.note_cancelled`) brings the menu back too.
+- **Nothing starts unasked.** With no arguments and no terminal, `hedonic run
+  disjoint` prints the plan and `not started: no terminal to confirm in`;
+  flags or `--yes` still run directly. Every last question (`tui.confirm`)
+  has **No** pre-selected. Backing out of a wizard exits 0 with `nothing
+  started`; Ctrl-C is 130. Wizard values are checked at the prompt and asked
+  again. `hedonic run resume` on a completed run only says where its results
+  are (`--again` relaunches it).
+- **`hedonic detect` (`experiments/detect.py`, the same file as hedonic 2's).**
+  One network (`sbm`, `lfr`, `famous`, `file`: `SOURCE:name=value,...`) x one
+  method (`hedonic`, `leiden`, `louvain`, `spectral`, `label_propagation`,
+  `infomap`, `onepass`, `mirror`) x one seed, in the terminal, scored against
+  the network's ground truth; `result.json` goes to `<data root>/Detect/`
+  unless `--no-save`. hedonic 2 adds `overlapping/detect_overlap.py` (SNAP
+  pairs, overlapping LFR, covers, the baselines); this file loads it only when
+  it exists. `tests/experiments/test_detect.py` is shared too.
 - **Durability.** Every run (`kind` `disjoint` or `queue`) executes detached
   in tmux session `hedonic-<name>`, or, without tmux, a detached process; on
   macOS under `caffeinate -i`. The worker ignores SIGINT and writes

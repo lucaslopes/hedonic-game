@@ -51,6 +51,26 @@ def fmt_time(seconds: float) -> str:
     return f"{h}:{rest // 60:02d}:{rest % 60:02d}" if h else f"{rest // 60}:{rest % 60:02d}"
 
 
+def fmt_duration(seconds: float) -> str:
+    """A length of time that cannot be read as a clock time: ``45 s``, ``12 min``, ``19 h 42 min``, ``3 d 4 h``."""
+    seconds = max(0, int(round(seconds)))
+    if seconds < 60:
+        return f"{seconds} s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours} h {minutes:02d} min" if minutes else f"{hours} h"
+    days, hours = divmod(hours, 24)
+    return f"{days} d {hours} h" if hours else f"{days} d"
+
+
+def seeds_text(seeds: list[int]) -> str:
+    """``seed 0`` or ``seeds 0,1,2``."""
+    return ("seed " if len(seeds) == 1 else "seeds ") + ",".join(map(str, seeds))
+
+
 def environment() -> dict:
     """Software provenance stored with every run (progress.json)."""
     import platform

@@ -60,9 +60,9 @@ def _value(v) -> str:
 
 
 def save(data: dict) -> Path:
-    lines = ["# hedonic user configuration — see `hedonic config --help`", ""]
+    lines = ["# hedonic user configuration — see `hedonic config --help`"]
     if data.get("defaults"):
-        lines += ["[defaults]"] + [f"{k} = {_value(v)}" for k, v in data["defaults"].items()]
+        lines += ["", "[defaults]"] + [f"{k} = {_value(v)}" for k, v in data["defaults"].items()]
     p = path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("\n".join(lines) + "\n")
@@ -87,8 +87,8 @@ def _validate(name: str, value) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] in ("-h", "--help"):
-        print(__doc__.strip())
+    if argv and argv[0] in ("-h", "--help"):  # the docstring without its reStructuredText marks
+        print(__doc__.strip().replace("``", "`").replace("::\n", ":\n"))
         return 0
     data = load()
     if not argv or argv[0] == "show":

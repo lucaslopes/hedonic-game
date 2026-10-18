@@ -125,7 +125,7 @@ def _posix_only() -> int | None:
 
 
 # Distributions the `cli` extra installs (pyproject.toml), by import name.
-CLI_MODULES = ("scipy", "pandas", "matplotlib", "pyarrow", "duckdb", "tqdm")
+CLI_MODULES = ("scipy", "pandas", "matplotlib", "networkx", "pyarrow", "duckdb", "tqdm")
 
 
 def _cli_extra() -> int | None:
@@ -182,7 +182,7 @@ RUN_VERBS = ("list", "status", "attach", "logs", "stop", "resume", "check", "que
 # only the disjoint sweep has one, and it depends on the preset (``_run_equivalent``).
 RUN_EQUIVALENTS: dict[str, str] = {}
 # Top-level `hedonic` commands.
-TOP_LEVEL = ("run", "show", "guide", "config", "update")
+TOP_LEVEL = ("run", "detect", "show", "guide", "config", "update")
 # Verbs of the overlapping experiments, which hedonic 1 does not have: they fail with a pointer to hedonic 2.
 HEDONIC_2_RUN_VERBS = ("exp", "paper", "paper-hoc", "spectrum", "spectrum-full", "posthoc", "controlled",
                        "startcurve", "audit", "calibrate", "calibrate-baselines")
@@ -214,6 +214,10 @@ def _run_equivalent(command: str, rest: list[str]) -> str | None:
 HEDONIC_HELP = """\
 usage: hedonic COMMAND [options]
 
+  hedonic                        in a terminal: the home screen (status, then a menu of what to do); elsewhere this help
+One network, one method (in this terminal)
+  hedonic detect [options]       network (SBM, LFR, famous, a file) x method x seed, scored against its ground truth
+                                 (a wizard without options; --list)
 Disjoint communities (planted-partition SBM: the disjoint paper)
   hedonic run disjoint [options] the SBM benchmark: store, figures and paper statistics (wizard without options)
   hedonic run disjoint --preset smoke   the whole pipeline in seconds
@@ -243,7 +247,12 @@ def hedonic_main(argv: list[str] | None = None) -> int:
     if (refused := _posix_only() or _cli_extra()) is not None:
         return refused
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] in ("-h", "--help") or argv[:2] in (["run", "-h"], ["run", "--help"]):
+    if not argv:
+        from hedonic.experiments import home
+
+        if home.wanted():  # a terminal; a pipe, a script or HEDONIC_PLAIN_VIEW=1 gets the help text
+            return home.main()
+    if not argv or argv[0] in ("-h", "--help", "help") or argv[:2] in (["run", "-h"], ["run", "--help"]):
         print(HEDONIC_HELP)
         return 0
     if argv[0] in ("-V", "--version"):
@@ -252,6 +261,10 @@ def hedonic_main(argv: list[str] | None = None) -> int:
     if argv[0] in HEDONIC_2_COMMANDS:
         print(f"hedonic {argv[0]}: {HEDONIC_2}", file=sys.stderr)
         return 2
+    if argv[0] == "detect":  # one network, one method, one seed, in this terminal
+        from hedonic.experiments import detect
+
+        return detect.main(argv[1:])
     if argv[0] == "guide":
         from hedonic.experiments.overlapping import guide
 
@@ -276,7 +289,14 @@ def hedonic_main(argv: list[str] | None = None) -> int:
         print(f"hedonic run {argv[1]}: {HEDONIC_2}", file=sys.stderr)
         return 2
     if argv[0] != "run" or (argv[1] not in RUN_ALIASES and argv[1] not in RUN_VERBS):
-        print(f"Unknown command: {' '.join(argv)}. Try `hedonic --help`.", file=sys.stderr)
+        import difflib
+
+        if argv[0] == "run":
+            close = [f"run {c}" for c in difflib.get_close_matches(argv[1], [*RUN_ALIASES, *RUN_VERBS], n=1)]
+        else:
+            close = difflib.get_close_matches(argv[0], [*TOP_LEVEL, "help"], n=1)
+        hint = f" Did you mean `hedonic {close[0]}`?" if close else ""
+        print(f"Unknown command: {' '.join(argv)}.{hint} Try `hedonic --help`.", file=sys.stderr)
         return 2
     if argv[1] in RUN_VERBS:
         from hedonic.experiments.overlapping import runmanager
