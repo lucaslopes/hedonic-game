@@ -484,9 +484,10 @@ class TestDisjointFrontDoor(unittest.TestCase):
                     "--output-dir", str(out)]
             self.assertEqual(runqueue.data_state(item, fresh=True), ("complete", str(out.resolve())))
             self.assertEqual(runqueue.unit_counts(item), (16, 16, "graphs"))
-            # A store whose Hedonic rows come from another core is refused before anything is written.
+            # A store whose Hedonic rows another detector computed (another fingerprint) is refused before
+            # anything is written.
             before = (out / "progress.json").read_bytes()
-            with _other_build(hedonic_core_source_sha256="0" * 64):
+            with _other_build(hedonic_partition_fingerprint="partitions-v1:" + "0" * 64):
                 self.assertEqual(runqueue.data_state(item, fresh=True)[0], "partial")
                 code = CLI.hedonic_main(["run", "disjoint", "--preset", "smoke", "--foreground",
                                          "--workers", "2", "--output-dir", str(out), "--name", "fg-smoke"])
@@ -623,7 +624,7 @@ class TestPerMethodIdentity(unittest.TestCase):
             root = Path(d)
             self._run(root, "Mirror,Hedonic,Spectral")
             mirror = self._rows(root / "s", "Mirror")
-            with _other_build(hedonic_core_source_sha256="0" * 64):
+            with _other_build(hedonic_partition_fingerprint="partitions-v1:" + "0" * 64):
                 with self.assertRaises(SystemExit) as raised:
                     self._run(root, "Mirror,Hedonic,Spectral")
                 self.assertIn("holds rows of Hedonic computed", str(raised.exception))
@@ -642,6 +643,93 @@ class TestPerMethodIdentity(unittest.TestCase):
                 self.assertEqual({c.split(":")[0] for c in calls}, {"community_hedonic"})
                 self.assertEqual(self._run(root, "Mirror,Hedonic,Spectral"), [])
             self.assertEqual(self._rows(root / "s", "Mirror"), mirror)
+
+    def test_another_source_with_the_same_fingerprint_is_replayed_and_adopted(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._run(root, "Mirror,Hedonic")
+            store = root / "s"
+            hedonic = self._rows(store, "Hedonic")
+            first = store_mod.runtime_identity()["hedonic_core_source_sha256"]
+
+            def durations():
+                df = store_mod.load_runs(store)
+                return list(df[df["method"] == "Hedonic"].sort_values(list(store_mod.KEY_COLUMNS))["duration"])
+
+            timed = durations()
+            # hedonic 1 and hedonic 2: other sources, the same partitions bit for bit.
+            with _other_build(hedonic_core_source_sha256="1" * 64):
+                with patch.object(store_mod, "_replay_shards", wraps=store_mod._replay_shards) as replay:
+                    self._run(root, "Mirror,Hedonic")  # its detector calls are the replay's
+                self.assertTrue(replay.called)
+                self.assertEqual(durations(), timed)  # kept, not recomputed
+                adopted = store_mod.read_manifest(store)["adopted"]
+                self.assertEqual([(a["method"], a["source"], a["by_source"]) for a in adopted],
+                                 [("Hedonic", first, "1" * 64)])
+                self.assertGreater(adopted[0]["rows_replayed"], 0)
+                self.assertEqual(self._rows(store, "Hedonic"), hedonic)
+                # Adopted once: the next run replays nothing.
+                with patch.object(store_mod, "_replay_shards", wraps=store_mod._replay_shards) as replay:
+                    self.assertEqual(self._run(root, "Mirror,Hedonic"), [])
+                self.assertFalse(replay.called)
+                # A new graph is written by this source; the store says which source wrote what.
+                code = sbm_sweep.main([*self.ARGS[:5], "0", "1", "2", *self.ARGS[7:], "--methods", "Mirror,Hedonic",
+                                       "--output_root", str(root), "--resume"])
+                self.assertEqual(code, 0)
+                self.assertEqual(store_mod.summarize(store)["sources"], {"Hedonic": {first: 2, "1" * 64: 1}})
+
+    def test_another_source_that_does_not_replay_is_refused_then_rerun(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._run(root, "Mirror,Hedonic")
+            store = root / "s"
+            for shard in store_mod.shard_paths(store):
+                table = pq.read_table(shard)
+                meta = table.schema.metadata
+                column = table.schema.get_field_index("adjusted_rand")
+                table = table.set_column(
+                    column, "adjusted_rand", pa.array([0.123] * table.num_rows, pa.float64())
+                ).replace_schema_metadata(meta)
+                pq.write_table(table, shard)
+            manifest = (store / "manifest.json").read_bytes()
+            with _other_build(hedonic_core_source_sha256="1" * 64):
+                with self.assertRaises(SystemExit) as raised:
+                    self._run(root, "Mirror,Hedonic")
+                self.assertIn("do not replay exactly", str(raised.exception))
+                self.assertEqual((store / "manifest.json").read_bytes(), manifest)
+                calls = self._run(root, "Mirror,Hedonic", "--rerun", "hedonic")
+                self.assertEqual({c.split(":")[0] for c in calls}, {"community_hedonic"})
+                self.assertEqual(store_mod.summarize(store)["sources"], {"Hedonic": {"1" * 64: 2}})
+                self.assertNotIn("adopted", store_mod.read_manifest(store))
+
+    def test_a_store_of_this_build_under_the_source_rule_stays_current(self):
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._run(root, "Mirror,Hedonic")
+            store = root / "s"
+            manifest = store_mod.read_manifest(store)
+            spec = manifest["spec"]
+            legacy = store_mod.spec_hash(store_mod.method_identity(
+                "Hedonic", spec["methods"]["Hedonic"], n_runs=spec["n_runs"], runtime=spec["runtime"], legacy=True))
+            self.assertNotEqual(legacy, manifest["method_identities"]["Hedonic"])
+            manifest["method_identities"]["Hedonic"] = spec["method_identities"]["Hedonic"] = legacy
+            (store / "manifest.json").write_text(json.dumps(manifest))
+            for shard in store_mod.shard_paths(store):  # as the sweep wrote it before the fingerprint
+                table = pq.read_table(shard)
+                meta = json.loads(table.schema.metadata[b"hedonic.disjoint_store"])
+                meta["methods_meta"]["Hedonic"]["identity"] = legacy
+                del meta["methods_meta"]["Hedonic"]["source"]
+                pq.write_table(table.replace_schema_metadata(
+                    {b"hedonic.disjoint_store": json.dumps(meta).encode()}), shard)
+            self.assertEqual(self._run(root, "Mirror,Hedonic"), [])
+            self.assertNotIn("adopted", store_mod.read_manifest(store))
+            mine = store_mod.runtime_identity()["hedonic_core_source_sha256"]
+            self.assertEqual(store_mod.summarize(store)["sources"], {"Hedonic": {mine: 2}})
 
     def test_reuse_from_carries_replayed_rows_into_a_new_store(self):
         with tempfile.TemporaryDirectory() as d:

@@ -228,6 +228,25 @@ hedonic-exp list                       # analysis and utility commands
   runtime fields; a store holding another identity is refused before any
   write, `--rerun` / `--reuse-from` resolve it). There is no igraph version
   pin and no protocol lock file.
+- **Two fingerprints (disjoint store).** The store's Hedonic rows are keyed on
+  what the core computes, not on its bytes: `hedonic.experiments.fingerprint`
+  runs a fixed grid of 8,736 partition calls (`GRID = "partitions-v1"`; seconds,
+  cached per compiled core in `~/.cache/hedonic/fingerprints`,
+  `HEDONIC_FINGERPRINT_CACHE`) and hashes memberships, quality and slack bits;
+  `store.runtime_identity()` carries it as `hedonic_partition_fingerprint` next
+  to `hedonic_core_source_sha256`, and `METHOD_RUNTIME_FIELDS["Hedonic"]` keys on
+  it, so hedonic 1 and hedonic 2 (other sources, the same partitions) share a
+  store. Each shard records the `source` that wrote a method's rows
+  (`SOURCE_FIELDS`); `disjoint-store` lists the graphs per source. Before a run
+  keeps rows of a source other than the loaded one, `store.check_adoption`
+  replays a sample of them with this build (5 shards x 10 rows per source) and
+  refuses on any difference (`--rerun hedonic` recomputes those rows); a source
+  it accepted is recorded in `manifest["adopted"]` and not replayed again.
+  A store of the same build written before the fingerprint stays current
+  (`store.identity_aliases`). The pinned fingerprint is in
+  `tests/experiments/test_fingerprint.py`: changing it means every store's
+  Hedonic rows are recomputed. Other records (overlap studies) keep the source
+  identity.
 - **Baseline calibration.** `hedonic run calibrate-baselines` takes
   `--method-budget M=N[:MIN]` (the paper queue: ANGEL at 3 settings, 60 min
   per pair), `--transfer PAIRS` (not searched: each searched method takes the

@@ -194,9 +194,17 @@ is what results depend on.
   queue keeps its build, and its records must be redone on the new one.
   Batch native edits; do not polish comments while the user's runs depend on
   the build.
-* The two lines have different digests even where their partitions are bit
-  for bit the same (their sources differ), so a store filled by one line is
-  not reused by the other.
+* **The disjoint store has a second fingerprint**, of behaviour:
+  `hedonic.experiments.fingerprint` runs 8,736 partition calls on the loaded
+  build (`partitions-v1:0668d101...`, pinned in
+  `tests/experiments/test_fingerprint.py`) and the store keys Hedonic's rows
+  on it, so the two lines (different sources, same partitions) share one
+  store. Each shard records the source that wrote it; before a run keeps rows
+  of another source it replays a sample of them and refuses on any
+  difference. If a change of yours moves the fingerprint, every store's
+  Hedonic rows are recomputed: say so, and update the pin in the same commit.
+* Overlap records (hedonic 2) keep the source identity: there a source change
+  always means new records.
 * `SOURCE_GLOBS` must cover every C file the extension compiles or includes:
   it once missed the engines under `native/core/*/`, so editing an engine did
   not change the digest. `tests/experiments/test_runs_build_identity.py`
@@ -276,6 +284,8 @@ extension by hand if a GCC build must be tried in Python.
 |---|---|---|
 | A C edit has no effect, or results look like the old build | stale `_core.*.so`: setuptools skipped the rebuild, or the editable install never recompiles | `setup.py build_ext --inplace --force`, then `scripts/fresh.py` |
 | Wheels or timings are x86_64 | uv's default 3.12 is x86_64 (Rosetta) | `uv venv -p cpython-3.12-macos-aarch64-none`; check `platform.machine()` |
+| A store refuses every method of another venv | the venvs' igraph extensions differ (one x86_64) | the same arm64 venv recipe for both |
+| `hedonic._core.core_version` names the other line | `HIG_VERSION_STRING` in `hedonic_core.h` not bumped | it is the release (`1.0.0`, `2.0.0`); `test_native_backend` checks it |
 | `import hedonic` picks the wrong build | `PYTHONPATH` left from an A/B run, or another venv | `fresh.py` / the paths `bitcheck.py` prints |
 | Pins "pass" but nothing was checked | `HIG_PINNED` unset | `tools/native_tests.py` |
 | Result differs on GCC x86_64 or MSVC only | unsequenced side effects (two draws in one expression) | one draw per statement |

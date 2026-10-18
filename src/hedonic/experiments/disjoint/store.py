@@ -193,14 +193,17 @@ def _file_sha256(path: str | None) -> str | None:
 def runtime_identity() -> dict[str, str | None]:
     """Versions that determine detector trajectories (resume must match).
 
-    The hedonic release, the SHA-256 of its compiled core and of the loaded
-    igraph extension (full Leiden, Spectral and graph building run there), and
-    python-igraph's version. Paths are left out so the identity, and with it
-    the spec hash, is the same on every machine that runs the same binaries;
-    ``invocation_environment`` records where they were.
+    The hedonic release, the SHA-256 of its compiled core, of the sources it was
+    compiled from and of the loaded igraph extension (full Leiden, Spectral and
+    graph building run there), python-igraph's version, and the behaviour
+    fingerprint of the partition detector (``hedonic.experiments.fingerprint``).
+    Paths are left out so the identity, and with it the spec hash, is the same
+    on every machine that runs the same binaries; ``invocation_environment``
+    records where they were.
     """
     import igraph
 
+    from hedonic.experiments.fingerprint import partition_fingerprint
     from hedonic.experiments.runtime import runtime_versions
 
     versions = runtime_versions()
@@ -213,6 +216,7 @@ def runtime_identity() -> dict[str, str | None]:
         getattr(igraph, "_igraph", None), "__file__", None
     )
     identity["igraph_extension_sha256"] = _file_sha256(extension)
+    identity["hedonic_partition_fingerprint"] = partition_fingerprint()
     return identity
 
 
@@ -264,9 +268,17 @@ BASE_SPEC_KEYS = ("schema", "graph_generator", "partitions", "timing_scope")
 # the duplicate rule) changes what a row holds; every method's identity carries it.
 ROW_CODE = "disjoint-row-v1"
 # The binaries each method's rows depend on. Every row is scored by igraph (rand, ARI), so every
-# method carries igraph's; Hedonic also carries the compiled core it runs in.
+# method carries igraph's. Hedonic carries what its core computes, the behaviour fingerprint, so
+# builds whose sources differ but whose partitions are the same bit for bit (hedonic 1 and 2) share
+# rows; which sources wrote them is recorded per shard (``SOURCE_FIELDS``), and rows of another
+# source are replayed before a run adopts them (``check_adoption``).
 _IGRAPH_FIELDS = ("igraph_c", "igraph_extension_sha256")
-METHOD_RUNTIME_FIELDS = {"Hedonic": ("hedonic_core_source_sha256", *_IGRAPH_FIELDS)}
+METHOD_RUNTIME_FIELDS = {"Hedonic": ("hedonic_partition_fingerprint", *_IGRAPH_FIELDS)}
+# Before the fingerprint, Hedonic's rows were keyed on the core's source digest; a store of the
+# loaded build written then is still current (``identity_aliases``).
+_LEGACY_RUNTIME_FIELDS = {"Hedonic": ("hedonic_core_source_sha256", *_IGRAPH_FIELDS)}
+# The runtime field naming the exact code that wrote a method's rows (recorded per shard).
+SOURCE_FIELDS = {"Hedonic": "hedonic_core_source_sha256"}
 # The methods whose restarts are counted by n_runs (the others run once per cell).
 RESTARTED_METHODS = ("Hedonic", "Leiden")
 
@@ -280,9 +292,13 @@ def _method_parameters(info: dict) -> dict:
     }
 
 
-def method_identity(name: str, info: dict, *, n_runs: int, runtime: dict) -> dict[str, Any]:
-    """Everything that decides one method's rows on a given graph and cell."""
-    fields = METHOD_RUNTIME_FIELDS.get(name, _IGRAPH_FIELDS)
+def method_identity(name: str, info: dict, *, n_runs: int, runtime: dict, legacy: bool = False) -> dict[str, Any]:
+    """Everything that decides one method's rows on a given graph and cell.
+
+    ``legacy=True`` gives the identity of the same rows under the rule before the behaviour
+    fingerprint (Hedonic keyed on its source digest).
+    """
+    fields = (_LEGACY_RUNTIME_FIELDS if legacy else METHOD_RUNTIME_FIELDS).get(name, _IGRAPH_FIELDS)
     identity = {
         "method": name,
         "method_call_name": info["method_call_name"],
@@ -301,10 +317,31 @@ def method_digests(spec: dict[str, Any]) -> dict[str, str]:
     if "method_identities" in spec:
         return dict(spec["method_identities"])
     runtime = spec.get("runtime") or {}
+    # A spec without a behaviour fingerprint was written under the rule before it.
+    legacy = "hedonic_partition_fingerprint" not in runtime
     return {
-        name: spec_hash(method_identity(name, info, n_runs=spec.get("n_runs", 1), runtime=runtime))
+        name: spec_hash(method_identity(name, info, n_runs=spec.get("n_runs", 1), runtime=runtime, legacy=legacy))
         for name, info in spec.get("methods", {}).items()
     }
+
+
+def method_source(name: str, runtime: dict) -> str | None:
+    """The exact code that writes ``name``'s rows under ``runtime`` (``None``: nothing beyond the identity)."""
+    field = SOURCE_FIELDS.get(name)
+    return runtime.get(field) if field else None
+
+
+def identity_aliases(spec: dict[str, Any]) -> dict[str, set[str]]:
+    """Per method, every digest that counts as current for this spec: its identity and, when the
+    identity rule changed since, the digest the same build's rows were written under before."""
+    runtime = spec.get("runtime") or {}
+    current = method_digests(spec)
+    aliases = {name: {digest} for name, digest in current.items()}
+    for name, info in spec.get("methods", {}).items():
+        if name in _LEGACY_RUNTIME_FIELDS and name in aliases:
+            aliases[name].add(spec_hash(method_identity(name, info, n_runs=spec.get("n_runs", 1),
+                                                        runtime=runtime, legacy=True)))
+    return aliases
 
 
 def build_spec(
@@ -373,11 +410,12 @@ def check_store(
             f"{root} holds a different kind of store ({', '.join(diff)} differ); use a new output folder"
         )
     stored = stored_method_digests(manifest)
+    aliases = identity_aliases(spec)
     state = {"same": [], "new": [], "changed": []}
     for name, digest in sorted(wanted.items()):
         if name not in stored:
             state["new"].append(name)
-        elif stored[name] == digest:
+        elif stored[name] in aliases.get(name, {digest}):
             state["same"].append(name)
         else:
             state["changed"].append(name)
@@ -437,8 +475,12 @@ def prepare_store(
     *,
     rerun: Iterable[str] = (),
     carried: dict[str, Any] | None = None,
+    adopted: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """Create or reopen a store (``check_store`` first, so a refusal writes nothing).
+
+    ``adopted`` (from ``check_adoption``) is appended to ``manifest["adopted"]``: the rows of
+    another source this build replayed and keeps.
 
     The manifest's ``method_identities`` become the union of the stored ones and this run's: a
     method this run does not name keeps its rows and its identity.  Shards written before
@@ -477,6 +519,8 @@ def prepare_store(
         manifest["method_identities"] = identities
     if carried:
         manifest.setdefault("carried", []).append(dict(carried, at=now))
+    for adoption in adopted:
+        manifest.setdefault("adopted", []).append(dict(adoption, at=now))
     if grid not in manifest["grids"]:
         manifest["grids"].append(grid)
     if invocation is not None:
@@ -874,6 +918,12 @@ def summarize(root: str | Path) -> dict[str, Any]:
     }
     if not paths:
         return summary
+    spec = manifest.get("spec") or {}
+    if spec.get("runtime"):
+        summary["sources"] = {
+            name: {str(source): len(shards) for source, shards in by_source.items()}
+            for name, by_source in shard_sources(root, spec).items()
+        }
     con = open_store(root)
     rows = con.execute(
         """
@@ -1038,8 +1088,9 @@ def _replay_shards(
     return graphs_checked, rows_checked, problems
 
 
-def current_method_digests(spec: dict[str, Any]) -> dict[str, str]:
-    """The identity each of the spec's methods would have if computed now, by this build."""
+def current_method_digests(spec: dict[str, Any], *, legacy: bool = False) -> dict[str, str]:
+    """The identity each of the spec's methods would have if computed now, by this build
+    (``legacy=True``: under the rule before the behaviour fingerprint)."""
     from hedonic.experiments.disjoint import sbm_sweep
 
     runtime = runtime_identity()
@@ -1050,6 +1101,7 @@ def current_method_digests(spec: dict[str, Any]) -> dict[str, str]:
                 sbm_sweep.METHODS.get(name, info),
                 n_runs=spec.get("n_runs", 1),
                 runtime=runtime,
+                legacy=legacy,
             )
         )
         for name, info in spec.get("methods", {}).items()
@@ -1079,8 +1131,9 @@ def verify_store(
     problems: list[str] = []
     stored = stored_method_digests(manifest)
     now = current_method_digests(spec)
+    before = current_method_digests(spec, legacy=True)
     names = sorted(stored if methods is None else set(methods))
-    other_build = [name for name in names if stored.get(name) != now.get(name)]
+    other_build = [name for name in names if stored.get(name) not in {now.get(name), before.get(name)}]
     if other_build:
         problems.append(
             f"rows of {', '.join(other_build)} were computed by another build or setting "
@@ -1101,6 +1154,89 @@ def verify_store(
         "problems": problems,
         "ok": not problems,
     }
+
+
+def shard_sources(root: str | Path, spec: dict[str, Any]) -> dict[str, dict[str, list[Path]]]:
+    """Per method with a recorded source, the shards holding its current rows, by the source that
+    wrote them.  Rows written under the identity rule before the fingerprint carry no source; they
+    are current only when they are this build's (``identity_aliases``), so their source is it."""
+    manifest = read_manifest(root) or {}
+    legacy = legacy_shard_digests(manifest)
+    aliases = identity_aliases(spec)
+    runtime = spec.get("runtime") or {}
+    out: dict[str, dict[str, list[Path]]] = {}
+    for path in shard_paths(root):
+        for name, entry in (shard_methods(path, legacy) or {}).items():
+            if name not in SOURCE_FIELDS or entry.get("identity") not in aliases.get(name, ()):
+                continue
+            source = entry.get("source") or method_source(name, runtime)
+            out.setdefault(name, {}).setdefault(source, []).append(path)
+    return out
+
+
+def foreign_sources(root: str | Path, spec: dict[str, Any]) -> dict[str, list[str]]:
+    """Per method, the sources other than the loaded one whose current rows this store holds and
+    has not adopted under this fingerprint yet (``check_adoption`` replays them)."""
+    manifest = read_manifest(root) or {}
+    runtime = spec.get("runtime") or {}
+    done = {(a["method"], a["source"], a["fingerprint"]) for a in manifest.get("adopted", [])}
+    out: dict[str, list[str]] = {}
+    for name, by_source in shard_sources(root, spec).items():
+        mine = method_source(name, runtime)
+        fingerprint = runtime.get(METHOD_RUNTIME_FIELDS[name][0])
+        pending = sorted(str(source) for source in by_source
+                         if source != mine and (name, source, fingerprint) not in done)
+        if pending:
+            out[name] = pending
+    return out
+
+
+def check_adoption(
+    root: str | Path, spec: dict[str, Any], *, sample_shards: int = 5, sample_rows: int = 10, seed: int = 0,
+    skip: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """Read-only: replay the rows this build would adopt from other sources.
+
+    A method keyed on its behaviour fingerprint (Hedonic) keeps rows written by any source with
+    the same fingerprint.  Before a run adopts rows of a source other than the loaded one, a
+    sample of them (``sample_shards`` shards per source, ``sample_rows`` rows each) is replayed
+    with this build and must match exactly; a source already adopted under this fingerprint
+    (``manifest["adopted"]``) is not replayed again.  Raises ``StoreConflict`` on any mismatch;
+    returns the adoptions to record (``prepare_store(adopted=...)``).  Methods in ``skip`` (rerun
+    or carried: their rows are recomputed or replaced) are not checked.
+    """
+    manifest = read_manifest(root)
+    if manifest is None:
+        return []
+    runtime = spec.get("runtime") or {}
+    done = {(a["method"], a["source"], a["fingerprint"]) for a in manifest.get("adopted", [])}
+    adoptions = []
+    rng = random.Random(seed)
+    for name, by_source in sorted(shard_sources(root, spec).items()):
+        if name in set(skip):
+            continue
+        mine = method_source(name, runtime)
+        fingerprint = runtime.get(METHOD_RUNTIME_FIELDS[name][0])
+        for source, paths in sorted(by_source.items(), key=lambda item: str(item[0])):
+            if source == mine or (name, source, fingerprint) in done:
+                continue
+            chosen = rng.sample(paths, min(sample_shards, len(paths)))
+            graphs, rows, problems = _replay_shards(
+                chosen, manifest["spec"], methods=[name], sample_rows=sample_rows, rng=rng
+            )
+            if rows == 0:
+                problems.append(f"{name}: no row of source {str(source)[:16]} was replayed")
+            if problems:
+                shown = "\n  ".join(problems[:10])
+                raise StoreConflict(
+                    f"{root}: {name} rows written by core source {str(source)[:16]} share this build's "
+                    f"fingerprint but do not replay exactly:\n  {shown}\n"
+                    f"Recompute them with --rerun {name.lower()}, or use a new output folder."
+                )
+            adoptions.append({"method": name, "source": source, "fingerprint": fingerprint,
+                              "graphs": len(paths), "graphs_replayed": graphs, "rows_replayed": rows,
+                              "by_source": mine})
+    return adoptions
 
 
 def verify_carry(
@@ -1329,6 +1465,9 @@ def main(argv=None) -> int:
                     f"{method:<12}{item['rows']:>6}  {item['adjusted_rand']:>6.3f}  "
                     f"{item['robustness']:>10.3f}  {item['duration_s']:>8.5f}"
                 )
+            for method, by_source in (summary.get("sources") or {}).items():
+                for source, graphs in sorted(by_source.items()):
+                    print(f"written by   {method}: core source {source[:16]}  {graphs} graph(s)")
     return status
 
 
