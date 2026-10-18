@@ -46,7 +46,7 @@ def _read_key() -> str:
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     try:
-        tty.setraw(fd)
+        tty.setraw(fd, termios.TCSADRAIN)  # TCSAFLUSH (the default) would drop keys typed ahead or pasted
         ch = os.read(fd, 1).decode(errors="ignore")
         if ch == "\x1b":
             # A bare Esc sends only this byte; arrows send "[A" etc. straight after it.
