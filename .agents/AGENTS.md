@@ -32,6 +32,13 @@ read `AGENTS.md` from the repository root) and the repository's skills in
   hedonic 2, what a source change does to run records, timing and memory
   under `scripts/guard.sh`, and the tag-driven TestPyPI/PyPI release. Local
   only: it never pushes, tags or publishes.
+- **`snap-networks`** is the path for the SNAP ground-truth networks
+  (`~/Databases/Hedonic/Networks`, read-only): `network:cover` pairs, the
+  loader's ID alignment, the covered-induced subgraph, detection with
+  `community_hedonic` and scoring with `hedonic.metrics`, the `hedonic run exp`
+  / `show` / `pickle` verbs, an inventory of the pairs (Table 1 sizes) and
+  `scripts/inspect_snap_network.py`, a bounded read-only look at the archive.
+  It is overlap-only, so it exists on hedonic 2, not on `release/1.x`.
 - `clean-worktree-commits` (a user-level skill, not in this repository) turns
   a dirty checkout into reviewable local commits before a release.
 
