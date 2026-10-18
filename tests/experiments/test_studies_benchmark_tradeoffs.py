@@ -17,9 +17,12 @@ from hedonic.experiments.plots import benchmark_tradeoffs as bt
 
 
 def write_record(folder: Path, network: str, seed: int, method: str, *, f1: float | None, seconds: float,
-                 status: str = "completed") -> None:
+                 status: str = "completed", unit: str = "full") -> None:
     runner = qs.BY_KEY[method].runner
-    directory = folder / f"{network}-full" / f"seed{seed}" / "runs" / network
+    base, cover = qs.split_target(network)
+    tag = base if cover is None else f"{base}-{cover}"
+    network = base
+    directory = folder / f"{tag}-{unit}" / f"seed{seed}" / "runs" / network
     directory.mkdir(parents=True, exist_ok=True)
     record = {"dataset": network, "seed": seed, "status": status, "detection_seconds": seconds,
               "metrics": {"f1": f1, "onmi": 0.5} if f1 is not None else {}}
@@ -61,6 +64,29 @@ class TestData(unittest.TestCase):
             self.assertIsNone(by_unit[("dblp", 0, "clique_percolation")]["robustness"])
             linear = bt.load_robustness([audit], "linear", "fixed_labels")
             self.assertAlmostEqual(linear[("dblp", 0, "hedonic")], 0.35)
+
+    def test_the_covers_of_one_network_stay_apart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bench, audit = Path(tmp) / "bench", Path(tmp) / "audit"
+            write_record(bench, "amazon", 0, "hedonic", f1=0.5, seconds=3.0)
+            write_record(bench, "amazon:top5000", 0, "hedonic", f1=0.7, seconds=0.2, unit="full-covered")
+            write_audit(audit, "amazon", 0, "hedonic", 0.6)
+            write_audit(audit, "amazon:top5000", 0, "hedonic", 0.8)
+            rows, _ = bt.load_benchmark([bench], "f1")
+            bt.join(rows, bt.load_robustness([audit], "log", "open_labels"))
+            by_target = {r["network"]: r for r in rows}
+            self.assertEqual(set(by_target), {"amazon", "amazon:top5000"})
+            self.assertEqual((by_target["amazon"]["accuracy"], by_target["amazon"]["robustness"]), (0.5, 0.6))
+            self.assertEqual((by_target["amazon:top5000"]["accuracy"], by_target["amazon:top5000"]["robustness"]),
+                             (0.7, 0.8))
+            only, _ = bt.load_benchmark([bench], "f1", networks=["amazon:top5k"])
+            self.assertEqual([r["network"] for r in only], ["amazon:top5000"])
+            self.assertEqual([r["network"] for r in bt.load_benchmark([bench], "f1", networks=["amazon:all"])[0]],
+                             ["amazon"])
+            self.assertEqual([a["network"] for a in bt.aggregate(rows)], ["amazon", "amazon:top5000"])
+            written = bt.plot(rows, bt.aggregate(rows), metric="f1", measure="log", policy="open_labels",
+                              output=Path(tmp) / "fig", formats=("png",))
+            self.assertTrue(written[0].is_file())
 
     def test_filters_and_the_first_folder_wins(self):
         with tempfile.TemporaryDirectory() as tmp:

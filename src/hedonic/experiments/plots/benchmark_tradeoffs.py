@@ -20,6 +20,7 @@ import csv
 import json
 import math
 import random
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -61,13 +62,17 @@ def load_benchmark(folders: Sequence[Path], metric: str, networks: Sequence[str]
     """
     rows: dict[tuple[str, int, str], dict[str, Any]] = {}
     skipped = 0
+    wanted = {target(n) for n in networks} if networks else None
     for folder in folders:
         for path in sorted(folder.glob("*/seed*/runs/*/*.json")):
             key = RUNNER_TO_KEY.get(path.stem)
-            if key is None or (methods and key not in methods) or (networks and path.parent.name not in networks):
+            if key is None or (methods and key not in methods):
+                continue
+            network = _unit_target(path, path.parent.name)  # amazon:all and amazon:top5000 are two networks here
+            if wanted is not None and network not in wanted:
                 continue
             record = json.loads(path.read_text())
-            unit = (str(record.get("dataset") or path.parent.name), int(record.get("seed", -1)), key)
+            unit = (network, int(record.get("seed", -1)), key)
             if unit in rows:
                 continue
             value = (record.get("metrics") or {}).get(metric)
@@ -85,7 +90,7 @@ def load_benchmark(folders: Sequence[Path], metric: str, networks: Sequence[str]
 
 
 def load_robustness(folders: Sequence[Path], measure: str, policy: str) -> dict[tuple[str, int, str], float]:
-    """The cover-profile robustness of every audited unit, by (network, seed, method)."""
+    """The cover-profile robustness of every audited unit, by (target, seed, method)."""
     field = MEASURES[measure]
     out: dict[tuple[str, int, str], float] = {}
     for folder in folders:
@@ -95,7 +100,7 @@ def load_robustness(folders: Sequence[Path], measure: str, policy: str) -> dict[
         for record in cover_audit.read_records(ledger).values():
             if record.get("status") != "completed" or record.get("profile") != "cover":
                 continue
-            out.setdefault((record["network"], int(record["seed"]), record["method"]),
+            out.setdefault((target(record["network"]), int(record["seed"]), record["method"]),
                            float(record["policies"][policy][field]))
     return out
 
@@ -119,7 +124,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in rows:
         groups.setdefault((row["network"], row["method"]), []).append(row)
     out = []
-    for (network, method), members in sorted(groups.items(), key=lambda item: (item[0][0], order[item[0][1]])):
+    for (network, method), members in sorted(groups.items(), key=lambda item: (_target_order(item[0][0]), order[item[0][1]])):
         accuracy = [m["accuracy"] for m in members]
         seconds = [m["seconds"] for m in members]
         robust = [m["robustness"] for m in members if m["robustness"] is not None]
@@ -138,6 +143,24 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None
         writer.writerows(rows)
 
 
+def target(network: str) -> str:
+    """A network:cover target in one spelling: the default ``all`` cover is the bare network (``amazon:all`` -> ``amazon``)."""
+    base, cover = qs.split_target(network)
+    return base if cover in (None, "all") else f"{base}:{cover}"
+
+
+def _unit_target(path: Path, base: str) -> str:
+    """The target of a record, read from its unit folder ``<base>[-<cover>]-<full|nN>[-covered]``."""
+    match = re.fullmatch(rf"{re.escape(base)}(?:-(.+?))?-(?:full|n\d+)(?:-covered)?", path.parents[3].name)
+    return target(f"{base}:{match.group(1)}" if match and match.group(1) else base)
+
+
+def _target_order(network: str) -> tuple[int, str]:
+    base, cover = qs.split_target(network)
+    order = list(qs.NETWORKS)
+    return (order.index(base) if base in order else len(order), cover or "")
+
+
 # --------------------------------------------------------------------------- figure
 def _bar(ci: float | None) -> float:
     return 0.0 if ci is None else ci
@@ -145,7 +168,7 @@ def _bar(ci: float | None) -> float:
 
 def plot(rows: list[dict[str, Any]], aggregates: list[dict[str, Any]], *, metric: str, measure: str, policy: str,
          output: Path, formats: Sequence[str] = ("pdf", "png")) -> list[Path]:
-    networks = sorted({row["network"] for row in rows}, key=list(qs.NETWORKS).index)
+    networks = sorted({row["network"] for row in rows}, key=_target_order)
     present = [method for method in qs.METHODS + qs.CONTROLS if any(row["method"] == method.key for row in rows)]
     style = {method.key: (plt.get_cmap("tab10")(index % 10), MARKERS[index % len(MARKERS)])
              for index, method in enumerate(qs.METHODS)}
