@@ -245,7 +245,8 @@ Validation, canonicalisation, scoring, audits and saving come after it.
   call and reports `detector_seconds`; start-up, imports and JSON transport are recorded as
   `isolation_overhead_seconds` and never counted. A worker that reports nothing is a failed record, not a guess.
 - Peak memory: `detector_peak_rss_bytes` is the detector process's own `ru_maxrss` (`wait4`, never `RUSAGE_CHILDREN`,
-  which keeps the largest child ever waited for). An in-process detector can only report the harness peak when the
+  which keeps the largest child ever waited for). On Linux exec carries the parent's high-water mark into the child, so
+  there the peak is the child's `VmHWM` sampled from `/proc` every 10 ms (`peak_rss_source = "proc_vmhwm_sampled"`). An in-process detector can only report the harness peak when the
   clock stopped (`detector_peak_rss_scope = "harness_process_lifetime"`), comparable only under `--isolate`. A
   worker's peak includes its interpreter and CDlib baseline (about 200 MB).
 - A new adapter times its detector through `timing.active()` and spawns nothing with `subprocess.run`

@@ -16,6 +16,18 @@ from hedonic.experiments import CLI
 from hedonic.experiments.overlapping import snap_pickle as sp
 from tests.experiments.test_provision_covered_stream import edge_multiset, load, write_root
 
+# The fixture graphs are tiny: a fixed budget and no free-memory floor, so a busy machine (a CI runner below the 10%
+# floor) neither skips a pair nor stops its worker.
+_MEMORY = patch.dict(os.environ, {"HEDONIC_MEMORY_BUDGET_GB": "16", "HEDONIC_MEMORY_FLOOR": "0"})
+
+
+def setUpModule():
+    _MEMORY.start()
+
+
+def tearDownModule():
+    _MEMORY.stop()
+
 
 class TestSnapPickle(unittest.TestCase):
     def test_registered_in_the_cli_and_help_works(self):

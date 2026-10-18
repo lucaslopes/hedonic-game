@@ -81,6 +81,53 @@ def peak_rss_bytes() -> int:
     return int(_own_usage().ru_maxrss * _FACTOR)
 
 
+# On Linux a child's ru_maxrss (wait4) is at least the parent's resident size when it was spawned: exec records the
+# high-water mark of the memory it replaces, which is the parent's (vfork) or its copy (fork). So a program started by
+# a harness that holds a large graph would be charged for the graph. There the child's own peak is read from
+# /proc/<pid>/status (VmHWM, the high-water mark of the new program's memory) while it runs; the reading misses at
+# most the growth of its last SAMPLE_SECONDS. macOS reports the program's own peak and needs none of this.
+_PROC_HWM = sys.platform.startswith("linux") and os.path.isdir("/proc/self")
+SAMPLE_SECONDS = 0.01
+
+
+class _HighWater:
+    """Samples a running child's VmHWM until :meth:`stop`; ``peak`` is the largest value read, in bytes."""
+
+    def __init__(self, pid: int) -> None:
+        self.peak: int | None = None
+        self._path = f"/proc/{pid}/status"
+        self._done = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _read(self) -> None:
+        try:
+            with open(self._path, "rb") as handle:
+                for line in handle:
+                    if line.startswith(b"VmHWM:"):
+                        value = int(line.split()[1]) * 1024
+                        self.peak = value if self.peak is None else max(self.peak, value)
+                        return
+        except (OSError, ValueError, IndexError):
+            return  # not started yet, or already a zombie (its memory is gone)
+
+    def _run(self) -> None:
+        while not self._done.is_set():
+            self._read()
+            self._done.wait(SAMPLE_SECONDS)
+
+    def stop(self) -> None:
+        self._done.set()
+        self._thread.join()
+
+
+def _child_peak(usage: Any, hwm: "_HighWater | None") -> int:
+    """The child's own peak: ru_maxrss where it is the program's (macOS), the sampled VmHWM on Linux."""
+    if hwm is not None and hwm.peak is not None:
+        return int(hwm.peak)
+    return int(usage.ru_maxrss * _FACTOR)
+
+
 def current_rss_bytes() -> int | None:
     """The resident set of this process now, in bytes (``/proc`` on Linux, ``ps`` elsewhere); None when unreadable."""
     try:
@@ -208,6 +255,7 @@ class DetectorClock:
                     if timer is not None:
                         timer.daemon = True
                         timer.start()
+                    hwm = _HighWater(handle.pid) if _PROC_HWM else None
                     try:
                         _pid, status, usage = os.wait4(handle.pid, 0)
                     except BaseException:  # Ctrl-C or an unexpected error: leave nothing running
@@ -219,18 +267,23 @@ class DetectorClock:
                         seconds = time.perf_counter() - started
                         if timer is not None:
                             timer.cancel()
+                        if hwm is not None:
+                            hwm.stop()
                     handle.returncode = os.waitstatus_to_exitcode(status)
             finally:
                 if stdin_handle is not None:
                     stdin_handle.close()
+            peak = _child_peak(usage, hwm)
             region = {"kind": "process", "label": label, "seconds": seconds, "counted": bool(counted),
-                      "peak_rss_bytes": int(usage.ru_maxrss * _FACTOR), "input_bytes": input_bytes}
+                      "peak_rss_bytes": peak, "input_bytes": input_bytes}
+            if hwm is not None:
+                region["peak_rss_source"] = "proc_vmhwm_sampled"
             self.regions.append(region)
             if counted:
                 self.seconds += seconds
             self.child_user_cpu_seconds += usage.ru_utime
             self.child_system_cpu_seconds += usage.ru_stime
-            self.process_peak_rss_bytes = max(self.process_peak_rss_bytes, int(usage.ru_maxrss * _FACTOR))
+            self.process_peak_rss_bytes = max(self.process_peak_rss_bytes, peak)
             self._stop()
             if killed.is_set():
                 raise subprocess.TimeoutExpired(command, timeout)
@@ -238,7 +291,7 @@ class DetectorClock:
                 returncode=handle.returncode,
                 stdout=out_path.read_text(encoding="utf-8", errors="replace"),
                 stderr=err_path.read_text(encoding="utf-8", errors="replace"),
-                seconds=seconds, peak_rss_bytes=int(usage.ru_maxrss * _FACTOR),
+                seconds=seconds, peak_rss_bytes=peak,
                 user_cpu_seconds=float(usage.ru_utime), system_cpu_seconds=float(usage.ru_stime),
                 command=command, input_bytes=input_bytes,
             )
