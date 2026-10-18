@@ -139,7 +139,18 @@ class Item:
     confirm: str = ""        # ask this before running it
 
 
-def menu(state: State) -> list[Item]:
+def _commands() -> tuple[set[str], set[str], set[str]]:
+    """What this line has: top-level commands, ``hedonic run`` verbs, bundled queues (hedonic 1 has the disjoint
+    ones; hedonic 2 adds the overlap ones). The menu offers only those, so one file serves both lines."""
+    from hedonic.experiments import CLI
+    from hedonic.experiments.resources import CONFIG_DIR
+
+    queues = {p.stem.removeprefix("queue-") for p in CONFIG_DIR.glob("queue-*.toml")}
+    return set(CLI.TOP_LEVEL), {*CLI.RUN_ALIASES, *CLI.RUN_VERBS}, queues
+
+
+def menu(state: State, commands: tuple[set[str], set[str], set[str]] | None = None) -> list[Item]:
+    top, run, queues = commands or _commands()
     items: list[Item] = []
     for name, detail in reversed(state.active[-2:]):
         items.append(Item(f"Watch {name}", f"{detail} · Ctrl-C closes the view only", ["run", "attach", name]))
@@ -147,21 +158,36 @@ def menu(state: State) -> list[Item]:
         name, status = state.unfinished[-1]
         items.append(Item(f"Resume {name}", f"{status}; finished work is reused", ["run", "resume", name],
                           confirm=f"Resume {name}?"))
-    items.append(Item("Start a benchmark", "a quick default run (about a minute), the paper's, or your own",
-                      ["run", "exp"]))
-    if state.favourite:
-        items.append(Item(f"Run {state.favourite}", "your favourite config (hedonic config set run NAME; asks first)",
-                          ["run"]))
+    if "exp" in run:
+        items.append(Item("Start a benchmark", "a quick default run (about a minute), the paper's, or your own",
+                          ["run", "exp"]))
+        if state.favourite:
+            items.append(Item(f"Run {state.favourite}", "your favourite config (hedonic config set run NAME; asks first)",
+                              ["run"]))
+    if "detect" in top:
+        items.append(Item("Detect communities", "one network (SBM, LFR, a SNAP pair, a file...) x one method x one "
+                          "seed, here; set every parameter", ["detect"], back=True))
+    if "paper" in queues:
+        items.append(Item("Plan the paper queue", "the overlap paper's experiments: plan and time, nothing starts",
+                          ["run", "queue", "paper", "--dry-run"], back=True))
+    if "disjoint" in queues:
+        items.append(Item("Plan the disjoint paper queue", "the smoke check, then the 100-seed grid: plan, nothing starts",
+                          ["run", "queue", "disjoint", "--dry-run"], back=True))
     items += [
-        Item("Plan the paper queue", "the overlap paper's experiments: plan and time, nothing starts",
-             ["run", "queue", "paper", "--dry-run"], back=True),
         Item("Disjoint SBM benchmark", "planted partitions: a seconds-long smoke run, or the paper's grid",
              ["run", "disjoint"]),
         Item("Runs", "every run and its progress", ["run", "list"], back=True),
-        Item("Networks & covers", "the SNAP graph/cover pairs on disk", ["show", "covers"], back=True),
-        Item("Methods", "which methods are ready, which need hedonic setup", ["show", "methods"], back=True),
-        Item("Set up data and methods", "what hedonic setup would download and build (a dry run)",
-             ["setup", "--dry-run"], back=True),
+    ]
+    if "setup" in top:
+        items += [
+            Item("Networks & covers", "the SNAP graph/cover pairs on disk", ["show", "covers"], back=True),
+            Item("Methods", "which methods are ready, which need hedonic setup", ["show", "methods"], back=True),
+            Item("Set up data and methods", "what hedonic setup would download and build (a dry run)",
+                 ["setup", "--dry-run"], back=True),
+        ]
+    else:
+        items.append(Item("Disjoint presets", "grids, methods and estimates", ["show", "disjoint"], back=True))
+    items += [
         Item("Guide", "a short tour and suggested next steps", ["guide"], back=True),
         Item("Settings", state.config_path, ["config", "show"], back=True),
         Item("Check for updates", "compare with PyPI; never installs from here", ["update"], back=True),

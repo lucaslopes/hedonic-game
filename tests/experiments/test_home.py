@@ -3,6 +3,7 @@ command it shows, views that come back, and a pty run of the real loop."""
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import os
 import re
@@ -17,6 +18,13 @@ from hedonic.experiments import CLI, home
 from hedonic.experiments.overlapping import tui
 
 ANSI = re.compile(r"\033\[[0-9;?<]*[A-Za-z]")
+# The same file runs in hedonic 1 (disjoint only) and hedonic 2 (adds the overlap experiments).
+HEDONIC_2 = importlib.util.find_spec("hedonic.experiments.overlapping.quickstart") is not None
+LINE_1 = ({"run", "detect", "show", "guide", "config", "update"},
+          {"disjoint", "list", "status", "attach", "logs", "stop", "resume", "check", "queue"}, {"disjoint"})
+LINE_2 = ({"run", "detect", "setup", "show", "guide", "config", "pickle", "update"},
+          {"exp", "paper", "disjoint", "list", "status", "attach", "logs", "stop", "resume", "check", "queue"},
+          {"disjoint", "paper"})
 
 
 class TestWhenItOpens(unittest.TestCase):
@@ -45,7 +53,7 @@ class TestWhenItOpens(unittest.TestCase):
 class TestMenu(unittest.TestCase):
     def test_runs_come_first_and_every_item_is_a_hedonic_command(self):
         state = home.State(active=[("q", "running")], unfinished=[("old", "interrupted")], favourite="paper")
-        items = home.menu(state)
+        items = home.menu(state, LINE_2)
         self.assertEqual(items[0].argv, ["run", "attach", "q"])
         self.assertEqual(items[1].argv, ["run", "resume", "old"])
         self.assertTrue(items[1].confirm)
@@ -53,7 +61,7 @@ class TestMenu(unittest.TestCase):
         self.assertEqual(items[3].argv, ["run"])
         self.assertIsNone(items[-1].argv)
         first_words = {i.argv[0] for i in items if i.argv}
-        self.assertLessEqual(first_words, set(CLI.TOP_LEVEL))
+        self.assertLessEqual(first_words, LINE_2[0])
         # Nothing a view runs starts work: the queue is only planned, setup is a dry run, update only compares.
         views = {tuple(i.argv) for i in items if i.back}
         self.assertIn(("run", "queue", "paper", "--dry-run"), views)
@@ -61,9 +69,29 @@ class TestMenu(unittest.TestCase):
         self.assertIn(("update",), views)
 
     def test_without_runs_the_menu_starts_with_a_benchmark(self):
-        items = home.menu(home.State())
+        items = home.menu(home.State(), LINE_2)
         self.assertEqual(items[0].argv, ["run", "exp"])
 
+    def test_hedonic_1_offers_only_its_own_commands(self):
+        items = home.menu(home.State(favourite="paper"), LINE_1)
+        argvs = [i.argv for i in items if i.argv]
+        self.assertLessEqual({a[0] for a in argvs}, LINE_1[0])
+        self.assertNotIn(["run", "exp"], argvs)
+        self.assertNotIn(["run"], argvs)  # a favourite is a benchmark config: hedonic 2 only
+        self.assertNotIn(["setup", "--dry-run"], argvs)
+        self.assertIn(["detect"], argvs)
+        self.assertIn(["run", "queue", "disjoint", "--dry-run"], argvs)
+        self.assertIn(["show", "disjoint"], argvs)
+
+    def test_the_menu_of_this_line_names_only_commands_it_has(self):
+        top, run, queues = home._commands()
+        for item in home.menu(home.State(favourite="x")):
+            if item.argv and item.argv[0] == "run" and len(item.argv) > 1:
+                self.assertIn(item.argv[1], run)
+            if item.argv:
+                self.assertIn(item.argv[0], top)
+
+    @unittest.skipUnless(HEDONIC_2, "the SNAP pairs are hedonic 2")
     def test_the_header_reads_local_state_only(self):
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
                 "HEDONIC_RUNS_DIR": d + "/runs", "HEDONIC_NETWORKS_DIR": d + "/nets",
@@ -100,8 +128,8 @@ class TestLoop(unittest.TestCase):
         self.assertIn("→ hedonic run list", out)
 
     def test_a_run_hands_over_and_returns_its_code(self):
-        code, ran, _ = self._run(["Start a benchmark"])
-        self.assertEqual((code, ran), (3, [["run", "exp"]]))
+        code, ran, _ = self._run(["Disjoint SBM benchmark"])
+        self.assertEqual((code, ran), (3, [["run", "disjoint"]]))
 
     def test_resume_asks_first_and_no_runs_nothing(self):
         state = home.State(unfinished=[("old", "failed")])
@@ -124,6 +152,7 @@ class TestWizardsAskBeforeStarting(unittest.TestCase):
             return answers.pop(0)
         return select
 
+    @unittest.skipUnless(HEDONIC_2, "the benchmark wizard is hedonic 2")
     def test_the_benchmark_default_is_the_quick_run_and_no_goes_back(self):
         from hedonic.experiments.overlapping import quickstart as qs
 
@@ -159,14 +188,19 @@ class TestNothingStartsUnasked(unittest.TestCase):
 
     def test_no_terminal_and_no_arguments_starts_nothing(self):
         from hedonic.experiments.disjoint import front
-        from hedonic.experiments.overlapping import quickstart as qs
         from hedonic.experiments.overlapping import runmanager
 
+        calls = [lambda: front.front_main([])]
+        if HEDONIC_2:
+            from hedonic.experiments.overlapping import quickstart as qs
+
+            calls += [lambda: qs.main([]), lambda: CLI.hedonic_main(["run"])]
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_CONFIG": d + "/c.toml",
                                                                         "HEDONIC_RUNS_DIR": d + "/runs"}), \
                 patch.object(tui, "interactive", return_value=False), \
-                patch.object(runmanager, "launch") as launch, patch.object(runmanager, "launch_disjoint") as dlaunch:
-            for call in (lambda: qs.main([]), lambda: CLI.hedonic_main(["run"]), lambda: front.front_main([])):
+                patch.object(runmanager, "launch_disjoint") as dlaunch, \
+                patch.object(runmanager, "launch", create=True) as launch:
+            for call in calls:
                 with redirect_stdout(io.StringIO()) as out:
                     self.assertEqual(call(), 0)
                 self.assertIn("not started: no terminal to confirm in", out.getvalue())
@@ -184,16 +218,23 @@ class TestNothingStartsUnasked(unittest.TestCase):
         self.assertEqual(seen["default"], 1)
 
     def test_a_wizard_backed_out_of_returns_to_the_menu(self):
-        from hedonic.experiments.overlapping import quickstart as qs
+        from hedonic.experiments.disjoint import front
 
-        with patch.object(tui, "select", side_effect=[4]), patch.object(tui, "interactive", return_value=True), \
-                redirect_stdout(io.StringIO()) as out:  # "Quit" on the wizard's first menu
-            self.assertEqual(qs.main(["-i"]), 0)
+        with tempfile.TemporaryDirectory() as d, patch.object(tui, "select", side_effect=tui.Cancelled), \
+                patch.object(tui, "interactive", return_value=True), redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(front.front_main(["-i", "--output-dir", d + "/out"]), 0)  # q on its first menu
         self.assertIn("nothing started", out.getvalue())
         self.assertTrue(tui.take_cancelled())
         self.assertFalse(tui.take_cancelled())  # read once
+        if HEDONIC_2:
+            from hedonic.experiments.overlapping import quickstart as qs
 
-        ran, picks = [], ["Start a benchmark", "Runs", "Back to the menu", "q"]
+            with patch.object(tui, "select", side_effect=[4]), patch.object(tui, "interactive", return_value=True), \
+                    redirect_stdout(io.StringIO()) as out:  # "Quit" on the benchmark wizard's first menu
+                self.assertEqual(qs.main(["-i"]), 0)
+            self.assertTrue(tui.take_cancelled())
+
+        ran, picks = [], ["Disjoint SBM benchmark", "Runs", "Back to the menu", "q"]
         defaults = []
 
         def select(title, options, default=0, help_text=""):
@@ -205,24 +246,28 @@ class TestNothingStartsUnasked(unittest.TestCase):
 
         def run(argv):
             ran.append(argv)
-            if argv == ["run", "exp"]:
+            if argv == ["run", "disjoint"]:
                 tui.note_cancelled()
             return 0
         with patch.object(home, "gather", return_value=home.State()), patch.object(tui, "select", side_effect=select), \
                 redirect_stdout(io.StringIO()):
             self.assertEqual(home.main(run=run), 0)
-        self.assertEqual(ran, [["run", "exp"], ["run", "list"]])  # the menu came back after the wizard
+        self.assertEqual(ran, [["run", "disjoint"], ["run", "list"]])  # the menu came back after the wizard
         labels = [i.label for i in home.menu(home.State())]
-        self.assertEqual(defaults[1], labels.index("Start a benchmark"))  # the cursor stayed where it was
+        self.assertEqual(defaults[1], labels.index("Disjoint SBM benchmark"))  # the cursor stayed where it was
         self.assertEqual(defaults[3], labels.index("Runs"))
 
-    def test_wizard_values_are_checked_at_the_prompt(self):
-        from hedonic.experiments.disjoint import front
+    @unittest.skipUnless(HEDONIC_2, "the benchmark wizard is hedonic 2")
+    def test_the_benchmark_wizard_checks_its_timeout(self):
         from hedonic.experiments.overlapping import quickstart as qs
 
         self.assertEqual(qs._positive_seconds("-5"), "enter a positive number of seconds")
         self.assertEqual(qs._positive_seconds("abc"), "enter a positive number of seconds")
         self.assertIsNone(qs._positive_seconds("600"))
+
+    def test_wizard_values_are_checked_at_the_prompt(self):
+        from hedonic.experiments.disjoint import front
+
         typed = iter(["abc", "-5", "120", "2", "0.3", "0.5", "0", "2", "0.5", "8"])
         errors = []
 
@@ -263,14 +308,14 @@ class TestNothingStartsUnasked(unittest.TestCase):
             resume.assert_called_once()
 
     def test_text_fits_by_words_and_durations_read_as_durations(self):
-        from hedonic.experiments.overlapping import quickstart as qs
+        import importlib
 
+        qs = importlib.import_module("hedonic.experiments.overlapping." + ("quickstart" if HEDONIC_2 else "common"))
         hint = tui.strip_ansi(tui._hint("❯ Start a benchmark", "a quick default run (about a minute)", columns=40))
         self.assertTrue(hint.endswith("…"))
         self.assertNotIn("(a…", hint)  # cut at a word
         self.assertEqual(tui._hint("x" * 30, "words", columns=32), "")
         self.assertEqual([qs.fmt_duration(s) for s in (45, 720, 70921, 3 * 86400)], ["45 s", "12 min", "19 h 42 min", "3 d"])
-        self.assertEqual(qs.seeds_text([0]), "seed 0")
         self.assertEqual(home._home_path("/private/tmp/a-very-long-folder-name-for-a-sandbox/hedonic/config.toml"),
                          "…/hedonic/config.toml")
 
