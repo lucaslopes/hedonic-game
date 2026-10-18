@@ -15,6 +15,7 @@ graph = Game(ig.Graph.Famous("Zachary"))
 # Disjoint partition: every vertex joins exactly one community.
 partition = graph.community_hedonic(
     resolution=graph.density(),  # γ (the default is the graph density)
+    max_memberships=1,           # 1 = disjoint; > 1 = overlapping cover
     seed=0,                      # same seed, same result
 )
 print(partition.membership)`;

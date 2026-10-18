@@ -1,7 +1,9 @@
 # Hedonic game — interactive explainer
 
-An educational, scrollytelling website for the disjoint hedonic game / Constant
-Potts Model behind the `hedonic` Python package, plus its documentation. It is a
+An educational, scrollytelling website for the hedonic game / Constant Potts
+Model behind the `hedonic` Python package, plus its documentation. A switch in
+the header moves between the disjoint story (`/`) and the overlapping one
+(`/overlap/`). It is a
 static React + TypeScript + Vite application deployed to GitHub Pages.
 
 ```bash
@@ -34,14 +36,28 @@ forwards every script, so nothing has to be run from inside `web/`.
 6. **Explore** — a free, zoomable lab with an inspector and a table view.
 7. **Use the package** — links into the documentation page (`/docs/`).
 
-The story is available in English and Brazilian Portuguese; the technical
+The overlap page (`/overlap/`) follows the cover game of `max_memberships > 1`
+on two cliques of four that share an edge:
+
+1. **What one vertex sees** — its intensity `1/√k`, the support, crowd and gain
+   of every label it can reach, the prefixes of positive gains up to the cap M,
+   fixed or open labels, and a button that plays its best response.
+2. **Stable intervals** — the selected vertex's utility as γ sweeps `[0, 1]`
+   against its best response, the exact stable intervals of every vertex and
+   their intersection, the Nash window.
+3. **Convergence** — the package's visiting queue, replayed visit by visit
+   from a seed, with the potential staircase and the cover the package returns.
+4. **Use the package** — `community_hedonic`, `stable_intervals`, `regrets`.
+
+Both stories are available in English and Brazilian Portuguese; the technical
 documentation is in English.
 
 ## Source layout
 
 ```
 web/
-├── index.html, docs/index.html   two entry pages (story, documentation)
+├── index.html, overlap/index.html, docs/index.html
+│                                 entry pages (disjoint story, overlap story, documentation)
 ├── content/
 │   ├── docs/*.md                 documentation pages (Markdown + front matter)
 │   └── references.bib            citation data shown on the site
@@ -50,12 +66,14 @@ web/
 │   ├── extract_api.py            Python AST → src/generated/api.json
 │   ├── generate-docs.mjs         runs the extractor and the BibTeX reader
 │   ├── bib.mjs                   dependency-free BibTeX reader
-│   └── crosscheck_native.py      optional: record the detector's results
+│   ├── crosscheck_native.py      optional: record the detector's results
+│   └── crosscheck_overlap_native.py  optional: record the cover detector and audit
 └── src/
     ├── model/                    the mathematics (pure TypeScript, no DOM)
     ├── viz/                      balance scale, decision tree, metagraph (SVG)
     ├── walk/                     walk controls, status, chart, certificate
     ├── story/                    the scrollytelling chapters and Explore lab
+    ├── overlap/                  the overlap page: chapters, cover graph, charts
     ├── docs/                     documentation page shell
     ├── components/               resolution control, tooltips, header, …
     ├── i18n/                     en.ts (source) and pt.ts (typed translation)
@@ -86,6 +104,26 @@ web/
   certificates, and three reproducible rules: best response (default),
   round-robin, and seeded random.
 
+`overlap/` is a port of the C core's cover engine and audit for unweighted
+graphs, one file per part of the core:
+
+- `random.ts` — CPython's Mersenne Twister (`random.Random(seed)`) and the
+  core's bounded draw (`native/core/shared/random.c`).
+- `cover.ts` — rows, intensities `1/√k`, masses, the pair potential
+  `Σ_{a<b} |σa ∩ σb| fa fb (A_ab − γ)`, the package's quality and relabelling.
+- `response.ts` — one visit of `native/core/cover/visit.c`: candidates in the
+  core's order, gains, the prefix rule, fixed or open labels.
+- `run.ts` — the visiting queue of `native/core/shared/queue.c` and the label
+  bookkeeping of `native/core/cover/rows.c`, one visit per step.
+- `audit.ts` — `native/core/check/audit.c`: exact stable intervals and regrets
+  of a fixed cover, and the Nash window.
+
+`scripts/crosscheck_overlap_native.py` runs the package (`community_hedonic`,
+`stable_intervals`, `regrets`, and the core's move trace) on the example graph
+and writes `src/model/__tests__/fixtures/overlap-native.json`; the tests replay
+every run move by move and compare every interval and regret exactly. Run it
+again, with a built package, after a change to the cover engine or the audit.
+
 For the example graph the tests pin the facts the story relies on: 52 edges
 (37 clear, 9 frustrated, 6 indifferent; 12 of them omitted from the paper's
 figure), thresholds 1/3, 1/2 and 2/3, and the sinks for every γ.
@@ -110,12 +148,14 @@ generated blocks: ` ```api Game.community_hedonic``` ` (or a module function
 such as ` ```api evaluate_cover``` `), ` ```api-members``` `,
 ` ```api-functions hedonic.metrics``` `, ` ```api-constants hedonic.metrics``` `,
 ` ```package-info``` ` and ` ```references``` `. Links can use `repo:path#L1`
-(GitHub source), `story:#anchor` (explainer section) and `docs:#page`.
+(GitHub source), `story:#anchor` or `story:overlap/#anchor` (explainer
+sections) and `docs:#page`.
 
 ## Conventions
 
-- **Faithful mathematics.** Every formula comes from the SRC abstract or
-  arXiv:2509.03834; educational simplifications are labelled in the interface
+- **Faithful mathematics.** Every formula of the disjoint story comes from the
+  SRC abstract or arXiv:2509.03834, and every rule of the overlap page from the
+  C core (`native/`), checked against the package; educational simplifications are labelled in the interface
   and in `content/docs/11-limitations.md`.
 - **Accessibility.** Every visual has a textual equivalent (verdicts, live
   regions, node labels, the Explore table). Colour is always paired with a

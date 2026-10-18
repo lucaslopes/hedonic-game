@@ -19,13 +19,13 @@ With [uv](https://docs.astral.sh/uv/):
 uv add hedonic
 ```
 
-`Game.evaluate_against` and `hedonic.metrics` score a result against a reference partition (or a cover given as community lists). Their one-to-one matching scores need SciPy, available as an optional extra:
+`Game.evaluate_against` and `hedonic.metrics` score a result against a reference cover. Their one-to-one matching scores need SciPy, available as an optional extra:
 
 ```bash
 python -m pip install "hedonic[metrics]"
 ```
 
-The command line that reproduces the disjoint paper's experiments (`hedonic run ...`, macOS and Linux) has its own extra:
+The command line that reproduces the papers' experiments (`hedonic run ...`, macOS and Linux) has its own extra:
 
 ```bash
 python -m pip install "hedonic[cli]"
@@ -36,7 +36,7 @@ python -m pip install "hedonic[cli]"
 
 ## Detect communities
 
-Wrap any undirected `igraph.Graph` in a `Game` and call `community_hedonic`:
+Wrap any undirected `igraph.Graph` in a `Game` and call `community_hedonic`. One method covers both kinds of output:
 
 ```python
 import igraph as ig
@@ -47,12 +47,21 @@ graph = Game(ig.Graph.Famous("Zachary"))
 # Disjoint partition: every vertex belongs to exactly one community.
 partition = graph.community_hedonic(
     resolution=graph.density(),
+    max_memberships=1,
     seed=0,
 )
 print(partition.membership)
+
+# Overlapping cover: a vertex may belong to up to four communities.
+cover = graph.community_hedonic(
+    resolution=graph.density(),
+    max_memberships=4,
+    seed=0,
+)
+print(cover)
 ```
 
-Every call runs until no vertex can improve by moving, so the result is an equilibrium of the game. `community_hedonic` returns an `igraph.VertexClustering`; the same `seed` on the same inputs returns the same result. This release detects partitions only (`max_memberships=1`, the default); overlapping covers are hedonic 2. See [community_hedonic](docs:#community-hedonic) for every parameter.
+Every call runs until no vertex can improve by moving, so the result is an equilibrium of the game. `community_hedonic` returns an `igraph.VertexClustering` when `max_memberships=1` and an `igraph.VertexCover` when the cap is larger; the same `seed` on the same inputs returns the same result. See [community_hedonic](docs:#community-hedonic) for every parameter.
 
 ## Reproduce the explainer's network
 
@@ -72,7 +81,7 @@ for gamma in (0.2, 0.5):
     print(gamma, part.membership)
 ```
 
-With hedonic 1.0.0 this prints, for every seed, `[0, 0, 0, 0]` (the grand coalition) for $\gamma = 0.2$ and `[0, 0, 0, 1]` (the partition {0,1,2}{3}) for $\gamma = 0.5$ — the same sinks the [explainer](story:#walk) finds. The [better-response dynamics](docs:#better-response) page explains why, and why `allow_isolation` matters.
+With hedonic 2.0.0 this prints, for every seed, `[0, 0, 0, 0]` (the grand coalition) for $\gamma = 0.2$ and `[0, 0, 0, 1]` (the partition {0,1,2}{3}) for $\gamma = 0.5$ — the same sinks the [explainer](story:#walk) finds. The [better-response dynamics](docs:#better-response) page explains why, and why `allow_isolation` matters.
 
 ## Run this explainer locally
 

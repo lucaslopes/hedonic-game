@@ -28,12 +28,46 @@
   font-weight: 650;
   font-size: 1.12rem;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nav {
   display: flex;
   gap: 2px;
   margin-left: auto;
+}
+
+.nav {
+  align-items: center;
+}
+
+.modes {
+  display: inline-flex;
+  padding: 2px;
+  margin-right: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--paper-2);
+}
+
+.mode {
+  padding: 4px 11px;
+  border-radius: 999px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mode:hover {
+  color: var(--ink);
+}
+
+.mode[aria-current='page'] {
+  color: var(--ink);
+  background: var(--card);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
 }
 
 .link {
@@ -89,6 +123,52 @@
 
 @media (max-width: 420px) {
   .brandText {
+    display: none;
+  }
+
+  .inner {
+    gap: 6px;
+  }
+
+  .modes {
+    margin-right: 0;
+  }
+
+  .mode {
+    padding: 4px 7px;
+    font-size: 0.82rem;
+  }
+
+  .link {
+    padding: 6px 5px;
+    font-size: 0.85rem;
+  }
+
+  .tools {
+    gap: 4px;
+  }
+
+  .lang {
+    min-width: 0;
+    padding: 0 7px;
+  }
+
+  .tools :global(.btn-small) {
+    min-height: 30px;
+  }
+
+  .tools :global(.btn-icon.btn-small) {
+    width: 30px;
+  }
+
+  .nav {
+    gap: 0;
+  }
+}
+
+/* The narrowest phones keep the language and theme; motion follows the system there. */
+@media (max-width: 380px) {
+  .narrowOptional {
     display: none;
   }
 }

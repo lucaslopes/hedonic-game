@@ -36,6 +36,7 @@ PATHS = {
     "game": "src/hedonic/Game.py",
     "utils": "src/hedonic/utils.py",
     "metrics": "src/hedonic/metrics.py",
+    "stability": "src/hedonic/stability.py",
     "pyproject": "pyproject.toml",
 }
 
@@ -372,7 +373,8 @@ def main(argv: list[str] | None = None) -> int:
 
     game = extract_game()
     functions = (extract_functions("utils", "hedonic.utils")
-                 + extract_functions("metrics", "hedonic.metrics"))
+                 + extract_functions("metrics", "hedonic.metrics")
+                 + extract_functions("stability", "hedonic.stability"))
     constants = extract_constants("game", "hedonic.Game") + extract_constants("metrics", "hedonic.metrics")
     payload = {
         "schemaVersion": 2,
