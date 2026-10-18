@@ -45,6 +45,10 @@ TOPICS: dict[str, tuple[str, str]] = {
         How the loops nest is a setting: `--order seed,method,network` (outermost first) or, in a config file,
         `order = ["seed", "method", "network"]`. It never invalidates a finished run.
 
+        A deterministic method (CliquePerc, FOX, BigCLAM, NcGame, NEO-K-Means) runs once per network, at the
+        lowest seed, since more seeds repeat its cover; Hedonic, ANGEL, Ego-Splitting and CoDeSEG run at every
+        seed. `--replication all` runs every method at every seed; both settings share their records.
+
         A started or resumed run first scans the plan against the files on disk: a unit is done only when its record
         is present, final, of the same settings, and its record and cover match the SHA-256 seal in RUN/integrity.
         A record whose bytes changed is moved aside (renamed, never deleted) and rerun. To see the scan only:

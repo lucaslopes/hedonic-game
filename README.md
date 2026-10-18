@@ -341,6 +341,13 @@ and Ego-Splitting; `--dry-run` says which are missing. Starting the queue
 again continues it: every run decides from its files what is already done.
 The queue writes under `--root DIR` (default `~/hedonic-runs/paper-queue`).
 
+The benchmark runs a deterministic method (CliquePerc, FOX, BigCLAM, NcGame,
+NEO-K-Means) once per pair, at the lowest seed of the plan, since its other
+seeds would repeat the same cover; Hedonic, ANGEL, Ego-Splitting and CoDeSEG
+(whose multi-threaded runs differ) run at every seed. `--replication all`
+runs every method at every seed, to check that determinism; both settings
+reuse the same records.
+
 Runs execute detached (tmux when available), so closing the terminal does not
 stop them: `hedonic run list`, `status`, `attach`, `logs`, `stop NAME` and
 `resume NAME` manage them. Data goes to `~/hedonic-data` (`HEDONIC_DATA_DIR`;

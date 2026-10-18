@@ -8,6 +8,14 @@
 # at least three vertices). A finished unit is never repeated: the scan at the start certifies every record on disk
 # (identity, final status, cover, SHA-256 seal, robustness audit) and runs only the rest.
 #
+# Replication. `seeds = "0-9"` is the seed list; how many of them a method runs follows its replication kind
+# (src/hedonic/experiments/overlapping/replication.py, the table the baseline calibration uses too). Hedonic, ANGEL and
+# Ego-Splitting take the seed (seeded), and CoDeSEG's runs differ at the benchmark's thread count (replicas): ten runs per
+# pair each. CliquePerc, FOX, BigCLAM, NcGame and NEO-K-Means return the same cover for every seed (deterministic, checked
+# by running them twice at these settings): one run per pair, at seed 0. 360 units instead of 720. `replication = "all"`
+# (or --replication all) runs every method at every seed, to audit determinism; units keep their identity either way, so
+# the two share their records.
+#
 # `networks` lists the eight pairs in the order they run: the top5000 covers first, then the `all` covers. `order` nests
 # seed > pair > method (inside the paper queue the benchmark runs one pair at a time). `robustness = true` audits each
 # saved cover right after its run, on the same induced graph (ledger RUN/robustness/cover_audit.jsonl).
