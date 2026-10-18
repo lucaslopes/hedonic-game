@@ -258,7 +258,13 @@ def _spawn(entry: dict) -> dict:
     if entry["backend"] == "tmux":
         if tmux_session_exists(entry["session"]):  # the idle pane of an earlier, finished attempt of this run
             subprocess.run(["tmux", "kill-session", "-t", f"={entry['session']}"], capture_output=True, check=False)
-        inner = (f"cd {shlex.quote(os.getcwd())} && env {' '.join(f'{k}={shlex.quote(v)}' for k, v in env.items())} "
+        # A tmux session starts from the tmux *server's* environment, which may hold HEDONIC_* settings of an
+        # earlier shell (another registry, another output folder): unset those this shell does not have, and pin
+        # the registry to the one this entry was written to, so the worker always finds its entry.
+        env["HEDONIC_RUNS_DIR"] = str(registry_dir())
+        stale = [k for k in _tmux_global_names() if k.startswith("HEDONIC_") and k not in env]
+        unset = "".join(f"-u {shlex.quote(k)} " for k in stale)
+        inner = (f"cd {shlex.quote(os.getcwd())} && env {unset}{' '.join(f'{k}={shlex.quote(v)}' for k, v in env.items())} "
                  f"{' '.join(map(shlex.quote, worker))} 2>&1 | tee -a {shlex.quote(entry['log'])}; "
                  "echo; echo '[hedonic] run finished — this pane stays open for inspection; type exit to close'; "
                  "exec $SHELL")
@@ -274,6 +280,15 @@ def _spawn(entry: dict) -> dict:
         entry["pid"] = proc.pid
         write_json(entry_path(name), entry)
     return entry
+
+
+def _tmux_global_names() -> list[str]:
+    """Names in the tmux server's global environment (empty when tmux has no server or cannot say)."""
+    try:
+        out = subprocess.run(["tmux", "show-environment", "-g"], capture_output=True, text=True, check=False).stdout
+    except OSError:
+        return []
+    return [line.split("=", 1)[0] for line in out.splitlines() if line and not line.startswith("-")]
 
 
 def _refuse_if_running(name: str) -> None:

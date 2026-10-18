@@ -431,3 +431,34 @@ class TestForeground(unittest.TestCase):
             self.assertTrue(seen["output"].endswith("fg-test"))
             entry = rm.load_entry("fg-test")
             self.assertEqual(rm.effective_status(entry, rm.read_progress(entry)), "completed")
+
+
+class TestTmuxEnvironment(unittest.TestCase):
+    """A tmux session starts from the server's environment: the worker must not inherit an earlier shell's HEDONIC_*."""
+
+    def test_stale_server_settings_are_unset_and_the_registry_is_pinned(self):
+        import os
+        import subprocess
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from hedonic.experiments.overlapping import runmanager as rm
+
+        calls = []
+
+        def fake_run(argv, **kw):
+            calls.append(argv)
+            if argv[:2] == ["tmux", "show-environment"]:
+                return subprocess.CompletedProcess(argv, 0, "HEDONIC_OUTPUT_DIR=/elsewhere\nHEDONIC_RUNS_DIR=/old\nPATH=/x\n", "")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, {"HEDONIC_RUNS_DIR": str(Path(tmp) / "reg")}, clear=False), \
+                patch.object(rm.subprocess, "run", fake_run), patch.object(rm, "tmux_session_exists", return_value=False):
+            os.environ.pop("HEDONIC_OUTPUT_DIR", None)
+            rm._spawn({"name": "t", "backend": "tmux", "session": "hedonic-t", "log": str(Path(tmp) / "w.log")})
+            inner = [c for c in calls if c[:2] == ["tmux", "new-session"]][0][-1]
+            self.assertIn("-u HEDONIC_OUTPUT_DIR", inner)
+            self.assertIn(f"HEDONIC_RUNS_DIR={Path(tmp) / 'reg'}", inner)
+            self.assertNotIn("-u HEDONIC_RUNS_DIR", inner)
