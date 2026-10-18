@@ -9,9 +9,14 @@
 # {root} is the folder every run writes into: `--root DIR`, by default <output_dir>/paper-queue with the output_dir of
 # `hedonic config` (else ~/Databases/Hedonic/Overlap). Running the queue again skips what its files on disk show finished and
 # resumes the rest. The two calibrations come first because the later runs read their results (--tuned); then the
-# synthetic study; then leveraging-gt, gt-robustness and the benchmark go pair by pair, in the order of `pairs`.
+# synthetic study; then leveraging-gt, gt-robustness and the benchmark go pair by pair. `schedule = "shortest"` runs one
+# step at a time, as always, but takes at each turn the ready step with the smallest estimate (the ETA of the queue
+# view), so the short pairs of every run finish before the long benchmark pairs; a run that reads another's result
+# (--tuned) waits for it, and gt-robustness takes its pairs in the order of `pairs`. `--schedule file` restores the
+# file's order (pair by pair, in the order of `pairs`).
 
 name = "paper-queue"
+schedule = "shortest"
 pairs = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000",
          "dblp:all", "amazon:all", "youtube:all"]
 

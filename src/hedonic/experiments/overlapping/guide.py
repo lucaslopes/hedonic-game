@@ -75,13 +75,14 @@ TOPICS: dict[str, tuple[str, str]] = {
     "paper": ("Reproduce the overlapping-communities paper (`hedonic run queue paper`)", """
         hedonic setup --all --dry-run           the eight graph/cover pairs and eight baselines it needs
         hedonic setup --all                     download the pairs, build and install the baselines
-        hedonic run queue paper --dry-run       the six runs, pair by pair, with what is already done
+        hedonic run queue paper --dry-run       the six runs, the order of their steps, with what is already done
         hedonic run queue paper                 start it (durable, resumable; days on a laptop)
         hedonic run queue paper --root DIR      the same, writing under DIR instead of OUTPUT_DIR/paper-queue
         hedonic run attach paper-queue          the live tree view (q closes the view only)
 
-        The queue runs the Hedonic calibration, the baseline calibration and the synthetic networks, then, on each
-        pair in turn (top5000 covers first), the ground-truth start curve, the robustness spectrum and the benchmark.
+        The queue runs the Hedonic calibration, the baseline calibration and the synthetic networks, then the
+        ground-truth start curve, the robustness spectrum and the benchmark one pair at a time, the shortest
+        step first (--schedule file: pair by pair, top5000 covers first).
         Every run decides from its files what is done, so starting the queue again continues it. The queue checks
         that the data and methods are prepared and prints the `hedonic setup` command when they are not.
 
@@ -148,6 +149,9 @@ TOPICS: dict[str, tuple[str, str]] = {
         A queue file that lists `pairs` and marks runs `by_pair = true` goes pair by pair: the whole block of those
         runs on the first pair, then on the next, in the order of `pairs`. A run between its pairs reads as part done
         (the half-filled mark), not as stopped. `hedonic run queue FILE --dry-run` prints the steps in order.
+        `schedule = "shortest"` in the file (or --schedule shortest) still runs one step at a time, but takes at each
+        turn the ready step with the smallest estimate; a run that reads another's folder (--tuned) or names it in
+        `after = [...]` waits for it.
     """),
     "config": ("Your settings (`hedonic config`)", """
         hedonic config                                show ~/.config/hedonic/config.toml

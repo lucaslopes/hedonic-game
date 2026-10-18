@@ -274,7 +274,7 @@ AUDIT_FRESH_SECONDS = 120.0  # a progress report older than this is not trusted 
 
 
 def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], progress: dict,
-              now: float | None = None) -> qm.RunModel:
+              now: float | None = None, history: dict | None = None) -> qm.RunModel:
     """The benchmark: one detector run per planned (pair, method, seed), executed in ``cfg.order``.
 
     ``units`` is the run's plan (``quickstart.build_plan``), so a deterministic method has one unit per pair (its lowest
@@ -286,6 +286,12 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
     (BigCLAM's cover of YouTube/top5k puts one vertex in 1,825 communities and its audit has run for hours, where every
     other cover of that pair took under a minute). A unit already running past its estimate has no basis for what is
     left, and the other seeds of its cell are priced at least as long as it has taken so far.
+
+    ``history`` (``runqueue._benchmark_history``) holds what the finished units on disk took, for every pair of the run,
+    including those a by-pair queue ran in earlier steps (their progress rows are gone). A cell this run has not timed is
+    priced from its own units on disk, else from the same method on the other pairs, per edge of the graph the detectors
+    saw (pairs with the same cover only: a top-5,000 subgraph says little about a whole network), and only then by the
+    planning constant, which is for the whole graph and so far too long for a covered top-5,000 subgraph.
     """
     now = time.time() if now is None else now
     robust = bool(getattr(cfg, "robustness", False))
@@ -307,13 +313,39 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
         if isinstance(seconds, (int, float)):
             detection[pair_label(str(row.get("network"))), str(row.get("label")), str(row.get("seed"))] = float(seconds)
     expected: dict[tuple[str, str], float] = {}
+    cells: dict[tuple[str, str], tuple[str, str]] = {}
     for net, _seed, method in units:
         expected[pair_label(net), method.label] = qs.expected_seconds(method, cfg, net)
+        cells[pair_label(net), method.label] = (net, method.key)
+    past = (history or {}).get("seconds") or {}
+    sizes = (history or {}).get("edges") or {}
+
+    def from_disk(cell: tuple[str, str]) -> float | None:
+        """What one unit of the cell should take from the finished units on disk: its own, else the same method's on the
+        other pairs of the same cover per edge (edges of the graph the detectors saw when the pair has a record, else of
+        the whole network)."""
+        net, key = cells[cell]
+        if past.get((net, key)):
+            return statistics.fmean(past[net, key])
+        cover = net.partition(":")[2] or "all"
+        others = {t: statistics.fmean(v) for (t, k), v in past.items()
+                  if k == key and v and t != net and (t.partition(":")[2] or "all") == cover}
+        if not others:  # another cover is another kind of graph (a top-5,000 subgraph against a whole network)
+            return None
+        if net in sizes:
+            rates = [seconds / sizes[t] for t, seconds in others.items() if sizes.get(t)]
+            if rates:
+                return statistics.fmean(rates) * sizes[net]
+        return scaled(net, others)
 
     def estimate(cell: tuple[str, str]) -> qm.Cost:
-        """What one unit of the cell takes: the mean of its finished units, else the planning constant (detection only)."""
+        """What one unit of the cell takes: the mean of its finished units, else what the units on disk say (its own, or
+        the same method on other pairs), else the planning constant (detection only)."""
         if measured.get(cell):
             return statistics.fmean(measured[cell]), "measured"
+        seconds = from_disk(cell)
+        if seconds is not None:
+            return seconds, "estimate"
         return expected[cell], "bound" if robust else "estimate"
 
     def elapsed(key: tuple[str, str, str]) -> float | None:
@@ -388,7 +420,9 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
         + (["a unit's time includes the exact robustness audit of its saved cover, which runs right after the detector; a "
             "method not yet timed on a pair is priced by its detection alone, so its ETA is a lower bound"]
            if robust else [])
-        + ["a method not yet timed here uses its planning constant, an upper bound for covered subgraphs on detection",
+        + ["a method not yet timed here is priced from its finished units on the other pairs of the same cover (per edge "
+           "of the graph the detectors saw); with none, from its planning constant, an upper bound for covered subgraphs "
+           "on detection",
            "a unit's exact audit reports the vertices it has done, so a running unit's remaining time is extrapolated from "
            "them (the vertices go through in a fixed pseudo-random order, so the rate so far is the rate of the rest) and the "
            "other seeds of its method are priced at its whole length",

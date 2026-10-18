@@ -192,7 +192,7 @@ hedonic                                # in a terminal: the home screen (status 
 hedonic guide                          # state-aware tour of the commands
 hedonic setup --all [--dry-run]        # SNAP pairs and the eight baselines' runtimes
 hedonic run exp [--dry-run]            # benchmark front door (wizard in a terminal)
-hedonic run queue paper --root DIR     # the paper's queue, pair by pair; --dry-run, --report
+hedonic run queue paper --root DIR     # the paper's queue, shortest step first; --schedule file, --dry-run, --report
 hedonic run queue disjoint             # the disjoint paper (smoke, then the 100-seed grid)
 hedonic run list|status|attach|logs|stop|resume|check
 hedonic show methods|networks|covers|metrics

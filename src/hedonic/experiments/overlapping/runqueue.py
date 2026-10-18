@@ -28,6 +28,14 @@ second, and so on, instead of each item on all pairs before the next item starts
 restricted to one pair (``slice_run``), started under the item's name and writing to the item's folder, so its records
 are the records the item would have written with all its pairs at once and nothing already on disk is orphaned. The
 files decide each step as they decide an item: a pair whose files are complete is skipped.
+
+Shortest first. ``schedule = "shortest"`` in the file (or ``hedonic run queue FILE --schedule shortest``) keeps one step
+running at a time, as always, but chooses each next step at its turn: of the steps that are ready, the one with the
+smallest estimate (the ETA the queue view shows for it), so a long step no longer holds back the short ones behind it.
+A step is ready when every item it reads is finished: an item depends on an earlier item whose output folder one of its
+arguments names (a ``--tuned`` file), and on the items listed in its ``after = [...]``. A spectrum takes its pairs in the
+queue's order (each step reports on the pairs before it); the other by-pair items take theirs in any order. A step with
+no estimate at all goes after the steps that have one. ``schedule = "file"`` (the default) is the order of the file.
 """
 
 from __future__ import annotations
@@ -213,6 +221,75 @@ def schedule(queue: dict) -> list[dict]:
     return steps
 
 
+SCHEDULES = ("file", "shortest")
+
+
+def dependencies(queue: dict) -> dict[str, set[str]]:
+    """Item name -> the earlier items it must wait for: those named in its ``after``, and those whose output folder one
+    of its arguments names (``--tuned {root}/hedonic-calibration/hoc_tuned.json`` waits for ``hedonic-calibration``)."""
+    root = queue.get("root") or ""
+    deps: dict[str, set[str]] = {}
+    earlier: list[tuple[str, list[str]]] = []
+    for item in queue["items"]:
+        mine = set(item.get("after") or [])
+        for name, folders in earlier:
+            if any(any(arg == f or f + os.sep in arg for f in folders) for arg in item["run"]):
+                mine.add(name)
+        deps[item["name"]] = mine
+        folders = [f for f in (_option(item["run"], "--output-dir"), str(Path(root) / item["name"]) if root else None) if f]
+        earlier.append((item["name"], [os.path.normpath(os.path.expanduser(f)) for f in folders]))
+    return deps
+
+
+def ready_steps(steps: list[dict], pending: list[int], deps: dict[str, set[str]]) -> list[int]:
+    """The pending steps that may start now: every item they depend on has no pending step, and a spectrum's step is its
+    first pending one (a spectrum goes through its pairs in the queue's order)."""
+    waiting = {steps[p]["item"] for p in pending}
+    ready = []
+    for place in pending:
+        step = steps[place]
+        if deps.get(step["item"], set()) & waiting:
+            continue
+        if step["run"][0] in SPECTRUM_VERBS and any(steps[p]["item"] == step["item"] for p in pending if p < place):
+            continue
+        ready.append(place)
+    return ready
+
+
+def shortest_order(steps: list[dict], pending: list[int], deps: dict[str, set[str]],
+                   cost: Callable[[int], float | None]) -> list[int]:
+    """The pending steps in the order a shortest-first queue would take them if no estimate changed: each turn the ready
+    step with the smallest ``cost`` (None, no estimate, goes after every step that has one; ties keep the file's order)."""
+    left, order = list(pending), []
+    while left:
+        ready = ready_steps(steps, left, deps) or left[:1]
+        place = min(ready, key=lambda p: (cost(p) is None, cost(p) or 0.0, p))
+        order.append(place)
+        left.remove(place)
+    return order
+
+
+def step_costs(entry: dict, steps: list[dict], prog: dict | None = None) -> dict[int, float | None]:
+    """Seconds each step should still take, from the queue view's estimates (the tree's run and pair nodes): a pair's
+    node for a by-pair step, the run's node otherwise. None where the view has no estimate."""
+    try:
+        root = tree(entry, prog or {})
+    except Exception:  # noqa: BLE001 - without estimates the queue keeps the file's order
+        return {place: None for place in range(len(steps))}
+    runs = {node.key[1]: node for node in root.children if len(node.key) > 1}
+    out: dict[int, float | None] = {}
+    for place, step in enumerate(steps):
+        node = runs.get(step["item"])
+        if node is not None and step["pair"] is not None:
+            labels = {qb.pair_label(step["pair"]), qb.pair_label(pair_id(step["pair"]))}
+            node = next((child for child in node.children if child.label in labels), None)
+        if node is None or (node.unknown and not node.left and node.done < node.total):
+            out[place] = None
+        else:
+            out[place] = 0.0 if node.total and node.done >= node.total else float(node.left)
+    return out
+
+
 def shipped_queues() -> list[str]:
     """The names of the queues shipped with the package (``paper`` for ``queue-paper.toml``)."""
     from hedonic.experiments import resources
@@ -313,6 +390,14 @@ def load_queue(path: str, root: str | Path | None = None) -> dict:
         seen.add(item_name)
         row = {"name": item_name, "run": run,
                **{key: str(item[key]) for key in ("title", "about", "short", "note") if item.get(key)}}
+        after = item.get("after") or []
+        if not isinstance(after, list) or not all(isinstance(a, str) for a in after):
+            raise SystemExit(f"{path}: item {item_name!r}: after must be a list of earlier item names")
+        unknown = [a for a in after if a not in seen - {item_name}]
+        if unknown:
+            raise SystemExit(f"{path}: item {item_name!r} is after {', '.join(unknown)}, which no earlier item is named")
+        if after:
+            row["after"] = list(after)
         if item.get("by_pair"):
             row.update(by_pair=True, pairs=_covered_pairs(path, item_name, run, pairs))
         items.append(row)
@@ -321,7 +406,10 @@ def load_queue(path: str, root: str | Path | None = None) -> dict:
     marks = [bool(item.get("by_pair")) for item in items]
     if any(marks) and not all(marks[marks.index(True):len(marks) - marks[::-1].index(True)]):
         raise SystemExit(f"{path}: the by_pair items must stand next to each other: they run as one block, pair by pair")
-    return {"name": name, "items": items, "file": str(file.resolve()), "root": str(root_dir),
+    plan = str(data.get("schedule") or "file")
+    if plan not in SCHEDULES:
+        raise SystemExit(f"{path}: schedule must be one of {', '.join(SCHEDULES)}, not {plan!r}")
+    return {"name": name, "items": items, "file": str(file.resolve()), "root": str(root_dir), "schedule": plan,
             **({"pairs": pairs} if pairs else {})}
 
 
@@ -469,6 +557,35 @@ def _unit_reusable(cfg: qs.Config, net: str, seed: int, method: qs.Method, binar
     return qs.unit_check(cfg, net, seed, method, binary).ok
 
 
+def _benchmark_history(cfg: qs.Config, units: list, reusable: list[bool], audited: dict | None) -> dict:
+    """What the finished units of a benchmark took, read from their records: ``{"seconds": {(target, method key):
+    [unit seconds]}, "edges": {target: edges of the graph the detectors saw}}``. A unit's seconds are its record's
+    runtime plus the audits of its cover (when the run audits), the same span the worker times a unit by, so a pair
+    whose units have not run is priced from the same method on the pairs that have."""
+    seconds: dict[tuple[str, str], list[float]] = {}
+    edges: dict[str, int] = {}
+    if audited is not None:
+        from hedonic.experiments.overlapping import cover_audit as ca
+    for ok, (net, seed, method) in zip(reusable, units):
+        if not ok:
+            continue
+        try:
+            record = qs.unit_record(cfg, net, seed, method)
+        except (OSError, ValueError):
+            continue
+        took = record.get("runtime_seconds")
+        if not isinstance(took, (int, float)):
+            continue
+        if audited is not None:
+            took += sum(float((audited.get(key) or {}).get("audit_seconds") or 0.0)
+                        for key in ca.unit_keys(net, seed, method.key))
+        seconds.setdefault((net, method.key), []).append(float(took))
+        m = (record.get("dataset_report") or {}).get("m")
+        if isinstance(m, int) and m > 0:
+            edges[net] = m
+    return {"seconds": seconds, "edges": edges}
+
+
 def _benchmark_state(run: list[str]) -> tuple[str, str]:
     """A quickstart run: its folder, and whether the runner would reuse every unit in it."""
     rest = run[1:] if run[0] == "exp" else ["--config", run[0], *run[1:]]
@@ -490,7 +607,7 @@ def _benchmark_state(run: list[str]) -> tuple[str, str]:
     if cfg.robustness:  # the run also audits every cover: a unit is finished only once its audits are recorded
         from hedonic.experiments.overlapping import cover_audit as ca
 
-        audited = set(ca.read_records(folder / ca.STAGE_DIR / ca.RESULTS_NAME))
+        audited = ca.read_records(folder / ca.STAGE_DIR / ca.RESULTS_NAME)
     reusable = [_unit_reusable(cfg, net, seed, method, binary) for net, seed, method in units]
     if audited is None:
         finished = reusable
@@ -501,7 +618,8 @@ def _benchmark_state(run: list[str]) -> tuple[str, str]:
     for done, (net, _seed, method) in zip(finished, units):
         by_cell.setdefault((_pair_label(net), method.label), []).append(bool(done))
     _note(folder, sum(finished), len(units), "units", [(group, label, flags) for (group, label), flags in by_cell.items()])
-    _set_model(folder, qb.benchmark, cfg, units, finished, progress)
+    _set_model(folder, qb.benchmark, cfg, units, finished, progress,
+               history=_benchmark_history(cfg, units, reusable, audited) if not _is_quiet() else None)
     if not any(reusable):
         return "missing", str(folder)
     return ("complete" if all(finished) else "partial"), str(folder)
@@ -1163,14 +1281,33 @@ def work(name: str, entry: dict, prog: dict, launch_item=_launch_item) -> int:
         print(f"  {row['name']:<30} {first:<10} {tally}", flush=True)
     prog.update(verified=time.time())
     rm.write_json(ppath, prog)
-    for place, step in enumerate(steps):
+    shortest = entry.get("schedule") == "shortest"
+    deps = dependencies(entry) if shortest else {}
+    if shortest:
+        print(style("order: shortest estimate first, chosen again at each turn among the steps that are ready", "bold"),
+              flush=True)
+    pending = list(range(len(steps)))
+    taken = 0
+    while pending:
+        place = pending[0]
+        if shortest:
+            costs = step_costs(entry, steps, prog)
+            ready = ready_steps(steps, pending, deps) or pending[:1]
+            place = min(ready, key=lambda p: (costs.get(p) is None, costs.get(p) or 0.0, p))
+            cost = costs.get(place)
+            print(style(f"  next: {steps[place]['item']}" + (f" · {steps[place]['pair']}" if steps[place]["pair"] else "")
+                        + f" ({'~' + qm.fmt_seconds(cost) if cost is not None else 'no estimate'};"
+                        f" the shortest of {len(ready)} ready, {len(pending)} left)", "dim"), flush=True)
+        pending.remove(place)
+        taken += 1
+        step = steps[place]
         row = prog["items"][step["index"]]
-        prog.update(current=step["index"], pair=step["pair"], step=place, updated=time.time())
+        prog.update(current=step["index"], pair=step["pair"], step=place, taken=taken, updated=time.time())
         if step["pair"] is None:
             ended = _run_item(row, prog, ppath, launch_item)
         else:
             ended = _run_step(row, step, prog["steps"][place], prog, ppath, launch_item)
-            more = any(later["index"] == step["index"] for later in steps[place + 1:])
+            more = any(steps[later]["index"] == step["index"] for later in pending)
             if ended == "completed":  # the item as a whole is finished only with its last pair
                 row.update(status="pending" if more else "completed",
                            note=f"{step['pair']} done; the next pair follows" if more else "all its pairs done")
@@ -1198,10 +1335,12 @@ def launch(entry: dict, *, backend: str = "auto") -> dict:
     use_tmux = backend == "tmux" or (backend == "auto" and shutil.which("tmux"))
     record = {"name": name, "kind": "queue", "items": entry["items"], "file": entry.get("file", ""),
               "pairs": entry.get("pairs") or [], "root": entry.get("root", ""), "output_dir": output,
+              "schedule": entry.get("schedule") or "file",
               "created": time.time(),
               "session": f"hedonic-{name}" if use_tmux else "", "backend": "tmux" if use_tmux else "process",
               "log": str(Path(output) / "worker.log"),
-              "command": f"hedonic run queue {entry.get('file', '')}" + (f" --root {entry['root']}" if entry.get("root") else "")}
+              "command": f"hedonic run queue {entry.get('file', '')}" + (f" --root {entry['root']}" if entry.get("root") else "")
+              + (" --schedule shortest" if entry.get("schedule") == "shortest" else "")}
     return rm._spawn(record)
 
 
@@ -1584,7 +1723,7 @@ def tree(entry: dict, prog: dict) -> qm.Node:
         if item.get("by_pair"):
             now = prog.get("pair") if status in ACTIVE and prog.get("current") == number - 1 else None
             node.detail.append(f"runs pair by pair, in the queue's order ({len(item.get('pairs') or [])} pairs)"
-                               + (f"; now on {now} (step {int(prog.get('step') or 0) + 1} of {len(prog.get('steps') or [])})" if now else ""))
+                               + (f"; now on {now} (step {int(prog.get('taken') or int(prog.get('step') or 0) + 1)} of {len(prog.get('steps') or [])})" if now else ""))
         runs.append(node)
     return qm.queue_node(entry["name"], runs, rm.effective_status(entry, prog), entry.get("file", ""),
                          order=list(entry.get("pairs") or []))
@@ -1803,11 +1942,17 @@ def front_main(argv: list[str]) -> int:
                         help="run `hedonic setup` for the pairs and methods that are missing before starting")
     parser.add_argument("--no-setup-check", action="store_true",
                         help="start even when pairs or method runtimes look missing (data kept elsewhere)")
+    parser.add_argument("--schedule", choices=SCHEDULES, default=None,
+                        help="file: the steps in the file's order (default); shortest: at each turn the ready step with "
+                             "the smallest estimate, so short work is not held back by a long run (overrides the "
+                             "file's schedule key)")
     parser.add_argument("--adopt-root", action="store_true",
                         help="write into a --root that already holds runs this hedonic's queues did not start "
                              "(a record certifies only for the build that reads it; others are rerun in place)")
     args = parser.parse_args(argv)
     queue = load_queue(args.file, root=args.root)
+    if args.schedule:
+        queue["schedule"] = args.schedule
     print(style(f"queue {queue['name']} · {len(queue['items'])} runs", "bold") + style(f" · root {queue['root']}", "dim"))
     items = with_labels(queue["items"], queue.get("file", ""))
     if args.report:
@@ -1817,7 +1962,15 @@ def front_main(argv: list[str]) -> int:
     for number, (name, status, action) in enumerate(plan(queue), 1):
         print(f"  {number}. {name:<28} {status:<12} → {action}")
     print(style("  each run is read again at its turn (2nd), so data that appeared or vanished since is caught", "dim"))
-    if queue.get("pairs"):
+    if queue.get("schedule") == "shortest":
+        steps = schedule(queue)
+        costs = step_costs(queue, steps)
+        print(style("order: shortest estimate first — chosen again at each turn; with today's estimates:", "bold"))
+        for number, place in enumerate(shortest_order(steps, list(range(len(steps))), dependencies(queue), costs.get), 1):
+            step, cost = steps[place], costs.get(place)
+            print(f"  {number:>2}. {step['item']}" + (f" · {step['pair']}" if step["pair"] else "")
+                  + f"  {'done' if cost == 0 else ('~' + qm.fmt_seconds(cost)) if cost is not None else 'no estimate'}")
+    elif queue.get("pairs"):
         print(style("order: pair by pair — the by-pair runs take turns on each pair, in this order", "bold"))
         lines: list[tuple[str | None, list[str]]] = []
         for item, pair, action in plan_steps(queue):  # one line per run of steps on the same pair
