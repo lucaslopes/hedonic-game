@@ -354,8 +354,11 @@ class TestPty(unittest.TestCase):
                 pump("Quit")
                 text = ANSI.sub("", out.decode(errors="ignore"))
                 self.assertIn("What would you like to do?", text)
-                self.assertIn("SNAP graph/cover pairs on disk", text)
-                self.assertIn("Start a benchmark", text)
+                if HEDONIC_2:
+                    self.assertIn("SNAP graph/cover pairs on disk", text)
+                    self.assertIn("Start a benchmark", text)
+                else:
+                    self.assertIn("Disjoint SBM benchmark", text)
                 os.write(fd, b"q")
                 pump("\x1b[?25h", 5.0)  # read before reaping: a closed pty drops what was not read
                 _, status = os.waitpid(pid, 0)

@@ -165,8 +165,9 @@ def menu(state: State, commands: tuple[set[str], set[str], set[str]] | None = No
             items.append(Item(f"Run {state.favourite}", "your favourite config (hedonic config set run NAME; asks first)",
                               ["run"]))
     if "detect" in top:
-        items.append(Item("Detect communities", "one network (SBM, LFR, a SNAP pair, a file...) x one method x one "
-                          "seed, here; set every parameter", ["detect"], back=True))
+        networks = "SBM, LFR, a SNAP pair, a file..." if "setup" in top else "SBM, LFR, a famous graph, a file"
+        items.append(Item("Detect communities", f"one network ({networks}) x one method x one seed, here; set every "
+                          "parameter", ["detect"], back=True))
     if "paper" in queues:
         items.append(Item("Plan the paper queue", "the overlap paper's experiments: plan and time, nothing starts",
                           ["run", "queue", "paper", "--dry-run"], back=True))

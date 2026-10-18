@@ -497,7 +497,7 @@ def hedonic_main(argv: list[str] | None = None) -> int:
             close = difflib.get_close_matches(argv[1], [*RUN_ALIASES, *RUN_VERBS], n=1)
             close = [f"run {c}" for c in close]
         else:
-            close = difflib.get_close_matches(argv[0], TOP_LEVEL, n=1)
+            close = difflib.get_close_matches(argv[0], [*TOP_LEVEL, "help"], n=1)
         hint = f" Did you mean `hedonic {close[0]}`?" if close else ""
         print(f"Unknown command: {' '.join(argv)}.{hint} Try `hedonic --help`.", file=sys.stderr)
         return 2
