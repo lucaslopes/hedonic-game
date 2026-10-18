@@ -392,8 +392,7 @@ def method_runtime_identity(methods: Iterable[str]) -> dict[str, str | None]:
     selected = set(methods)
     identity: dict[str, str | None] = {}
     if selected & HEDONIC_IN_PROCESS:
-        identity["hedonic"] = runtime.hedonic_version()
-        identity["hedonic_core_sha256"] = runtime.core_sha256()
+        identity.update(runtime.build_identity())
     if selected & (IGRAPH_IN_PROCESS | HEDONIC_IN_PROCESS):
         identity["python_igraph"] = getattr(ig, "__version__", None)
     return identity

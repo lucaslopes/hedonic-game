@@ -112,9 +112,9 @@ def configure(out: str | Path, *, tag: str = "main", jobs: int = 1, slot_dir: st
 
 def build() -> dict[str, str]:
     """The build an evaluation is made on: two records are interchangeable only when this is equal."""
-    from hedonic.experiments.runtime import core_sha256, hedonic_version
+    from hedonic.experiments.runtime import build_identity
 
-    return {"hedonic": hedonic_version(), "hedonic_core_sha256": core_sha256()}
+    return build_identity()
 
 
 # ---------------------------------------------------------------- instances

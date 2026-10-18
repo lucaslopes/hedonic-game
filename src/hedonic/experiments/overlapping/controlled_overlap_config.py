@@ -289,7 +289,7 @@ def json_build(path: str | Path) -> str:
         return "other"
     stored = ((data.get("implementation_identity") or {}).get("environment")) or {}
     now = co._environment_identity()
-    keys = ("hedonic_core_sha256", "python_igraph", "networkx")
+    keys = ("hedonic_core_source_sha256", "python_igraph", "networkx")
     return "current" if all(stored.get(key) == now.get(key) for key in keys) else "other"
 
 

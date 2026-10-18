@@ -206,7 +206,8 @@ def runtime_identity() -> dict[str, str | None]:
     versions = runtime_versions()
     identity = {
         key: versions.get(key)
-        for key in ("hedonic", "hedonic_core", "hedonic_core_sha256", "python_igraph", "igraph_c")
+        for key in ("hedonic", "hedonic_core", "hedonic_core_sha256", "hedonic_core_source_sha256", "python_igraph",
+                    "igraph_c")
     }
     extension = versions.get("igraph_extension_path") or getattr(
         getattr(igraph, "_igraph", None), "__file__", None
@@ -265,7 +266,7 @@ ROW_CODE = "disjoint-row-v1"
 # The binaries each method's rows depend on. Every row is scored by igraph (rand, ARI), so every
 # method carries igraph's; Hedonic also carries the compiled core it runs in.
 _IGRAPH_FIELDS = ("igraph_c", "igraph_extension_sha256")
-METHOD_RUNTIME_FIELDS = {"Hedonic": ("hedonic_core_sha256", *_IGRAPH_FIELDS)}
+METHOD_RUNTIME_FIELDS = {"Hedonic": ("hedonic_core_source_sha256", *_IGRAPH_FIELDS)}
 # The methods whose restarts are counted by n_runs (the others run once per cell).
 RESTARTED_METHODS = ("Hedonic", "Leiden")
 

@@ -486,7 +486,7 @@ class TestDisjointFrontDoor(unittest.TestCase):
             self.assertEqual(runqueue.unit_counts(item), (16, 16, "graphs"))
             # A store whose Hedonic rows come from another core is refused before anything is written.
             before = (out / "progress.json").read_bytes()
-            with _other_build(hedonic_core_sha256="0" * 64):
+            with _other_build(hedonic_core_source_sha256="0" * 64):
                 self.assertEqual(runqueue.data_state(item, fresh=True)[0], "partial")
                 code = CLI.hedonic_main(["run", "disjoint", "--preset", "smoke", "--foreground",
                                          "--workers", "2", "--output-dir", str(out), "--name", "fg-smoke"])
@@ -623,7 +623,7 @@ class TestPerMethodIdentity(unittest.TestCase):
             root = Path(d)
             self._run(root, "Mirror,Hedonic,Spectral")
             mirror = self._rows(root / "s", "Mirror")
-            with _other_build(hedonic_core_sha256="0" * 64):
+            with _other_build(hedonic_core_source_sha256="0" * 64):
                 with self.assertRaises(SystemExit) as raised:
                     self._run(root, "Mirror,Hedonic,Spectral")
                 self.assertIn("holds rows of Hedonic computed", str(raised.exception))

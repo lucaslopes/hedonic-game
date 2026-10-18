@@ -188,8 +188,7 @@ def _parse_grid(value: str | Iterable[float]) -> list[float]:
 def _runtime_identity() -> dict[str, Any]:
     """The runtime part of a record's identity: the hedonic version and the compiled core (no paths)."""
     return {
-        "hedonic": runtime.hedonic_version(),
-        "hedonic_core_sha256": runtime.core_sha256(),
+        **runtime.build_identity(),
         "algorithm_identity": runtime.ALGORITHM_IDENTITY,
     }
 

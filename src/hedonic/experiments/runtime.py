@@ -40,9 +40,35 @@ def core_sha256() -> str:
     return digest.hexdigest()
 
 
+@functools.cache
+def core_source_sha256() -> str:
+    """SHA-256 of the C sources the loaded core was compiled from (``hedonic._core.source_sha256``, set by setup.py).
+
+    The core's rounding is fixed by its source, so two builds of one source (another platform, compiler, wheel or
+    devN) compute the same results: records name this digest, not the compiled bytes. A core built without it falls
+    back to the SHA-256 of its bytes."""
+    from hedonic import _core
+
+    return getattr(_core, "source_sha256", None) or core_sha256()
+
+
+def release_series() -> str:
+    """``major.minor`` of the installed version (``2.0`` for 2.0.0.dev9, 2.0.0rc1 and 2.0.3). A change of the Python
+    layer that changes results bumps the minor version; dev, rc and patch releases share the series."""
+    import re
+
+    match = re.match(r"(\d+)\.(\d+)", hedonic_version())
+    return f"{match.group(1)}.{match.group(2)}" if match else hedonic_version()
+
+
+def build_identity() -> dict[str, str]:
+    """What a record of a Hedonic detector call depends on: the release series and the core's source digest."""
+    return {"hedonic": release_series(), "hedonic_core_source_sha256": core_source_sha256()}
+
+
 def algorithm_identity() -> str:
-    """The detector's name in records: ``community_hedonic/hedonic-<version>``."""
-    return f"community_hedonic/hedonic-{hedonic_version()}"
+    """The detector's name in records: ``community_hedonic/hedonic-<series>+core-<16 hex of the source digest>``."""
+    return f"community_hedonic/hedonic-{release_series()}+core-{core_source_sha256()[:16]}"
 
 
 ALGORITHM_IDENTITY = algorithm_identity()
@@ -63,6 +89,7 @@ def runtime_versions() -> dict[str, str | None]:
         "hedonic_core": getattr(_core, "core_version", None),
         "hedonic_core_path": str(Path(_core.__file__).resolve()),
         "hedonic_core_sha256": core_sha256(),
+        "hedonic_core_source_sha256": core_source_sha256(),
         "python_igraph": getattr(igraph, "__version__", None),
         "igraph_c": getattr(native, "__igraph_version__", None),
         "python_igraph_path": getattr(igraph, "__file__", None),

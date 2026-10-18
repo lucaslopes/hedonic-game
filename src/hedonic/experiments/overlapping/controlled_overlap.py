@@ -613,6 +613,7 @@ def _environment_identity() -> dict[str, str | None]:
         "python_igraph": _distribution_version("igraph"),
         "hedonic": runtime.hedonic_version(),
         "hedonic_core_sha256": runtime.core_sha256(),
+        "hedonic_core_source_sha256": runtime.core_source_sha256(),
     }
 
 

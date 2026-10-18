@@ -344,7 +344,7 @@ class TestSpectrumStudy(_FixedBudget):
             self.assertIn(f"hedonic/experiments/overlapping/{module}.py", identity["tracked_files"])
         self.assertIn("hedonic/Game.py", identity["tracked_files"])
         runtime = identity["runtime"]
-        self.assertEqual(set(runtime), {"hedonic", "hedonic_core_sha256", "algorithm_identity"})
+        self.assertEqual(set(runtime), {"hedonic", "hedonic_core_source_sha256", "algorithm_identity"})
         self.assertNotIn("/", json.dumps(runtime).replace("community_hedonic/", ""))
         # the digest is of the package source plus the version and the core build, nothing else
         self.assertEqual(identity["tracked_files_sha256"], gs.tracked_digest())

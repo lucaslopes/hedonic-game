@@ -467,7 +467,7 @@ class TestPackagedSearchEndToEnd(unittest.TestCase):
             self.assertEqual(entry["confirm_seeds"], [0, 1])
             self.assertGreater(entry["detector_evaluations"], 5)
             self.assertEqual(entry["mode"], "full")
-            self.assertEqual(entry["build"]["hedonic_core_sha256"], data["environment"]["hedonic_core_sha256"])
+            self.assertEqual(entry["build"]["hedonic_core_source_sha256"], data["environment"]["hedonic_core_source_sha256"])
             self.assertEqual(data["settings"]["hedonic"]["dblp:top5000"],
                              {"max_memberships": entry["max_memberships"], "absolute_resolution": entry["absolute_resolution"]})
             self.assertTrue(any("[dblp:top5000 local M=" in line for line in lines))  # the probe lines reach the log
