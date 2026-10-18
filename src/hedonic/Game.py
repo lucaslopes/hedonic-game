@@ -130,8 +130,9 @@ class Game(Graph):
         allow_isolation:
             Whether a deviation may use a fresh label with score zero.
         edge_weights:
-            Non-negative finite weights or an edge attribute name. None uses
-            the graph's ``weight`` attribute if present, otherwise ones.
+            Non-negative finite weights or an edge attribute name (``"weight"``).
+            None is ones, as in ``community_hedonic``: audit with the weights
+            the detector was given.
         atol, rtol:
             Heuristic tolerance ``atol + rtol * max(1, abs(current_utility))``.
             This is independent of the detector's certified rounding bound.
@@ -479,6 +480,12 @@ class Game(Graph):
         Returns
         -------
         VertexClustering if ``max_memberships == 1``, else VertexCover.
+
+        A cover has one community per occupied label, and two labels may
+        have the same members: they are different coalitions of the game
+        (each counts in every member's utility and in the potential), so
+        they are kept. To compare with a reference cover, deduplicate the
+        bodies first, e.g. ``set(map(frozenset, cover))``.
 
         The result carries ``_hedonic_provenance`` (versions, effective
         parameters, count mode) and ``_hedonic_native_quality``:

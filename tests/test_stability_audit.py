@@ -23,17 +23,19 @@ def same_bits(actual, expected):
 
 def compare(graph, rows, *, vertices=None):
     game = Game(graph)
+    weights = "weight" if "weight" in graph.edge_attributes() else None  # the reference reads the attribute
     state = ref.build_fractional_state(graph, rows)
     selected = list(range(game.vcount())) if vertices is None else vertices
     top = max(map(len, rows))
     for cap, allow, prune in itertools.product((top, top + 1, top + 2), (False, True), (False, True)):
         actual = _audit.stable_intervals(game, rows, max_memberships=cap,
-                                         allow_isolation=allow, vertices=selected, prune=prune)
+                                         allow_isolation=allow, vertices=selected, prune=prune,
+                                         edge_weights=weights)
         expected = [ref.exact_stable_intervals(state, v, cap, allow, atol=ATOL, rtol=RTOL, prune=prune)
                     for v in selected]
         assert actual == expected, (cap, allow, prune)
         result = _audit.regrets(game, GRID, rows, max_memberships=cap,
-                               allow_isolation=allow, vertices=selected, prune=prune)
+                               allow_isolation=allow, vertices=selected, prune=prune, edge_weights=weights)
         entries = ref.build_entries(state, cap, allow, selected, prune=prune)
         for i, gamma in enumerate(GRID):
             r, t = ref.compiled_regrets(entries, gamma)
@@ -63,6 +65,18 @@ def test_ties_weights_parallel_edges_and_private_labels():
     rows += [[3], [4]]  # explicit completion of uncovered vertices
     compare(graph, rows)
     compare(ig.Graph(n=3), [[0], [0], [1]])
+
+
+def test_the_audit_weights_default_to_ones_as_the_detector_does():
+    graph = ig.Graph.Ring(6)
+    graph.es["weight"] = [1., 1., 9., 1., 1., 1.]  # edge 2-3 pulls vertex 3 to label 0
+    game = Game(graph)
+    rows = [[0], [0], [0], [1], [1], [1]]
+    ones = game.regrets([0.3], rows)
+    explicit = game.regrets([0.3], rows, edge_weights=[1.] * 6)
+    weighted = game.regrets([0.3], rows, edge_weights="weight")
+    assert np.array_equal(ones.regret, explicit.regret)
+    assert not np.array_equal(ones.regret, weighted.regret)
 
 
 @pytest.mark.parametrize("seed", range(10))

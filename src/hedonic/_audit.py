@@ -33,8 +33,6 @@ def _prepare(game, memberships=None, max_memberships=None, edge_weights=None):
     offsets[0] = 0
     np.cumsum([len(row) for row in rows], out=offsets[1:])
     labels = np.fromiter(chain.from_iterable(rows), dtype=np.int64, count=int(offsets[-1]))
-    if edge_weights is None and "weight" in game.edge_attributes():
-        edge_weights = "weight"
     weights = _edge_weight_buffer(game, edge_weights, nonnegative=True)
     return _core._audit_prepare(game, offsets, labels, weights), cap
 

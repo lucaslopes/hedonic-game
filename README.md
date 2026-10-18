@@ -321,7 +321,18 @@ The disjoint (stochastic block model) paper:
 hedonic run disjoint --preset smoke             # the whole pipeline in seconds
 hedonic run disjoint --preset paper --dry-run   # the paper's plan, time and disk
 hedonic run disjoint --preset paper             # durable and resumable, about a day on 8 cores
+hedonic run queue disjoint                      # the same, as a queue: the smoke run, then the paper's grid
 ```
+
+Its methods are Hedonic (this package's detector), stock igraph's CPM Leiden
+(`community_leiden`, the paper's full Leiden), and four references (ground truth,
+Mirror, one pass, spectral).
+Each method's results carry their own identity (its call, parameters and the
+build that computes it), so a store that already holds some methods keeps
+them and runs only the missing or changed ones; a store made by another
+build is refused before anything is written, and `--rerun METHOD` or
+`--reuse-from STORE` (which first replays a sample with this build) says
+what to do with it.
 
 The overlapping-communities paper is one queue of six runs: the Hedonic
 calibration, the baseline calibration, the synthetic networks, then, pair by
@@ -355,8 +366,9 @@ reuse the same records.
 Runs execute detached (tmux when available), so closing the terminal does not
 stop them: `hedonic run list`, `status`, `attach`, `logs`, `stop NAME` and
 `resume NAME` manage them. Data goes to `~/Databases/Hedonic` (`HEDONIC_DATA_DIR`;
-SNAP files under `networks/`, or `HEDONIC_NETWORKS_DIR`), runs to
-`~/Databases/Hedonic/Overlap` (`HEDONIC_OUTPUT_DIR`), and built method runtimes to
+SNAP files under `Networks/`, or `HEDONIC_NETWORKS_DIR`), overlapping runs to
+`~/Databases/Hedonic/Overlap` (`HEDONIC_OUTPUT_DIR`), disjoint runs to
+`~/Databases/Hedonic/Disjoint` (`HEDONIC_DISJOINT_OUTPUT_DIR`), and built method runtimes to
 `~/.cache/hedonic/codeseg` (`HEDONIC_CODESEG_CACHE`, or `hedonic config set
 cache_dir PATH`). `hedonic config set output_dir PATH` and
 `hedonic config set network_root PATH` change them for every run;
@@ -405,8 +417,8 @@ The C audit finds closed stable intervals over resolution [0, 1] using the
 paper's tolerance `1e-10 + 1e-9 * max(1, abs(current_utility))`. This differs
 from the detector's rigorous equilibrium certificate. Audits support unit
 node weights only, finite non-negative edge weights, and undirected graphs
-without self-loops. `edge_weights=None` uses the graph's `weight` attribute
-if present, otherwise ones. The native implementation computes each vertex's
+without self-loops. `edge_weights=None` means ones, as in `community_hedonic`;
+pass `edge_weights="weight"` to audit with an edge attribute. The native implementation computes each vertex's
 supports on demand, avoiding a global vertex-by-label support table.
 See [the core arithmetic contract](native/README.md#fixed-cover-stability-audit).
 

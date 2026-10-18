@@ -169,3 +169,19 @@ def test_evaluate_against_requires_state_ground_truth_and_known_method():
         game.evaluate_against(None)
     with pytest.raises(ValueError, match="Unknown evaluation method"):
         game.evaluate_against([[0, 1], [2]], method="rand")
+
+
+def test_a_cover_keeps_labels_with_identical_members():
+    """Two labels with the same members are two coalitions of the game: the cover keeps both (documented)."""
+    import igraph as ig
+    from hedonic import Game
+
+    for seed in range(50):
+        g = Game(ig.Graph.Erdos_Renyi(30, 0.2))
+        cover = g.community_hedonic(resolution=0.05, max_memberships=3, seed=seed)
+        bodies = [frozenset(c) for c in cover]
+        if len(set(bodies)) < len(bodies):
+            occupied = {label for row in g.memberships for label in row}
+            assert len(bodies) == len(occupied)  # one community per occupied label, duplicates included
+            return
+    raise AssertionError("no cover with duplicate bodies in 50 seeds")
