@@ -609,10 +609,8 @@ def front_main(argv: list[str] | None = None) -> int:
         # Refused before anything is written or registered.
         print(f"hedonic run disjoint: error: {status['refused']}", file=sys.stderr)
         return 2
-    if args.foreground:
-        entry = {"name": name, "kind": "disjoint", "settings": settings, "output_dir": output,
-                 "argv": sweep_argv(settings, Path(output)), "command": "hedonic run disjoint " + " ".join(front_argv(settings))}
-        return work(name, entry, {}, progress_file=Path(output) / "progress.json")
+    if args.foreground:  # registered like a detached run, so `hedonic run check NAME` (its last line) finds it
+        return runmanager.run_disjoint_foreground(settings, name, output)
     entry = runmanager.launch_disjoint(settings, name, output)
     where = f"tmux session {entry['session']}" if entry["backend"] == "tmux" else f"background process (log {entry['log']})"
     out = sys.stderr if args.json else sys.stdout

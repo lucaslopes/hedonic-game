@@ -328,7 +328,36 @@ def launch_spectrum(argv: list[str], name: str | None, output_dir: str, *, backe
 
 
 def launch_disjoint(settings: dict, name: str | None, output_dir: str, *, backend: str = "auto") -> dict:
-    """Start the disjoint SBM benchmark (``hedonic run disjoint``) durably; the store is ``output_dir``."""
+    """Start the disjoint SBM benchmark (``hedonic run disjoint``) durably; the store is ``output_dir``.
+
+    A run first started with ``--foreground`` resumes detached."""
+    return _spawn(_disjoint_entry(settings, name, output_dir, "auto" if backend == "foreground" else backend))
+
+
+def run_disjoint_foreground(settings: dict, name: str | None, output_dir: str) -> int:
+    """``hedonic run disjoint --foreground``: the same worker in this terminal, registered like a detached run, so
+    ``hedonic run status|list|check NAME`` know it. Ctrl-C stops it (recorded as ``stopped``); the store keeps its shards."""
+    from hedonic.experiments.disjoint import front
+
+    entry = _disjoint_entry(settings, name, output_dir, "foreground")
+    entry["pid"] = os.getpid()
+    write_json(entry_path(entry["name"]), entry)
+    prog: dict = {}
+    progress = Path(entry["output_dir"]) / "progress.json"
+    try:
+        return front.work(entry["name"], entry, prog, progress_file=progress)
+    except KeyboardInterrupt:
+        prog.update(status="stopped", finished=time.time(), updated=time.time())
+        write_json(progress, prog)
+        print(style(f"\n  stopped · continue with: hedonic run resume {entry['name']}", "yellow"), flush=True)
+        return 130
+    except BaseException as exc:  # noqa: BLE001 - recorded, then raised as before
+        prog.update(status="failed", reason=f"{type(exc).__name__}: {exc}", finished=time.time(), updated=time.time())
+        write_json(progress, prog)
+        raise
+
+
+def _disjoint_entry(settings: dict, name: str | None, output_dir: str, backend: str) -> dict:
     from hedonic.experiments.disjoint import front
 
     name = qs.parse_name(name or new_name("disjoint"))
@@ -345,12 +374,12 @@ def launch_disjoint(settings: dict, name: str | None, output_dir: str, *, backen
     Path(output).mkdir(parents=True, exist_ok=True)
     (Path(output) / "progress.json").unlink(missing_ok=True)
     use_tmux = backend == "tmux" or (backend == "auto" and shutil.which("tmux"))
-    entry = {"name": name, "kind": "disjoint", "settings": settings, "argv": front.sweep_argv(settings, Path(output)),
-             "config": {}, "output_dir": output, "created": time.time(),
-             "session": f"hedonic-{name}" if use_tmux else "", "backend": "tmux" if use_tmux else "process",
-             "log": str(Path(output) / "worker.log"),
-             "command": "hedonic run disjoint " + " ".join(shlex.quote(a) for a in front.front_argv(settings))}
-    return _spawn(entry)
+    return {"name": name, "kind": "disjoint", "settings": settings, "argv": front.sweep_argv(settings, Path(output)),
+            "config": {}, "output_dir": output, "created": time.time(),
+            "session": f"hedonic-{name}" if use_tmux else "",
+            "backend": "foreground" if backend == "foreground" else "tmux" if use_tmux else "process",
+            "log": str(Path(output) / "worker.log"),
+            "command": "hedonic run disjoint " + " ".join(shlex.quote(a) for a in front.front_argv(settings))}
 
 
 def launch_posthoc(argv: list[str], name: str, output_dir: str, *, backend: str = "auto") -> dict:
