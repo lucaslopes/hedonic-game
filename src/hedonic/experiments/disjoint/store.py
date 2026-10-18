@@ -79,7 +79,7 @@ def _require_pyarrow():
     except ImportError as exc:  # pragma: no cover - experiments extra installs it
         raise SystemExit(
             "The disjoint result store needs pyarrow: "
-            'pip install "hedonic[experiments]"'
+            'pip install "hedonic[cli]"'
         ) from exc
     return pa, pq
 
@@ -89,7 +89,7 @@ def _require_duckdb():
         import duckdb
     except ImportError as exc:  # pragma: no cover - experiments extra installs it
         raise SystemExit(
-            "SQL queries need duckdb: pip install \"hedonic[experiments]\""
+            "SQL queries need duckdb: pip install \"hedonic[cli]\""
         ) from exc
     return duckdb
 

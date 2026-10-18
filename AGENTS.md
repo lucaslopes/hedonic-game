@@ -114,9 +114,13 @@ Invariants:
    and no other backend. The core never reads an igraph graph; the binding
    passes it the edge list.
 3. The library's modules import only igraph (`>=1.0`) and NumPy, and SciPy
-   inside `hedonic.metrics` for one-to-one matching; the other dependencies
-   (pandas, Matplotlib, NetworkX, PyArrow, DuckDB, tqdm) serve the command
-   line. Nothing checks igraph's version at import.
+   inside `hedonic.metrics` for one-to-one matching. Those two are the only
+   dependencies of `pip install hedonic`; SciPy is the `metrics` extra, and
+   the command line's (SciPy, pandas, Matplotlib, NetworkX, PyArrow, DuckDB,
+   tqdm) are the `cli` extra (`experiments` is its 1.x name). The CLI's entry
+   points refuse to start without it and name the extra (`CLI.CLI_MODULES`
+   must list the `cli` extra; a test checks). Nothing checks igraph's version
+   at import.
 4. Results are bit-identical across platforms: rounding is fixed by the
    source (`-ffp-contract=off`, `/fp:strict`, every fused multiply-add an
    explicit `hig_fma`: the instruction or the core's soft fma, never libm's;
@@ -228,7 +232,7 @@ hedonic-exp list                       # analysis and utility commands
 ## Checks
 
 ```bash
-python -m pip install -e . pytest              # or: uv pip install -e . pytest
+python -m pip install -e ".[cli]" pytest       # or: uv pip install -e ".[cli]" pytest
 python setup.py build_ext --inplace            # after editing native/
 make -C native test test-release test-soft-fma test-x86_64   # C tests, libm check, x86_64 (Rosetta)
 python tools/native_tests.py                   # pinned Python tests (fails on any skip)

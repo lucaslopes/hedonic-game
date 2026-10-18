@@ -9,19 +9,12 @@ authors = [
     { name = "Lucas Lopes Felipe" }
 ]
 requires-python = ">=3.12"
-# The library needs igraph and numpy; the rest is the experiment CLI (`hedonic`, `hedonic-exp`), so a plain
-# `pip install hedonic` can run every experiment of the papers.
-# The experiment command line (hedonic run ..., hedonic setup) needs macOS or Linux; Windows gets the library.
+# `pip install hedonic` is the library alone (igraph and numpy), for use from other code. The experiment command
+# line (`hedonic`, `hedonic-exp`) and every experiment of the papers need the `cli` extra:
+# `pip install "hedonic[cli]"`. The command line needs macOS or Linux; Windows gets the library.
 dependencies = [
     "igraph>=1.0",
     "numpy",
-    "scipy>=1.10",
-    "pandas>=2.0; sys_platform != 'win32'",
-    "matplotlib>=3.7; sys_platform != 'win32'",
-    "networkx>=3.0; sys_platform != 'win32'",
-    "pyarrow>=14; sys_platform != 'win32'",
-    "duckdb>=1.0; sys_platform != 'win32'",
-    "tqdm>=4.60; sys_platform != 'win32'",
 ]
 keywords = ["community detection", "hedonic games", "graphs", "networks", "overlapping communities"]
 classifiers = [
@@ -32,9 +25,20 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# One-to-one matching in hedonic.metrics (Game.evaluate_against "one_to_one_f1"); scipy is now a dependency, the
-# extra is kept so `pip install "hedonic[metrics]"` still works.
+# One-to-one matching in hedonic.metrics (Game.evaluate_against "one_to_one_f1").
 metrics = ["scipy>=1.10"]
+# The experiment command line and its runs (tests/experiments need it too). The CLI refuses to start without it.
+cli = [
+    "scipy>=1.10",
+    "pandas>=2.0; sys_platform != 'win32'",
+    "matplotlib>=3.7; sys_platform != 'win32'",
+    "networkx>=3.0; sys_platform != 'win32'",
+    "pyarrow>=14; sys_platform != 'win32'",
+    "duckdb>=1.0; sys_platform != 'win32'",
+    "tqdm>=4.60; sys_platform != 'win32'",
+]
+# The 1.x name of the same extra.
+experiments = ["hedonic[cli]"]
 
 [project.scripts]
 hedonic = "hedonic.experiments.CLI:hedonic_main"

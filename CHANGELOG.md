@@ -69,7 +69,9 @@
   a build with or without the instruction from CPUID), and every wheel
   job runs the C tests and the Python tests against results pinned bit for
   bit.
-- The experiment command line ships with the package: `pip install hedonic`
+- `pip install hedonic` is the library alone (igraph and numpy). The
+  experiment command line ships with the package, and its dependencies are
+  the `cli` extra: `pip install "hedonic[cli]"` (also `hedonic[experiments]`)
   installs `hedonic` (runs) and `hedonic-exp` (analysis and utility
   commands), with the run configs and the external-method workers as package
   data.

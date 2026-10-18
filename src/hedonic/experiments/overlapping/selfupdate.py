@@ -81,9 +81,9 @@ def upgrade() -> int:
     """Upgrade in the running interpreter's environment (pip, else uv)."""
     import shutil
 
-    commands = [[sys.executable, "-m", "pip", "install", "--upgrade", "hedonic"]]
+    commands = [[sys.executable, "-m", "pip", "install", "--upgrade", "hedonic[cli]"]]
     if shutil.which("uv"):
-        commands.append(["uv", "pip", "install", "--python", sys.executable, "--upgrade", "hedonic"])
+        commands.append(["uv", "pip", "install", "--python", sys.executable, "--upgrade", "hedonic[cli]"])
     for command in commands:
         print(style("  $ " + " ".join(command), "dim"))
         if subprocess.run(command, check=False).returncode == 0:

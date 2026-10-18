@@ -12,7 +12,8 @@ use. Python 3.12 or newer.
 ## TL;DR
 
 ```bash
-pip install hedonic
+pip install hedonic              # the library
+pip install "hedonic[cli]"       # plus the command line that reproduces the papers
 ```
 
 ```python
@@ -86,6 +87,9 @@ sorted gains.
 ```bash
 python -m pip install hedonic
 ```
+
+That is the library alone (igraph and numpy). The command line and the paper
+experiments need the `cli` extra: `python -m pip install "hedonic[cli]"`.
 
 With [`uv`](https://docs.astral.sh/uv/):
 
@@ -302,7 +306,7 @@ print(f"memberships of the first five vertices: {cover.membership[:5]}")
 
 ## Command line: reproducing the experiments
 
-`pip install hedonic` installs two commands. `hedonic` is the front door for
+`pip install "hedonic[cli]"` installs two commands. `hedonic` is the front door for
 runs; `hedonic-exp list` names the analysis and utility commands.
 
 ```bash
@@ -411,7 +415,7 @@ See [the core arithmetic contract](native/README.md#fixed-cover-stability-audit)
 ```bash
 git clone https://github.com/lucaslopes/hedonic.git
 cd hedonic
-python -m pip install -e . pytest
+python -m pip install -e ".[cli]" pytest
 python -m pytest
 make -C native test            # the C core's own tests (sanitizers)
 python tools/native_tests.py   # bit-level pins, as the wheel builds run them

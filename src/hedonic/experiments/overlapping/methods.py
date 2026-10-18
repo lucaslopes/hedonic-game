@@ -759,7 +759,7 @@ METHODS: dict[str, MethodAdapter] = {
         parameters={"clique_size": 3, "max_communities": 50_000},
         scalability="Can grow exponentially with clique density; protected by timeout.",
         output_kind="Direct overlapping node cover from clique components",
-        install_requirement='pip install "hedonic[experiments]" (networkx)',
+        install_requirement='pip install "hedonic[cli]" (networkx)',
         runner=_clique_percolation,
     ),
     "demon": MethodAdapter(
@@ -769,7 +769,7 @@ METHODS: dict[str, MethodAdapter] = {
         parameters={"epsilon": 0.25, "min_community_size": 2},
         scalability="Local expansion can be costly on high-degree social graphs.",
         output_kind="Direct overlapping node cover returned by the DEMON package",
-        install_requirement='pip install "hedonic[experiments]" (demon)',
+        install_requirement='pip install "hedonic[cli]" (demon)',
         runner=_demon,
     ),
     "agmfit": MethodAdapter(

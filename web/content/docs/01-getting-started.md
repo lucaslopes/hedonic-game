@@ -25,6 +25,12 @@ uv add hedonic
 python -m pip install "hedonic[metrics]"
 ```
 
+The command line that reproduces the papers' experiments (`hedonic run ...`, macOS and Linux) has its own extra:
+
+```bash
+python -m pip install "hedonic[cli]"
+```
+
 ```package-info
 ```
 

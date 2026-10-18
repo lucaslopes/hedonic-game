@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from hedonic.experiments import CLI
@@ -128,6 +128,40 @@ class TestUpdate(unittest.TestCase):
             code, text = run(["update", "--json"])
             self.assertEqual(code, 1)
             self.assertIn("offline", json.loads(text)["error"])
+
+
+class TestCliExtra(unittest.TestCase):
+    """`pip install hedonic` is the library alone; the command line names the extra it needs."""
+
+    def test_the_command_line_refuses_without_the_cli_extra(self):
+        import importlib.util
+
+        real = importlib.util.find_spec
+        with patch("importlib.util.find_spec", lambda name, *a: None if name in ("pandas", "duckdb") else real(name, *a)):
+            for entry in (CLI.hedonic_main, CLI.main):
+                err = io.StringIO()
+                with redirect_stderr(err):
+                    self.assertEqual(entry(["run", "list"]), 2)
+                self.assertIn('pip install "hedonic[cli]"', err.getvalue())
+                self.assertIn("pandas, duckdb", err.getvalue())
+
+    def test_the_checked_modules_are_the_cli_extra(self):
+        import re
+        import tomllib
+        from pathlib import Path
+
+        extra = tomllib.loads((Path(__file__).resolve().parents[2] / "pyproject.toml").read_text())
+        names = {re.split(r"[<>=!~;\[ ]", req, maxsplit=1)[0]
+                 for req in extra["project"]["optional-dependencies"]["cli"]}
+        self.assertEqual(names, set(CLI.CLI_MODULES))
+
+    def test_update_keeps_the_extra(self):
+        from types import SimpleNamespace
+
+        with patch.object(selfupdate.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run, \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(selfupdate.upgrade(), 0)
+        self.assertEqual(run.call_args.args[0][-2:], ["--upgrade", "hedonic[cli]"])
 
 
 if __name__ == "__main__":

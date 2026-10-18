@@ -262,6 +262,51 @@ class TestMetrics(unittest.TestCase):
         self.assertEqual(out.stdout.strip(), "False")
 
 
+class TestLeanInstall(unittest.TestCase):
+    """``pip install hedonic`` is the library alone: igraph and numpy."""
+
+    CLI_ONLY = ("scipy", "pandas", "matplotlib", "networkx", "pyarrow", "duckdb", "tqdm")
+
+    def test_the_base_dependencies_are_igraph_and_numpy(self):
+        import re
+        import tomllib
+        from pathlib import Path
+
+        project = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())["project"]
+        names = {re.split(r"[<>=!~;\[ ]", req, maxsplit=1)[0] for req in project["dependencies"]}
+        self.assertEqual(names, {"igraph", "numpy"})
+        cli = {re.split(r"[<>=!~;\[ ]", req, maxsplit=1)[0] for req in project["optional-dependencies"]["cli"]}
+        self.assertEqual(cli, set(self.CLI_ONLY))
+
+    def test_the_package_reports_its_version(self):
+        from importlib.metadata import version
+
+        import hedonic
+
+        self.assertEqual(hedonic.__version__, version("hedonic"))
+
+    def test_the_library_runs_without_the_cli_extra(self):
+        script = f"""
+import sys
+class Block:
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] in {self.CLI_ONLY!r}:
+            raise ImportError("blocked: " + name)
+sys.meta_path.insert(0, Block())
+import igraph as ig
+from hedonic import Game, metrics, stability
+g = Game(ig.Graph.Famous("Zachary"))
+part = g.community_hedonic(max_memberships=1, seed=0)
+cover = g.community_hedonic(max_memberships=3, seed=0)
+intervals = g.stable_intervals()
+regrets = g.regrets([0.1, g.density()])
+print(len(part.membership), len(intervals), regrets.regret.shape,
+      round(metrics.evaluate_cover([[0, 1]], [[0, 1]], 2, one_to_one=False)["f1"], 3))
+"""
+        out = subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)
+        self.assertEqual(out.stdout.split(), ["34", "34", "(34,", "2)", "1.0"])
+
+
 class TestMaxCommunitiesStart(unittest.TestCase):
     """``max_communities`` draws a random start; a draw may miss labels."""
 

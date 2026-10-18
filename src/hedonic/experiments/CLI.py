@@ -264,8 +264,24 @@ def _posix_only() -> int | None:
     return None
 
 
+# Distributions the `cli` extra installs (pyproject.toml), by import name.
+CLI_MODULES = ("scipy", "pandas", "matplotlib", "networkx", "pyarrow", "duckdb", "tqdm")
+
+
+def _cli_extra() -> int | None:
+    """``pip install hedonic`` is the library alone; the command line needs ``hedonic[cli]``."""
+    import importlib.util
+
+    missing = [name for name in CLI_MODULES if importlib.util.find_spec(name) is None]
+    if missing:
+        print(f"hedonic: the command line needs the cli extra ({', '.join(missing)} not installed):\n"
+              f'  pip install "hedonic[cli]"', file=sys.stderr)
+        return 2
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
-    if (refused := _posix_only()) is not None:
+    if (refused := _posix_only() or _cli_extra()) is not None:
         return refused
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help"):
@@ -386,7 +402,7 @@ Data, runtimes and settings
 
 
 def hedonic_main(argv: list[str] | None = None) -> int:
-    if (refused := _posix_only()) is not None:
+    if (refused := _posix_only() or _cli_extra()) is not None:
         return refused
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help") or argv[:2] in (["run", "-h"], ["run", "--help"]):

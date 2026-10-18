@@ -380,7 +380,7 @@ def write_all(output_dir: Path, audit_rows: list[dict[str, Any]], result_rows: l
         written += accuracy_change_figure(result_rows, plot_dir / "gt_spectrum_accuracy_change", policies)
         written += accuracy_versus_change_figure(result_rows, plot_dir / "gt_spectrum_accuracy_vs_change")
     except ImportError:
-        print("  matplotlib is not installed: figures skipped (pip install 'hedonic[experiments]')")
+        print("  matplotlib is not installed: figures skipped (pip install 'hedonic[cli]')")
     bundle = output_dir / "paper"
     tables = output_dir / "tables"
     bundle.mkdir(parents=True, exist_ok=True)
