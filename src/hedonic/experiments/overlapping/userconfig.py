@@ -2,9 +2,9 @@
 
 Example::
 
-    [defaults]          # machine settings applied to every run, unless a flag overrides them
+    [defaults]          # machine settings
     disjoint_output_root = "/data/hedonic/disjoint"   # parent folder of `hedonic run disjoint` runs and queues
-    threads = 10
+    threads = 10        # kept for your own scripts; no hedonic 1 run reads it
 
 Manage it with ``hedonic config`` (show), ``hedonic config set KEY VALUE``,
 ``hedonic config unset KEY``, ``hedonic config path``; ``hedonic config example``
