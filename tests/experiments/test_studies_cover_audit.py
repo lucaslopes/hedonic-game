@@ -65,7 +65,8 @@ class TestPlan(unittest.TestCase):
             plan = ca.resolve(["--source", tmp, "--networks", "dblp,amazon", "--methods", "hedonic,clique_percolation",
                                "--seeds", "0-1", "--output-dir", str(Path(tmp) / "out")])
             keys = [c["key"] for c in ca.conditions(plan)]
-            self.assertEqual(len(keys), 2 * 2 * (2 + 1))  # networks x seeds x (hoc: cover+labelled, clique_percolation: cover)
+            # networks x (hoc: 2 seeds x cover+labelled; clique_percolation, deterministic: its lowest seed's cover)
+            self.assertEqual(len(keys), 2 * (2 * 2 + 1))
             self.assertEqual(keys[:2], ["dblp/seed0/hedonic/cover", "dblp/seed0/hedonic/labelled"])
             methods = [c["method"] for c in ca.conditions(plan)]
             self.assertEqual(methods, sorted(methods, key=["hedonic", "clique_percolation"].index))  # all of one method, then the next

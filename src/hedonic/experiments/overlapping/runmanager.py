@@ -1541,13 +1541,25 @@ def _cover_key(path: Path) -> list:
 
 
 def check_benchmark(entry: dict, sample: int) -> int:
-    """Rerun the fastest ``sample`` completed detector runs and compare covers and scores exactly."""
+    """Rerun the fastest ``sample`` completed detector runs and compare covers and scores exactly.
+
+    Only planned units are candidates (the plan follows the run's replication), and a method whose runs are replicas
+    (``replication.kind``: the program is stochastic and no seed reaches it) is left out, since a rerun is not expected to
+    repeat its cover.
+    """
     import tempfile
+
+    from hedonic.experiments.overlapping import replication
 
     cfg = qs.Config(**entry["config"])
     prog = read_progress(entry)
     done = [p for p in prog.get("plan", []) if p.get("status") == "completed"]
     print(f"  run      {entry['name']} · {len(done)}/{len(prog.get('plan', []))} detector runs completed")
+    replicas = sorted({p["method"] for p in done if replication.kind(p["method"]) == "replicas"})
+    if replicas:
+        print(f"  skipped  {', '.join(qs.BY_KEY[m].label for m in replicas)}: its runs are independent replicas "
+              "(stochastic, no seed reaches the program), so a rerun need not repeat a cover")
+    done = [p for p in done if p["method"] not in replicas]
     if not done:
         print("  nothing to check yet")
         return 1
@@ -1555,10 +1567,10 @@ def check_benchmark(entry: dict, sample: int) -> int:
     failures = 0
     for item in picked:
         m = qs.BY_KEY[item["method"]]
-        size = "full" if not cfg.nodes else f"n{cfg.nodes}"
-        stored_dir = Path(cfg.output_dir) / f"{item['network']}-{size}" / f"seed{item['seed']}"
-        stored = json.loads((stored_dir / "runs" / item["network"] / f"{m.runner}.json").read_text())
-        stored_cover = stored_dir / "covers" / item["network"] / f"{m.runner}.json.gz"
+        dataset = qs.split_target(item["network"])[0]
+        _, stored_dir = qs.unit_argv(cfg, item["network"], item["seed"], m, None)
+        stored = json.loads((stored_dir / "runs" / dataset / f"{m.runner}.json").read_text())
+        stored_cover = stored_dir / "covers" / dataset / f"{m.runner}.json.gz"
         with tempfile.TemporaryDirectory(prefix="hedonic-check-") as tmp:
             again = qs.Config(**{**cfg.__dict__, "output_dir": tmp, "save_covers": stored_cover.is_file()})
             print(f"  … rerunning {qs.NETWORKS[item['network']][0]} · seed {item['seed']} · {m.label} "
@@ -1567,8 +1579,8 @@ def check_benchmark(entry: dict, sample: int) -> int:
             same_metrics = all(rec.get("metrics", {}).get(k) == stored.get("metrics", {}).get(k)
                                for k in ("f1", "onmi") if k in stored.get("metrics", {}))
             same_cover = None
-            fresh_cover = Path(tmp) / f"{item['network']}-{size}" / f"seed{item['seed']}" / "covers" / \
-                item["network"] / f"{m.runner}.json.gz"
+            fresh_cover = qs.unit_argv(again, item["network"], item["seed"], m, None)[1] / "covers" / dataset / \
+                f"{m.runner}.json.gz"
             if stored_cover.is_file() and fresh_cover.is_file():
                 same_cover = _cover_key(stored_cover) == _cover_key(fresh_cover)
         ok = rec.get("status") == "completed" and same_metrics and same_cover is not False

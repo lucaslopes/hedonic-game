@@ -109,7 +109,7 @@ class TestShippedCoversConfig(unittest.TestCase):
         self.assertNotIn("hoc_multilevel", cfg.methods)
         self.assertEqual(cfg.induce, "covered")
         self.assertTrue(cfg.robustness and cfg.save_covers)
-        self.assertEqual(len(qs.build_plan(cfg, {})), 8 * 9 * 10)
+        self.assertEqual(len(qs.build_plan(cfg, {})), 8 * (4 * 10 + 5))  # 5 deterministic methods run once per pair
 
     def test_for_a_seed_each_pair_is_finished_with_all_methods_before_the_next_top5000_covers_first(self):
         cfg = load()

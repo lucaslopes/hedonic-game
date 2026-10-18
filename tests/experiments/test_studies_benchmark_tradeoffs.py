@@ -99,7 +99,7 @@ class TestFigureAndCLI(unittest.TestCase):
             self.assertEqual(code, 0)
             for name in ("benchmark_tradeoffs.png", "benchmark_tradeoffs.csv", "benchmark_tradeoffs_rows.csv"):
                 self.assertTrue((Path(tmp) / name).stat().st_size > 0, name)
-            self.assertIn("40 units", buffer.getvalue())
+            self.assertIn("24 units", buffer.getvalue())  # 2 networks x (5 + 5 seeds + 1 run of each deterministic method)
 
     def test_a_missing_benchmark_is_a_usage_error_and_an_empty_one_fails(self):
         with tempfile.TemporaryDirectory() as tmp, redirect_stderr(io.StringIO()):
