@@ -216,17 +216,17 @@ class TestTypeAhead(unittest.TestCase):
                                       "import sys, time; from hedonic.experiments.overlapping import tui; "
                                       "time.sleep(0.5); sys.exit(10 + tui.select('pick', ['a', 'b', 'c', 'd']))"])
         os.write(fd, b"\x1b[B\x1b[B\x1b[B\r")  # before the prompt is even drawn
-        end = time.time() + 10
-        while time.time() < end:
+        end, done, status = time.time() + 10, 0, None
+        while not done and time.time() < end:
+            # Drain the output so the child never blocks on a full pty. On Linux a read raises EIO once the child
+            # has exited, before it is reaped: keep waiting for its status rather than leaving the loop.
             if select.select([fd], [], [], 0.05)[0]:
                 try:
                     os.read(fd, 65536)
                 except OSError:
-                    break
+                    time.sleep(0.05)
             done, status = os.waitpid(pid, os.WNOHANG)
-            if done:
-                break
-        else:
+        if not done:
             os.kill(pid, 9)
             _, status = os.waitpid(pid, 0)
         os.close(fd)
