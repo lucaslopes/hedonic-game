@@ -72,8 +72,10 @@ class TestClockPrimitives(unittest.TestCase):
 
     def test_peak_memory_is_the_process_own_and_does_not_leak_between_runs(self):
         clock = timing.DetectorClock()
-        big = clock.process([sys.executable, "-c", "b = bytearray(250 * 1024 * 1024); b[::4096] = b'x' * len(b[::4096])"],
-                            label="big")
+        # The child holds its peak for a moment, as a detector does: on Linux the peak is sampled (SAMPLE_SECONDS),
+        # so growth in a process's last few milliseconds can be missed on a slow runner.
+        big = clock.process([sys.executable, "-c", "import time; b = bytearray(250 * 1024 * 1024); "
+                             "b[::4096] = b'x' * len(b[::4096]); time.sleep(0.3)"], label="big")
         small = clock.process([sys.executable, "-c", "pass"], label="small")
         self.assertGreater(big.peak_rss_bytes, 200 * 1024 * 1024)
         self.assertLess(small.peak_rss_bytes, 120 * 1024 * 1024)  # RUSAGE_CHILDREN would have kept the 250 MB
