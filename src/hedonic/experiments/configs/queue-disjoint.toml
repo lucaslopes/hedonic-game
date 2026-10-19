@@ -7,9 +7,8 @@
 #   hedonic run status disjoint-queue       # progress; `hedonic run attach disjoint-queue` opens the live tree
 #   hedonic run stop disjoint-queue         # stop; run the same `hedonic run queue disjoint` again to continue
 #
-# {root} is the folder every run writes into: `--root DIR`, by default <disjoint_output_root>/disjoint-queue
-# (`hedonic config set disjoint_output_root PATH`, else ~/Databases/Hedonic/Disjoint). Nothing is downloaded: the
-# 50,000 graphs are regenerated from their seeds. Running the queue again skips a store whose rows are
+# {root} is the folder every run writes into: `--root DIR`, by default <output_dir>/disjoint-queue. Nothing is
+# downloaded: the 50,000 graphs are regenerated from their seeds. Running the queue again skips a store whose rows are
 # current for every method and resumes the rest; a store whose rows came from another build is refused with the
 # reason (recompute those methods with --rerun, or start a new folder).
 
