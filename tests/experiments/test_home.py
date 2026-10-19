@@ -24,7 +24,7 @@ LINE_1 = ({"run", "detect", "show", "guide", "config", "update"},
           {"disjoint", "list", "status", "attach", "logs", "stop", "resume", "check", "queue"}, {"disjoint"})
 LINE_2 = ({"run", "detect", "setup", "show", "guide", "config", "pickle", "update"},
           {"exp", "paper", "disjoint", "list", "status", "attach", "logs", "stop", "resume", "check", "queue"},
-          {"disjoint", "paper"})
+          {"disjoint", "overlap"})
 
 
 class TestWhenItOpens(unittest.TestCase):
@@ -64,7 +64,7 @@ class TestMenu(unittest.TestCase):
         self.assertLessEqual(first_words, LINE_2[0])
         # Nothing a view runs starts work: the queue is only planned, setup is a dry run, update only compares.
         views = {tuple(i.argv) for i in items if i.back}
-        self.assertIn(("run", "queue", "paper", "--dry-run"), views)
+        self.assertIn(("run", "queue", "overlap", "--dry-run"), views)
         self.assertIn(("setup", "--dry-run"), views)
         self.assertIn(("update",), views)
 

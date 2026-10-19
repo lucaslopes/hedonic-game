@@ -168,9 +168,9 @@ def menu(state: State, commands: tuple[set[str], set[str], set[str]] | None = No
         networks = "SBM, LFR, a SNAP pair, a file..." if "setup" in top else "SBM, LFR, a famous graph, a file"
         items.append(Item("Detect communities", f"one network ({networks}) x one method x one seed, here; set every "
                           "parameter", ["detect"], back=True))
-    if "paper" in queues:
-        items.append(Item("Plan the paper queue", "the overlap paper's experiments: plan and time, nothing starts",
-                          ["run", "queue", "paper", "--dry-run"], back=True))
+    if "overlap" in queues:
+        items.append(Item("Plan the overlap paper queue", "the overlap paper's experiments: plan and time, nothing starts",
+                          ["run", "queue", "overlap", "--dry-run"], back=True))
     if "disjoint" in queues:
         items.append(Item("Plan the disjoint paper queue", "the smoke check, then the 100-seed grid: plan, nothing starts",
                           ["run", "queue", "disjoint", "--dry-run"], back=True))
