@@ -226,7 +226,7 @@ def _benchmark_entry(cfg: qs.Config, name: str | None, backend: str) -> dict:
         if old and effective_status(old, read_progress(old)) in ("running", "setup", "starting"):
             raise SystemExit(f"{name} is already running — reopen it with `hedonic run attach {name}` "
                              f"or pick another --name")
-    cfg.output_dir = str(expand_path(cfg.output_dir) / name) if not cfg.output_dir.endswith(name) else cfg.output_dir
+    cfg.output_dir = str(qs.run_folder(cfg, name))
     cfg.output_dir = str(expand_path(cfg.output_dir).resolve())  # absolute: `hedonic run list` works from any directory
     cfg.cache_dir = str(expand_path(cfg.cache_dir).resolve())
     if cfg.network_root:

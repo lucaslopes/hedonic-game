@@ -440,6 +440,32 @@ class TestTune(unittest.TestCase):
         self.assertNotIn(cs.EXTREMAL, {c["gamma"] for c in configs})
 
 
+class TestUnlimitedCap(unittest.TestCase):
+    """``--fixed-M -1``: the resolution only, no cap, on the wide log scan."""
+
+    def test_the_resolution_only_search_scans_the_wide_grid_and_keeps_no_cap(self):
+        register()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "unlimited"
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(cs.main(tune_argv(out, "--fixed-M", "-1", "--no-extremal")), 0)
+            summary = last_search(out)
+            final = summary["final"]
+            self.assertEqual(final["M"], -1)
+            self.assertNotIn("rounds", summary["stages"])  # no cap search
+            gammas = [g for g, _ in summary["stages"]["gamma_at_M"]["points"]]
+            lo, hi = cs.WIDE_SCAN
+            self.assertTrue(any(abs(g / lo - 1) < 1e-6 for g in gammas))
+            self.assertTrue(any(abs(g / hi - 1) < 1e-6 for g in gammas))
+            self.assertGreater(final["f1_median"], 0.8)
+            configs = [json.loads(line) for line in evals_lines(out)]
+            self.assertEqual({c["config"]["M"] for c in configs}, {-1})
+            done = [c for c in configs if c["status"] == "completed"]
+            self.assertTrue(done)
+            # the label-free audit plays the uncapped game: no vertex is "at the cap"
+            self.assertEqual({c["label_free"]["saturated_fraction"] for c in done}, {0.0})
+
+
 class TestCommandLine(unittest.TestCase):
     def test_the_multilevel_phase_is_refused_early(self):
         register()

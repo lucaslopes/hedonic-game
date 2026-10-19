@@ -8,7 +8,9 @@ one-dimensional searches whose structure follows from the theory of the hedonic 
    sign at a Familiarity threshold (a local ratio in (0, 1)), and the accuracy profile is searched in log gamma: a scan at
    factor-2 spacing over ``[rho_in / 32, rho_in]`` (``rho_in`` the median internal density of the reference
    communities), a gallop outward while the best probe is the outermost one (within ``[rho, 0.9]``, stopping on a
-   plateau), then a bracketed golden-section search until the bracket is narrower than ``--tol-u``. The clique regime
+   plateau), then a bracketed golden-section search until the bracket is narrower than ``--tol-u``. With ``--fixed-M`` (the
+   resolution only, as the paper calibrates Hedonic at the unlimited cap -1) the scan covers ``[1e-6, 0.5]`` at
+   factor-4 spacing instead, because the profile can peak far below the density. The clique regime
    ``gamma -> 1`` is probed once on its own (``EXTREMAL``), because the profile can have a second plateau there.
 2. **Cap**, on ``log2 M``: gallop up while doubling gains at least ``--delta`` (or until the returned covers certify that
    the cap no longer binds: no vertex at the cap and every vertex at an uncapped best response), gallop down while
@@ -76,6 +78,13 @@ from hedonic.experiments.overlapping.calibration_audit import CoverAudit, active
 PHI = (math.sqrt(5.0) - 1.0) / 2.0
 EXTREMAL = 0.999  # clique regime: every frustrated move resolves against strangers
 PHASE = "local"  # the only phase hedonic 2.0 has
+# The resolution-only search (``--fixed-M``, the paper's unlimited cap -1): a log grid at factor-4 spacing over
+# [1e-6, 0.5], then golden section around the best point. On the SNAP top5000 pairs the F1 profile has a peak near the
+# reference density and another two to three decades below it (YouTube: 0.434 at 0.065, 0.508 at 3e-5), which the
+# default bracket [rho_in/32, rho_in] misses.
+WIDE_SCAN = (1e-6, 0.5)
+WIDE_SCAN_FACTOR = 4.0
+WIDE_SCAN_EVALS = 20
 MULTILEVEL_GONE = ("the multilevel phase is not available in hedonic 2.0 (overlapping multilevel was removed; "
                    "only local moving remains): use --phase local")
 
@@ -236,6 +245,8 @@ def score(inst: dict, rows) -> dict:
 
 
 def label_free(inst: dict, rows, gamma: float, M: int) -> dict:
+    if M < 1:  # -1: no cap, the game's cap is the vertex count
+        M = len(rows)
     k = np.fromiter((len(r) for r in rows), dtype=np.int64, count=len(rows))
     act = np.asarray(inst["graph"].degree()) > 0
     au = CoverAudit(inst["graph"], rows)
@@ -433,10 +444,10 @@ class Probe:
 
 # ------------------------------------------------------------------ searches
 def golden_max_log(f, lo: float, hi: float, *, tol_u: float, max_evals: int,
-                   floor: float, ceil: float, plateau: float = 0.0, prefetch=None) -> dict:
+                   floor: float, ceil: float, plateau: float = 0.0, prefetch=None, scan_factor: float = 2.0) -> dict:
     """Maximize f(gamma) over u = log gamma, allowing a multimodal profile.
 
-    1. Scan: probes at factor-2 spacing from lo to hi (log grid), because the profile has a Familiarity peak and a
+    1. Scan: probes at factor-2 spacing (``scan_factor``) from lo to hi (log grid), because the profile has a Familiarity peak and a
        separate extremal plateau as gamma -> 1 (clique regime), which golden section alone can confuse.
     2. Gallop: while the best probe is the outermost one on either side, add a probe a factor 2 further out, within
        [floor, ceil]; stop when that step gains less than ``plateau`` (below the smallest Familiarity threshold, or above
@@ -457,7 +468,7 @@ def golden_max_log(f, lo: float, hi: float, *, tol_u: float, max_evals: int,
 
     uf, uc = math.log(floor), math.log(ceil)
     a0, b0 = math.log(lo), math.log(hi)
-    k = max(2, math.ceil((b0 - a0) / math.log(2.0)))
+    k = max(2, math.ceil((b0 - a0) / math.log(scan_factor)))
     if prefetch is not None:
         prefetch([math.exp(round(a0 + (b0 - a0) * i / k, 9)) for i in range(k + 1)])
     for i in range(k + 1):
@@ -581,12 +592,18 @@ def tune(spec: str, phase: str = PHASE, *, M0: int, M_max: int, seeds: list[int]
     probe = Probe(spec, base, seeds, timeout=timeout, objective=objective)
     lo, hi = gamma_bracket or (inst["rho_in"] / 32.0, inst["rho_in"])
     floor, ceil = inst["rho"], 0.9
+    scan_factor = 2.0
+    if fixed_M is not None and gamma_bracket is None:
+        # resolution only: the accuracy profile can have two separate peaks (one far below the density), so scan the
+        # whole range on a coarse log grid first and refine around the best point
+        lo, hi = WIDE_SCAN
+        floor, scan_factor, max_evals = min(floor, lo / 10.0), WIDE_SCAN_FACTOR, max(max_evals, WIDE_SCAN_EVALS)
     M = fixed_M or min(M_start or M0 * 4, M_max)  # the search never chooses a cap above M_max
     # stage 1: resolution at a generous cap (interior regime), plus the extremal clique regime gamma -> 1 as one
     # separate probe
     J_ext = probe(gamma=EXTREMAL, M=M) if extremal else float("nan")
     g1 = golden_max_log(lambda gamma: probe(gamma=gamma, M=M), lo, hi, tol_u=tol_u,
-                        max_evals=max_evals, floor=floor, ceil=ceil, plateau=delta / 2,
+                        max_evals=max_evals, floor=floor, ceil=ceil, plateau=delta / 2, scan_factor=scan_factor,
                         prefetch=lambda gammas: probe.prefetch([{"gamma": g, "M": M} for g in gammas]))
     stages = {"gamma_at_M": {"M": M, **g1}, "extremal": {"gamma": EXTREMAL, "M": M, "J": J_ext,
                                                         "beats_interior": bool(J_ext > g1["J"] + delta)}}
@@ -709,7 +726,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--confirm-seeds", default="0,1,2,3,4")
     ap.add_argument("--M0", type=int, default=8)
     ap.add_argument("--M-max", type=int, default=128, help="the largest cap the search may choose")
-    ap.add_argument("--fixed-M", type=int, help="search the resolution only, at this cap")
+    ap.add_argument("--fixed-M", type=int, help="search the resolution only, at this cap (-1: no cap); without "
+                    "--bracket the scan covers [1e-6, 0.5] at factor-4 spacing")
     ap.add_argument("--delta", type=float, default=0.002, help="score tolerance of the cap search, snap and gallop stop")
     ap.add_argument("--tol-u", type=float, default=0.1, help="width of the final golden-section bracket in log gamma")
     ap.add_argument("--max-evals", type=int, default=14, help="evaluations of one resolution search at most")

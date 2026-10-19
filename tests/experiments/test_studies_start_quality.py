@@ -210,6 +210,16 @@ class TestRandomLevel(unittest.TestCase):
         self.assertTrue(0.0 <= record["final_symmetric_f1"] <= 1.0)
         self.assertLess(record["start_communities"], labels)  # the undrawn label is an empty community
 
+    def test_no_cap_starts_from_the_whole_reference_and_runs(self):
+        """cap -1 (no cap): level 0 is the reference itself, never a projection, and the detector runs uncapped."""
+        cover = [[0, 1, 2], [2, 3, 4], [2, 5, 6], [6, 7, 0]]  # vertex 2 is in three communities
+        prepared = SimpleNamespace(dataset=SimpleNamespace(graph=tiny_graph(), cover=cover))
+        job = gs.Job("tiny", "top5000", prepared, None)
+        record = sq.run_condition(job, {"cap": -1, "gamma": 0.1}, 0, 0, "k", "local")
+        self.assertEqual(record["cap"], -1)
+        self.assertEqual(record["start_symmetric_f1"], 1.0)  # the exact reference
+        self.assertTrue(0.0 <= record["final_symmetric_f1"] <= 1.0)
+
 
 class TestResume(unittest.TestCase):
     def test_rerun_skips_recorded_conditions_and_extends_by_new_ones(self):

@@ -302,6 +302,25 @@ hedonic-exp list                       # analysis and utility commands
   `tests/experiments/test_fingerprint.py`: changing it means every store's
   Hedonic rows are recomputed. Other records (overlap studies) keep the source
   identity.
+- **Hedonic calibration, no cap.** `hedonic run calibrate --cap unlimited`
+  searches the resolution only at `max_memberships = -1` (no cap: the
+  detector's cap is the vertex count), on a log grid over [1e-6, 0.5] at
+  factor-4 spacing before golden section (`calibration_search.WIDE_SCAN`),
+  because the F1 profile can peak two to three decades below the density.
+  The paper queue uses it: the cap is the one setting that never reads the
+  reference. A record of an uncapped Hedonic unit carries the vertex count as
+  `max_memberships` and `max_memberships_source = "unlimited"`; the robustness
+  audit then plays the uncapped game. A search counts only under its own cap
+  mode (`calibrate.same_cap_mode`).
+- **The paper queue goes method by method.** Hedonic first (calibration,
+  synthetic networks, then leveraging-gt, gt-robustness and its benchmark
+  rows pair by pair), then each baseline: `calibration-M` (adopting the
+  finished searches of `baseline-calibration-rc1`) and `benchmark-M`. Every
+  benchmark item writes into `{root}/benchmark` (`--shared-folder`: the
+  folder itself, not OUTPUT_DIR/NAME), so finished units are reused
+  and each item waits for the earlier ones (an item depends on every earlier
+  item whose folder its arguments name). `tests/experiments/test_queue_skip.py`
+  pins the order.
 - **Baseline calibration.** `hedonic run calibrate-baselines` takes
   `--method-budget M=N[:MIN]` (the paper queue: ANGEL at 3 settings, 60 min
   per pair), `--transfer PAIRS` (not searched: each searched method takes the

@@ -150,15 +150,19 @@ class Config:
     robustness: bool = False                # audit every saved cover (robustness/cover_audit.jsonl): needs covers, full graphs
     induce: str = "full"                    # "covered": every method sees only the subgraph induced by the cover's vertices
     replication: str = "auto"               # "auto": a deterministic method runs once (lowest seed); "all": every seed
+    shared_folder: bool = False             # output_dir is the run's folder itself, shared with other runs (never /NAME)
 
     def command(self) -> str:
-        allowed = {"output_dir", "cache_dir", "network_root", "json"} | ({"tuned", "method_params"} if self.tuned else set())
+        allowed = {"output_dir", "cache_dir", "network_root", "json", "shared_folder"} | (
+            {"tuned", "method_params"} if self.tuned else set())
         if self.profile in PROFILES and PROFILES[self.profile].differences(self) <= allowed:
             parts = ["hedonic run exp", "--config", self.profile]
             if self.tuned:
                 parts += ["--tuned", self.tuned]
             if self.output_dir != PROFILES[self.profile].output_dir:
                 parts += ["--output-dir", self.output_dir]
+            if self.shared_folder:
+                parts.append("--shared-folder")
             if self.cache_dir != "~/.cache/hedonic":
                 parts += ["--cache-dir", self.cache_dir]
             if self.network_root:
@@ -191,6 +195,8 @@ class Config:
             parts += ["--induce", self.induce]
         if self.replication != "auto":
             parts += ["--replication", self.replication]
+        if self.shared_folder:
+            parts.append("--shared-folder")
         return " ".join(shlex.quote(p) if " " in p and p != "hedonic run exp" else p for p in parts)
 
     def pretty_command(self) -> str:
@@ -449,6 +455,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="loop nesting, outermost first, e.g. seed,method,network (default network,seed,method); "
                         "a config file sets it with its `order` key")
     p.add_argument("--save-covers", action="store_true", help="keep every detector cover next to its record")
+    p.add_argument("--shared-folder", action="store_true",
+                   help="--output-dir is the run's folder itself, shared by several runs (each with its own --name and "
+                        "--methods), instead of OUTPUT_DIR/NAME: a unit another run finished there is reused")
     p.add_argument("--isolate", action="store_true",
                    help="run each detector run in a fresh child process, so its record's peak RSS is its own")
     p.add_argument("--robustness", action=argparse.BooleanOptionalAction, default=None,
@@ -592,6 +601,8 @@ def config_from_args(a: argparse.Namespace) -> Config:
         cfg.save_covers = True
     if a.isolate:
         cfg.isolate = True
+    if a.shared_folder:
+        cfg.shared_folder = True
     if a.robustness is not None:
         cfg.robustness = a.robustness
     if cfg.robustness:
@@ -975,13 +986,19 @@ def replication_text(cfg: Config) -> str:
     return f"deterministic, one run at seed {min(cfg.seeds)}: {', '.join(once)}"
 
 
+def run_folder(cfg: Config, name: str) -> Path:
+    """The folder a run named ``name`` writes into: OUTPUT_DIR/NAME, or OUTPUT_DIR itself when it already ends with the
+    name or the run shares it (``--shared-folder``)."""
+    folder = expand_path(cfg.output_dir)
+    return folder if cfg.shared_folder or str(cfg.output_dir).endswith(name) else folder / name
+
+
 def scan_command(cfg: Config, name: str | None) -> int:
     """``--scan``: print what the run's folder already holds for every unit of the plan. Reads only; seals nothing."""
     if not name:
         print(style("  --scan needs --name: a run's records live in OUTPUT_DIR/NAME", "yellow"))
         return 2
-    folder = expand_path(cfg.output_dir)
-    cfg.output_dir = str(folder if str(cfg.output_dir).endswith(name) else folder / name)
+    cfg.output_dir = str(run_folder(cfg, name))
     plan = build_plan(cfg, {})
     binary = codeseg_binary(codeseg_tools(cfg)) if "codeseg" in cfg.methods else None
     if binary is not None and not binary.is_file():

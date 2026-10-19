@@ -151,6 +151,13 @@ class TestCoDeSEGRunner(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             codeseg_reproduction._hedonic_adapter_cap({"max_memberships": 1}, reference, 7)
+        # -1 is no cap: the detector's cap is the vertex count, and the record says so
+        self.assertEqual(
+            codeseg_reproduction._hedonic_adapter_cap({"max_memberships": -1}, reference, 7),
+            (7, "unlimited"),
+        )
+        with self.assertRaises(ValueError):
+            codeseg_reproduction._hedonic_adapter_cap({"max_memberships": -2}, reference, 7)
 
     def test_disjoint_control_is_an_explicit_cap_one(self):
         self.assertEqual(

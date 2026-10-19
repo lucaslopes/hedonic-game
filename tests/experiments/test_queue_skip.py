@@ -21,9 +21,12 @@ from hedonic.experiments.overlapping import start_quality as sq
 from hedonic.experiments.resources import CONFIG_DIR
 
 QUEUE = str(CONFIG_DIR / "queue-paper.toml")
-PAPER_ITEMS = [
-    "hedonic-calibration", "baseline-calibration", "synthetic-networks", "leveraging-gt", "gt-robustness", "benchmark",
-]
+HEDONIC_ITEMS = ["hedonic-calibration-gamma", "synthetic-gamma", "leveraging-gt-gamma", "gt-robustness-gamma",
+                 "benchmark-hedonic"]
+# the baselines one at a time: published-setting deterministic ones with results, calibrated deterministic ones, then
+# the seeded ones with ten runs per pair
+BASELINE_ORDER = ["codeseg", "ncgame", "fox", "bigclam", "neo-kmeans", "clique-percolation", "ego-splitting", "angel"]
+PAPER_ITEMS = HEDONIC_ITEMS + [f"{kind}-{m}" for m in BASELINE_ORDER for kind in ("calibration", "benchmark")]
 
 
 def _register(root: Path, name: str, status: str) -> None:
@@ -445,12 +448,47 @@ class TestQueueFile(_Base):
     def test_the_item_that_writes_the_calibration_runs_before_every_item_that_reads_it(self):
         queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
         names = [item["name"] for item in queue["items"]]
+        deps = runqueue.dependencies(queue)
         readers = [item["name"] for item in queue["items"] if runqueue._option(item["run"], "--tuned")]
-        self.assertEqual(readers, ["leveraging-gt", "gt-robustness", "benchmark"])
-        for reader in readers:
+        self.assertEqual(readers, ["leveraging-gt-gamma", "gt-robustness-gamma", "benchmark-hedonic"]
+                         + [f"benchmark-{m}" for m in BASELINE_ORDER])
+        for reader in readers[:3]:
             tuned = runqueue._option(next(i for i in queue["items"] if i["name"] == reader)["run"], "--tuned")
-            self.assertIn("/hedonic-calibration/hoc_tuned.json", tuned)
-            self.assertLess(names.index("hedonic-calibration"), names.index(reader))
+            self.assertEqual(tuned.split(",")[0].split("/")[-2:], ["hedonic-calibration-gamma", "hoc_tuned.json"])
+            self.assertIn("hedonic-calibration-gamma", deps[reader])
+        for m in BASELINE_ORDER:  # each baseline benchmark reads its own calibration, written just before it
+            self.assertIn(f"calibration-{m}", deps[f"benchmark-{m}"])
+            self.assertEqual(names.index(f"calibration-{m}") + 1, names.index(f"benchmark-{m}"))
+
+    def test_hedonic_runs_first_and_the_baselines_one_at_a_time(self):
+        queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
+        deps = runqueue.dependencies(queue)
+        previous = "benchmark-hedonic"
+        for m in BASELINE_ORDER:  # a baseline starts once the method before it has finished its whole benchmark
+            self.assertIn(previous, deps[f"calibration-{m}"])
+            self.assertIn(previous, deps[f"benchmark-{m}"])  # the shared folder
+            previous = f"benchmark-{m}"
+        benchmarks = [i for i in queue["items"] if i["name"].startswith("benchmark-")]
+        folders = {runqueue._option(i["run"], "--output-dir") for i in benchmarks}
+        self.assertEqual(folders, {str((self.root / "q" / "benchmark").resolve())})  # one folder: records are reused
+        self.assertEqual([runqueue._option(i["run"], "--methods") for i in benchmarks],
+                         ["hedonic"] + [m.replace("-", "_") for m in BASELINE_ORDER])
+
+    def test_a_shared_folder_is_the_run_folder_itself_and_survives_a_resume(self):
+        args = qs.build_parser().parse_args(["--output-dir", str(self.root / "bench"), "--shared-folder"])
+        cfg = qs.config_from_args(args)
+        self.assertEqual(qs.run_folder(cfg, "benchmark-fox"), self.root / "bench")
+        self.assertIn("--shared-folder", cfg.command())
+        again = qs.Config(**cfg.__dict__)  # a durable run stores its config as a dict and resumes from it
+        self.assertEqual(qs.run_folder(again, "benchmark-fox"), self.root / "bench")
+        plain = qs.config_from_args(qs.build_parser().parse_args(["--output-dir", str(self.root / "bench")]))
+        self.assertEqual(qs.run_folder(plain, "benchmark-fox"), self.root / "bench" / "benchmark-fox")
+        self.assertEqual(qs.run_folder(plain, "bench"), self.root / "bench")
+
+    def test_hedonic_is_calibrated_on_the_resolution_only_with_no_cap(self):
+        queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
+        run = next(i for i in queue["items"] if i["name"] == "hedonic-calibration-gamma")["run"]
+        self.assertEqual(runqueue._option(run, "--cap"), "unlimited")
 
     def test_every_item_covers_the_pairs_in_the_same_order_top5000_first(self):
         # the manuscript's pairs: DBLP, Amazon and YouTube with both covers, Friendster and LiveJournal with top5000
@@ -458,13 +496,13 @@ class TestQueueFile(_Base):
         complete = ["dblp:all", "amazon:all", "youtube:all"]
         queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
         by_name = {item["name"]: item for item in queue["items"]}
-        for name in ("hedonic-calibration", "baseline-calibration"):
+        for name in ["hedonic-calibration-gamma"] + [f"calibration-{m}" for m in BASELINE_ORDER]:
             self.assertEqual(runqueue._option(by_name[name]["run"], "--networks").split(","), top5000 + complete)
-        plan = sq.resolve(["--config", runqueue._option(by_name["leveraging-gt"]["run"], "--config")])
+        plan = sq.resolve(["--config", runqueue._option(by_name["leveraging-gt-gamma"]["run"], "--config")])
         self.assertEqual(plan["networks"], top5000 + ["dblp", "amazon", "youtube"])
-        cfg = qs.load_config(runqueue._option(by_name["benchmark"]["run"], "--config"))
+        cfg = qs.load_config(runqueue._option(by_name["benchmark-hedonic"]["run"], "--config"))
         self.assertEqual(cfg.networks, top5000 + complete)
-        spectrum = runqueue._spectrum_options("spectrum", by_name["gt-robustness"]["run"][1:])
+        spectrum = runqueue._spectrum_options("spectrum", by_name["gt-robustness-gamma"]["run"][1:])
         self.assertEqual([f"{d}:{c}" for d, c in spectrum["pairs"]], top5000 + complete)
         self.assertEqual(cfg.order, "seed,network,method")
 
@@ -585,12 +623,14 @@ class TestPairByPair(_Base):
         queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
         self.assertEqual(queue["pairs"], PAPER_PAIRS)
         steps = runqueue.schedule(queue)
-        self.assertEqual([s["item"] for s in steps[:3]], ["hedonic-calibration", "baseline-calibration", "synthetic-networks"])
-        self.assertEqual([(s["item"], s["pair"]) for s in steps[3:]],
-                         [(name, pair) for pair in PAPER_PAIRS for name in ("leveraging-gt", "gt-robustness", "benchmark")])
-        # the first pair is finished in all three experiments before the second pair starts
-        self.assertEqual([s["pair"] for s in steps[3:6]], ["dblp:top5000"] * 3)
-        self.assertEqual(steps[-1]["pair"], "youtube:all")
+        self.assertEqual([s["item"] for s in steps[:2]], ["hedonic-calibration-gamma", "synthetic-gamma"])
+        block = ("leveraging-gt-gamma", "gt-robustness-gamma", "benchmark-hedonic")
+        n = len(PAPER_PAIRS) * len(block)
+        self.assertEqual([(s["item"], s["pair"]) for s in steps[2:2 + n]],
+                         [(name, pair) for pair in PAPER_PAIRS for name in block])
+        # the first pair is finished in all three Hedonic experiments before the second pair starts
+        self.assertEqual([s["pair"] for s in steps[2:5]], ["dblp:top5000"] * 3)
+        self.assertEqual([s["item"] for s in steps[2 + n:]], PAPER_ITEMS[len(HEDONIC_ITEMS):])  # baselines: whole items
 
     def test_the_worker_takes_the_steps_in_order_and_skips_a_pair_whose_files_are_complete(self):
         queue = self._queue_file()

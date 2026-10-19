@@ -585,6 +585,36 @@ class TestAutoMode(unittest.TestCase):
             self.assertEqual({cal.search_mode(plan, s["network"], s["method"]) for s in cal.searches(plan)}, {mode})
 
 
+class TestUnlimitedCap(unittest.TestCase):
+    """``--cap unlimited``: each search is the resolution-only search with no cap, and its entries say so."""
+
+    def test_the_command_searches_the_resolution_only_with_no_cap_and_no_warm_bracket(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = packaged_plan(tmp, "--networks", "dblp:top5000,dblp:all", "--cap", "unlimited", "--mode", "auto")
+            for search in cal.searches(plan):
+                argv = cal.search_argv(plan, search)
+                self.assertEqual(argv[argv.index("--fixed-M") + 1], "-1")
+                self.assertNotIn("--bracket", argv)
+                self.assertNotIn("--M-start", argv)
+            self.assertEqual(cal.resolve(cal.launch_argv(plan))["cap"], "unlimited")
+            self.assertIn("no cap", cal.describe(plan))
+            with self.assertRaises(ValueError):
+                packaged_plan(tmp, "--cap", "unlimited", "--budget", "3")
+
+    def test_a_search_counts_only_under_its_own_cap_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = packaged_plan(tmp, "--networks", "dblp:top5000", "--cap", "unlimited")
+            mine = cal.current_build()
+            capped = {"max_memberships": 4, "absolute_resolution": 0.1, "build": mine}
+            path = plan["output"] / cal.TUNED_NAME
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"searches": {"hedonic/dblp:top5000": capped}}))
+            self.assertEqual(cal.state_of(plan), "missing")  # a capped search does not answer an unlimited plan
+            path.write_text(json.dumps({"searches": {"hedonic/dblp:top5000": {**capped, "max_memberships": -1}}}))
+            self.assertEqual(cal.state_of(plan), "complete")
+            self.assertEqual(cal.state_of(packaged_plan(tmp, "--networks", "dblp:top5000")), "missing")
+
+
 class TestParallelCalibration(unittest.TestCase):
     def plan(self, tmp: str, *extra: str) -> dict:
         script = Path(tmp) / "slow_tune.py"

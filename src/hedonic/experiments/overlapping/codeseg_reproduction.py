@@ -113,6 +113,9 @@ HEDONIC_REFERENCE_FREE_MAX_MEMBERSHIPS = 8
 # per-vertex multiplicity of the scored reference cover.  Such rows are
 # reference-informed ablations and are labelled by ``max_memberships_source``.
 HEDONIC_REFERENCE_MULTIPLICITY_CAP = "reference-multiplicity"
+# ``max_memberships = -1``: no cap (the detector's cap is the vertex count). The record carries the vertex count and
+# ``max_memberships_source = "unlimited"``.
+UNLIMITED_CAP = -1
 DATASETS: tuple[str, ...] = (
     "amazon",
     "youtube",
@@ -699,8 +702,10 @@ def _hedonic_adapter_cap(
         )
         return max(2, int(multiplicity)), "reference_max_multiplicity_ablation"
     cap = int(requested)
+    if cap == UNLIMITED_CAP:  # no cap: every vertex may join as many communities as it likes (cap = vertex count)
+        return max(2, int(n_vertices)), "unlimited"
     if cap < 2:
-        raise ValueError("Hedonic overlapping adapters require max_memberships >= 2")
+        raise ValueError("Hedonic overlapping adapters require max_memberships >= 2, or -1 (unlimited)")
     return cap, "user_specified"
 
 
@@ -2323,8 +2328,8 @@ def _method_parameters(
                 "--hedonic-max-memberships must be an integer >= 2 or "
                 f"{HEDONIC_REFERENCE_MULTIPLICITY_CAP!r}"
             ) from exc
-        if cap_value < 2:
-            raise ValueError("--hedonic-max-memberships must be >= 2")
+        if cap_value < 2 and cap_value != UNLIMITED_CAP:
+            raise ValueError("--hedonic-max-memberships must be >= 2, or -1 (unlimited)")
         hedonic_cap = {"max_memberships": cap_value}
 
     return {

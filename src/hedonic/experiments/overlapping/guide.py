@@ -75,19 +75,22 @@ TOPICS: dict[str, tuple[str, str]] = {
     "paper": ("Reproduce the overlapping-communities paper (`hedonic run queue paper`)", """
         hedonic setup --all --dry-run           the eight graph/cover pairs and eight baselines it needs
         hedonic setup --all                     download the pairs, build and install the baselines
-        hedonic run queue paper --dry-run       the six runs, the order of their steps, with what is already done
+        hedonic run queue paper --dry-run       its runs, the order of their steps, with what is already done
         hedonic run queue paper                 start it (durable, resumable; days on a laptop)
         hedonic run queue paper --root DIR      the same, writing under DIR instead of OUTPUT_DIR/paper-queue
         hedonic run attach paper-queue          the live tree view (q closes the view only)
 
-        The queue runs the Hedonic calibration, the baseline calibration and the synthetic networks, then the
-        ground-truth start curve, the robustness spectrum and the benchmark one pair at a time, the shortest
-        step first (--schedule file: pair by pair, top5000 covers first).
+        The queue goes method by method. Hedonic first: its calibration (the resolution only, no membership cap),
+        the synthetic networks, then the ground-truth start curve, the robustness spectrum and its benchmark rows
+        one pair at a time, the shortest step first (--schedule file: pair by pair, top5000 covers first). Then
+        each baseline in turn, cheapest first: its calibration, then its benchmark on every pair, all benchmark
+        items writing into one folder so a finished unit is reused.
         Every run decides from its files what is done, so starting the queue again continues it. The queue checks
         that the data and methods are prepared and prints the `hedonic setup` command when they are not.
 
         The runs can also be started one by one:
         hedonic run calibrate --networks dblp:top5000 --mode auto   re-tune Hedonic's (gamma, cap); writes hoc_tuned.json
+        hedonic run calibrate --networks dblp:top5000 --cap unlimited   the resolution only, no cap (the paper's)
         hedonic run calibrate-baselines --networks PAIRS --methods all   label-free baseline calibration
             (--method-budget angel=3:60, --transfer PAIRS, --adopt-from DIR: the queue's budget, unsearched pairs
             that take the nearest calibrated pair's setting, and searches copied from an earlier calibration)

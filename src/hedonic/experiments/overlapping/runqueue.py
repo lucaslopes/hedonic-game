@@ -593,9 +593,7 @@ def _benchmark_state(run: list[str]) -> tuple[str, str]:
     if not args.name:  # without a name the folder is only chosen when the run starts
         return "unknown", ""
     cfg = qs.config_from_args(args)
-    folder = qs.expand_path(cfg.output_dir)
-    if not str(cfg.output_dir).endswith(args.name):  # the folder runmanager.launch gives this run
-        folder = folder / args.name
+    folder = qs.run_folder(cfg, args.name)  # the folder runmanager.launch gives this run
     cfg.output_dir = str(folder)
     progress = _read(folder / "progress.json") or {}
     unavailable = {method: "" for method in progress.get("unavailable") or {}}  # methods this machine cannot run

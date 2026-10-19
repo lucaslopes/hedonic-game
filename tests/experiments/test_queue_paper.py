@@ -52,18 +52,17 @@ class TestShippedQueue(_Isolated):
         root = self.root / "q"
         queue = runqueue.load_queue("paper", root=str(root))
         self.assertEqual(queue["pairs"], PAIRS)
-        self.assertEqual([i["name"] for i in queue["items"]], ["hedonic-calibration", "baseline-calibration",
-                                                               "synthetic-networks", "leveraging-gt", "gt-robustness",
-                                                               "benchmark"])
+        # the Hedonic experiments and the benchmark items reuse the folders of the earlier queue, so their records count
+        shared = {"leveraging-gt-gamma": "leveraging-gt", "gt-robustness-gamma": "gt-robustness"}
         for item in queue["items"]:
             text = " ".join(item["run"])
             self.assertNotIn("{root}", text)
             self.assertNotIn("Databases", text)
             self.assertNotIn("1006", text)
-            self.assertEqual(runqueue._option(item["run"], "--output-dir"), str(root.resolve() / item["name"]), item["name"])
-        tuned = runqueue._option(next(i for i in queue["items"] if i["name"] == "benchmark")["run"], "--tuned")
-        self.assertEqual(tuned.split(","), [str(root.resolve() / "hedonic-calibration" / "hoc_tuned.json"),
-                                            str(root.resolve() / "baseline-calibration" / "baseline_tuned.json")])
+            folder = ("benchmark" if item["name"].startswith("benchmark-") else shared.get(item["name"], item["name"]))
+            self.assertEqual(runqueue._option(item["run"], "--output-dir"), str(root.resolve() / folder), item["name"])
+        tuned = runqueue._option(next(i for i in queue["items"] if i["name"] == "benchmark-fox")["run"], "--tuned")
+        self.assertEqual(tuned.split(","), [str(root.resolve() / "calibration-fox" / "baseline_tuned.json")])
 
     def test_the_default_root_is_the_output_dir_then_the_runs_root(self):
         with patch("hedonic.experiments.overlapping.userconfig.defaults", return_value={"output_dir": str(self.root / "o")}):
@@ -73,15 +72,20 @@ class TestShippedQueue(_Isolated):
 
             self.assertEqual(runqueue.default_root("paper-queue"), Path(config.RUNS_ROOT) / "paper-queue")
 
-    def test_the_baseline_item_has_the_settings_of_the_earlier_calibration(self):
-        """The same budget as the 1.x ``baseline-paper`` run, so its memoised searches are reused (see baseline_run)."""
-        queue = runqueue.load_queue("paper", root=str(self.root / "q"))
-        run = next(i for i in queue["items"] if i["name"] == "baseline-calibration")["run"]
-        self.assertEqual(run[0], "calibrate-baselines")
-        self.assertEqual(runqueue._option(run, "--methods").split(","), BASELINES)
-        self.assertEqual(runqueue._option(run, "--networks").split(","), PAIRS)
-        self.assertEqual([runqueue._option(run, flag) for flag in
-                          ("--max-evals", "--max-minutes", "--eval-timeout-minutes", "--replicates")], ["8", "240", "60", "1"])
+    def test_the_baseline_items_have_the_settings_of_the_earlier_calibration(self):
+        """The same budget as the earlier calibration, whose finished searches each item adopts (see baseline_run)."""
+        root = self.root / "q"
+        queue = runqueue.load_queue("paper", root=str(root))
+        items = [i for i in queue["items"] if i["name"].startswith("calibration-")]
+        self.assertEqual(sorted(runqueue._option(i["run"], "--methods") for i in items), sorted(BASELINES))
+        for item in items:
+            run = item["run"]
+            self.assertEqual(run[0], "calibrate-baselines")
+            self.assertEqual(runqueue._option(run, "--networks").split(","), PAIRS)
+            self.assertEqual([runqueue._option(run, flag) for flag in
+                              ("--max-evals", "--max-minutes", "--eval-timeout-minutes", "--replicates")],
+                             ["8", "240", "60", "1"])
+            self.assertEqual(runqueue._option(run, "--adopt-from"), str(root.resolve() / "baseline-calibration-rc1"))
 
     def test_no_item_asks_for_the_multilevel_phase(self):
         queue = runqueue.load_queue("paper", root=str(self.root / "q"))

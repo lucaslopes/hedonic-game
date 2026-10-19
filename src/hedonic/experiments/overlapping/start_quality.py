@@ -518,7 +518,8 @@ def run_condition(job: Any, setting: dict[str, Any], level: float | str, seed: i
     graph = job.graph
     n = graph.vcount()
     cap, gamma = int(setting["cap"]), float(setting["gamma"])
-    start = job.start(cap)  # the cap projection of the reference when the cap is below its multiplicity
+    # the cap projection of the reference when the cap is below its multiplicity; -1 (no cap) keeps the reference
+    start = job.start(cap if cap >= 1 else None)
     reference = start.memberships
     incidences = sum(map(len, reference))
     if level == "random":
@@ -536,7 +537,7 @@ def run_condition(job: Any, setting: dict[str, Any], level: float | str, seed: i
     # allow_isolation is True, as in the calibrated rows (methods._hedonic_local).
     outcome = v3._detector_worker(graph, contiguous_labels(start_memberships), cap, gamma, phase, True, seed)
     seconds = time.monotonic() - started
-    final_raw = v3._normalize_raw_memberships(outcome["final_memberships"], n, cap)
+    final_raw = v3._normalize_raw_memberships(outcome["final_memberships"], n, cap if cap >= 1 else n)
     final_cover = rb.canonicalize_cover(rb.vertex_memberships_to_cover(final_raw), n)
     final_f1, final_onmi = score(final_cover, job.gt_cover, n)
     return {
@@ -694,7 +695,7 @@ def run_study(plan: dict[str, Any], *, loader: Callable[[str], Any] = load_netwo
         job = loader(network)  # loaded here, before any fork, so the workers share it
         workers = min(int(plan.get("workers") or 1), len(pending))
         setting = plan["settings"][network]
-        job.start(int(setting["cap"]))  # the cap projection is cached on the job: computed once here, not once per worker
+        job.start(int(setting["cap"]) if int(setting["cap"]) >= 1 else None)  # the cap projection is cached on the job: computed once here, not once per worker
 
         def task(condition: dict[str, Any], job: Any = job, setting: dict[str, Any] = setting) -> dict[str, Any]:
             return run_condition(job, setting, condition["level"], condition["seed"], condition["key"], plan["phase"])

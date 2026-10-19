@@ -78,6 +78,8 @@ DEFAULT_NETWORKS = "dblp,amazon"
 DEFAULT_PHASES = "local"
 DEFAULT_CONFIRM = "0-4"
 DEFAULT_FACTOR = 1.5
+CAP_MODES = ("search", "unlimited")
+UNLIMITED = -1  # max_memberships of an unlimited cap
 PROBE_LINE = re.compile(r"^\s*\[(\S+) (local|multilevel) M=(\d+) gamma=(\S+) .*?\] (\w+)")
 MULTILEVEL_GONE = "--phases takes local only: the multilevel phase is not available in hedonic 2.0"
 
@@ -101,6 +103,9 @@ def build_parser(prog: str = "hedonic run calibrate") -> argparse.ArgumentParser
                         help="warm: start at the recorded optimum (default); full: the search's own bracket; auto: warm for "
                              "a target that is a network's whole graph or its `all` cover and has its own recorded optimum, "
                              "full for the rest (other covers, networks without an optimum)")
+    parser.add_argument("--cap", choices=CAP_MODES, default="search",
+                        help="search: search the resolution and the membership cap (default); unlimited: search the "
+                             "resolution only, with no cap (max_memberships -1), on a wide log grid")
     parser.add_argument("--networks", default=DEFAULT_NETWORKS,
                         help=f"comma list; a name alone is the whole graph, network:cover (dblp:top5k) the graph induced "
                              f"by that cover's vertices (default {DEFAULT_NETWORKS})")
@@ -171,7 +176,9 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate") -> dict[str, A
     name = qs.parse_name(args.name or "hoc-calibration")
     root = Path(userconfig.defaults().get("output_dir") or RUNS_ROOT)
     output = expand_path(args.output_dir).resolve() if args.output_dir else expand_path(root / name).resolve()
-    return {"script": script, "mode": args.mode, "networks": networks, "methods": methods,
+    if args.cap == "unlimited" and args.budget is not None:
+        raise ValueError("--cap unlimited searches the resolution only; it does not go with --budget")
+    return {"script": script, "mode": args.mode, "cap": args.cap, "networks": networks, "methods": methods,
             "factor": float(args.factor), "confirm": qs.parse_seeds(args.confirm_seeds), "python": args.python or sys.executable,
             "workers": parallel.default_workers(args.workers),
             "budget": args.budget, "cap_minutes": args.cap_minutes,
@@ -228,7 +235,9 @@ def search_argv(plan: dict[str, Any], search: dict[str, Any]) -> list[str]:
     if plan["workers"] > 1:
         argv += ["--jobs", str(plan["workers"]), "--slot-dir", str(plan["output"] / "ledger" / "slots"),
                  "--slot-count", str(plan["workers"])]
-    if search_mode(plan, search["network"], search["method"]) == "warm":
+    if plan.get("cap") == "unlimited":  # the resolution only, no cap: the search's wide scan, no warm bracket
+        argv += ["--fixed-M", str(UNLIMITED)]
+    elif search_mode(plan, search["network"], search["method"]) == "warm":
         gamma, cap = float(start["absolute_resolution"]), int(start["max_memberships"])
         argv += ["--bracket", f"{gamma / plan['factor']:.9g},{gamma * plan['factor']:.9g}", "--M-start", str(cap),
                  "--no-extremal"]
@@ -279,7 +288,9 @@ def describe(plan: dict[str, Any]) -> str:
     lazy = (f", lazy: {plan['budget']} evaluations" + (f" or {plan['cap_minutes']:g} probe min" if plan.get("cap_minutes") else "")
             if plan.get("budget") is not None else "")
     count = len(searches(plan))
-    return (f"HOC calibration ({plan['mode']} start{lazy}) · {count} search{'' if count == 1 else 'es'}: "
+    start = ("resolution only, no cap (-1), wide log scan" if plan.get("cap") == "unlimited"
+             else f"{plan['mode']} start{lazy}")
+    return (f"HOC calibration ({start}) · {count} search{'' if count == 1 else 'es'}: "
             + ", ".join(s["key"] for s in searches(plan)) + f" · {plan['workers']} worker{'s' if plan['workers'] != 1 else ''}")
 
 
@@ -307,8 +318,10 @@ def plan_lines(plan: dict[str, Any]) -> list[str]:
     for search in searches(plan):
         start = start_for(search["method"], search["network"])
         mode = search_mode(plan, search["network"], search["method"])
-        lines.append(f"  {search['key']:<28} {mode:<4} · reference gamma {start['absolute_resolution']:.6g}, cap {start['max_memberships']}"
-                     f" ({start['source']})"
+        what = ("gamma on a log grid over [1e-6, 0.5], then refined · no cap" if plan.get("cap") == "unlimited" else
+                f"{mode:<4} · reference gamma {start['absolute_resolution']:.6g}, cap {start['max_memberships']}"
+                f" ({start['source']})")
+        lines.append(f"  {search['key']:<28} {what}"
                      + ("   [recorded]" if search["key"] in done else "")
                      + (f"   [data {data[search['network']]}]" if search["network"] in data and search["key"] not in done
                         else ""))
@@ -365,7 +378,14 @@ def recorded(plan: dict[str, Any]) -> set[str]:
     is not recorded: a run searches it again and replaces its entry, and the queue does not count it."""
     mine = current_build()
     return {key for key, entry in (read_tuned(plan).get("searches") or {}).items()
-            if isinstance(entry, dict) and entry.get("build") == mine}
+            if isinstance(entry, dict) and entry.get("build") == mine and same_cap_mode(plan, entry)}
+
+
+def same_cap_mode(plan: dict[str, Any], entry: dict[str, Any]) -> bool:
+    """A recorded search answers this plan only under the same cap mode: an unlimited calibration's entries have cap
+    -1, a cap search's a positive cap."""
+    unlimited = int(entry.get("max_memberships") or 0) == UNLIMITED
+    return unlimited == (plan.get("cap") == "unlimited")
 
 
 def other_build(plan: dict[str, Any]) -> set[str]:
@@ -437,7 +457,8 @@ def record_search(plan: dict[str, Any], search: dict[str, Any], summary: dict[st
         entry["lazy"] = {k: summary["lazy"][k] for k in ("budget", "cap_minutes", "stopped_by", "stopped_after", "evaluations",
                                                         "probe_seconds", "detection_seconds", "selection")}
     data = read_tuned(plan) or {}
-    data.update({"protocol": PROTOCOL, "mode": plan["mode"], "algorithm_identity": ALGORITHM_IDENTITY,
+    data.update({"protocol": PROTOCOL, "mode": plan["mode"], "cap": plan.get("cap", "search"),
+                 "algorithm_identity": ALGORITHM_IDENTITY,
                  "environment": runtime_versions(),
                  "search": str(plan["script"]) if plan.get("script") else SEARCH_MODULE})
     data.setdefault("searches", {})[search["key"]] = entry
@@ -445,7 +466,8 @@ def record_search(plan: dict[str, Any], search: dict[str, Any], summary: dict[st
         "max_memberships": cap, "absolute_resolution": gamma}
     mine = current_build()
     data["complete"] = {s["key"] for s in searches(plan)} <= {
-        key for key, value in data["searches"].items() if isinstance(value, dict) and value.get("build") == mine}
+        key for key, value in data["searches"].items()
+        if isinstance(value, dict) and value.get("build") == mine and same_cap_mode(plan, value)}
     path = plan["output"] / TUNED_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -591,7 +613,7 @@ def front_study(argv: list[str]) -> dict[str, Any]:
 def launch_argv(plan: dict[str, Any]) -> list[str]:
     """Every setting spelled out, so a resume rebuilds the same plan."""
     argv = (["--script", str(plan["script"])] if plan.get("script") else []) + [
-        "--mode", plan["mode"], "--networks", ",".join(plan["networks"]),
+        "--mode", plan["mode"], "--cap", plan.get("cap", "search"), "--networks", ",".join(plan["networks"]),
         "--phases", ",".join(sorted({PHASE_OF[m] for m in plan["methods"]})),
         "--factor", f"{plan['factor']:g}", "--confirm-seeds", ",".join(map(str, plan["confirm"])),
         "--workers", str(plan["workers"]), "--python", plan["python"], "--name", plan["name"],
