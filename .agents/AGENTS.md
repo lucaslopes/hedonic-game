@@ -321,6 +321,14 @@ hedonic-exp list                       # analysis and utility commands
   items), is complete when every inner item is (`_queue_state`), adds the inner
   requirements to the setup check, and the tree hangs the inner tree under it
   (keys prefixed `("in", NAME)`). A queue that contains itself is refused.
+- **Output of one thread.** The queue view builds its tree on a thread of its
+  own, so a state check must never silence the process: use
+  `threadio.redirected(stdout=..., stderr=...)` (`DROP` discards, a buffer
+  captures), which routes only the calling thread's writes, never
+  `contextlib.redirect_stdout` or an assignment to `sys.stdout` (the main
+  thread's "reopen / stop" lines were lost while a rebuild ran). The view
+  repaints only the rows that changed, inside a synchronized update, and
+  writes nothing when nothing changed.
 - **Time limits are per single run** (`limits.py`, `queuelimits.py`). A queue
   file's `[limits]` (`timeout`, `max_eta`: seconds or `"90s"`, `"30m"`,
   `"2h"`, `"1h30m"`; `"none"` removes one) and an item's `limits = {...}`

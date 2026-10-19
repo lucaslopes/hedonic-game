@@ -89,6 +89,17 @@
     run is estimated longer. Neither is ever applied to a total of runs, and
     neither changes a record's identity: a stopped run is recorded as a
     `timeout` and runs again under a larger limit.
+  - The queue tree times a finished benchmark unit by its whole span
+    (detection, the robustness audits of its cover, scoring), not by its
+    detection alone, and a running unit's ETA includes the audit profiles
+    still to come (a Hedonic unit audits its `cover`, then its `labelled`
+    profile).
+  - The queue view redraws only the rows that changed, inside a
+    synchronized update, and writes nothing when nothing changed: over SSH
+    the full repaint five times a second showed half-drawn frames and the
+    selected row's highlight flickered. Closing the view always prints how
+    to reopen or stop the queue (a state check on the view's own thread
+    used to swallow it).
   - `hedonic setup [--pairs P,...] [--methods M,...] [--all] [--dry-run]`
     downloads SNAP pairs and builds or installs the external baselines,
     after checking the system tools they need.

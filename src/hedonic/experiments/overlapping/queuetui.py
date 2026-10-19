@@ -480,6 +480,23 @@ ALT_ON = "\033[?1049h\033[?25l"
 ALT_OFF = "\033[?25h\033[?1049l"
 MOUSE_ON = "\033[?1000h\033[?1006h"
 MOUSE_OFF = "\033[?1006l\033[?1000l"
+SYNC_ON, SYNC_OFF = "\033[?2026h", "\033[?2026l"  # synchronized update: the terminal shows the frame at once (others ignore it)
+
+
+def paint(previous: list[str] | None, lines: list[str]) -> str:
+    """What to write to turn a screen showing ``previous`` into ``lines``: only the rows that changed, each at its own
+    position, inside a synchronized update; "" when nothing changed (``previous`` None: every row).
+
+    Rewriting the whole screen five times a second sent ~30 kB/s to a terminal that showed nothing new, and over SSH a
+    client paints what has arrived, so frames showed half-drawn: the selected row's highlight flickered in and out."""
+    changed = [i for i, line in enumerate(lines) if previous is None or i >= len(previous) or previous[i] != line]
+    clear = previous is not None and len(previous) > len(lines)
+    if not changed and not clear:
+        return ""
+    parts = [SYNC_ON] + [f"\033[{i + 1};1H{lines[i]}\033[K" for i in changed]
+    if previous is None or clear:
+        parts.append(f"\033[{len(lines) + 1};1H\033[J")
+    return "".join(parts) + SYNC_OFF
 
 
 def header_line(root: qm.Node, status: str, elapsed: float | None, G: dict, now: float | None = None) -> str:
@@ -540,6 +557,8 @@ def run(build: Callable[[], qm.Node], status: Callable[[], tuple[str, float | No
     tui.tty.setcbreak(fd)
     out.write(ALT_ON + MOUSE_ON)
     mouse_on, spin, carry = True, 0, ""
+    shown: list[str] | None = None  # what the screen shows now (None: unknown, so the next frame draws every row)
+    shown_size = None
     try:
         while builder.root is None and not builder.error:
             time.sleep(0.05)
@@ -554,8 +573,14 @@ def run(build: Callable[[], qm.Node], status: Callable[[], tuple[str, float | No
                                frames[spin % len(frames)], notice=notice() if notice else None)
                 if builder.error:
                     lines[-1] = style(fit(f"  could not refresh: {builder.error}", columns), "red")
-                out.write("\033[H" + "\033[K\n".join(fit(line, columns) for line in lines) + "\033[K\033[J")
-                out.flush()
+                lines = [fit(line, columns) for line in lines]
+                if (size.columns, size.lines) != shown_size:  # a resized terminal: draw every row again
+                    shown, shown_size = None, (size.columns, size.lines)
+                text = paint(shown, lines)
+                if text:
+                    out.write(text)
+                    out.flush()
+                shown = lines
                 if view.mouse != mouse_on:
                     out.write(MOUSE_ON if view.mouse else MOUSE_OFF)
                     out.flush()

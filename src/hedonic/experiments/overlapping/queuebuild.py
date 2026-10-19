@@ -301,9 +301,11 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
     seed_dim = qm.Dim("seed", "seeds", "seed {}", about="the method's random seed; a deterministic method runs once per pair, "
                       "at the lowest seed (the run's replication, see `hedonic run exp --help`)")
     measured: dict[tuple[str, str], list[float]] = {}
+    whole: dict[tuple[str, str, str], float] = {}  # what a unit this run timed took: detection, audits and scoring
     for row in progress.get("plan") or []:
         if row.get("status") == "completed" and isinstance(row.get("seconds"), (int, float)):
             measured.setdefault((pair_label(str(row.get("network"))), str(row.get("label"))), []).append(float(row["seconds"]))
+            whole[pair_label(str(row.get("network"))), str(row.get("label")), str(row.get("seed"))] = float(row["seconds"])
     running_rows = {(pair_label(str(r.get("network"))), str(r.get("label")), str(r.get("seed"))): r
                     for r in progress.get("plan") or [] if r.get("status") == "running"}
     # the detection time of every unit the worker knows (also those it found finished and skipped: its scan reads them)
@@ -319,6 +321,8 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
         cells[pair_label(net), method.label] = (net, method.key)
     past = (history or {}).get("seconds") or {}
     sizes = (history or {}).get("edges") or {}
+    unit_took = (history or {}).get("units") or {}
+    audits = (history or {}).get("audits") or {}
 
     def from_disk(cell: tuple[str, str]) -> float | None:
         """What one unit of the cell should take from the finished units on disk: its own, else the same method's on the
@@ -352,14 +356,46 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
         started = (running_rows.get(key) or {}).get("started")
         return max(0.0, now - float(started)) if isinstance(started, (int, float)) else None
 
+    def profiles_left(key: tuple[str, str, str], info: dict) -> list[str]:
+        """The audit profiles of a running unit after the one its audit reports (``cover``, then ``labelled`` for
+        Hedonic). The report's key names the profile; a report without it (a worker from before it was kept) adds
+        nothing, because the ledger cannot say: a unit's audits are written together once all of them are done."""
+        from hedonic.experiments.overlapping import cover_audit as ca
+
+        current = str(info.get("key") or "").rpartition("/")[2]
+        if not current or key[:2] not in cells:
+            return []
+        net, method_key = cells[key[:2]]
+        try:
+            seed = int(key[2])
+        except ValueError:
+            return []
+        profiles = [k.rpartition("/")[2] for k in ca.unit_keys(net, seed, method_key)]
+        return profiles[profiles.index(current) + 1:] if current in profiles else []
+
     def audit_left(key: tuple[str, str, str]) -> float | None:
-        """Seconds the exact audit of a running unit has left, from the progress it reported (None: unknown or stale)."""
+        """Seconds the exact audits of a running unit have left, from the progress it reported (None: unknown or stale).
+
+        The report covers the profile under way (its policies included); each profile still to come is priced by what
+        that profile took for the same method on this pair's finished seeds, else as long as the one under way."""
         info = (running_rows.get(key) or {}).get("audit")
         if not isinstance(info, dict) or not isinstance(info.get("eta_seconds"), (int, float)):
             return None
         updated = info.get("updated")
         age = max(0.0, now - float(updated)) if isinstance(updated, (int, float)) else 0.0
-        return max(0.0, float(info["eta_seconds"]) - age) if age <= AUDIT_FRESH_SECONDS else None
+        if age > AUDIT_FRESH_SECONDS:
+            return None
+        eta = float(info["eta_seconds"])
+        left = max(0.0, eta - age)
+        later = profiles_left(key, info)
+        if later:
+            number, policies = int(info.get("number") or 1), max(1, int(info.get("policies") or 1))
+            per_policy = (float(info.get("elapsed") or 0.0) + eta) / max(1, 1 + policies - number)
+            net, method_key = cells[key[:2]]
+            for profile in later:
+                seen = audits.get((net, method_key, profile))
+                left += statistics.fmean(seen) if seen else per_policy * policies
+        return left
 
     def overdue(key: tuple[str, str, str]) -> float | None:
         """Seconds a running unit has taken when that is more than its cell's estimate and it can say no more, else None."""
@@ -379,7 +415,8 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
     made = []
     for (net, seed, method), done in zip(units, finished):
         key = (pair_label(net), method.label, str(seed))
-        seconds = detection.get(key) if done else None
+        # a finished unit took its whole span (detection, the audits of its cover, scoring), not its detection alone
+        seconds = (whole.get(key) or unit_took.get((net, seed, method.key)) or detection.get(key)) if done else None
         note = ""
         if key in running_rows and not done:
             spent, limit = elapsed(key), estimate(key[:2])[0]

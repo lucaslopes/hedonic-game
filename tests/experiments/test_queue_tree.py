@@ -205,7 +205,7 @@ class TestBuilders(unittest.TestCase):
     # ---- the benchmark: a unit's time includes its audit, and a unit past its estimate has no ETA
     NOW = 1_000_000.0
 
-    def _benchmark(self, plan, finished_labels=(), seeds=(0, 1, 2)):
+    def _benchmark(self, plan, finished_labels=(), seeds=(0, 1, 2), history=None):
         from types import SimpleNamespace
 
         methods = {label: SimpleNamespace(label=label, key=label.lower()) for label in ("Hedonic", "BigCLAM")}
@@ -213,7 +213,7 @@ class TestBuilders(unittest.TestCase):
         finished = [(label, seed) in finished_labels for label in methods for seed in seeds]
         cfg = SimpleNamespace(robustness=True, order="seed,network,method")
         with patch.object(qb.qs, "expected_seconds", lambda m, c, n: {"Hedonic": 100.0, "BigCLAM": 1658.0}[m.label]):
-            return qb.benchmark(cfg, units, finished, {"plan": plan}, now=self.NOW).families[0]
+            return qb.benchmark(cfg, units, finished, {"plan": plan}, now=self.NOW, history=history).families[0]
 
     def _row(self, label, seed, status, **fields):
         return {"network": "youtube:top5000", "label": label, "seed": seed, "status": status, **fields}
@@ -288,6 +288,53 @@ class TestBuilders(unittest.TestCase):
         (seconds, basis), unit = self._cost(self._benchmark(plan), "BigCLAM", 0)
         self.assertEqual((seconds, basis), (None, ""))  # the audit or its worker is gone: back to "no ETA"
         self.assertIn("unknown", unit.note)
+
+    # ---- a finished unit took its whole span, and a running one has every audit profile still to come
+    def test_a_finished_unit_took_its_audits_too_not_its_detection_alone(self):
+        plan = [self._row("Hedonic", 0, "completed", seconds=6600.0, detection_seconds=2.9)]
+        family = self._benchmark(plan, {("Hedonic", 0), ("Hedonic", 1)},
+                                 history={"units": {("youtube:top5000", 1, "hedonic"): 6500.0}})
+        took = {u.coords[2]: u.took for u in family.units if u.coords[1] == "Hedonic"}
+        self.assertEqual(took["0"], 6600.0)  # the tree said "done 2.9s" for a unit of 1h50
+        self.assertEqual(took["1"], 6500.0)  # skipped by the scan (no row seconds): from its records on disk
+
+    def _hedonic_audit(self, profile, eta=1000.0):
+        return self._audit(eta, key=f"youtube:top5000/seed1/hedonic/{profile}")
+
+    def test_a_running_unit_in_its_cover_audit_also_has_its_labelled_audit_to_go(self):
+        plan = [self._row("Hedonic", 1, "running", started=self.NOW - 3000.0, detection_seconds=2.9,
+                          audit=self._hedonic_audit("cover"))]
+        history = {"audits": {("youtube:top5000", "hedonic", "labelled"): [3700.0, 3900.0]}}
+        left = self._cost(self._benchmark(plan, history=history), "Hedonic", 1)[0][0]
+        self.assertEqual(round(left), 990 + 3800)  # the report's rest of the cover audit, then a labelled audit
+        # no finished labelled audit to go by: priced as long as the profile under way (2 policies of (600 + 1000) / 2)
+        self.assertEqual(round(self._cost(self._benchmark(plan), "Hedonic", 1)[0][0]), 990 + 1600)
+
+    def test_a_running_unit_in_its_last_profile_has_only_what_its_audit_reports(self):
+        plan = [self._row("Hedonic", 1, "running", started=self.NOW - 3000.0, detection_seconds=2.9,
+                          audit=self._hedonic_audit("labelled"))]
+        history = {"audits": {("youtube:top5000", "hedonic", "labelled"): [3800.0]}}
+        self.assertEqual(round(self._cost(self._benchmark(plan, history=history), "Hedonic", 1)[0][0]), 990)
+
+    def test_a_report_without_its_profile_adds_no_profile(self):
+        plan = [self._row("Hedonic", 1, "running", started=self.NOW - 3000.0, detection_seconds=2.9, audit=self._audit(1000.0))]
+        history = {"audits": {("youtube:top5000", "hedonic", "labelled"): [3800.0]}}  # a worker from before the key
+        self.assertEqual(round(self._cost(self._benchmark(plan, history=history), "Hedonic", 1)[0][0]), 990)
+
+    def test_the_history_counts_only_units_whose_audits_are_all_recorded(self):
+        from types import SimpleNamespace
+
+        method = SimpleNamespace(label="Hedonic", key="hedonic")
+        units = [("youtube:all", 0, method), ("youtube:all", 3, method)]
+        audited = {"youtube:all/seed0/hedonic/cover": {"audit_seconds": 2900.0},
+                   "youtube:all/seed0/hedonic/labelled": {"audit_seconds": 3785.0},
+                   "youtube:all/seed3/hedonic/cover": {"audit_seconds": 2950.0}}  # seed 3 is in its labelled audit
+        record = {"unit_seconds": 11.6, "runtime_seconds": 2.9, "dataset_report": {"m": 318432}}
+        with patch.object(runqueue.qs, "unit_record", lambda cfg, net, seed, m: record):
+            history = runqueue._benchmark_history(SimpleNamespace(induce=None), units, [True, True], audited)
+        self.assertEqual(history["seconds"], {("youtube:all", "hedonic"): [11.6 + 2900.0 + 3785.0]})
+        self.assertEqual(history["units"], {("youtube:all", 0, "hedonic"): 11.6 + 2900.0 + 3785.0})
+        self.assertEqual(history["audits"][("youtube:all", "hedonic", "cover")], [2900.0, 2950.0])
 
     def test_controlled_instances_follow_the_loops_of_the_grid(self):
         grid = {"graph-seeds": ["0", "1"], "mus": ["0.1", "0.2"], "overlap-fractions": ["0.05", "0.1", "0.15"]}
@@ -830,6 +877,62 @@ class TestModelFailure(unittest.TestCase):
 
 
 @unittest.skipUnless(os.name == "posix", "needs a pty")
+def _emulate(data: str, rows: int, cols: int) -> list[str]:
+    """The screen a terminal shows after ``data``: cursor positioning, erase in line and display, text (enough for
+    the viewer's output; other escape sequences are ignored)."""
+    screen = [[" "] * cols for _ in range(rows)]
+    r = c = i = 0
+    while i < len(data):
+        if data[i] == "\x1b":
+            match = re.match(r"\x1b\[([0-9;?<]*)([A-Za-z])", data[i:])
+            if match:
+                params, command = match.groups()
+                if command == "H" and not params.startswith("?"):
+                    numbers = [int(x) for x in params.split(";") if x]
+                    r = min(rows - 1, numbers[0] - 1) if numbers else 0
+                    c = numbers[1] - 1 if len(numbers) > 1 else 0
+                elif command == "K":
+                    screen[r][c:] = [" "] * (cols - c)
+                elif command == "J" and not params.startswith("?"):
+                    screen[r][c:] = [" "] * (cols - c)
+                    for below in range(r + 1, rows):
+                        screen[below] = [" "] * cols
+                i += len(match.group(0))
+            else:
+                i += 1
+            continue
+        ch = data[i]
+        if ch == "\r":
+            c = 0
+        elif ch == "\n":
+            r = min(rows - 1, r + 1)
+        elif c < cols:
+            screen[r][c] = ch
+            c += 1
+        i += 1
+    return ["".join(row).rstrip() for row in screen]
+
+
+class TestPaint(unittest.TestCase):
+    def test_the_first_frame_draws_every_row_and_clears_below(self):
+        text = qt.paint(None, ["a", "b"])
+        self.assertTrue(text.startswith(qt.SYNC_ON) and text.endswith(qt.SYNC_OFF))
+        self.assertEqual(_emulate("x" * 5 + "\r\n" + "y" * 5 + "\r\nzzz" + text, 4, 10)[:3], ["a", "b", ""])
+
+    def test_an_unchanged_frame_writes_nothing(self):
+        self.assertEqual(qt.paint(["a", "› selected", "c"], ["a", "› selected", "c"]), "")
+
+    def test_only_the_rows_that_changed_are_written(self):
+        text = qt.paint(["a", "› selected", "c ⠦"], ["a", "› selected", "c ⠧"])
+        self.assertNotIn("selected", text)  # the highlighted row is left alone
+        self.assertIn("\x1b[3;1Hc ⠧\x1b[K", text)
+        self.assertEqual(_emulate(qt.paint(None, ["a", "› selected", "c ⠦"]) + text, 3, 20), ["a", "› selected", "c ⠧"])
+
+    def test_a_shorter_frame_clears_the_rows_below_it(self):
+        screen = _emulate(qt.paint(None, ["a", "b", "c"]) + qt.paint(["a", "b", "c"], ["a"]), 3, 5)
+        self.assertEqual(screen, ["a", "", ""])
+
+
 class TestPty(unittest.TestCase):
     SCRIPT = textwrap.dedent("""
         import sys
@@ -865,9 +968,9 @@ class TestPty(unittest.TestCase):
                     except OSError:
                         return
 
-        def screen() -> str:
+        def screen() -> str:  # the rows only change where they differ, so replay the whole output onto a screen
             text = out.decode(errors="ignore")
-            return ANSI.sub("", text[text.rfind("\x1b[H"):])
+            return "\n".join(_emulate(text[text.rfind("\x1b[?1049h"):], 30, 110))
         try:
             pump(2.0)
             first = screen()
