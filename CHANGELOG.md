@@ -124,6 +124,26 @@
     computed through a separate best-response path, can differ from 1.x in
     the last bit. The complete DBLP/top5000 spectrum audit (131 resolutions,
     two policies) takes 4 s instead of 2 minutes.
+  - A benchmark unit run with `--save-covers` keeps its whole answer, so it
+    can be audited and scored again without its detector: the cover, Hedonic's
+    labelled memberships in `<runner>.labels.json.gz` (no longer inline in the
+    record), the SNAP id of every analysis vertex (`vertex_ids.json.gz`, one
+    per seed folder) and the analysis graph's SHA-256 in the record's
+    `dataset_report.graph_sha256`. The gzips carry no time stamp, so the same
+    answer is the same bytes, and the unit's seal covers the labels too. The
+    audit refuses a loaded graph whose hash differs from the record's.
+  - `hedonic-exp overlapping-rescore --source RUN --networks PAIRS` scores the
+    saved covers again with the runner's own scoring and other settings
+    (paper filter, Omega, singleton mode, matching weight, NF1); `--check`
+    reproduces every record's scores and exits 1 on any difference.
+  - A robustness audit counts only while it describes the cover on disk (its
+    cover's or labels' hash, or its digest, against the unit's seal), and the
+    ledger's last record of a key wins. Before, a unit that ran again kept the
+    audit of its earlier cover.
+  - The overlap queue's benchmark items run `--no-robustness`; each phase
+    ends with an `audit` item that audits every saved cover, so all detector
+    runs of a phase finish before any audit starts. Its rows are grouped as
+    "Robustness audit" in the queue view, with per-unit progress and ETA.
   - Data defaults to `~/hedonic-data` and runs to `~/hedonic-runs`
     (`HEDONIC_DATA_DIR`, `HEDONIC_OUTPUT_DIR`, `HEDONIC_NETWORKS_DIR` and
     `~/.config/hedonic/config.toml` override them). `hedonic setup` and every

@@ -363,7 +363,7 @@ class TestQueueAndViewer(unittest.TestCase):
             run = ["audit", "--source", str(source), "--networks", "dblp", "--methods", "hedonic,clique_percolation", "--seeds", "0",
                    "--name", "audit-test", "--output-dir", str(out)]
             runqueue._check_arguments(run)
-            self.assertEqual(runqueue._data_state(run), ("missing", str(out.resolve())))
+            self.assertEqual(runqueue._data_state(run), ("missing", f"{out.resolve()}#audit-test"))  # a key per item
             out.mkdir()
             keys = [c["key"] for c in ca.conditions(ca.front_study(run[1:]))]
             (out / ca.RESULTS_NAME).write_text(json.dumps({"key": keys[0], "status": "completed"}) + "\n")

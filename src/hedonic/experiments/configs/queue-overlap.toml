@@ -14,6 +14,12 @@
 # first, on LiveJournal/top5000 and Friendster/top5000, the largest covered subgraphs (1.5 and 4 million edges), so a slow
 # method there cannot hold up the rest. Items run in the order of this file (`schedule = "file"`).
 #
+# Answers first, audits after: the benchmark items run `--no-robustness` and only save each unit's answer (its cover,
+# Hedonic's labelled memberships, the analysis graph's vertex ids and SHA-256). Each phase ends with its robustness audit
+# (`audit`, `audit-large`), which audits every saved cover into {root}/benchmark/robustness and skips a unit whose
+# detector run has not finished (`--skip-missing`). An audit counts only while it describes the cover on disk, so a unit
+# that ran again is audited again. `hedonic-exp overlapping-rescore` scores the saved answers with other metric settings.
+#
 # Hedonic: synthetic networks, then the calibration, then pair by pair (the queue's `pairs`) the ground-truth robustness,
 # leveraging the ground truth and the benchmark rows. The calibration searches the resolution gamma only, with no
 # membership cap (max_memberships -1), on each pair's covered subgraph against that pair's cover (`--cap unlimited`: a
@@ -77,8 +83,8 @@ name = "benchmark-hedonic"
 by_pair = true
 short = "bench-hed"
 title = "Hedonic: benchmark (DBLP, Amazon and YouTube)"
-about = "Hedonic at its calibrated gamma and no cap, seeds 0-9, on the subgraph each cover induces; every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json", "--name", "benchmark-hedonic", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "Hedonic at its calibrated gamma and no cap, seeds 0-9, on the subgraph each cover induces; its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json", "--name", "benchmark-hedonic", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-codeseg"
@@ -91,8 +97,8 @@ run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top500
 name = "benchmark-codeseg"
 short = "bench-codeseg"
 title = "CoDeSEG: benchmark (DBLP, Amazon and YouTube)"
-about = "CoDeSEG on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "codeseg", "--tuned", "{root}/calibration-codeseg/baseline_tuned.json", "--name", "benchmark-codeseg", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "CoDeSEG on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "codeseg", "--tuned", "{root}/calibration-codeseg/baseline_tuned.json", "--name", "benchmark-codeseg", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-ncgame"
@@ -105,8 +111,8 @@ run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top500
 name = "benchmark-ncgame"
 short = "bench-ncgame"
 title = "NcGame: benchmark (DBLP, Amazon and YouTube)"
-about = "NcGame on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "ncgame", "--tuned", "{root}/calibration-ncgame/baseline_tuned.json", "--name", "benchmark-ncgame", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "NcGame on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "ncgame", "--tuned", "{root}/calibration-ncgame/baseline_tuned.json", "--name", "benchmark-ncgame", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-fox"
@@ -119,8 +125,8 @@ run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top500
 name = "benchmark-fox"
 short = "bench-fox"
 title = "FOX: benchmark (DBLP, Amazon and YouTube)"
-about = "FOX on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "fox", "--tuned", "{root}/calibration-fox/baseline_tuned.json", "--name", "benchmark-fox", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "FOX on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "fox", "--tuned", "{root}/calibration-fox/baseline_tuned.json", "--name", "benchmark-fox", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-bigclam"
@@ -133,8 +139,8 @@ run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top500
 name = "benchmark-bigclam"
 short = "bench-bigclam"
 title = "BigCLAM: benchmark (DBLP, Amazon and YouTube)"
-about = "BigCLAM on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "bigclam", "--tuned", "{root}/calibration-bigclam/baseline_tuned.json", "--name", "benchmark-bigclam", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "BigCLAM on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "bigclam", "--tuned", "{root}/calibration-bigclam/baseline_tuned.json", "--name", "benchmark-bigclam", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-neo-kmeans"
@@ -147,8 +153,8 @@ run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top500
 name = "benchmark-neo-kmeans"
 short = "bench-neo-kmea"
 title = "NEO-K-Means: benchmark (DBLP, Amazon and YouTube)"
-about = "NEO-K-Means on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "neo_kmeans", "--tuned", "{root}/calibration-neo-kmeans/baseline_tuned.json", "--name", "benchmark-neo-kmeans", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "NEO-K-Means on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "neo_kmeans", "--tuned", "{root}/calibration-neo-kmeans/baseline_tuned.json", "--name", "benchmark-neo-kmeans", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-clique-percolation"
@@ -161,8 +167,8 @@ run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top500
 name = "benchmark-clique-percolation"
 short = "bench-clique-p"
 title = "CliquePerc: benchmark (DBLP, Amazon and YouTube)"
-about = "CliquePerc on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "clique_percolation", "--tuned", "{root}/calibration-clique-percolation/baseline_tuned.json", "--name", "benchmark-clique-percolation", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "CliquePerc on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "clique_percolation", "--tuned", "{root}/calibration-clique-percolation/baseline_tuned.json", "--name", "benchmark-clique-percolation", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-ego-splitting"
@@ -175,8 +181,8 @@ run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top500
 name = "benchmark-ego-splitting"
 short = "bench-ego-spli"
 title = "Ego-Splitting: benchmark (DBLP, Amazon and YouTube)"
-about = "Ego-Splitting on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "ego_splitting", "--tuned", "{root}/calibration-ego-splitting/baseline_tuned.json", "--name", "benchmark-ego-splitting", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "Ego-Splitting on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "ego_splitting", "--tuned", "{root}/calibration-ego-splitting/baseline_tuned.json", "--name", "benchmark-ego-splitting", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-angel"
@@ -189,8 +195,15 @@ run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top500
 name = "benchmark-angel"
 short = "bench-angel"
 title = "ANGEL: benchmark (DBLP, Amazon and YouTube)"
-about = "ANGEL on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "angel", "--tuned", "{root}/calibration-angel/baseline_tuned.json", "--name", "benchmark-angel", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "ANGEL on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "angel", "--tuned", "{root}/calibration-angel/baseline_tuned.json", "--name", "benchmark-angel", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "audit"
+short = "audit"
+title = "Robustness audit of the saved covers (DBLP, Amazon and YouTube)"
+about = "The exact robustness of every cover the benchmark items above saved (both action spaces, the cover profile for every method and the labelled profile for Hedonic), method by method in queue order, into the benchmark's robustness ledger. It runs after every detector run of the phase, so their accuracy and time are in first."
+run = ["audit", "--source", "{root}/benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "hedonic,codeseg,ncgame,fox,bigclam,neo_kmeans,clique_percolation,ego_splitting,angel", "--seeds", "0-9", "--induce", "covered", "--skip-missing", "--name", "audit", "--output-dir", "{root}/benchmark/robustness"]
 
 [[items]]
 name = "calibration-hedonic-large"
@@ -217,8 +230,8 @@ run = ["startcurve", "--config", "start-quality-hoc-local", "--networks", "livej
 name = "benchmark-hedonic-large"
 short = "bench-hed-L"
 title = "Hedonic: benchmark (LiveJournal/top5k and Friendster/top5k)"
-about = "Hedonic at its calibrated gamma and no cap, seeds 0-9, on the subgraph each cover induces; every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic-large/hoc_tuned.json", "--name", "benchmark-hedonic-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "Hedonic at its calibrated gamma and no cap, seeds 0-9, on the subgraph each cover induces; its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic-large/hoc_tuned.json", "--name", "benchmark-hedonic-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-codeseg-large"
@@ -231,8 +244,8 @@ run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5
 name = "benchmark-codeseg-large"
 short = "bench-codeseg-L"
 title = "CoDeSEG: benchmark (LiveJournal/top5k and Friendster/top5k)"
-about = "CoDeSEG on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "codeseg", "--tuned", "{root}/calibration-codeseg-large/baseline_tuned.json", "--name", "benchmark-codeseg-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "CoDeSEG on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "codeseg", "--tuned", "{root}/calibration-codeseg-large/baseline_tuned.json", "--name", "benchmark-codeseg-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-ncgame-large"
@@ -245,8 +258,8 @@ run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5
 name = "benchmark-ncgame-large"
 short = "bench-ncgame-L"
 title = "NcGame: benchmark (LiveJournal/top5k and Friendster/top5k)"
-about = "NcGame on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ncgame", "--tuned", "{root}/calibration-ncgame-large/baseline_tuned.json", "--name", "benchmark-ncgame-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "NcGame on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ncgame", "--tuned", "{root}/calibration-ncgame-large/baseline_tuned.json", "--name", "benchmark-ncgame-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-fox-large"
@@ -259,8 +272,8 @@ run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5
 name = "benchmark-fox-large"
 short = "bench-fox-L"
 title = "FOX: benchmark (LiveJournal/top5k and Friendster/top5k)"
-about = "FOX on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "fox", "--tuned", "{root}/calibration-fox-large/baseline_tuned.json", "--name", "benchmark-fox-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "FOX on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "fox", "--tuned", "{root}/calibration-fox-large/baseline_tuned.json", "--name", "benchmark-fox-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-bigclam-large"
@@ -273,8 +286,8 @@ run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5
 name = "benchmark-bigclam-large"
 short = "bench-bigclam-L"
 title = "BigCLAM: benchmark (LiveJournal/top5k and Friendster/top5k)"
-about = "BigCLAM on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "bigclam", "--tuned", "{root}/calibration-bigclam-large/baseline_tuned.json", "--name", "benchmark-bigclam-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "BigCLAM on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "bigclam", "--tuned", "{root}/calibration-bigclam-large/baseline_tuned.json", "--name", "benchmark-bigclam-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-neo-kmeans-large"
@@ -287,8 +300,8 @@ run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5
 name = "benchmark-neo-kmeans-large"
 short = "bench-neo-kmea-L"
 title = "NEO-K-Means: benchmark (LiveJournal/top5k and Friendster/top5k)"
-about = "NEO-K-Means on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "neo_kmeans", "--tuned", "{root}/calibration-neo-kmeans-large/baseline_tuned.json", "--name", "benchmark-neo-kmeans-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "NEO-K-Means on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "neo_kmeans", "--tuned", "{root}/calibration-neo-kmeans-large/baseline_tuned.json", "--name", "benchmark-neo-kmeans-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-clique-percolation-large"
@@ -301,8 +314,8 @@ run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5
 name = "benchmark-clique-percolation-large"
 short = "bench-clique-p-L"
 title = "CliquePerc: benchmark (LiveJournal/top5k and Friendster/top5k)"
-about = "CliquePerc on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "clique_percolation", "--tuned", "{root}/calibration-clique-percolation-large/baseline_tuned.json", "--name", "benchmark-clique-percolation-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "CliquePerc on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "clique_percolation", "--tuned", "{root}/calibration-clique-percolation-large/baseline_tuned.json", "--name", "benchmark-clique-percolation-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-ego-splitting-large"
@@ -315,8 +328,8 @@ run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5
 name = "benchmark-ego-splitting-large"
 short = "bench-ego-spli-L"
 title = "Ego-Splitting: benchmark (LiveJournal/top5k and Friendster/top5k)"
-about = "Ego-Splitting on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ego_splitting", "--tuned", "{root}/calibration-ego-splitting-large/baseline_tuned.json", "--name", "benchmark-ego-splitting-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "Ego-Splitting on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ego_splitting", "--tuned", "{root}/calibration-ego-splitting-large/baseline_tuned.json", "--name", "benchmark-ego-splitting-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-angel-large"
@@ -329,5 +342,12 @@ run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5
 name = "benchmark-angel-large"
 short = "bench-angel-L"
 title = "ANGEL: benchmark (LiveJournal/top5k and Friendster/top5k)"
-about = "ANGEL on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "angel", "--tuned", "{root}/calibration-angel-large/baseline_tuned.json", "--name", "benchmark-angel-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+about = "ANGEL on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "angel", "--tuned", "{root}/calibration-angel-large/baseline_tuned.json", "--name", "benchmark-angel-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "audit-large"
+short = "audit"
+title = "Robustness audit of the saved covers (LiveJournal/top5k and Friendster/top5k)"
+about = "The exact robustness of every cover the benchmark items above saved (both action spaces, the cover profile for every method and the labelled profile for Hedonic), method by method in queue order, into the benchmark's robustness ledger. It runs after every detector run of the phase, so their accuracy and time are in first."
+run = ["audit", "--source", "{root}/benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "hedonic,codeseg,ncgame,fox,bigclam,neo_kmeans,clique_percolation,ego_splitting,angel", "--seeds", "0-9", "--induce", "covered", "--skip-missing", "--name", "audit-large", "--output-dir", "{root}/benchmark/robustness"]

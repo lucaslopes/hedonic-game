@@ -144,6 +144,16 @@ COMMANDS: dict[str, Command] = {
         ),
         needs_data="snap-networks",
     ),
+    "overlapping-rescore": Command(
+        name="overlapping-rescore",
+        module="hedonic.experiments.overlapping.cover_rescore",
+        attr="main",
+        summary=(
+            "Score the covers a benchmark saved again (paper filter, Omega, singleton mode, matching weight, NF1), "
+            "or --check them against their records; no detector runs"
+        ),
+        needs_data="snap-networks",
+    ),
     "overlapping-calibrate": Command(
         name="overlapping-calibrate",
         module="hedonic.experiments.overlapping.calibrate",

@@ -432,6 +432,82 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
 
 
 # --------------------------------------------------------------------------- the calibration
+# --------------------------------------------------------------------------- the cover audit
+PROFILE_MEANING = {"cover": "the saved scoring cover (every method)",
+                   "labelled": "the exact labelled memberships Hedonic returned"}
+
+
+def audit_seconds(record: dict) -> float | None:
+    """What one audit record cost: loading its graph (when it did), building the state, and the exact audit."""
+    parts = [record.get(key) for key in ("load_seconds", "state_seconds", "audit_seconds")]
+    if not isinstance(parts[2], (int, float)):
+        return None
+    return float(sum(part for part in parts if isinstance(part, (int, float))))
+
+
+def audit(plan: dict, records: dict[str, dict], progress: dict | None = None, now: float | None = None,
+          finished: set[str] | None = None) -> qm.RunModel:
+    """The cover audit (``hedonic run audit``): one exact audit per saved cover and profile, methods outermost.
+
+    A finished audit took its recorded seconds. One still to do costs what the same method's audits of the same pair and
+    profile took ("measured"), else the same method and profile on other pairs scaled by edges ("estimate"). The running
+    audit costs what its progress report says is left while the report is fresh (``AUDIT_FRESH_SECONDS``). ``finished``
+    is the keys the state check found done (a record of an earlier cover of a unit that ran again is not); by default
+    every recorded key.
+    """
+    from hedonic.experiments.overlapping import cover_audit as ca
+
+    now = time.time() if now is None else now
+    current = (progress or {}).get("current") if (progress or {}).get("status") in ("running", "setup") else None
+    fresh = bool(current) and now - float(current.get("updated") or 0.0) <= AUDIT_FRESH_SECONDS
+    method_dim = qm.Dim("method", "methods", "{}", about="the detector whose saved covers are audited")
+    pair_dim = qm.Dim("pair", "pairs", about="a network with one of its covers; the graph is its covered subgraph")
+    seed_dim = qm.Dim("seed", "seeds", "seed {}", about="the detector seed of the audited cover")
+    profile_dim = qm.Dim("profile", "profiles", "{}", about="which membership profile of the run is audited",
+                         meaning=PROFILE_MEANING)
+    units, cells, by_method = [], {}, {}
+    for c in ca.conditions(plan):
+        record = records.get(c["key"])
+        if record is not None and finished is not None and c["key"] not in finished:
+            record = None  # stale: it describes an earlier cover of its unit
+        seconds = audit_seconds(record) if record else None
+        note = ""
+        if record and record.get("status") == "completed":
+            block = (record.get("policies") or {}).get(ca.PRIMARY_POLICY) or {}
+            if isinstance(block.get("stable_measure_log"), (int, float)):
+                note = f"robust {block['stable_measure_log']:.3f}"
+        elif record:
+            note = str(record.get("status"))
+        running = bool(current) and current.get("key") == c["key"] and record is None
+        units.append(qm.Unit((method_label(c["method"]), pair_label(c["network"]), str(c["seed"]), c["profile"]),
+                             record is not None, seconds, note, running, seconds))
+        if seconds is not None:
+            cells.setdefault((c["method"], c["network"], c["profile"]), []).append(seconds)
+            by_method.setdefault((c["method"], c["profile"]), {}).setdefault(c["network"], []).append(seconds)
+    key_of = {u.coords: c for u, c in zip(units, ca.conditions(plan))}
+
+    def cost(unit: qm.Unit) -> qm.Cost:
+        c = key_of[unit.coords]
+        if unit.running and fresh and isinstance(current.get("eta_seconds"), (int, float)):
+            age = now - float(current["updated"])
+            return max(0.0, float(current["eta_seconds"]) - age), "estimate"
+        cell = cells.get((c["method"], c["network"], c["profile"]))
+        if cell:
+            return statistics.fmean(cell), "measured"
+        others = {net: statistics.fmean(v) for net, v in by_method.get((c["method"], c["profile"]), {}).items()}
+        guess = scaled(c["network"], others)
+        return (guess, "estimate") if guess is not None else (None, "")
+
+    family = qm.Family(
+        "audits", "audits",
+        "the exact robustness of one saved cover under one profile: every vertex's stable resolutions, both action spaces",
+        [method_dim, pair_dim, seed_dim, profile_dim], units, "method > pair > seed > profile", cost,
+        [f"{plan.get('workers', 1)} forked vertex workers per audit; the audits run one at a time",
+         "an audit costs what the same method's audits of the pair took, else of other pairs scaled by edges"])
+    stage = str((progress or {}).get("stage") or "") if current else ""
+    return qm.RunModel([family], [], stage)
+
+
 SEARCHES_AT_ONCE = 4  # the calibration runs its four searches side by side
 
 

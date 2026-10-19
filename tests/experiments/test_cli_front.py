@@ -31,7 +31,7 @@ class TestCLI(unittest.TestCase):
 
     def test_registry_covers_expected_commands(self):
         expected = {
-            "smoke", "disjoint", "disjoint-load", "disjoint-store", "disjoint-stats", "plots", "reproduce-disjoint",
+            "smoke", "disjoint", "disjoint-load", "disjoint-store", "disjoint-stats", "plots", "reproduce-disjoint", "overlapping-rescore",
             "overlapping-small", "overlapping-controlled", "start-quality", "overlapping-cover-audit",
             "overlapping-calibrate", "baseline-calibrate", "overlapping-tradeoffs", "participation-budget",
             "overlapping-codeseg", "codeseg-setup", "codeseg-doctor", "snap-pickle", "overlapping-gt-spectrum",

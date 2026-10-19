@@ -56,7 +56,8 @@ class TestShippedQueue(_Isolated):
         queue = runqueue.load_queue("overlap", root=str(root))
         self.assertEqual(queue["pairs"], SMALL)
         # the benchmark items share one folder and the large spectrum the first one's, so their records are reused
-        shared = {"gt-robustness-large": "gt-robustness"}
+        shared = {"gt-robustness-large": "gt-robustness", "audit": "benchmark/robustness",
+                  "audit-large": "benchmark/robustness"}  # the audits write the benchmark's robustness ledger
         for item in queue["items"]:
             text = " ".join(item["run"])
             self.assertNotIn("{root}", text)

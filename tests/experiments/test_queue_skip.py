@@ -27,8 +27,10 @@ LARGE_HEDONIC = ["calibration-hedonic-large", "gt-robustness-large", "leveraging
 # the seeded ones with ten runs per pair
 BASELINE_ORDER = ["codeseg", "ncgame", "fox", "bigclam", "neo-kmeans", "clique-percolation", "ego-splitting", "angel"]
 BASELINE_ITEMS = [f"{kind}-{m}" for m in BASELINE_ORDER for kind in ("calibration", "benchmark")]
-# phase 1 on DBLP, Amazon and YouTube; phase 2, Hedonic first again, on the two largest covered subgraphs
-PAPER_ITEMS = HEDONIC_ITEMS + BASELINE_ITEMS + LARGE_HEDONIC + [f"{name}-large" for name in BASELINE_ITEMS]
+# phase 1 on DBLP, Amazon and YouTube; phase 2, Hedonic first again, on the two largest covered subgraphs; each phase
+# ends with the robustness audit of the covers its benchmarks saved
+PAPER_ITEMS = (HEDONIC_ITEMS + BASELINE_ITEMS + ["audit"] + LARGE_HEDONIC + [f"{name}-large" for name in BASELINE_ITEMS]
+               + ["audit-large"])
 SMALL_PAIRS = ["dblp:top5000", "dblp:all", "amazon:top5000", "amazon:all", "youtube:top5000", "youtube:all"]
 LARGE_PAIRS = ["livejournal:top5000", "friendster:top5000"]
 
@@ -582,6 +584,31 @@ class TestQueueFile(_Base):
                              LARGE_PAIRS if large else SMALL_PAIRS, name)
         cfg = qs.load_config(runqueue._option(by_name["benchmark-hedonic"]["run"], "--config"))
         self.assertEqual(cfg.order, "seed,network,method")
+
+    def test_the_benchmarks_save_covers_and_the_audit_items_audit_them_after_every_detector_run(self):
+        queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
+        names = [item["name"] for item in queue["items"]]
+        deps = runqueue.dependencies(queue)
+        bench = str((self.root / "q" / "benchmark").resolve())
+        for item in queue["items"]:
+            if item["name"].startswith("benchmark-"):  # answers first: no robustness stage, covers kept for the audit
+                self.assertIn("--no-robustness", item["run"], item["name"])
+                self.assertTrue(qs.load_config(runqueue._option(item["run"], "--config")).save_covers)
+        for audit, sfx in (("audit", ""), ("audit-large", "-large")):
+            item = queue["items"][names.index(audit)]
+            run = item["run"]
+            self.assertEqual(run[0], "audit")
+            self.assertEqual(runqueue._option(run, "--source"), bench)
+            self.assertEqual(runqueue._option(run, "--output-dir"), str(Path(bench) / "robustness"))  # the stage's ledger
+            self.assertIn("--skip-missing", run)
+            self.assertEqual(runqueue._option(run, "--methods").split(","),
+                             ["hedonic"] + [m.replace("-", "_") for m in BASELINE_ORDER])
+            phase = [n for n in names if n.startswith("benchmark-") and n.endswith("-large") == bool(sfx)]
+            self.assertTrue(all(names.index(n) < names.index(audit) for n in phase), audit)
+            self.assertTrue(set(phase) <= set(deps[audit]), audit)
+            self.assertEqual(runqueue.item_method(item), "Robustness audit")
+        self.assertEqual(names[-1], "audit-large")
+        self.assertEqual(names.index("audit") + 1, names.index("calibration-hedonic-large"))
 
 
 PAPER_PAIRS = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000",

@@ -63,6 +63,7 @@ from hedonic.experiments.config import NETWORKS_DIR, OVERLAPPING_ARTIFACTS_DIR, 
 from hedonic.experiments.leiden import seeded_igraph_rng
 from hedonic.experiments import timing
 from hedonic.experiments.overlapping import limits
+from hedonic.experiments.overlapping import cover_store
 from hedonic.experiments.overlapping.cdlib_env import (
     MethodUnavailable,
     run_slpa,
@@ -513,6 +514,47 @@ def _cover_for_paper_metrics(dataset: SnapDataset) -> tuple[list[list[int]], set
         "canonicalization": validation,
         "prediction_filter": "intersect_each_predicted_community_with_gt_nodes",
     }
+
+
+def score_cover(
+    cover: Sequence[Sequence[int]],
+    dataset: SnapDataset,
+    ground_truth: list[list[int]],
+    gt_nodes: set[int],
+    *,
+    paper_filter: bool,
+    compute_omega: bool,
+    omega_sample_size: int,
+    seed: int,
+    **options: Any,
+) -> tuple[dict[str, Any], list[list[int]], list[list[int]]]:
+    """Score a detector's cover as a benchmark record does: the metric vector, the scored prediction and reference.
+
+    ``ground_truth`` and ``gt_nodes`` are ``_cover_for_paper_metrics(dataset)``. Under the paper filter the prediction
+    is restricted to the reference's vertices and scored against the filtered reference; otherwise both are scored
+    whole. ``options`` go to ``evaluate_cover`` (``singleton_mode``, ``matching_weight``). The rescoring of saved
+    covers (``cover_rescore``) calls this with a record's own settings, so it reproduces the record's metrics.
+    """
+    n_vertices = dataset.graph.vcount()
+    scored_prediction = (
+        _filter_prediction(cover, gt_nodes=gt_nodes, n_vertices=n_vertices)
+        if paper_filter
+        else canonicalize_cover(cover, n_vertices=n_vertices, minimum_size=1)[0]
+    )
+    scored_ground_truth = ground_truth if paper_filter else dataset.cover
+    accuracy = evaluate_cover(
+        scored_prediction,
+        scored_ground_truth,
+        n_vertices,
+        compute_omega=compute_omega,
+        omega_sample_size=omega_sample_size,
+        omega_seed=seed,
+        **options,
+    )
+    f1 = float(accuracy["f1"])
+    onmi = overlapping_normalized_mutual_information_lfk(scored_prediction, scored_ground_truth)
+    accuracy.update({"onmi": float(onmi), "onmi_percent": 100.0 * float(onmi), "f1_percent": 100.0 * f1})
+    return accuracy, scored_prediction, scored_ground_truth
 
 
 def _filter_prediction(
@@ -1894,7 +1936,8 @@ def _load_dataset(
 def _cover_on_disk(record: dict[str, Any], output_dir: Path) -> bool:
     """A completed record reused under --save-covers still needs its cover; without it the detector runs again."""
     relative = record.get("cover_path")
-    return bool(relative) and (output_dir / str(relative)).is_file()
+    labels = cover_store.labels_path(record)
+    return bool(relative) and (output_dir / str(relative)).is_file() and (not labels or (output_dir / labels).is_file())
 
 
 def _run_dataset(
@@ -1912,9 +1955,23 @@ def _run_dataset(
     omega_sample_size: int = 100_000,
     save_covers: bool = False,
     limit_seconds: float | None = None,
+    network_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     ground_truth, gt_nodes, gt_report = _cover_for_paper_metrics(dataset)
     records: list[dict[str, Any]] = []
+    known: dict[str, Any] = {}
+
+    def answer_report() -> dict[str, Any]:
+        """The dataset report a record keeps: with the graph's SHA-256 and, under --save-covers, its vertex id map
+        (both taken once, when the first method of this dataset runs, outside every unit's clock)."""
+        if "report" not in known:
+            graph_sha = cover_store.graph_sha256(dataset.graph)
+            ids = None
+            if save_covers:
+                ids = str(cover_store.write_vertex_ids(output_dir, dataset, graph_sha, network_root).relative_to(output_dir))
+            known["report"] = cover_store.record_report(dataset.report, graph_sha, ids)
+        return known["report"]
+
     # A queue's time limit (``--limit-seconds``) lowers the per-run timeout of this one detector run; it is not part of
     # the config digest. It binds only when it is below the run's own timeout, and a run it stops is a ``timeout``.
     run_timeout = limits.effective(timeout_seconds, limit_seconds)
@@ -1940,6 +1997,7 @@ def _run_dataset(
         parameters["dataset"] = dataset.name
         if run_timeout is not None:
             parameters["timeout_seconds"] = float(run_timeout)
+        report = answer_report()  # before the unit's clock: hashing the graph is the dataset's, not the unit's
         unit_started = time.perf_counter()  # the whole unit, scoring and saving included: ``unit_seconds``
         record: dict[str, Any] = {
             "protocol_version": PROTOCOL_VERSION,
@@ -1950,7 +2008,7 @@ def _run_dataset(
             "status": "running",
             "timing_scope": timing.TIMING_SCOPE,
             "runtime_versions": runtime.runtime_versions(),
-            "dataset_report": dataset.report,
+            "dataset_report": report,
             "ground_truth_report": gt_report,
             "method_spec": METHOD_SPECS[name].__dict__,
             "paper_filter_enabled": bool(paper_filter),
@@ -1968,40 +2026,12 @@ def _run_dataset(
                 raise RuntimeError(f"{name}: the detector never started the detector clock (see timing.py)")
             _stamp_detector_clock(record, clock)
             scoring_started = time.perf_counter()
-            scored_prediction = (
-                _filter_prediction(cover, gt_nodes=gt_nodes, n_vertices=dataset.graph.vcount())
-                if paper_filter
-                else canonicalize_cover(cover, n_vertices=dataset.graph.vcount(), minimum_size=1)[0]
-            )
-            scored_ground_truth = ground_truth if paper_filter else dataset.cover
-            accuracy = evaluate_cover(
-                scored_prediction,
-                scored_ground_truth,
-                dataset.graph.vcount(),
-                compute_omega=compute_omega,
-                omega_sample_size=omega_sample_size,
-                omega_seed=seed,
-            )
-            f1 = float(accuracy["f1"])
-            onmi = overlapping_normalized_mutual_information_lfk(
-                scored_prediction, scored_ground_truth
-            )
-            accuracy.update(
-                {
-                    "onmi": float(onmi),
-                    "onmi_percent": 100.0 * float(onmi),
-                    "f1_percent": 100.0 * float(f1),
-                }
-            )
+            accuracy, scored_prediction, scored_ground_truth = score_cover(
+                cover, dataset, ground_truth, gt_nodes, paper_filter=paper_filter, compute_omega=compute_omega,
+                omega_sample_size=omega_sample_size, seed=seed)
             record["scoring_seconds"] = time.perf_counter() - scoring_started
-            if save_covers:  # the detector's cover (analysis-graph vertex ids), for later rescoring
-                cover_path = output_dir / "covers" / dataset.name / f"{name}.json.gz"
-                cover_path.parent.mkdir(parents=True, exist_ok=True)
-                import gzip
-
-                with gzip.open(cover_path, "wt", encoding="utf-8") as handle:
-                    json.dump([sorted(int(v) for v in c) for c in cover], handle)
-                record["cover_path"] = str(cover_path.relative_to(output_dir))
+            if save_covers:  # the detector's answer (analysis-graph vertex ids), to audit and rescore it later
+                record["cover_path"] = cover_store.save_answer(output_dir, dataset.name, name, cover, detector_metadata)
             record.update(
                 {
                     "status": "completed",
@@ -2659,6 +2689,7 @@ def main(argv: list[str] | None = None) -> int:
                 omega_sample_size=int(args.omega_sample_size),
                 save_covers=bool(args.save_covers),
                 limit_seconds=args.limit_seconds,
+                network_root=network_root,
             )
         )
     manifest = {

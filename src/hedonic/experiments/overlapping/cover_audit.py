@@ -12,7 +12,8 @@ Two profiles are audited, and every record names the one it used:
 ``cover``     the saved scoring cover: unique communities, one label each, which every method has. A vertex that
               no community contains is completed with a private singleton label (it plays alone), and the count is
               recorded. This is the profile to compare methods on.
-``labelled``  the exact labelled memberships a HOC detector returned (``detector.final_memberships``). The saved
+``labelled``  the exact labelled memberships a HOC detector returned (``detector.final_memberships``, or the file
+              ``detector.final_memberships_path`` names: ``cover_store``). The saved
               cover merges labels with identical members, which changes the vertices' intensities, so the cover of
               a HOC run is not the profile the detector reached. The labelled profile is a Nash equilibrium at the
               run's own resolution and cap, which makes it the correctness check of this audit.
@@ -50,6 +51,7 @@ import numpy as np
 
 from hedonic.experiments.config import NETWORKS_DIR, RUNS_ROOT, expand_path
 from hedonic.experiments.runtime import runtime_versions
+from hedonic.experiments.overlapping import cover_store
 from hedonic.experiments.overlapping import gt_posthoc as ph
 from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.overlapping import replication
@@ -125,6 +127,9 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("--name", help="run name (default cover-audit)")
     parser.add_argument("--output-dir", help="run folder (default: <output_dir>/NAME)")
     parser.add_argument("--overwrite", action="store_true", help="delete this audit's records before starting")
+    parser.add_argument("--skip-missing", action="store_true",
+                        help="finish even when some covers have no benchmark record (a pair the queue's max_eta skipped, "
+                             "a benchmark not run yet): they are listed, and a later run audits them")
     parser.add_argument("--dry-run", action="store_true", help="print the plan; load nothing and write nothing")
     return parser
 
@@ -190,6 +195,7 @@ def resolve(argv: list[str], prog: str = "hedonic run audit") -> dict[str, Any]:
     return {"sources": sources, "networks": networks, "methods": methods, "seeds": seeds, "profiles": profiles,
             "induce": args.induce, "replication": args.replication,
             "cap": parse_cap(args.cap), "name": name, "output": output, "overwrite": bool(args.overwrite),
+            "skip_missing": bool(args.skip_missing),
             "dry_run": bool(args.dry_run),
             "workers": max(1, int(args.workers or min(8, os.cpu_count() or 1))),
             "network_root": expand_path(args.network_root or NETWORKS_DIR).resolve(),
@@ -197,7 +203,8 @@ def resolve(argv: list[str], prog: str = "hedonic run audit") -> dict[str, Any]:
 
 
 def read_records(path: Path) -> dict[str, dict[str, Any]]:
-    """Valid records by key (a torn or corrupt line is skipped; the first record of a key wins)."""
+    """Valid records by key (a torn or corrupt line is skipped; the last record of a key wins, so the audit of a cover
+    that was audited again, after its unit ran again, replaces the earlier one)."""
     records: dict[str, dict[str, Any]] = {}
     if not path.is_file():
         return records
@@ -207,7 +214,7 @@ def read_records(path: Path) -> dict[str, dict[str, Any]]:
         except json.JSONDecodeError:
             continue
         if isinstance(record, dict) and isinstance(record.get("key"), str):
-            records.setdefault(record["key"], record)
+            records[record["key"]] = record
     return records
 
 
@@ -249,6 +256,39 @@ def find_record(plan: dict[str, Any], network: str, seed: int, method: str) -> t
     return None, None
 
 
+def unit_seal(plan: dict[str, Any], network: str, seed: int, method: str) -> dict[str, Any] | None:
+    """The seal of the benchmark unit whose cover a condition audits (``unit_integrity``), or None without one."""
+    from hedonic.experiments.overlapping import unit_integrity as ui
+
+    _source, path = find_record(plan, network, seed, method)
+    if path is None:
+        return None
+    return ui.read_seal(path.parents[2], qs.split_target(network)[0], qs.BY_KEY[method].runner)
+
+
+def is_current(record: dict[str, Any], seal: dict[str, Any] | None) -> bool:
+    """Does an audit record describe the unit as it is on disk now? A unit that ran again (other settings, a new cover)
+    leaves the audit of its earlier cover in the ledger under the same key: that audit is stale and runs again. Without a
+    seal there is nothing to compare, and the record stands."""
+    if seal is None:
+        return True
+    if record.get("status") != "completed":
+        return record.get("config_digest") == seal.get("config_digest")
+    if record.get("profile") == "cover":
+        return bool(record.get("cover_file_sha256")) and record.get("cover_file_sha256") == seal.get("cover_sha256")
+    if record.get("config_digest") != seal.get("config_digest"):
+        return False
+    return not seal.get("labels_sha256") or record.get("labels_file_sha256") == seal["labels_sha256"]
+
+
+def done(plan: dict[str, Any], records: dict[str, dict[str, Any]], condition: dict[str, Any]) -> bool:
+    """A condition is done when the ledger has a record of it that describes its unit's cover on disk now."""
+    record = records.get(condition["key"])
+    if record is None:
+        return False
+    return is_current(record, unit_seal(plan, condition["network"], condition["seed"], condition["method"]))
+
+
 def describe(plan: dict[str, Any]) -> str:
     once = [m for m in plan["methods"] if len(replication.planned_seeds(m, plan["seeds"], plan.get("replication", "auto"))) == 1]
     seeds = f"{len(plan['seeds'])} seeds" + (f" (deterministic methods: seed {min(plan['seeds'])} only)"
@@ -260,7 +300,8 @@ def describe(plan: dict[str, Any]) -> str:
 def plan_lines(plan: dict[str, Any]) -> list[str]:
     todo = conditions(plan)
     present = read_records(plan["output"] / RESULTS_NAME)
-    have = sum(1 for condition in todo if condition["key"] in present)
+    have = sum(1 for condition in todo if done(plan, present, condition))
+    stale = sum(1 for condition in todo if condition["key"] in present) - have
     missing = [c for c in todo if find_record(plan, c["network"], c["seed"], c["method"])[1] is None]
     lines = [f"hedonic-exp overlapping-cover-audit · {describe(plan)} ({PROTOCOL})",
              "  sources  " + ", ".join(str(source) for source in plan["sources"]),
@@ -273,6 +314,9 @@ def plan_lines(plan: dict[str, Any]) -> list[str]:
              f"  records  {plan['output'] / RESULTS_NAME} (one JSON line per cover and profile)",
              f"  present  {have:,} of {len(todo):,} audits already recorded"
              + (" (--overwrite: they are deleted first)" if plan["overwrite"] else " (a run resumes them)")]
+    if stale:
+        lines.append(f"  stale    {stale:,} recorded audits describe an earlier cover of their unit (it ran again): "
+                     f"they are audited again")
     if missing:
         lines.append(f"  waiting  {len(missing):,} audits have no benchmark record in the sources yet, e.g. {missing[0]['key']}")
     return lines
@@ -337,8 +381,7 @@ def own_resolution(detector: dict[str, Any]) -> tuple[float | None, str | None]:
 
 
 def graph_identity(graph) -> str:
-    edges = np.asarray(sorted(tuple(sorted(edge)) for edge in graph.get_edgelist()), dtype=np.int64)
-    return hashlib.sha256(edges.tobytes() + str(graph.vcount()).encode()).hexdigest()
+    return cover_store.graph_sha256(graph)  # the same bytes this function always hashed (tests compare the two)
 
 
 def load_graph(network: str, cover_variant: str, root: Path, induce: str = "full"):
@@ -450,7 +493,7 @@ def audit_unit(condition: dict[str, Any], plan: dict[str, Any], graphs: dict[tup
                 detection_seconds=record.get("detection_seconds"))
     if record.get("status") != "completed":
         return {**base, "status": "no_cover", "reason": f"the detector run ended {record.get('status')!r}"}
-    if profile == "labelled" and not detector.get("final_memberships"):
+    if profile == "labelled" and not cover_store.has_labels(record):
         return {**base, "status": "no_labels", "reason": "the record keeps no exact labelled memberships"}
     if profile == "cover" and not record.get("cover_path"):
         return {**base, "status": "no_cover", "reason": "the run saved no cover (it needs --save-covers)"}
@@ -473,10 +516,13 @@ def audit_unit(condition: dict[str, Any], plan: dict[str, Any], graphs: dict[tup
     if (report.get("n"), report.get("m")) != (n_vertices, graph.ecount()):
         raise ValueError(f"{path}: the record was produced on a graph of n={report.get('n')}, m={report.get('m')}, "
                          f"but the loaded {network} graph has n={n_vertices}, m={graph.ecount()}")
+    if report.get("graph_sha256") and report["graph_sha256"] != identity:  # records since the hash was stamped
+        raise ValueError(f"{path}: the record was produced on a graph with SHA-256 {report['graph_sha256'][:12]}..., "
+                         f"but the loaded {network} graph's is {identity[:12]}... (same n and m, other edges)")
     if profile == "cover":
         memberships, info = cover_profile(read_cover(unit_dir / record["cover_path"]), n_vertices)
     else:
-        memberships, info = labelled_profile(detector["final_memberships"], n_vertices)
+        memberships, info = labelled_profile(cover_store.read_labels(record, unit_dir), n_vertices)
     own = max(len(labels) for labels in memberships)
     record_cap = detector.get("max_memberships") if method in LABELLED_METHODS else None
     cap = effective_cap(plan["cap"], int(record_cap) if record_cap else None, own)
@@ -508,6 +554,8 @@ def audit_unit(condition: dict[str, Any], plan: dict[str, Any], graphs: dict[tup
         result["warnings"] = warnings
     if profile == "cover":
         result["cover_file_sha256"] = hashlib.sha256((unit_dir / record["cover_path"]).read_bytes()).hexdigest()
+    elif cover_store.labels_path(record):
+        result["labels_file_sha256"] = hashlib.sha256((unit_dir / cover_store.labels_path(record)).read_bytes()).hexdigest()
     return result
 
 
@@ -629,26 +677,31 @@ def run_audit(plan: dict[str, Any], *, progress: Progress = _silent, emit: Calla
     todo = conditions(plan)
     if not todo:
         raise ValueError("nothing to audit: no method was named and none was found in the sources")
-    done = sum(1 for condition in todo if condition["key"] in records)
-    emit(f"cover audit: {len(todo)} audits; {done} already in {results}; {len(todo) - done} to run")
+    finished = {condition["key"] for condition in todo if done(plan, records, condition)}
+    count = len(finished)
+    emit(f"cover audit: {len(todo)} audits; {count} already in {results}; {len(todo) - count} to run")
     graphs: dict[tuple[str, str, str], Any] = {}
     waiting = []
     for condition in todo:
-        if condition["key"] in records:
+        if condition["key"] in finished:
             continue
         if find_record(plan, condition["network"], condition["seed"], condition["method"])[1] is None:
             waiting.append(condition["key"])
             continue
-        record = audit_unit(condition, plan, graphs, progress)
+        key = condition["key"]
+        record = audit_unit(condition, plan, graphs, lambda event, key=key: progress({**event, "key": key}))
         append_record(results, record)
         records[condition["key"]] = record
-        done += 1
-        progress({"type": "unit", "done": done, "total": len(todo), "key": condition["key"]})
-        emit(progress_line(done, len(todo), record))
+        count += 1
+        progress({"type": "unit", "done": count, "total": len(todo), "key": condition["key"]})
+        emit(progress_line(count, len(todo), record))
     write_outputs(plan, todo, records)
-    if waiting:
+    if waiting and not plan.get("skip_missing"):
         raise RuntimeError(f"{len(waiting)} audits have no benchmark record in the sources yet (first: {waiting[0]}); "
                            f"finish the benchmark, then run this audit again")
+    if waiting:
+        emit(f"cover audit: {len(waiting)} audits have no benchmark record yet (first: {waiting[0]}); skipped, a later "
+             f"run audits them")
     emit(f"cover audit: wrote {results}, {out / TABLE_NAME} and {out / SUMMARY_NAME}")
     return 0
 
@@ -657,8 +710,8 @@ def state_of(plan: dict[str, Any]) -> str:
     """complete | partial | missing: whether every audit of the plan has a record."""
     records = read_records(plan["output"] / RESULTS_NAME)
     todo = conditions(plan)
-    done = sum(1 for condition in todo if condition["key"] in records)
-    return "complete" if todo and done == len(todo) else "partial" if done else "missing"
+    count = sum(1 for condition in todo if done(plan, records, condition))
+    return "complete" if todo and count == len(todo) else "partial" if count else "missing"
 
 
 # --------------------------------------------------------------------------- the stage of a benchmark run
@@ -741,11 +794,11 @@ class Stage:
         return [c for c in conditions(self.plan) if (c["network"], c["seed"], c["method"]) == (network, seed, method)]
 
     def audited(self, network: str, seed: int, method: str) -> bool:
-        return all(c["key"] in self.records for c in self.unit_conditions(network, seed, method))
+        return all(done(self.plan, self.records, c) for c in self.unit_conditions(network, seed, method))
 
     def audit(self, network: str, seed: int, method: str) -> dict[str, float] | None:
         """Audit what this unit still lacks (every profile), and return its robustness measure (None without a cover)."""
-        todo = [c for c in self.unit_conditions(network, seed, method) if c["key"] not in self.records]
+        todo = [c for c in self.unit_conditions(network, seed, method) if not done(self.plan, self.records, c)]
         if todo:
             for record in self._in_child(todo):
                 append_record(self.results, record)
@@ -839,7 +892,8 @@ def launch_argv(plan: dict[str, Any]) -> list[str]:
             "--profiles", ",".join(plan["profiles"]), "--cap", str(plan["cap"]), "--workers", str(plan["workers"]),
             "--network-root", str(plan["network_root"]), "--name", plan["name"], "--output-dir", str(plan["output"]),
             "--replication", plan.get("replication", replication.DEFAULT_MODE),
-            *(["--induce", plan["induce"]] if plan.get("induce") else [])]
+            *(["--induce", plan["induce"]] if plan.get("induce") else []),
+            *(["--skip-missing"] if plan.get("skip_missing") else [])]
 
 
 def front_main(argv: list[str] | None = None) -> int:
@@ -890,7 +944,8 @@ def work(name: str, entry: dict[str, Any], prog: dict[str, Any]) -> int:
     plan = resolve(entry["argv"])
     todo = conditions(plan)
     results = plan["output"] / RESULTS_NAME
-    already = sum(1 for condition in todo if condition["key"] in read_records(results))
+    present = read_records(results)
+    already = sum(1 for condition in todo if done(plan, present, condition))
     ppath = rm.progress_path(entry)
     prog.update({"name": name, "kind": "audit", "status": "setup", "pid": os.getpid(), "started": time.time(),
                  "updated": time.time(), "describe": describe(plan), "command": entry["command"],
@@ -905,6 +960,9 @@ def work(name: str, entry: dict[str, Any], prog: dict[str, Any]) -> int:
     def on_event(event: dict[str, Any]) -> None:
         if event["type"] in ("stage", "vertices"):
             prog.update(status="running", stage=event["text"], updated=time.time())
+        if event["type"] == "vertices":  # the running audit, for the queue view's ETA (queuebuild.audit)
+            prog["current"] = {**{k: event.get(k) for k in ("key", "policy", "number", "policies", "done", "total",
+                                                             "elapsed", "eta_seconds")}, "updated": time.time()}
         elif event["type"] == "unit":
             first_seen.setdefault("at", time.time())
             fresh = event["done"] - prog["resumed_from"]
@@ -912,6 +970,7 @@ def work(name: str, entry: dict[str, Any], prog: dict[str, Any]) -> int:
             eta = elapsed / (fresh - 1) * (event["total"] - event["done"]) if fresh > 1 else None
             prog.update(status="running", done=event["done"], total=event["total"], last=event["key"],
                         eta_seconds=eta, updated=time.time())
+            prog.pop("current", None)
         rm.write_json(ppath, prog)
 
     prog.update(status="running", updated=time.time())
@@ -919,7 +978,10 @@ def work(name: str, entry: dict[str, Any], prog: dict[str, Any]) -> int:
     code = run_audit(plan, progress=on_event)
     if code != 0:
         raise RuntimeError(f"the cover audit returned {code}")
-    prog.update(status="completed", done=len(todo), eta_seconds=0, stage=None, finished=time.time(), updated=time.time())
+    recorded = read_records(results)
+    prog.pop("current", None)
+    prog.update(status="completed", done=sum(1 for condition in todo if done(plan, recorded, condition)), eta_seconds=0,
+                stage=None, finished=time.time(), updated=time.time())
     rm.write_json(ppath, prog)
     print(style(f"  wrote {results}", "green"), flush=True)
     return 0

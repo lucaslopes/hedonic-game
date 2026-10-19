@@ -359,8 +359,25 @@ hedonic-exp list                       # analysis and utility commands
   benchmark item writes into `{root}/benchmark` (`--shared-folder`: the
   folder itself, not OUTPUT_DIR/NAME), so finished units are reused
   and each item waits for the earlier ones (an item depends on every earlier
-  item whose folder its arguments name). `tests/experiments/test_queue_skip.py`
-  pins the order.
+  item whose folder its arguments name). Each phase ends with its robustness
+  audit (`audit`, `audit-large`: `hedonic run audit --source {root}/benchmark
+  --skip-missing` into `{root}/benchmark/robustness`, the ledger the old
+  inline stage wrote): the benchmark items run `--no-robustness`, so every
+  detector run of a phase (accuracy and time) is in before any audit starts.
+  `tests/experiments/test_queue_skip.py` pins the order.
+- **Answers first, audits and scores after.** A benchmark unit run with
+  `--save-covers` keeps its answer (`overlapping/cover_store.py`): the cover,
+  Hedonic's labelled rows in `<runner>.labels.json.gz` (older records keep
+  them inline in `detector.final_memberships`), one `vertex_ids.json.gz` per
+  seed folder (SNAP id of each analysis vertex) and the analysis graph's
+  SHA-256 in `dataset_report.graph_sha256`; the seal covers the labels too.
+  The audit and `hedonic-exp overlapping-rescore` (`cover_rescore.py`: the
+  runner's own `codeseg_reproduction.score_cover` with other settings;
+  `--check` reproduces each record) refuse a loaded graph whose hash differs.
+  An audit counts only while it describes the cover on disk
+  (`cover_audit.done`: its cover's or labels' hash, or its digest, against the
+  unit's seal); a unit that ran again is audited again and the ledger's last
+  record of a key wins. Read audit records through `done`, never by key alone.
 - **The queue view nests by method.** When a queue's items study more than one
   method, `hedonic run attach` groups its runs under one node per method
   (`runqueue.item_method`: Hedonic for its own verbs, else the single method of

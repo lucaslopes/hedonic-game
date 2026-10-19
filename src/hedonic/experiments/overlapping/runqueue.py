@@ -527,7 +527,7 @@ def _state(name: str) -> tuple[str, dict | None]:
 DATA_TTL = 60.0  # seconds a data check is reused; the queue view is redrawn every second
 # Checks that only read the run's own progress and record files are cheap, so the interactive view sees them nearly live;
 # a benchmark check certifies every unit's files (hashes) and keeps the long reuse.
-LIVE_VERBS = (*SPECTRUM_VERBS, "startcurve", "controlled", "calibrate", "calibrate-baselines")
+LIVE_VERBS = (*SPECTRUM_VERBS, "startcurve", "controlled", "calibrate", "calibrate-baselines", "audit")
 LIVE_TTL = 2.0
 _DATA_CACHE: dict[str, tuple[float, tuple[str, str]]] = {}
 # What each state check counted on its way: folder -> (finished, total, noun). Filled by the checks below, read by
@@ -699,8 +699,10 @@ def _benchmark_state(run: list[str]) -> tuple[str, str]:
     reusable = [_unit_reusable(cfg, net, seed, method, binary) for net, seed, method in units]
     if audited is None:
         finished = reusable
-    else:
-        finished = [ok and all(key in audited for key in ca.unit_keys(net, seed, method.key))
+    else:  # its audits recorded, and of the cover on disk now (a unit that ran again needs its audits again)
+        where = {"sources": [folder], "induce": cfg.induce}
+        finished = [ok and all(ca.done(where, audited, {"key": key, "network": net, "seed": seed, "method": method.key})
+                               for key in ca.unit_keys(net, seed, method.key))
                     for ok, (net, seed, method) in zip(reusable, units)]
     by_cell: dict[tuple[str, str], list[bool]] = {}
     for done, (net, _seed, method) in zip(finished, units):
@@ -1042,8 +1044,18 @@ def _audit_state(args: list[str]) -> tuple[str, str]:
     plan = ca.front_study(args)
     records = ca.read_records(plan["output"] / ca.RESULTS_NAME)
     todo = ca.conditions(plan)
-    _note(plan["output"], sum(c["key"] in records for c in todo), len(todo), "audits")  # (no breakdown: not queued)
-    return ca.state_of(plan), str(plan["output"])
+    # Audit items of one queue share a ledger (the benchmark's robustness folder), so the key of their counts and model
+    # names the run too: each item shows its own plan's audits.
+    key = f"{plan['output']}#{plan['name']}"
+    finished = {c["key"] for c in todo if ca.done(plan, records, c)}  # a stale audit (its unit ran again) is not done
+    cells: dict[tuple[str, str], list[bool]] = {}
+    for c in todo:
+        cells.setdefault((_pair_label(c["network"]), f"{qb.method_label(c['method'])} · {c['profile']}"), []).append(
+            c["key"] in finished)
+    _note(key, len(finished), len(todo), "audits", [(pair, label, flags) for (pair, label), flags in cells.items()])
+    _set_model(key, qb.audit, plan, records, _read(Path(plan["output"]) / "progress.json"), finished=finished)
+    state = "complete" if todo and len(finished) == len(todo) else "partial" if finished else "missing"
+    return state, key
 
 
 def _calibrate_state(args: list[str]) -> tuple[str, str]:
@@ -2076,6 +2088,8 @@ def item_method(item: dict) -> str:
         return "queues"
     if run[0] in HEDONIC_VERBS:
         return "Hedonic"
+    if run[0] == "audit":  # every method's covers: a node of its own, not "several methods"
+        return "Robustness audit"
     names = [m for m in (_option(run, "--methods") or "").split(",") if m]
     if len(names) == 1:
         return qb.method_label(names[0]).split(" (")[0]

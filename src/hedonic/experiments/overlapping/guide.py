@@ -85,7 +85,9 @@ TOPICS: dict[str, tuple[str, str]] = {
         spectrum, the ground-truth start curve and its benchmark rows one pair at a time), then each baseline in
         turn, cheapest first: its calibration, then its benchmark. Phase 2 repeats every method, Hedonic first, on
         LiveJournal/top5000 and Friendster/top5000, the largest graphs, so they cannot hold up the rest. All
-        benchmark items write into one folder so a finished unit is reused.
+        benchmark items write into one folder so a finished unit is reused. The benchmark items only save each
+        answer (cover, labels, vertex ids, graph hash); each phase ends with an audit item that audits every saved
+        cover, so all detector runs of a phase finish before any audit.
         Every run decides from its files what is done, so starting the queue again continues it. The queue checks
         that the data and methods are prepared and prints the `hedonic setup` command when they are not.
 
@@ -97,6 +99,7 @@ TOPICS: dict[str, tuple[str, str]] = {
             that take the nearest calibrated pair's setting, and searches copied from an earlier calibration)
         hedonic run exp --config paper-benchmark --tuned FILE[,FILE]     the benchmark at the calibrated settings
         hedonic run audit --source RUN          exact robustness of the covers a run saved without --robustness
+        hedonic-exp overlapping-rescore --source RUN --networks PAIRS   score the saved covers again (--check: reproduce)
     """),
     "spectrum": ("Ground-truth robustness spectrum (`hedonic run spectrum`)", """
         hedonic show covers                       present / missing / unsupported graph/cover pairs
