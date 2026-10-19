@@ -125,6 +125,12 @@ def build_parser(prog: str = "hedonic run calibrate") -> argparse.ArgumentParser
     parser.add_argument("--cap-minutes", type=float, metavar="M",
                         help="lazy calibration: also stop a search once its selection evaluations have cost M "
                              "single-core minutes (detection + scoring + audit); needs --budget")
+    parser.add_argument("--timeout", type=float, metavar="S",
+                        help="seconds one detector run may take before it is killed (default 1800); each run of a search "
+                             "is timed on its own, never the search's total")
+    parser.add_argument("--limit-seconds", type=float, metavar="S",
+                        help="a queue's time limit for one detector run: lowers --timeout (a probe it stopped is a "
+                             "timeout, rerun under a larger limit)")
     parser.add_argument("--network-root", metavar="DIR",
                         help="SNAP networks folder (default: HEDONIC_NETWORKS_DIR, the user config's network_root, else "
                              "the package default)")
@@ -176,12 +182,16 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate") -> dict[str, A
     name = qs.parse_name(args.name or "hoc-calibration")
     root = Path(userconfig.defaults().get("output_dir") or RUNS_ROOT)
     output = expand_path(args.output_dir).resolve() if args.output_dir else expand_path(root / name).resolve()
+    for flag, value in (("--timeout", args.timeout), ("--limit-seconds", args.limit_seconds)):
+        if value is not None and not value > 0:
+            raise ValueError(f"{flag} must be a positive number of seconds")
     if args.cap == "unlimited" and args.budget is not None:
         raise ValueError("--cap unlimited searches the resolution only; it does not go with --budget")
     return {"script": script, "mode": args.mode, "cap": args.cap, "networks": networks, "methods": methods,
             "factor": float(args.factor), "confirm": qs.parse_seeds(args.confirm_seeds), "python": args.python or sys.executable,
             "workers": parallel.default_workers(args.workers),
             "budget": args.budget, "cap_minutes": args.cap_minutes,
+            "timeout": args.timeout, "limit": args.limit_seconds,
             "network_root": expand_path(args.network_root).resolve() if args.network_root else None,
             "snap_cache_dir": expand_path(args.snap_cache_dir).resolve() if args.snap_cache_dir else None,
             "download": not args.no_download,
@@ -235,6 +245,9 @@ def search_argv(plan: dict[str, Any], search: dict[str, Any]) -> list[str]:
     if plan["workers"] > 1:
         argv += ["--jobs", str(plan["workers"]), "--slot-dir", str(plan["output"] / "ledger" / "slots"),
                  "--slot-count", str(plan["workers"])]
+    timeout = run_timeout(plan)
+    if timeout is not None:  # one detector run's timeout (the search's default when neither is given)
+        argv += ["--timeout", f"{timeout:g}"]
     if plan.get("cap") == "unlimited":  # the resolution only, no cap: the search's wide scan, no warm bracket
         argv += ["--fixed-M", str(UNLIMITED)]
     elif search_mode(plan, search["network"], search["method"]) == "warm":
@@ -249,6 +262,17 @@ def search_argv(plan: dict[str, Any], search: dict[str, Any]) -> list[str]:
         if not plan.get("download", True):
             argv.append("--no-download")
     return argv
+
+
+def run_timeout(plan: dict[str, Any]) -> float | None:
+    """The timeout of one detector run: ``--timeout`` (else the search's own default), lowered by ``--limit-seconds``;
+    None when neither is given, so the search keeps its default and its command line stays as it was."""
+    from hedonic.experiments.overlapping import limits
+    from hedonic.experiments.overlapping.calibration_search import DEFAULT_TIMEOUT
+
+    if plan.get("timeout") is None and plan.get("limit") is None:
+        return None
+    return limits.effective(plan.get("timeout") or DEFAULT_TIMEOUT, plan.get("limit"))
 
 
 def data_status(plan: dict[str, Any]) -> dict[str, str]:
@@ -622,6 +646,10 @@ def launch_argv(plan: dict[str, Any]) -> list[str]:
         argv += ["--budget", str(plan["budget"])]
     if plan.get("cap_minutes"):
         argv += ["--cap-minutes", f"{plan['cap_minutes']:g}"]
+    if plan.get("timeout") is not None:
+        argv += ["--timeout", f"{plan['timeout']:g}"]
+    if plan.get("limit") is not None:
+        argv += ["--limit-seconds", f"{plan['limit']:g}"]
     if plan.get("network_root"):
         argv += ["--network-root", str(plan["network_root"])]
     if plan.get("snap_cache_dir"):

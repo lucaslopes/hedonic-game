@@ -82,6 +82,13 @@
     and methods are prepared. `hedonic run queue disjoint` runs the disjoint
     paper's, and `hedonic run queue all` both; a queue item can be a whole
     queue (`run = ["queue", NAME|FILE]`).
+  - A queue file's `[limits]` (and an item's `limits = {...}`, or
+    `hedonic run queue --timeout D --max-eta D`) bound each single run:
+    `timeout` stops one detector run, calibration probe or start-quality
+    condition that is still going, and `max_eta` skips a pair whose single
+    run is estimated longer. Neither is ever applied to a total of runs, and
+    neither changes a record's identity: a stopped run is recorded as a
+    `timeout` and runs again under a larger limit.
   - `hedonic setup [--pairs P,...] [--methods M,...] [--all] [--dry-run]`
     downloads SNAP pairs and builds or installs the external baselines,
     after checking the system tools they need.

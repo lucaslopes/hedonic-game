@@ -135,6 +135,7 @@ class Config:
     preset: str = "screened"
     threads: int = os.cpu_count() or 1
     timeout: float = 600.0
+    limit: float | None = None              # a queue's time limit for one detector run (min with timeout; not identity)
     output_dir: str = str(RUNS_ROOT / "exp")  # a durable run writes to OUTPUT_DIR/NAME
     cache_dir: str = "~/.cache/hedonic"
     network_root: str | None = None
@@ -153,7 +154,7 @@ class Config:
     shared_folder: bool = False             # output_dir is the run's folder itself, shared with other runs (never /NAME)
 
     def command(self) -> str:
-        allowed = {"output_dir", "cache_dir", "network_root", "json", "shared_folder"} | (
+        allowed = {"output_dir", "cache_dir", "network_root", "json", "shared_folder", "limit"} | (
             {"tuned", "method_params"} if self.tuned else set())
         if self.profile in PROFILES and PROFILES[self.profile].differences(self) <= allowed:
             parts = ["hedonic run exp", "--config", self.profile]
@@ -163,6 +164,8 @@ class Config:
                 parts += ["--output-dir", self.output_dir]
             if self.shared_folder:
                 parts.append("--shared-folder")
+            if self.limit is not None:
+                parts += ["--limit-seconds", f"{self.limit:g}"]
             if self.cache_dir != "~/.cache/hedonic":
                 parts += ["--cache-dir", self.cache_dir]
             if self.network_root:
@@ -197,6 +200,8 @@ class Config:
             parts += ["--replication", self.replication]
         if self.shared_folder:
             parts.append("--shared-folder")
+        if self.limit is not None:
+            parts += ["--limit-seconds", f"{self.limit:g}"]
         return " ".join(shlex.quote(p) if " " in p and p != "hedonic run exp" else p for p in parts)
 
     def pretty_command(self) -> str:
@@ -443,6 +448,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "defaults ('paper' is accepted as an old spelling)")
     p.add_argument("--threads", type=int, default=None, help="threads for methods that support them (default: all cores)")
     p.add_argument("--timeout", type=float, default=None, help="per-run detection timeout in seconds (default 600)")
+    p.add_argument("--limit-seconds", type=float, default=None, metavar="S",
+                   help="a queue's time limit for one detector run: lowers --timeout without changing any record's "
+                        "identity; a run it stops is recorded as a timeout and reruns under a larger limit or none")
     p.add_argument("--output-dir", default=None, help="where run records and the summary are saved (default ~/Databases/Hedonic/Overlap/exp; a durable run adds /NAME)")
     p.add_argument("--cache-dir", default=None, help="downloads and built runtimes (default ~/.cache/hedonic)")
     p.add_argument("--network-root", default=None, help="optional folder with local SNAP archives")
@@ -587,6 +595,10 @@ def config_from_args(a: argparse.Namespace) -> Config:
             setattr(cfg, key, getattr(a, key))
     if not cfg.timeout > 0:
         raise ValueError("--timeout must be a positive number of seconds")
+    if a.limit_seconds is not None:
+        if not a.limit_seconds > 0:
+            raise ValueError("--limit-seconds must be a positive number of seconds")
+        cfg.limit = float(a.limit_seconds)
     if cfg.preset == "paper":
         cfg.preset = "registry"
     if a.threads is not None:
@@ -831,9 +843,14 @@ def expected_seconds(m: Method, cfg: Config, network: str) -> float:
     n, e = NETWORKS[network][1:]
     # whole-graph figures: the plan of a covered-induced run is smaller than this, so its estimate is an upper bound
     if not cfg.nodes and (m.key, split_target(network)[0]) in MEASURED_FULL:
-        return 2.0 + min(cfg.timeout, MEASURED_FULL[m.key, split_target(network)[0]])
+        return 2.0 + min(run_timeout(cfg), MEASURED_FULL[m.key, split_target(network)[0]])
     edges = e * min(1.0, cfg.nodes / n) if cfg.nodes else e
-    return 2.0 + min(cfg.timeout, m.seconds * edges / DBLP_EDGES)
+    return 2.0 + min(run_timeout(cfg), m.seconds * edges / DBLP_EDGES)
+
+
+def run_timeout(cfg: Config) -> float:
+    """The longest one detector run may take: the run's timeout, lowered by a queue's limit."""
+    return cfg.timeout if cfg.limit is None else min(cfg.timeout, cfg.limit)
 
 
 def graph_text(cfg: Config) -> str:
@@ -1120,6 +1137,8 @@ def unit_argv(cfg: Config, net: str, seed: int, m: Method, binary: Path | None) 
         argv.append("--no-omega")
     if cfg.save_covers:
         argv.append("--save-covers")
+    if cfg.limit is not None:  # policy, not identity: the runner keeps it out of the config digest
+        argv += ["--limit-seconds", f"{cfg.limit:g}"]
     return argv, out
 
 
@@ -1153,7 +1172,7 @@ def unit_check(cfg: Config, net: str, seed: int, m: Method, binary: Path | None,
         if not ui.record_path(out, split_target(net)[0], m.runner).is_file():
             return ui.Check("missing", "no record")
         return ui.Check("stale", "the unit's identity could not be computed")
-    return (ui.adopt if adopt else ui.check)(out, split_target(net)[0], m.runner, digest, cfg.save_covers)
+    return (ui.adopt if adopt else ui.check)(out, split_target(net)[0], m.runner, digest, cfg.save_covers, cfg.limit)
 
 
 def unit_record(cfg: Config, net: str, seed: int, m: Method) -> dict:
@@ -1236,7 +1255,7 @@ def run_one(cfg: Config, net: str, seed: int, m: Method, binary: Path | None) ->
         rec = json.loads(path.read_text())
         from hedonic.experiments.overlapping import unit_integrity as ui
 
-        if rec.get("status") in ui.FINAL and ui.check(out, dataset, m.runner, None, cfg.save_covers).state in ("unsealed", "corrupt"):
+        if ui.final(rec, cfg.limit) and ui.check(out, dataset, m.runner, None, cfg.save_covers, cfg.limit).state in ("unsealed", "corrupt"):
             ui.seal(out, dataset, m.runner, by="run")  # certify the bytes the runner just wrote (a reused, sealed record keeps its seal)
     else:
         tail = [line for line in buffer.getvalue().strip().splitlines() if line.strip()]

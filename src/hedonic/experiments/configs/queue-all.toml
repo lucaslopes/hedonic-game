@@ -7,6 +7,17 @@
 # judged from its files as that queue judges its own items, so running this again skips a finished paper. Each inner
 # queue writes into its own root (its default, or "--root", DIR after the name), never into this queue's. Edit a copy
 # of this file to chain other queues: `hedonic run queue my-queues.toml`.
+#
+# Time limits set here pass down to every item of both queues. Each is about a single run (a detector run, a
+# calibration probe, a start-quality condition), never a total:
+#
+#   [limits]
+#   timeout = "2h"     # a single run still going after 2 hours is stopped and recorded as a timeout
+#   max_eta = "6h"     # a pair whose single run is estimated over 6 hours is skipped
+#
+# An [[items]] entry may set its own `limits = { timeout = "30m" }` ("none" removes one); `hedonic run queue NAME
+# --timeout 2h --max-eta 6h` sets them from the command line, under the file's. A limit never changes a record's
+# identity: a run it stopped runs again once the limit is larger or gone.
 
 name = "all-queue"
 

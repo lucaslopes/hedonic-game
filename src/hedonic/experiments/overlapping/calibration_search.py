@@ -72,6 +72,7 @@ from typing import Any
 import numpy as np
 
 from hedonic import Game
+from hedonic.experiments.overlapping import limits
 from hedonic.experiments.overlapping import parallel as par
 from hedonic.experiments.overlapping.calibration_audit import CoverAudit, active_density, internal_densities
 
@@ -117,6 +118,9 @@ def configure(out: str | Path, *, tag: str = "main", jobs: int = 1, slot_dir: st
     SNAP_CACHE_DIR = Path(snap_cache_dir).expanduser() if snap_cache_dir else None
     DOWNLOAD = bool(download)
     CACHE.clear()
+
+
+DEFAULT_TIMEOUT = 1800.0  # seconds one detector run may take (``--timeout``); a queue's limit lowers it
 
 
 def build() -> dict[str, str]:
@@ -319,7 +323,8 @@ def _compute(spec: str, cfg: dict, timeout: float) -> dict:
     t0 = time.perf_counter(); proc.start(); proc.join(timeout)
     if proc.is_alive():
         proc.kill(); proc.join()
-        out = {"status": "timeout", "wall_seconds": time.perf_counter() - t0}
+        # ``limit_seconds``: a larger timeout later runs this configuration again (``limits.stands``)
+        out = {"status": "timeout", "wall_seconds": time.perf_counter() - t0, "limit_seconds": float(timeout)}
     else:
         try:
             with open(path, "rb") as fh:
@@ -370,7 +375,9 @@ def evaluate_many(spec: str, cfgs: list[dict], *, timeout: float, objective: str
     todo: dict[str, dict] = {}
     for cfg in cfgs:
         key = cfg_key(spec, cfg)
-        if key not in CACHE and key not in todo:
+        # A run stopped at a timeout answers only under a timeout no larger than that one: one detector run each
+        known = key in CACHE and limits.stands(CACHE[key], timeout, default=DEFAULT_TIMEOUT)
+        if not known and key not in todo:
             todo[key] = cfg
     if todo:
         load_instance(spec)  # in this process, before any fork, so the workers share it
@@ -731,7 +738,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--delta", type=float, default=0.002, help="score tolerance of the cap search, snap and gallop stop")
     ap.add_argument("--tol-u", type=float, default=0.1, help="width of the final golden-section bracket in log gamma")
     ap.add_argument("--max-evals", type=int, default=14, help="evaluations of one resolution search at most")
-    ap.add_argument("--timeout", type=float, default=1800, help="seconds before a detector run is killed")
+    ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
+                    help="seconds before one detector run is killed (each run on its own, never a search's total)")
     ap.add_argument("--bracket", help="lo,hi absolute gamma bracket of the first scan (default rho_in/32, rho_in)")
     ap.add_argument("--gamma", type=float, help="probe mode: the resolution")
     ap.add_argument("--gammas", help="grid mode: comma-separated resolutions (fractions allowed)")

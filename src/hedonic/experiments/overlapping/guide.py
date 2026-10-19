@@ -160,6 +160,17 @@ TOPICS: dict[str, tuple[str, str]] = {
         An item can be a whole queue: `run = ["queue", "overlap"]` (a shipped name or a file, optionally with
         "--root", DIR). It starts that queue, waits until it completes and goes on, so `hedonic run queue all` runs
         the overlap paper's queue and then the disjoint paper's. The tree shows the inner queue's runs under it.
+
+        Time limits, in the queue file (or `hedonic run queue FILE --timeout 2h --max-eta 6h`):
+            [limits]                       every item of this queue and of the queues it runs
+            timeout = "2h"                 a single run still going after 2 hours is stopped (recorded as a timeout)
+            max_eta = "6h"                 a pair whose single run is estimated over 6 hours is skipped
+            limits = { timeout = "30m" }   under an [[items]] entry: that item only ("none" removes a limit)
+        Both are about one run (a detector run, a calibration probe, a start-quality condition), never a total: a
+        calibration whose thirty probes each finish inside the limit is never stopped because together they take
+        longer. A limit never changes what a record is: a run it stopped runs again under a larger limit or none.
+        The spectrum keeps its own per-run timeout (part of each condition's identity); --dry-run shows, per run,
+        what one run is and where a limit does not apply.
     """),
     "config": ("Your settings (`hedonic config`)", """
         hedonic config                                show ~/.config/hedonic/config.toml

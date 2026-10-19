@@ -27,6 +27,16 @@
 # (Ego-Splitting, ANGEL, the longest). Each has its own calibration folder (a fixed method's is its recorded published
 # setting) that adopts the searches baseline-calibration-rc1 finished, and every benchmark item writes into the one
 # `benchmark` folder, so a unit already on disk with the same settings is reused.
+#
+# Time limits, each about a single run (a detector run, a calibration probe, a start-quality condition), never a total:
+#
+#   [limits]
+#   timeout = "2h"     # a single run still going after 2 hours is stopped and recorded as a timeout
+#   max_eta = "6h"     # a pair whose single run is estimated over 6 hours is skipped
+#
+# An [[items]] entry may set its own `limits = { timeout = "30m" }` ("none" removes one); `hedonic run queue NAME
+# --timeout 2h --max-eta 6h` sets them from the command line, under the file's. A limit never changes a record's
+# identity: a run it stopped runs again once the limit is larger or gone.
 
 name = "overlap-queue"
 schedule = "file"

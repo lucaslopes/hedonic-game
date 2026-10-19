@@ -64,12 +64,13 @@ from typing import Any, Callable, Sequence
 import igraph as ig
 
 from hedonic.experiments.config import codeseg_cache_dir
-from hedonic.experiments.overlapping import replication
+from hedonic.experiments.overlapping import limits, replication
 
 PROTOCOL = "baseline-calibration-v1"
 CRITERION = "heldout-pair-loglik-v1"
 HOLDOUT_FRACTION = 0.2
 HOLDOUT_MAX_PAIRS = 200_000  # positives plus negatives; keeps the scorer cheap on the large graphs
+DEFAULT_EVAL_TIMEOUT = 3600.0  # seconds one evaluation's detector run may take (``--eval-timeout-minutes`` 60)
 
 # Pre-registered grids (fixed before any calibration run; a change is a protocol change, record why).
 CLIQUE_SIZES = (3, 4, 5, 6)
@@ -116,7 +117,7 @@ class Budget:
     """Evaluations and single-core seconds a calibration may spend (None = no cap on that axis)."""
     max_evals: int | None = 8
     max_seconds: float | None = None
-    eval_timeout: float | None = 3600.0
+    eval_timeout: float | None = DEFAULT_EVAL_TIMEOUT
 
 
 @dataclass
@@ -401,6 +402,8 @@ def _run_replica(ctx: Context, method: str, params: dict[str, Any], replica: int
     else:
         rec["reason"] = out.get("reason")
         rec["score_seconds"] = 0.0
+        if out["status"] == "timeout" and b.eval_timeout:
+            rec["limit_seconds"] = float(b.eval_timeout)
     ctx.seconds += rec["detect_seconds"] + rec["score_seconds"]
     if path is not None:
         with path.open("a") as fh:
@@ -439,7 +442,8 @@ def evaluate(ctx: Context, method: str, params: dict[str, Any]) -> dict[str, Any
     fresh = False
     for replica in range(count):
         key = _key(ctx, method, params, replica)
-        if key in known:
+        # a run stopped at a timeout answers only under a timeout no larger than that one (one evaluation each)
+        if key in known and limits.stands(known[key], ctx.budget.eval_timeout, default=DEFAULT_EVAL_TIMEOUT):
             recs[replica] = known[key]
             continue
         if not fresh:

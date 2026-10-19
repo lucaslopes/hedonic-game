@@ -51,6 +51,7 @@ from typing import Any, Callable
 from hedonic.experiments import runtime
 from hedonic.experiments.config import RUNS_ROOT, expand_path
 from hedonic.experiments.resources import config_path as resolve_config
+from hedonic.experiments.overlapping import limits
 from hedonic.experiments.overlapping import gt_spectrum as gs
 from hedonic.experiments.overlapping import ground_truth_robustness as v3
 from hedonic.experiments.overlapping import parallel
@@ -265,6 +266,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workers", type=int, metavar="N",
                         help="conditions run side by side in forked workers (default: the performance cores, or "
                              "HEDONIC_WORKERS); 1 runs them one at a time in this process")
+    parser.add_argument("--limit-seconds", type=float, metavar="S",
+                        help="a queue's time limit for one condition's detector run: a run still going after S seconds is "
+                             "stopped and recorded as a timeout (rerun under a larger limit or none)")
     parser.add_argument("--dry-run", action="store_true", help="print the plan; load no graph and write nothing")
     parser.add_argument("--overwrite", action="store_true",
                         help="delete this study's records first (a plain rerun resumes instead)")
@@ -293,6 +297,8 @@ def resolve(argv: list[str]) -> dict[str, Any]:
     levels = parse_levels(args.levels or ",".join(DEFAULT_LEVELS))
     if args.workers is not None and args.workers < 1:
         raise ValueError("--workers must be at least 1")
+    if args.limit_seconds is not None and not args.limit_seconds > 0:
+        raise ValueError("--limit-seconds must be a positive number of seconds")
     return {
         "config": str(resolve_config(config).resolve()) if config else None,
         "phase": phase,
@@ -303,6 +309,7 @@ def resolve(argv: list[str]) -> dict[str, Any]:
         "tuned": ",".join(tuned_paths) or None,
         "settings": {network: with_cap(tuned_setting(network, phase, calibrated), args.cap) for network in networks},
         "workers": parallel.default_workers(args.workers),
+        "limit": args.limit_seconds,
         "dry_run": bool(args.dry_run),
         "overwrite": bool(args.overwrite),
     }
@@ -531,7 +538,7 @@ def score(cover: list[list[int]], reference: list[list[int]], n_vertices: int) -
 
 
 def run_condition(job: Any, setting: dict[str, Any], level: float | str, seed: int, key: str,
-                  phase: str) -> dict[str, Any]:
+                  phase: str, limit: float | None = None) -> dict[str, Any]:
     graph = job.graph
     n = graph.vcount()
     cap, gamma = setting_cap(job, setting), float(setting["gamma"])
@@ -551,8 +558,16 @@ def run_condition(job: Any, setting: dict[str, Any], level: float | str, seed: i
         requested, perturbation_seed = float(level), SWAP_SEED_BASE + seed
     start_f1, start_onmi = score(start_cover, job.gt_cover, n)
     started = time.monotonic()
-    # allow_isolation is True, as in the calibrated rows (methods._hedonic_local).
-    outcome = v3._detector_worker(graph, contiguous_labels(start_memberships), cap, gamma, phase, True, seed)
+    # allow_isolation is True, as in the calibrated rows (methods._hedonic_local). ``limit`` bounds this one detector run.
+    try:
+        with limits.wall_clock(limit):
+            outcome = v3._detector_worker(graph, contiguous_labels(start_memberships), cap, gamma, phase, True, seed)
+    except limits.RunLimitReached as exc:
+        return {"study": STUDY, "schema_version": SCHEMA_VERSION, "key": key, "phase": phase, "network": job.dataset,
+                "cover": job.cover, "level": label_of(level), "level_kind": "random" if level == "random" else "swap",
+                "detector_seed": seed, "start_symmetric_f1": start_f1, "start_onmi": start_onmi, "cap": cap,
+                "gamma": gamma, "n_vertices": n, "n_edges": graph.ecount(), "code": code_identity(),
+                **limits.timed_out(exc.seconds, started)}
     seconds = time.monotonic() - started
     final_raw = v3._normalize_raw_memberships(outcome["final_memberships"], n, cap if cap >= 1 else n)
     final_cover = rb.canonicalize_cover(rb.vertex_memberships_to_cover(final_raw), n)
@@ -593,9 +608,12 @@ def run_condition(job: Any, setting: dict[str, Any], level: float | str, seed: i
 
 
 # --------------------------------------------------------------------------- records
-def read_records(path: Path) -> dict[str, dict[str, Any]]:
+def read_records(path: Path, limit: float | None = None) -> dict[str, dict[str, Any]]:
     """Valid records by resume key (a torn or corrupt line is skipped; the first record of a key wins). A record without
-    a phase field was written before the phase option (1.x), so it is HOC-multilevel."""
+    a phase field was written before the phase option (1.x), so it is HOC-multilevel.
+
+    A condition a time limit stopped counts only under a ``limit`` no larger than that one (``limits.stands``); the
+    latest record of a key wins over a stopped one, so a rerun under a larger limit replaces it."""
     records: dict[str, dict[str, Any]] = {}
     if not path.is_file():
         return records
@@ -608,8 +626,15 @@ def read_records(path: Path) -> dict[str, dict[str, Any]]:
             continue
         if isinstance(record, dict) and isinstance(record.get("key"), str):
             phase = str(record.setdefault("phase", LEGACY_PHASE))
-            records.setdefault(resume_key(record["key"], phase), record)
-    return records
+            key = resume_key(record["key"], phase)
+            if key not in records or records[key].get("status") == limits.TIMEOUT_STATUS:
+                records[key] = record
+    return {key: record for key, record in records.items() if limits.stands(record, limit)}
+
+
+def completed(record: dict[str, Any]) -> bool:
+    """A condition whose detector run finished (not one a time limit stopped)."""
+    return record.get("status", "completed") == "completed"
 
 
 def repair_tail(path: Path) -> None:
@@ -641,7 +666,7 @@ def write_summary(path: Path, todo: list[dict[str, Any]], records: dict[str, dic
     """Mean and sample standard deviation over seeds for each (network, level), from the current plan's records."""
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for condition in todo:
-        if condition["key"] in records:
+        if condition["key"] in records and completed(records[condition["key"]]):
             groups.setdefault((condition["network"], label_of(condition["level"])), []).append(records[condition["key"]])
     rows = []
     for (network, level), group in groups.items():
@@ -687,6 +712,9 @@ def load_network_job(target: str) -> Any:
 
 
 def progress_line(done: int, total: int, record: dict[str, Any]) -> str:
+    if not completed(record):
+        return (f"[{done}/{total}] {record['network']} level={record['level']} seed={record['detector_seed']} "
+                f"seconds={record['seconds']:.2f} {record['status']}: {record.get('reason', '')}")
     return (f"[{done}/{total}] {record['network']} level={record['level']} seed={record['detector_seed']} "
             f"seconds={record['seconds']:.2f} start_f1={record['start_symmetric_f1']:.4f} "
             f"final_f1={record['final_symmetric_f1']:.4f}")
@@ -702,7 +730,7 @@ def run_study(plan: dict[str, Any], *, loader: Callable[[str], Any] = load_netwo
         for name in (RESULTS_NAME, SUMMARY_NAME):
             (out / name).unlink(missing_ok=True)
     repair_tail(results)
-    records = read_records(results)
+    records = read_records(results, plan.get("limit"))
     todo = conditions(plan)
     count = sum(1 for condition in todo if condition["key"] in records)
     emit(f"start-quality: {len(todo)} conditions; {count} already in {results}; {len(todo) - count} to run")
@@ -717,7 +745,8 @@ def run_study(plan: dict[str, Any], *, loader: Callable[[str], Any] = load_netwo
         job.start(cap if cap >= 1 else None)  # the cap projection is cached on the job: computed once here, not once per worker
 
         def task(condition: dict[str, Any], job: Any = job, setting: dict[str, Any] = setting) -> dict[str, Any]:
-            return run_condition(job, setting, condition["level"], condition["seed"], condition["key"], plan["phase"])
+            return run_condition(job, setting, condition["level"], condition["seed"], condition["key"], plan["phase"],
+                                 plan.get("limit"))
 
         for index, record in parallel.run_forked(task, pending, workers):
             record["workers"] = workers  # how many conditions shared the machine with this one
@@ -732,7 +761,7 @@ def run_study(plan: dict[str, Any], *, loader: Callable[[str], Any] = load_netwo
 
 def plan_lines(plan: dict[str, Any]) -> list[str]:
     todo = conditions(plan)
-    present = sum(1 for condition in todo if condition["key"] in read_records(plan["output"] / RESULTS_NAME))
+    present = sum(1 for condition in todo if condition["key"] in read_records(plan["output"] / RESULTS_NAME, plan.get("limit")))
     levels = ", ".join(label_of(level) for level in plan["levels"])
     phase = plan["phase"]
     lines = [
@@ -747,6 +776,8 @@ def plan_lines(plan: dict[str, Any]) -> list[str]:
         f"  workers  {plan.get('workers', 1)} conditions side by side"
         + (" (seconds is the detector's wall-clock with that many running together)" if plan.get("workers", 1) > 1 else ""),
     ]
+    if plan.get("limit") is not None:
+        lines.append(f"  limit    {limits.fmt(plan['limit'])} per condition's detector run (a run past it is a timeout)")
     for network in plan["networks"]:
         setting = plan["settings"][network]
         lines.append(f"  {network:<18} cap {setting['cap']} · gamma {setting['gamma']:.6g} ({setting['source']})")
@@ -795,6 +826,8 @@ def _front_parser() -> argparse.ArgumentParser:
                              "number of reference communities on one vertex: the experiment leverages the ground truth)")
     parser.add_argument("--workers", type=int, metavar="N",
                         help="conditions run side by side (default: the performance cores, or HEDONIC_WORKERS)")
+    parser.add_argument("--limit-seconds", type=float, metavar="S",
+                        help="a queue's time limit for one condition's detector run (a run past it is a timeout)")
     parser.add_argument("--name", help="run name (default: the config file's name)")
     parser.add_argument("--output-dir", help="run folder, which holds the records (default: the config's output, "
                                              "else <output_dir>/<name>)")
@@ -822,6 +855,8 @@ def front_plan(args: argparse.Namespace) -> dict[str, Any]:
         study += ["--cap", args.cap]
     if args.workers is not None:
         study += ["--workers", str(args.workers)]
+    if args.limit_seconds is not None:
+        study += ["--limit-seconds", f"{args.limit_seconds:g}"]
     if args.output_dir:
         study += ["--output", str(expand_path(args.output_dir).resolve())]
     elif "output" not in config_defaults(str(config)):  # a named run: <output_dir>/<name>
@@ -843,7 +878,8 @@ def launch_argv(plan: dict[str, Any]) -> list[str]:
     return ["--networks", ",".join(plan["networks"]), "--phase", plan["phase"],
             "--seeds", ",".join(map(str, plan["seeds"])), "--levels", ",".join(token_of(level) for level in plan["levels"]),
             "--output", str(plan["output"]), "--workers", str(plan.get("workers", 1))] + (["--tuned", plan["tuned"]] if plan.get("tuned") else []) + (
-        ["--cap", REFERENCE_CAP] if any(s["cap"] == REFERENCE_CAP for s in plan["settings"].values()) else [])
+        ["--cap", REFERENCE_CAP] if any(s["cap"] == REFERENCE_CAP for s in plan["settings"].values()) else []) + (
+        ["--limit-seconds", f"{plan['limit']:g}"] if plan.get("limit") is not None else [])
 
 
 def describe(plan: dict[str, Any]) -> str:
@@ -906,7 +942,7 @@ def work(name: str, entry: dict[str, Any], prog: dict[str, Any]) -> int:
     plan = resolve(entry["argv"])
     todo = conditions(plan)
     results = plan["output"] / RESULTS_NAME
-    already = sum(1 for condition in todo if condition["key"] in read_records(results))
+    already = sum(1 for condition in todo if condition["key"] in read_records(results, plan.get("limit")))
     ppath = rm.progress_path(entry)
     prog.update({"name": name, "kind": "startcurve", "status": "setup", "pid": os.getpid(), "started": time.time(),
                  "updated": time.time(), "describe": describe(plan), "command": entry["command"],

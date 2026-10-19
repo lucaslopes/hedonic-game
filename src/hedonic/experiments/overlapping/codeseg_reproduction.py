@@ -62,6 +62,7 @@ from hedonic.experiments import runtime
 from hedonic.experiments.config import NETWORKS_DIR, OVERLAPPING_ARTIFACTS_DIR, expand_path
 from hedonic.experiments.leiden import seeded_igraph_rng
 from hedonic.experiments import timing
+from hedonic.experiments.overlapping import limits
 from hedonic.experiments.overlapping.cdlib_env import (
     MethodUnavailable,
     run_slpa,
@@ -1910,9 +1911,14 @@ def _run_dataset(
     compute_omega: bool = True,
     omega_sample_size: int = 100_000,
     save_covers: bool = False,
+    limit_seconds: float | None = None,
 ) -> list[dict[str, Any]]:
     ground_truth, gt_nodes, gt_report = _cover_for_paper_metrics(dataset)
     records: list[dict[str, Any]] = []
+    # A queue's time limit (``--limit-seconds``) lowers the per-run timeout of this one detector run; it is not part of
+    # the config digest. It binds only when it is below the run's own timeout, and a run it stops is a ``timeout``.
+    run_timeout = limits.effective(timeout_seconds, limit_seconds)
+    binding = limit_seconds is not None and run_timeout == limit_seconds and run_timeout != timeout_seconds
     for name in methods:
         run_path = output_dir / "runs" / dataset.name / f"{name}.json"
         if resume and run_path.is_file():
@@ -1923,7 +1929,8 @@ def _run_dataset(
             if (
                 isinstance(cached, dict)
                 and cached.get("config_digest") == config_digest
-                and cached.get("status") in {"completed", "unavailable", "failed"}
+                and (cached.get("status") in {"completed", "unavailable", "failed"}
+                     or (cached.get("status") == limits.TIMEOUT_STATUS and limits.stands(cached, limit_seconds)))
                 and (not save_covers or cached.get("status") != "completed" or _cover_on_disk(cached, output_dir))
             ):
                 records.append(cached)
@@ -1931,8 +1938,8 @@ def _run_dataset(
                 continue
         parameters = dict(method_parameters.get(name, {}))
         parameters["dataset"] = dataset.name
-        if timeout_seconds is not None:
-            parameters["timeout_seconds"] = float(timeout_seconds)
+        if run_timeout is not None:
+            parameters["timeout_seconds"] = float(run_timeout)
         unit_started = time.perf_counter()  # the whole unit, scoring and saving included: ``unit_seconds``
         record: dict[str, Any] = {
             "protocol_version": PROTOCOL_VERSION,
@@ -1952,7 +1959,8 @@ def _run_dataset(
         try:
             # The detector clock runs inside the adapters (``timing``), around the detector's own computation only.
             # Everything below it (validation, canonicalisation, scoring, saving the cover) comes after it stopped.
-            with timing.detector_run() as clock:
+            in_process = name in HEDONIC_IN_PROCESS or name in IGRAPH_IN_PROCESS
+            with timing.detector_run() as clock, limits.wall_clock(limit_seconds if binding and in_process else None):
                 cover, detector_metadata = _run_method(
                     name, dataset.graph, ground_truth, int(seed), parameters
                 )
@@ -2004,6 +2012,8 @@ def _run_dataset(
                     "scored_ground_truth_node_count": len(gt_nodes),
                 }
             )
+        except limits.RunLimitReached as exc:  # the in-process detector, interrupted at the queue's limit
+            record.update(limits.timed_out(exc.seconds))
         except MethodUnavailable as exc:
             reason = str(exc)
             lowered_reason = reason.lower()
@@ -2023,6 +2033,9 @@ def _run_dataset(
                     "reason": reason,
                 }
             )
+            if binding and "timed out" in lowered_reason:  # the program outlived the queue's limit, not its own timeout
+                record.update(limits.timed_out(float(limit_seconds)), reason=f"{reason} (the queue's limit of "
+                              f"{limits.fmt(limit_seconds)} for one run)")
         except Exception as exc:  # preserve the failure in the resumable ledger
             record.update(
                 {
@@ -2218,6 +2231,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-nodes", type=int, default=None, help="GT-informed induced-subgraph bound for local tests")
     parser.add_argument("--timeout", type=float, default=None, help="per-detector wall-clock timeout in seconds")
+    parser.add_argument("--limit-seconds", type=float, default=None,
+                        help="a queue's time limit for one detector run: lowers --timeout for this run without changing "
+                             "the record's identity; a run it stops is recorded as a timeout and reruns under a larger limit")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--preflight", action="store_true", help="load/report data and dependencies without running detectors")
     parser.add_argument(
@@ -2465,6 +2481,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--max-nodes must be positive")
     if args.timeout is not None and args.timeout <= 0:
         parser.error("--timeout must be positive")
+    if args.limit_seconds is not None and args.limit_seconds <= 0:
+        parser.error("--limit-seconds must be positive")
     if args.smoke_nodes < 6:
         parser.error("--smoke-nodes must be at least 6")
     if args.omega_sample_size <= 0:
@@ -2640,6 +2658,7 @@ def main(argv: list[str] | None = None) -> int:
                 compute_omega=bool(args.compute_omega),
                 omega_sample_size=int(args.omega_sample_size),
                 save_covers=bool(args.save_covers),
+                limit_seconds=args.limit_seconds,
             )
         )
     manifest = {

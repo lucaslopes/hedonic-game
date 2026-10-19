@@ -321,6 +321,29 @@ hedonic-exp list                       # analysis and utility commands
   items), is complete when every inner item is (`_queue_state`), adds the inner
   requirements to the setup check, and the tree hangs the inner tree under it
   (keys prefixed `("in", NAME)`). A queue that contains itself is refused.
+- **Time limits are per single run** (`limits.py`, `queuelimits.py`). A queue
+  file's `[limits]` (`timeout`, `max_eta`: seconds or `"90s"`, `"30m"`,
+  `"2h"`, `"1h30m"`; `"none"` removes one) and an item's `limits = {...}`
+  override the limits inherited from `hedonic run queue --timeout/--max-eta`
+  or from the queue that runs this one (passed down as those flags). The
+  item's row keeps its merged `limits`. `timeout` reaches the runner as
+  `--limit-seconds`, which only lowers its own per-run timeout and is never
+  part of an identity: the benchmark's detector run (`codeseg_reproduction`,
+  a timer around an in-process detector, the program's own timeout
+  otherwise), one probe of `calibration_search` (a forked child), one
+  evaluation of `baseline_calibration` and one start-quality condition. A run
+  it stopped is `status: "timeout"` with `limit_seconds` and stands only under
+  a limit no larger (`limits.stands`; `unit_integrity.final`). Never measure a
+  limit against a sum of runs: a calibration of thirty short probes is thirty
+  runs. The spectrum's `timeout_seconds` is in every condition key, so it is
+  not lowered (said in `--dry-run`); `controlled`, `disjoint`, `posthoc` and
+  `audit` take no limit. `max_eta` is judged by the worker at an item's (or a
+  pair's) turn from `queuelimits.estimates`: one run per pair, measured on the
+  pair, else the same runs on other pairs scaled by edges, else the method's
+  planning constant, bounded by the run's timeout; a pair with no estimate is
+  never skipped. A skipped benchmark, start-quality or spectrum pair leaves
+  `--networks`/`--pairs`, a skipped baseline-calibration pair moves to
+  `--transfer`; the Hedonic calibration is never skipped on an estimate.
 - **The overlap queue goes method by method, in two phases** (`schedule =
   "file"`). Phase 1 is DBLP, Amazon and YouTube (`pairs`, each network's
   `top5000` and `all` covers together): Hedonic first (`synthetic-hedonic`,

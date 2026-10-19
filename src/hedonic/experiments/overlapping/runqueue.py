@@ -55,7 +55,9 @@ import time
 import tomllib
 from pathlib import Path
 
+from hedonic.experiments.overlapping import limits as lim
 from hedonic.experiments.overlapping import queuebuild as qb
+from hedonic.experiments.overlapping import queuelimits as ql
 from hedonic.experiments.overlapping import queuemodel as qm
 from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.overlapping import runmanager as rm
@@ -336,11 +338,16 @@ def default_disjoint_root(name: str) -> Path:
     return (Path(os.path.expanduser(str(base))) if base else Path(config.DISJOINT_RUNS_ROOT)) / name
 
 
-def load_queue(path: str, root: str | Path | None = None, _within: tuple[str, ...] = ()) -> dict:
+def load_queue(path: str, root: str | Path | None = None, _within: tuple[str, ...] = (),
+               inherited: dict | None = None) -> dict:
     """Read and check a queue file; every problem is reported before anything starts.
 
     ``{root}`` in an item's arguments becomes ``root`` (default :func:`default_root`), made absolute. An item whose
-    run is ``["queue", FILE|NAME, ("--root", DIR)]`` is a whole queue (see :func:`_queue_item`)."""
+    run is ``["queue", FILE|NAME, ("--root", DIR)]`` is a whole queue (see :func:`_queue_item`).
+
+    Time limits (``limits``): ``inherited`` (the limits of the queue that runs this one, or ``--timeout``/``--max-eta``),
+    then the file's ``[limits]``, then each item's ``limits``, each overriding the one before. An item's limits are stored
+    on its row (``limits``) and its ``timeout`` is passed to its runner (``queuelimits.apply``)."""
     file = queue_file(path)
     path = str(file)
     if str(file.resolve()) in _within:
@@ -350,6 +357,7 @@ def load_queue(path: str, root: str | Path | None = None, _within: tuple[str, ..
         name = qs.parse_name(str(data.get("name") or file.stem))
     except ValueError as exc:
         raise SystemExit(f"{path}: {exc}") from None
+    queue_limits = lim.merge(inherited or {}, lim.parse(data.get("limits"), f"{path}: [limits]"))
     disjoint_only = bool(data.get("items")) and all(
         (item.get("run") or [""])[0] == "disjoint" for item in data.get("items") or [])
     if root:
@@ -374,9 +382,10 @@ def load_queue(path: str, root: str | Path | None = None, _within: tuple[str, ..
         run = item.get("run")
         if not isinstance(run, list) or not run or not all(isinstance(arg, str) for arg in run):
             raise SystemExit(f"{path}: item {number} needs run = [\"VERB\", ...], for example run = [\"spectrum\"]")
+        mine = lim.merge(queue_limits, lim.parse(item.get("limits"), f"{path}: item {number}: limits"))
         if run[0] == "queue":
             row = _queue_item(path, number, item, [arg.replace("{root}", str(root_dir)) for arg in run],
-                              (*_within, str(file.resolve())))
+                              (*_within, str(file.resolve())), mine)
             if row["name"] in seen or row["name"] == name:
                 raise SystemExit(f"{path}: the run name {row['name']!r} is used more than once")
             seen.add(row["name"])
@@ -388,7 +397,7 @@ def load_queue(path: str, root: str | Path | None = None, _within: tuple[str, ..
             raise SystemExit(f"{path}: item {number}: {exc}") from None
         if item_name in seen or item_name == name:
             raise SystemExit(f"{path}: the run name {item_name!r} is used more than once")
-        run = _absolute_config([arg.replace("{root}", str(root_dir)) for arg in run])
+        run = ql.apply(_absolute_config([arg.replace("{root}", str(root_dir)) for arg in run]), mine)
         given = _option(run, "--name")
         if given is not None and given != item_name:
             raise SystemExit(f"{path}: item {item_name!r} runs as {given!r}; its --name must be the item's own name")
@@ -404,6 +413,8 @@ def load_queue(path: str, root: str | Path | None = None, _within: tuple[str, ..
         seen.add(item_name)
         row = {"name": item_name, "run": run,
                **{key: str(item[key]) for key in ("title", "about", "short", "note") if item.get(key)}}
+        if mine:
+            row["limits"] = mine
         after = item.get("after") or []
         if not isinstance(after, list) or not all(isinstance(a, str) for a in after):
             raise SystemExit(f"{path}: item {item_name!r}: after must be a list of earlier item names")
@@ -424,27 +435,39 @@ def load_queue(path: str, root: str | Path | None = None, _within: tuple[str, ..
     if plan not in SCHEDULES:
         raise SystemExit(f"{path}: schedule must be one of {', '.join(SCHEDULES)}, not {plan!r}")
     return {"name": name, "items": items, "file": str(file.resolve()), "root": str(root_dir), "schedule": plan,
-            **({"pairs": pairs} if pairs else {})}
+            **({"pairs": pairs} if pairs else {}), **({"limits": queue_limits} if queue_limits else {})}
 
 
-def _queue_item(path: str, number: int, item: dict, run: list[str], within: tuple[str, ...]) -> dict:
+def _queue_item(path: str, number: int, item: dict, run: list[str], within: tuple[str, ...],
+                limits: dict | None = None) -> dict:
     """A queue item that is a whole queue: ``run = ["queue", FILE|NAME, ("--root", DIR), (other flags)]``.
 
     The inner queue is read and checked now, with everything it contains. The item runs under the inner queue's own
     name (its registry entry), so that is the item's name; ``name`` may be omitted, and must equal it when given. The
-    stored run names the inner file absolutely and its root, so a resume from anywhere starts the same queue."""
+    stored run names the inner file absolutely and its root, so a resume from anywhere starts the same queue. The item's
+    limits are the inner queue's inherited ones, passed on its command line (``--timeout``, ``--max-eta``)."""
     if len(run) < 2 or run[1].startswith("-"):
         raise SystemExit(f"{path}: item {number}: run = [\"queue\", FILE|NAME, ...] needs the queue to run")
     rest = run[2:]
     given = _option(rest, "--root")
-    inner = load_queue(run[1], root=given, _within=within)
+    for flag in ("--timeout", "--max-eta"):  # limits on the item's own command line come before the item's limits table
+        if _option(rest, flag) is not None:
+            key = flag.removeprefix("--").replace("-", "_")
+            try:
+                limits = {**(limits or {}), key: lim.parse_duration(_option(rest, flag))}
+            except ValueError as exc:
+                raise SystemExit(f"{path}: item {number}: {flag}: {exc}") from None
+            rest = _without_option(rest, flag)
+    limits = lim.merge(limits or {})
+    inner = load_queue(run[1], root=given, _within=within, inherited=limits)
     name = inner["name"]
     if item.get("name") and str(item["name"]) != name:
         raise SystemExit(f"{path}: item {number} runs the queue {name!r}; its name must be that name (or be omitted)")
     if item.get("by_pair") or item.get("after"):
         raise SystemExit(f"{path}: item {name!r} is a queue: it takes no by_pair or after (items run in file order)")
     rest = _with_option(rest, "--root", inner["root"])
-    return {"name": name, "run": ["queue", inner["file"], *rest], "queue": inner,
+    return {"name": name, "run": ql.apply(["queue", inner["file"], *rest], limits), "queue": inner,
+            **({"limits": limits} if limits else {}),
             **{key: str(item[key]) for key in ("title", "about", "short", "note") if item.get(key)}}
 
 
@@ -967,7 +990,7 @@ def _startcurve_state(args: list[str]) -> tuple[str, str]:
     from hedonic.experiments.overlapping import start_quality as sq
 
     plan = sq.front_study(args)
-    records = sq.read_records(Path(plan["output"]) / sq.RESULTS_NAME)
+    records = sq.read_records(Path(plan["output"]) / sq.RESULTS_NAME, plan.get("limit"))
     keys = [condition["key"] for condition in sq.conditions(plan)]
     done = sum(key in records for key in keys)
     cells: dict[tuple[str, float], list[bool]] = {}
@@ -1192,9 +1215,18 @@ def _data_state(run: list[str], fresh: bool = False) -> tuple[str, str]:
     return "unknown", ""  # no data check for this kind: the registry decides
 
 
+def _run_limits(run: list[str]) -> dict:
+    """The limits a queue item's command line passes to the queue it runs (``--timeout``, ``--max-eta``)."""
+    out = {}
+    for flag, key in (("--timeout", "timeout"), ("--max-eta", "max_eta")):
+        if _option(run, flag) is not None:
+            out[key] = lim.parse_duration(_option(run, flag))
+    return out
+
+
 def inner_queue(run: list[str]) -> dict:
     """The queue a ``["queue", FILE, "--root", DIR]`` item runs, read from its file as a start would read it."""
-    return load_queue(run[1], root=_option(run[2:], "--root"))
+    return load_queue(run[1], root=_option(run[2:], "--root"), inherited=_run_limits(run[2:]))
 
 
 def _queue_state(run: list[str], fresh: bool = False) -> tuple[str, str]:
@@ -1382,6 +1414,25 @@ def _launch_item(name: str, run: list[str], resuming: bool) -> int:
         return 1
 
 
+def _eta_skips(row: dict, run: list[str]) -> tuple[list[str] | None, list[dict]]:
+    """The item's arguments without the pairs whose single run is estimated over its ``max_eta`` (None: nothing left),
+    and those pairs with their estimate. Judged now, from the files as they are at the item's turn."""
+    max_eta = (row.get("limits") or {}).get("max_eta")
+    found = ql.over(run, max_eta)
+    if not found:
+        return run, []
+    skipped = [{"pair": target, "seconds": seconds, "basis": basis} for target, (seconds, basis) in found.items()]
+    for skip in skipped:
+        print(style(f"  skip {row['name']} · {skip['pair']}: one run ~{qm.fmt_seconds(skip['seconds'])} "
+                    f"({skip['basis']}) > max_eta {lim.fmt(max_eta)}", "yellow"), flush=True)
+    return ql.without(run, list(found)), skipped
+
+
+def _skip_note(skipped: list[dict], max_eta: float | None) -> str:
+    pairs = ", ".join(f"{s['pair']} (~{qm.fmt_seconds(s['seconds'])})" for s in skipped)
+    return f"skipped by max_eta {lim.fmt(max_eta)}: {pairs}"
+
+
 def _run_item(row: dict, prog: dict, ppath: Path, launch_item) -> str:
     """Start (or resume) one item and wait until it ends. Returns the item's final status."""
     name = row["name"]
@@ -1401,7 +1452,18 @@ def _run_item(row: dict, prog: dict, ppath: Path, launch_item) -> str:
     else:
         resuming = status in ("stopped", "failed", "interrupted")
         note = "resuming from its finished records" if resuming else "starting"
-        if launch_item(name, row["run"], resuming and entry is not None) != 0:
+        run, skipped = _eta_skips(row, row["run"])
+        if skipped:
+            row["skipped"] = skipped
+            max_eta = (row.get("limits") or {}).get("max_eta")
+            if run is None:
+                row.update(status="completed", note=_skip_note(skipped, max_eta))
+                rm.write_json(ppath, prog)
+                print(style(f"  ✓ {name} — every pair skipped by max_eta", "yellow"), flush=True)
+                return "completed"
+            note = f"{note}, without {', '.join(s['pair'] for s in skipped)} ({_skip_note(skipped, max_eta)})"
+            resuming = False  # a fresh start with the remaining pairs: its runner reuses every record on disk
+        if launch_item(name, run, resuming and entry is not None) != 0:
             row.update(status="failed", note="could not be started")
             rm.write_json(ppath, prog)
             return "failed"
@@ -1459,6 +1521,17 @@ def _run_step(row: dict, step: dict, mark: dict, prog: dict, ppath: Path, launch
         rm.write_json(ppath, prog)
         print(style(f"  ✓ {name} · {pair} finished earlier — skipped", "green"), flush=True)
         return "completed"
+    run, skipped = _eta_skips(row, run)
+    if skipped:
+        max_eta = (row.get("limits") or {}).get("max_eta")
+        row.setdefault("skipped", [])
+        row["skipped"] += [s for s in skipped if s not in row["skipped"]]
+        if run is None or any(pair_id(s["pair"]) == pair for s in skipped):
+            mark.update(status="completed", note=_skip_note([s for s in skipped if pair_id(s["pair"]) == pair] or skipped,
+                                                            max_eta))
+            rm.write_json(ppath, prog)
+            print(style(f"  ✓ {name} · {pair} skipped by max_eta", "yellow"), flush=True)
+            return "completed"
     if launch_item(name, run, False) != 0:
         row.update(status="failed", note=f"could not be started on {pair}")
         mark.update(status="failed", note="could not be started")
@@ -1483,7 +1556,8 @@ def work(name: str, entry: dict, prog: dict, launch_item=_launch_item) -> int:
     by_pair = any(step["pair"] for step in steps)
     prog.update(name=name, kind="queue", status="running", pid=os.getpid(), started=time.time(), updated=time.time(),
                 current=None, pair=None, file=entry.get("file", ""),
-                items=[{"name": i["name"], "run": i["run"], "status": "pending"} for i in entry["items"]],
+                items=[{"name": i["name"], "run": i["run"], "status": "pending",
+                        **({"limits": i["limits"]} if i.get("limits") else {})} for i in entry["items"]],
                 steps=[{"item": s["item"], "pair": s["pair"], "status": "pending"} for s in steps] if by_pair else [])
     rm.write_json(ppath, prog)
     how = (f"{len(entry['items'])} runs, by pair ({len(steps)} steps): the whole block on one pair before the next pair"
@@ -1550,12 +1624,13 @@ def launch(entry: dict, *, backend: str = "auto") -> dict:
     use_tmux = backend == "tmux" or (backend == "auto" and shutil.which("tmux"))
     record = {"name": name, "kind": "queue", "items": entry["items"], "file": entry.get("file", ""),
               "pairs": entry.get("pairs") or [], "root": entry.get("root", ""), "output_dir": output,
-              "schedule": entry.get("schedule") or "file",
+              "schedule": entry.get("schedule") or "file", "limits": entry.get("limits") or {},
               "created": time.time(),
               "session": f"hedonic-{name}" if use_tmux else "", "backend": "tmux" if use_tmux else "process",
               "log": str(Path(output) / "worker.log"),
               "command": f"hedonic run queue {entry.get('file', '')}" + (f" --root {entry['root']}" if entry.get("root") else "")
-              + (" --schedule shortest" if entry.get("schedule") == "shortest" else "")}
+              + (" --schedule shortest" if entry.get("schedule") == "shortest" else "")
+              + "".join(f" --{key.replace('_', '-')} {lim.fmt(value)}" for key, value in (entry.get("limits") or {}).items())}
     return rm._spawn(record)
 
 
@@ -1777,6 +1852,15 @@ def _check_line(item: dict) -> str:
     return text
 
 
+def limit_lines(item: dict) -> list[str]:
+    """The item's time limits as they apply to it (what one run is, or why a limit does not apply), then the pairs the
+    worker skipped on ``max_eta`` with their single-run estimates."""
+    lines = [f"limit: {line}" for line in ql.describe(item["run"], item.get("limits") or {})]
+    for skip in item.get("skipped") or []:
+        lines.append(f"skipped {skip['pair']}: one run ~{qm.fmt_seconds(skip['seconds'])} ({skip['basis']})")
+    return lines
+
+
 def report(items: list[dict], G: dict | None = None, full: bool = False, frame: str | None = None) -> list[str]:
     """Everything the queue has to do, as sections: a run, then its pairs, then what is counted inside each pair.
 
@@ -1803,6 +1887,8 @@ def report(items: list[dict], G: dict | None = None, full: bool = False, frame: 
         if item.get("about"):
             lines += [style(line, "dim") for line in textwrap.wrap(item["about"], width=WIDTH - 5, initial_indent="   ",
                                                                   subsequent_indent="   ")]
+        lines += [style(line, "dim") for text in limit_lines(item) for line in textwrap.wrap(
+            text, width=WIDTH - 5, initial_indent="   ", subsequent_indent="     ")]
         if count is None:
             lines.append("   " + style(shown, colour) + style("  (counted when its turn comes)" if shown == "awaiting" else "", "dim"))
             if _check_line(item):
@@ -1860,7 +1946,7 @@ def report(items: list[dict], G: dict | None = None, full: bool = False, frame: 
 def with_checks(items: list[dict], prog: dict) -> list[dict]:
     """The items with what the queue's two verifications found (kept in the worker's progress rows)."""
     rows = {str(r.get("name")): r for r in prog.get("items") or []}
-    keys = ("first", "first_count", "second", "second_count", "pair")
+    keys = ("first", "first_count", "second", "second_count", "pair", "skipped")
     return [{**{k: rows[i["name"]][k] for k in keys if rows.get(i["name"], {}).get(k)}, **i} for i in items]
 
 
@@ -1938,7 +2024,7 @@ def tree(entry: dict, prog: dict) -> qm.Node:
                 pass
         for line in (_check_line(item), _STALE.get(folder, ""), *_EARLIER.get(folder, []),
                      _PREVIEWED.get(folder, "") if state == "awaiting" else "", item.get("note", ""),
-                     *failure_lines(item["name"])):
+                     *limit_lines(item), *failure_lines(item["name"])):
             if line:
                 node.detail.append(line)
         if item["run"][0] == "queue":
@@ -2221,11 +2307,24 @@ def front_main(argv: list[str]) -> int:
                         help="file: the steps in the file's order (default); shortest: at each turn the ready step with "
                              "the smallest estimate, so short work is not held back by a long run (overrides the "
                              "file's schedule key)")
+    parser.add_argument("--timeout", metavar="DURATION",
+                        help="time limit for one run of every item (e.g. 2h, 30m, 90s): a run still going is stopped; "
+                             "the queue file's [limits] and an item's limits override it")
+    parser.add_argument("--max-eta", metavar="DURATION",
+                        help="skip a pair whose single run is estimated longer than this (e.g. 6h); the queue file's "
+                             "[limits] and an item's limits override it")
     parser.add_argument("--adopt-root", action="store_true",
                         help="write into a --root that already holds runs this hedonic's queues did not start "
                              "(a record certifies only for the build that reads it; others are rerun in place)")
     args = parser.parse_args(argv)
-    queue = load_queue(args.file, root=args.root)
+    given = {}
+    for key, value in (("timeout", args.timeout), ("max_eta", args.max_eta)):
+        if value is not None:
+            try:
+                given[key] = lim.parse_duration(value)
+            except ValueError as exc:
+                parser.error(f"--{key.replace('_', '-')}: {exc}")
+    queue = load_queue(args.file, root=args.root, inherited=lim.merge(given))
     if args.schedule:
         queue["schedule"] = args.schedule
     print(style(f"queue {queue['name']} · {len(queue['items'])} runs", "bold") + style(f" · root {queue['root']}", "dim"))

@@ -33,6 +33,15 @@ from pathlib import Path
 SEAL_DIR = "integrity"
 SCHEMA = 1
 FINAL = ("completed", "unavailable", "failed")
+TIMEOUT = "timeout"  # a run a queue's time limit stopped (``limits``): final only under a limit no larger than that one
+
+
+def final(record: dict, limit: float | None = None) -> bool:
+    """Is this record the unit's answer for a run under the queue's per-run ``limit`` (None: no limit)?"""
+    from hedonic.experiments.overlapping import limits
+
+    status = record.get("status")
+    return status in FINAL or (status == TIMEOUT and limits.stands(record, limit))
 OK_STATES = ("verified", "unsealed")
 
 
@@ -77,15 +86,17 @@ def read_seal(out: Path, network: str, runner: str) -> dict | None:
     return seal if isinstance(seal, dict) else None
 
 
-def check(out: Path, network: str, runner: str, digest: str | None, save_covers: bool) -> Check:
-    """Certify one unit from the files on disk. ``digest`` is the config digest the runner would stamp now."""
+def check(out: Path, network: str, runner: str, digest: str | None, save_covers: bool,
+          limit: float | None = None) -> Check:
+    """Certify one unit from the files on disk. ``digest`` is the config digest the runner would stamp now; ``limit``
+    the queue's per-run time limit, under which a run that limit (or a smaller one) stopped is final."""
     path = record_path(out, network, runner)
     if not path.is_file():
         return Check("missing", "no record")
     record = _read_json(path)
     if not isinstance(record, dict):
         return Check("corrupt", "the record is not readable JSON")
-    if record.get("status") not in FINAL:
+    if not final(record, limit):
         return Check("missing", f"the record is {record.get('status')!r}, not final")
     if digest is not None and record.get("config_digest") != digest:
         return Check("stale", "the record was made with other settings", record)
@@ -135,9 +146,10 @@ def seal(out: Path, network: str, runner: str, *, by: str) -> dict:
     return body
 
 
-def adopt(out: Path, network: str, runner: str, digest: str | None, save_covers: bool) -> Check:
+def adopt(out: Path, network: str, runner: str, digest: str | None, save_covers: bool,
+          limit: float | None = None) -> Check:
     """``check``, and seal a valid unsealed unit after reading its cover through (its bytes are trusted from now on)."""
-    result = check(out, network, runner, digest, save_covers)
+    result = check(out, network, runner, digest, save_covers, limit)
     if result.state != "unsealed":
         return result
     record = result.record or {}

@@ -72,6 +72,9 @@ def build_parser(prog: str = "hedonic run calibrate-baselines") -> argparse.Argu
                         help="single-core minutes per method and pair (0 = no cap)")
     parser.add_argument("--eval-timeout-minutes", type=float, default=60.0, metavar="M",
                         help="one detector run is killed after M minutes and recorded as a failed probe (default 60)")
+    parser.add_argument("--limit-seconds", type=float, default=None, metavar="S",
+                        help="a queue's time limit for one detector run: lowers --eval-timeout-minutes (each evaluation "
+                             "on its own, never a search's total); an evaluation it stopped reruns under a larger limit")
     parser.add_argument("--replicates", type=int, default=bc.DEFAULT_REPLICATES, metavar="R",
                         help="independent runs averaged per setting for the methods whose runs are replicas "
                              f"(BigCLAM, NEO-K-Means, FOX; default {bc.DEFAULT_REPLICATES}; 1 = one run)")
@@ -152,6 +155,8 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate-baselines") -> d
         raise ValueError("nothing to calibrate")
     if args.max_evals < 0 or args.max_minutes < 0 or args.eval_timeout_minutes <= 0:
         raise ValueError("--max-evals and --max-minutes cannot be negative and --eval-timeout-minutes must be positive")
+    if args.limit_seconds is not None and not args.limit_seconds > 0:
+        raise ValueError("--limit-seconds must be a positive number of seconds")
     if args.replicates < 1:
         raise ValueError("--replicates must be at least 1")
     if args.workers is not None and args.workers < 1:
@@ -169,7 +174,7 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate-baselines") -> d
     output = expand_path(args.output_dir).resolve() if args.output_dir else expand_path(root / name).resolve()
     return {"networks": networks, "methods": methods, "network_root": args.network_root, "seed": int(args.seed),
             "max_evals": int(args.max_evals), "max_minutes": float(args.max_minutes),
-            "eval_timeout_minutes": float(args.eval_timeout_minutes), "replicates": int(args.replicates), "workers": args.workers,
+            "eval_timeout_minutes": float(args.eval_timeout_minutes), "limit": args.limit_seconds, "replicates": int(args.replicates), "workers": args.workers,
             "sensitivity": bool(args.sensitivity), "runtime_manifest": args.runtime_manifest,
             "method_budgets": method_budgets, "transfer": transfer, "transfer_missing": bool(args.transfer_missing),
             "adopt_from": adopt, "name": name, "output": output, "overwrite": bool(args.overwrite), "dry_run": bool(args.dry_run)}
@@ -200,8 +205,10 @@ def parse_method_budgets(text: str, methods: list[str]) -> dict[str, tuple[int, 
 
 def budget_of(plan: dict[str, Any], method: str | None = None) -> bc.Budget:
     evals, minutes = (plan.get("method_budgets") or {}).get(method, (plan["max_evals"], plan["max_minutes"]))
+    from hedonic.experiments.overlapping import limits
+
     return bc.Budget(max_evals=evals or None, max_seconds=minutes * 60 or None,
-                     eval_timeout=plan["eval_timeout_minutes"] * 60)
+                     eval_timeout=limits.effective(plan["eval_timeout_minutes"] * 60, plan.get("limit")))
 
 
 def searches(plan: dict[str, Any]) -> list[dict[str, Any]]:
@@ -593,6 +600,8 @@ def launch_argv(plan: dict[str, Any]) -> list[str]:
         argv += ["--network-root", str(plan["network_root"])]
     if plan["runtime_manifest"]:
         argv += ["--runtime-manifest", str(plan["runtime_manifest"])]
+    if plan.get("limit") is not None:
+        argv += ["--limit-seconds", f"{plan['limit']:g}"]
     return argv + (["--sensitivity"] if plan["sensitivity"] else [])
 
 
