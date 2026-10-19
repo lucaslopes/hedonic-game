@@ -240,10 +240,27 @@ class TestFixedAndStructural(Fixture):
         self.assertEqual(r.params, {"clique_size": 6})
         self.assertFalse(r.bracketed)
 
-    def test_angel_grid_is_the_registered_one(self):
+    def test_angel_grid_is_the_registered_one_walked_from_the_largest_phi(self):
         result = bc.calibrate_angel(self.ctx(runner=lambda m, g, p, s: block_cover(g.vcount(), 10)))
-        self.assertEqual([c["params"]["threshold"] for c in result.candidates], list(bc.ANGEL_THRESHOLDS))
+        self.assertEqual([c["params"]["threshold"] for c in result.candidates], sorted(bc.ANGEL_THRESHOLDS, reverse=True))
         self.assertTrue(all(c["params"]["min_community_size"] == 3 for c in result.candidates))
+        self.assertEqual(result.params["threshold"], min(bc.ANGEL_THRESHOLDS))  # equal scores: the smaller phi
+
+    def test_an_angel_setting_stopped_at_the_timeout_ends_the_walk(self):
+        import time
+
+        def runner(method, graph, params, seed):  # a smaller phi merges more and runs longer
+            if params["threshold"] < 0.5:
+                time.sleep(30)
+            return block_cover(graph.vcount(), 10 if params["threshold"] == 0.5 else 5)
+
+        result = bc.calibrate_angel(self.ctx(runner=runner, budget=bc.Budget(max_evals=None, eval_timeout=1.0)))
+        self.assertEqual([(c["params"]["threshold"], c["status"]) for c in result.candidates],
+                         [(0.8, "completed"), (0.66, "completed"), (0.5, "completed"), (0.33, "timeout")])  # 0.2 not tried
+        self.assertTrue(result.stop_reason.startswith("timeout at phi 0.33"))
+        self.assertEqual((result.status, result.params["threshold"]), ("calibrated", 0.5))
+        self.assertFalse(result.bracketed)
+        self.assertIn("did not finish within the evaluation timeout", " ".join(result.notes))
 
 
 class TestOutput(Fixture):

@@ -95,7 +95,7 @@ TOPICS: dict[str, tuple[str, str]] = {
         hedonic run calibrate --networks dblp:top5000 --mode auto   re-tune Hedonic's (gamma, cap); writes hoc_tuned.json
         hedonic run calibrate --networks dblp:top5000 --cap unlimited   the resolution only, no cap (the paper's)
         hedonic run calibrate-baselines --networks PAIRS --methods all   label-free baseline calibration
-            (--method-budget angel=3:60, --transfer PAIRS, --adopt-from DIR: the queue's budget, unsearched pairs
+            (--method-budget angel=5:240, --transfer PAIRS, --adopt-from DIR: the queue's budget, unsearched pairs
             that take the nearest calibrated pair's setting, and searches copied from an earlier calibration)
         hedonic run exp --config paper-benchmark --tuned FILE[,FILE]     the benchmark at the calibrated settings
         hedonic run audit --source RUN          exact robustness of the covers a run saved without --robustness

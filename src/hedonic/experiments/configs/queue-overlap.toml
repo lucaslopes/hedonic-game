@@ -189,7 +189,7 @@ name = "calibration-angel"
 short = "cal-angel"
 title = "ANGEL: calibration (DBLP, Amazon and YouTube)"
 about = "ANGEL on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "angel", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=3:60", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-angel", "--output-dir", "{root}/calibration-angel"]
+run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "angel", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=5:240", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-angel", "--output-dir", "{root}/calibration-angel"]
 
 [[items]]
 name = "benchmark-angel"
@@ -336,7 +336,7 @@ name = "calibration-angel-large"
 short = "cal-angel-L"
 title = "ANGEL: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "ANGEL on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "angel", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=3:60", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-angel-large", "--output-dir", "{root}/calibration-angel-large"]
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "angel", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=5:240", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-angel-large", "--output-dir", "{root}/calibration-angel-large"]
 
 [[items]]
 name = "benchmark-angel-large"

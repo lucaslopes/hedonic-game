@@ -405,8 +405,11 @@ hedonic-exp list                       # analysis and utility commands
   take the authors' setting on every pair (`bc.FIXED_METHODS`): without
   `--sensitivity` their per-pair record is written without loading `G[S]`.
 - **Baseline calibration.** `hedonic run calibrate-baselines` takes
-  `--method-budget M=N[:MIN]` (the overlap queue: ANGEL at 3 settings, 60 min
-  per pair), `--transfer PAIRS` (not searched: each searched method takes the
+  `--method-budget M=N[:MIN]` (the overlap queue: ANGEL at its 5 settings,
+  240 min per pair; its grid is walked from the largest phi down, the cheap
+  end, and a setting stopped at the timeout ends the walk; a search recorded
+  under an earlier rule, `bc.SEARCH_VERSIONS`, is searched again on its
+  ledger), `--transfer PAIRS` (not searched: each searched method takes the
   nearest calibrated pair's setting, same network first, else nearest
   density, K scaled by n for BigCLAM and NEO-K-Means), `--transfer-missing`
   (the same for a search that ended without a setting) and `--adopt-from DIR`

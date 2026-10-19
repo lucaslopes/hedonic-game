@@ -1107,10 +1107,10 @@ def _baselines_state(args: list[str]) -> tuple[str, str]:
 
     plan = br.front_study(args)
     todo = br.searches(plan)
-    own = br.read_tuned(plan).get("searches") or {}
+    own = br.current(br.read_tuned(plan).get("searches") or {})
     adopted: dict[str, dict] = {}
     for source, keys in br.adoptable(plan).items():
-        found = br.read_tuned({"output": Path(source)}).get("searches") or {}
+        found = br.current(br.read_tuned({"output": Path(source)}).get("searches") or {})
         adopted.update({key: {**found[key], "adopted_from": source} for key in keys})
     from hedonic.experiments.overlapping import baseline_calibration as bc
 

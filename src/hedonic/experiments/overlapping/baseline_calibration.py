@@ -77,6 +77,9 @@ CLIQUE_SIZES = (3, 4, 5, 6)
 CLIQUE_GIANT_FRACTION = 0.5
 ANGEL_THRESHOLDS = (0.2, 0.33, 0.5, 0.66, 0.8)  # 0.33 and 0.66 are the authors' examples
 ANGEL_MIN_COMMUNITY_SIZE = 3
+# A method whose search rule changed: a search recorded under another version is searched again (its ledger, keyed by
+# setting, is reused). "descending-v2": ANGEL walks its grid from the largest phi down and stops at a timeout.
+SEARCH_VERSIONS = {"angel": "descending-v2"}
 K_FRACTIONS = (0.02, 0.005, 0.08, 0.01, 0.04, 0.002)  # K / n, in the order they are tried (centre first, then spread)
 K_FACTOR = 2.0  # one extension step when the best K sits on the edge of what was tried
 K_MAX_EXTEND = 2
@@ -661,28 +664,41 @@ def calibrate_angel(ctx: Context, *, thresholds: Sequence[float] = ANGEL_THRESHO
 
     The authors give no universal value (0.33 and 0.66 are illustrations; larger phi merges less). The runner's
     ``threshold = 0.6`` is the benchmark's earlier choice, not an authors' recommendation. The grid is the same for every
-    cover; ``min_community_size`` is fixed at the runner's 3."""
+    cover; ``min_community_size`` is fixed at the runner's 3.
+
+    The grid is walked from the largest phi down: a smaller phi merges more and costs more (on DBLP/top5000, 27 s at 0.6
+    and more than an hour at 0.2), so the cheap settings are scored first, and a setting stopped at the evaluation timeout
+    ends the walk (the smaller ones are not tried)."""
     before = (ctx.evaluations, ctx.seconds)
-    rule = (f"phi in {list(thresholds)} (pre-registered), maximum held-out pair likelihood on G[S]; "
-            f"min_community_size fixed at {min_community_size}; ties go to the first (smaller) phi")
+    rule = (f"phi in {list(thresholds)} (pre-registered), tried from the largest down, the walk ending at the first "
+            f"setting stopped at the evaluation timeout; maximum held-out pair likelihood on G[S]; "
+            f"min_community_size fixed at {min_community_size}; ties go to the smaller phi")
     cands, stop = [], "complete"
     try:
-        for phi in thresholds:
+        for phi in sorted(thresholds, reverse=True):
             cands.append(_candidate(evaluate(ctx, "angel", {"threshold": float(phi),
                                                             "min_community_size": int(min_community_size)})))
             if cands[-1]["status"] == "unavailable":
                 stop = "runtime unavailable"
                 break
+            if cands[-1]["status"] == "timeout":
+                stop = f"timeout at phi {phi:g}: smaller phi not tried"
+                break
     except BudgetExhausted as exc:
         stop = f"budget ({exc})"
-    best = _best(cands)
-    if best is None:
-        return _finish(ctx, before, _all_failed("angel", rule, cands, stop))
     ordered = [c for c in cands if c["status"] == "completed"]
+    if not ordered:
+        return _finish(ctx, before, _all_failed("angel", rule, cands, stop))
+    best = max(ordered, key=lambda c: (c["score"], -c["params"]["threshold"]))
     phis = [c["params"]["threshold"] for c in ordered]
     bracketed = (min(phis) < best["params"]["threshold"] < max(phis)) if len(phis) >= 3 else None
-    notes = ["the optimum is on the edge of the grid; phi is bounded in (0, 1), extend the grid only with a recorded reason"] \
-        if bracketed is False else []
+    notes = []
+    if bracketed is False and stop.startswith("timeout") and best["params"]["threshold"] == min(phis):
+        notes.append(f"the optimum is the smallest phi that finished; the next one down did not finish within the "
+                     f"evaluation timeout ({stop})")
+    elif bracketed is False:
+        notes.append("the optimum is on the edge of the grid; phi is bounded in (0, 1), extend the grid only with a "
+                     "recorded reason")
     return _finish(ctx, before, CalibrationResult(
         "angel", "calibrated", dict(best["params"]), rule, None, criterion=CRITERION, candidates=cands,
         stop_reason=stop, bracketed=bracketed, notes=notes))

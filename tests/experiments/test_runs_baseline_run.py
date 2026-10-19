@@ -267,6 +267,27 @@ class TestAdoptAndTransfer(unittest.TestCase):
                 br.run_calibration(plan)
             self.assertLessEqual(len(br.read_tuned(plan)["searches"]["angel/amazon"]["candidates"]), 3)
 
+    def test_a_search_recorded_under_an_earlier_rule_is_searched_again_and_not_adopted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, plan = Path(tmp) / "old", plan_for(str(Path(tmp) / "new"))
+            plan["output"].mkdir(parents=True)
+            old = {"status": "calibrated", "params": {"threshold": 0.2, "min_community_size": 3},
+                   "runner_params": {"threshold": 0.2, "min_community_size": 3}, "network": "amazon"}  # no search_version: ascending
+            fixed = {"status": "fixed", "params": {}, "runner_params": {}, "network": "amazon"}
+            data = {"protocol": br.PROTOCOL, "criterion": bc.CRITERION, "uses_ground_truth": False, "complete": True,
+                    "searches": {"angel/amazon": old, "codeseg/amazon": fixed}}
+            for folder in (source, plan["output"]):
+                folder.mkdir(exist_ok=True)
+                (folder / br.TUNED_NAME).write_text(json.dumps(data))
+            self.assertEqual(br.recorded(plan), {"codeseg/amazon"})  # ANGEL's is searched again; a method whose rule
+            plan["adopt_from"] = [str(source)]                       # did not change keeps its record
+            self.assertNotIn("angel/amazon", br.adoptable(plan)[str(source)])
+            with patch.object(bc, "load_context", Loader()), redirect_stdout(io.StringIO()):
+                br.run_calibration(plan)
+            entry = br.read_tuned(plan)["searches"]["angel/amazon"]
+            self.assertEqual(entry["search_version"], bc.SEARCH_VERSIONS["angel"])
+            self.assertEqual(entry["candidates"][0]["params"]["threshold"], max(bc.ANGEL_THRESHOLDS))
+
     def test_a_transferred_pair_is_not_searched_and_its_k_is_scaled(self):
         with tempfile.TemporaryDirectory() as tmp:
             plan = br.resolve(["--networks", "dblp:top5000,amazon:top5000,dblp:all", "--methods", "codeseg,bigclam,angel",

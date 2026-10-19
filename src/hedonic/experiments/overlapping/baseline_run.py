@@ -275,8 +275,15 @@ def read_tuned(plan: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def current(found: dict[str, Any]) -> dict[str, Any]:
+    """The searches of a result file recorded under their method's present search rule (``bc.SEARCH_VERSIONS``): one
+    recorded under an earlier rule is searched again, reusing its ledger."""
+    return {k: v for k, v in found.items()
+            if isinstance(v, dict) and v.get("search_version") == bc.SEARCH_VERSIONS.get(k.split("/", 1)[0])}
+
+
 def recorded(plan: dict[str, Any]) -> set[str]:
-    return set((read_tuned(plan).get("searches") or {}))
+    return set(current(read_tuned(plan).get("searches") or {}))
 
 
 def state_of(plan: dict[str, Any]) -> str:
@@ -294,7 +301,7 @@ def state_of(plan: dict[str, Any]) -> str:
 def mark_complete(plan: dict[str, Any]) -> dict[str, Any]:
     """Set the file's ``complete`` flag for this plan (atomically) and return the file's content."""
     data = read_tuned(plan)
-    flag = {s["key"] for s in searches(plan)} <= set(data.get("searches") or {})
+    flag = {s["key"] for s in searches(plan)} <= set(current(data.get("searches") or {}))
     if data and data.get("complete") != flag:
         data["complete"] = flag
         path = plan["output"] / TUNED_NAME
@@ -309,6 +316,8 @@ def record_search(plan: dict[str, Any], search: dict[str, Any], result: bc.Calib
     """Add one finished calibration to baseline_tuned.json (atomically) and return the file's content."""
     entry = {**result.to_dict(), "network": search["network"], "graph": graph,
              "runner_params": bc.runner_params(result.method, result.params), "environment": runtime_versions(), **extra}
+    if result.method in bc.SEARCH_VERSIONS:
+        entry["search_version"] = bc.SEARCH_VERSIONS[result.method]
     data = read_tuned(plan) or {}
     data.update({"protocol": PROTOCOL, "criterion": bc.CRITERION, "uses_ground_truth": False, "environment": runtime_versions(),
                  "plan": {k: plan[k] for k in ("seed", "max_evals", "max_minutes", "eval_timeout_minutes", "replicates",
@@ -319,7 +328,7 @@ def record_search(plan: dict[str, Any], search: dict[str, Any], result: bc.Calib
         settings[search["network"]] = entry["runner_params"]
     else:
         settings.pop(search["network"], None)
-    data["complete"] = {s["key"] for s in searches(plan)} <= set(data["searches"])
+    data["complete"] = {s["key"] for s in searches(plan)} <= set(current(data["searches"]))
     write_tuned(plan, data)
     return data
 
@@ -341,7 +350,7 @@ def adoptable(plan: dict[str, Any]) -> dict[str, list[str]]:
     wanted = [s["key"] for s in searches(plan)]
     out: dict[str, list[str]] = {}
     for source in plan.get("adopt_from") or []:
-        found = read_tuned({"output": Path(source)}).get("searches") or {}
+        found = current(read_tuned({"output": Path(source)}).get("searches") or {})
         keys = [k for k in wanted if k not in mine and (found.get(k) or {}).get("status") in ADOPTABLE]
         mine |= set(keys)
         out[str(source)] = keys
@@ -377,7 +386,7 @@ def adopt(plan: dict[str, Any], emit: Callable[[str], Any] = print) -> int:
             if entry.get("runner_params") is not None:
                 data.setdefault("settings", {}).setdefault(method, {})[target] = entry["runner_params"]
             count += 1
-        data["complete"] = {s["key"] for s in searches(plan)} <= set(data.get("searches") or {})
+        data["complete"] = {s["key"] for s in searches(plan)} <= set(current(data.get("searches") or {}))
         write_tuned(plan, data)
         copied = 0
         for target in plan["networks"]:
@@ -522,7 +531,7 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
         pending = [s_ for s_ in pending if s_ not in moved]
         finished += _run_method(plan, method, pending, sizes, workers, calibrate_one, finished, len(todo), progress, emit)
         if plan.get("transfer_missing"):
-            results = read_tuned(plan).get("searches") or {}
+            results = current(read_tuned(plan).get("searches") or {})
             moved += [s_ for s_ in todo if s_["method"] == method and s_ not in moved
                       and (results.get(s_["key"]) or {}).get("status") == "failed"
                       and (results.get(s_["key"]) or {}).get("stop_reason") != "no transfer source"]
@@ -530,7 +539,7 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
         for index, graph in parallel.run_forked(size_of, unknown, workers, admit=_memory_allows) if unknown else []:
             sizes[unknown[index]["network"]] = graph
         for search in moved:
-            results = read_tuned(plan).get("searches") or {}
+            results = current(read_tuned(plan).get("searches") or {})
             earlier = results.get(search["key"])
             why = ("its search ended without a setting" if earlier else "--transfer: this pair is not searched")
             result, source = transferred_result(method, search["network"], results, sizes.get(search["network"]), why)
@@ -734,7 +743,7 @@ def tree(entry: dict[str, Any], prog: dict[str, Any]):
 
     plan = resolve(entry["argv"], prog="hedonic run calibrate-baselines")
     todo = searches(plan)
-    results = read_tuned(plan).get("searches") or {}
+    results = current(read_tuned(plan).get("searches") or {})
     status = rm.effective_status(entry, prog)
     model = qb.baselines(plan, todo, results)
     done = len(set(results) & {s["key"] for s in todo})

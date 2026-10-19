@@ -101,9 +101,19 @@
     to reopen or stop the queue (a state check on the view's own thread
     used to swallow it).
   - A baseline calibration in the queue view counts the settings of the
-    method's own `--method-budget` (ANGEL's 3 in the overlap queue), not the
-    run's `--max-evals`, and prices what is left within the method's minutes
-    per pair: the view showed ANGEL at 0/8 settings and an ETA of six hours.
+    method's own `--method-budget`, not the run's `--max-evals`, and prices
+    what is left within the method's minutes per pair: the view showed ANGEL
+    at 0/8 settings (its budget was 3) and an ETA of six hours.
+  - ANGEL's calibration walks its pre-registered grid (phi 0.2 to 0.8) from
+    the largest phi down, and a setting stopped at the evaluation timeout
+    ends the walk; ties still go to the smaller phi. A smaller phi merges
+    more and costs more (DBLP/top5000: 27 s at 0.6, over an hour at 0.2), so
+    the ascending walk spent its budget of 3 settings on the expensive end:
+    three pairs ended without a setting, and the two that finished chose the
+    edge of what was tried. The overlap queue gives it all 5 settings and
+    240 minutes per pair. A search recorded under the earlier rule is
+    searched again (`SEARCH_VERSIONS`), reusing its ledger, and is not
+    adopted from another calibration.
   - `hedonic setup [--pairs P,...] [--methods M,...] [--all] [--dry-run]`
     downloads SNAP pairs and builds or installs the external baselines,
     after checking the system tools they need.
