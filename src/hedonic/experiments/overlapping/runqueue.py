@@ -617,12 +617,14 @@ def _benchmark_state(run: list[str]) -> tuple[str, str]:
     by_cell: dict[tuple[str, str], list[bool]] = {}
     for done, (net, _seed, method) in zip(finished, units):
         by_cell.setdefault((_pair_label(net), method.label), []).append(bool(done))
-    _note(folder, sum(finished), len(units), "units", [(group, label, flags) for (group, label), flags in by_cell.items()])
-    _set_model(folder, qb.benchmark, cfg, units, finished, progress,
+    # The view keeps counts and models by this key: items that share one folder (--shared-folder) each get their own
+    key = f"{folder}#{args.name}" if cfg.shared_folder else str(folder)
+    _note(key, sum(finished), len(units), "units", [(group, label, flags) for (group, label), flags in by_cell.items()])
+    _set_model(key, qb.benchmark, cfg, units, finished, progress,
                history=_benchmark_history(cfg, units, reusable, audited) if not _is_quiet() else None)
     if not any(reusable):
-        return "missing", str(folder)
-    return ("complete" if all(finished) else "partial"), str(folder)
+        return "missing", key
+    return ("complete" if all(finished) else "partial"), key
 
 
 def _spectrum_options(verb: str, args: list[str]) -> dict:
@@ -929,10 +931,20 @@ def _baselines_state(args: list[str]) -> tuple[str, str]:
     for source, keys in br.adoptable(plan).items():
         found = br.read_tuned({"output": Path(source)}).get("searches") or {}
         adopted.update({key: {**found[key], "adopted_from": source} for key in keys})
-    results = {**adopted, **own}
+    from hedonic.experiments.overlapping import baseline_calibration as bc
+
+    fixed = {}  # a published setting is the same on every pair: nothing to run, so it counts as done
+    for search in todo:
+        if search["method"] in bc.FIXED_METHODS and search["key"] not in own and search["key"] not in adopted:
+            result = bc.calibrate(search["method"], None)
+            fixed[search["key"]] = {**result.to_dict(), "runner_params": bc.runner_params(result.method, result.params)}
+    results = {**fixed, **adopted, **own}
     have = set(results)
     earlier = ([f"{len(adopted)} finished calibration(s) of {', '.join(sorted({Path(v['adopted_from']).name for v in adopted.values()}))} "
                 "are copied in when this run starts (counted as done here)"] if adopted else [])
+    if fixed:
+        earlier.append(f"{len(fixed)} pair(s) take the authors' published setting, written when this run starts "
+                       "(nothing is run or loaded for them)")
     _note(plan["output"], len(have & {s["key"] for s in todo}), len(todo), "calibrations",
           [(_pair_label(network), "calibrations", [f"{method}/{network}" in have for method in plan["methods"]])
            for network in plan["networks"]], earlier=earlier)
@@ -1760,6 +1772,11 @@ def tree(entry: dict, prog: dict) -> qm.Node:
             took = rm.elapsed_seconds(run_entry, rm.read_progress(run_entry), "completed")
         node = qm.run_node(number, item["name"], item.get("title", ""), _NODE_STATUS.get(status, status), model, count,
                            item.get("about", ""), eta, took)
+        shown = _NODE_STATUS.get(status, status)
+        if node.status == "done" and shown != "done":  # everything counted is on disk, but the run still has to start
+            node.status, node.took, node.took_missing = shown, 0.0, 0  # (adopted searches, a published setting to write)
+            node.left, node.basis = max(node.left, 1.0), "estimate"
+            node.detail.append("nothing is left to compute; the run still starts to write its files")
         if model is not None and folder in _DECORATE:
             try:
                 _DECORATE[folder](node)  # rows below a leaf that the model cannot hold (the settings a search tried)

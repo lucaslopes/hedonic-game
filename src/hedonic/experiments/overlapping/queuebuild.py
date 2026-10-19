@@ -506,11 +506,12 @@ def decorate_calibration(node: qm.Node, plan: dict, searches: dict[str, dict]) -
             counts = [r["metrics"].get("predicted_community_count") for r in ok if r["metrics"].get("predicted_community_count")]
             label = (f"γ {gamma:.3g}" + (f" · cap {cap}" if cap > 0 else "")
                      + (f" · F1 {f1:.3f}" if f1 is not None else f" · {group[0].get('status', '?')}")
-                     + (f" · {int(statistics.median(counts)):,} communities" if counts else "")
-                     + ("  ★ chosen" if chosen == (gamma, cap) else ""))
+                     + (f" · {int(statistics.median(counts)):,} communities" if counts else ""))
             seeds = sorted({int(r["config"].get("seed", 0)) for r in group})
-            row = qm.Node(key=n.key + ("probe", gamma, cap), label=label, depth=n.depth + 1, log=True,
-                          note=f"seed {seeds[0]}" if len(seeds) == 1 else f"{len(seeds)} seeds")
+            label += (f" · seed {seeds[0]}" if len(seeds) == 1 else f" · {len(seeds)} seeds") + (
+                "  ★ chosen" if chosen == (gamma, cap) else "")
+            row = qm.Node(key=n.key + ("probe", gamma, cap), label=label, depth=n.depth + 1, noun="evaluations",
+                          done=len(group), total=len(group), status="done" if ok else "failed")
             row.took = sum(float(r.get(k) or 0.0) for r in group
                            for k in ("detection_seconds", "scoring_seconds", "audit_seconds"))
             row.detail = [f"γ = {gamma:.6g}" + (f", cap {cap}" if cap > 0 else ", no cap")]
@@ -523,7 +524,7 @@ def decorate_calibration(node: qm.Node, plan: dict, searches: dict[str, dict]) -
                        if m else f" · {str(r.get('reason') or '')[:120]}"))
             n.children.append(row)
         done = len(records)
-        spent = sum(row.took for row in n.children)
+        spent = sum(row.took for row in n.children if row.done)
         if n.status == "done" and spent > n.took:  # its evaluations were reused from the ledger: show what they cost
             n.took = spent
             n.detail.append("its evaluations were reused from the ledger; the time shown is what they cost when they ran")
@@ -536,6 +537,30 @@ def decorate_calibration(node: qm.Node, plan: dict, searches: dict[str, dict]) -
             pace = search_pace(records)
             if pace is not None:
                 n.left, n.basis, n.unknown = (n.total - n.done) * pace, "estimate", 0
+            # what is left: the probe being evaluated (its gamma is known only once it is recorded) and the ones to come
+            left = n.total - n.done
+            under_way = n.status == "running"
+            if under_way:
+                row = qm.Node(key=n.key + ("probe", "now"), label=f"evaluation {done + 1}: under way (its γ is recorded when it ends)",
+                              depth=n.depth + 1, noun="evaluations", done=0, total=1, status="running")
+                if pace is not None:
+                    since = time.time() - (search_last(records) or time.time())
+                    row.left, row.basis = max(pace - since, 0.0), "estimate"
+                else:
+                    row.unknown = 1
+                n.children.append(row)
+                left -= 1
+            if left > 0:
+                first = done + 1 + under_way
+                row = qm.Node(key=n.key + ("probe", "later"),
+                              label=(f"evaluations {first}-{n.total}" if left > 1 else f"evaluation {first}")
+                              + ": each γ is chosen from the results before it",
+                              depth=n.depth + 1, noun="evaluations", done=0, total=left, status="pending")
+                if pace is not None:
+                    row.left, row.basis = left * pace, "estimate"
+                else:
+                    row.unknown = 1
+                n.children.append(row)
             n.detail.append(f"{done} evaluations so far; a search like this one usually takes about {expected} "
                             "(each result chooses the next probe, so the total is not known in advance)"
                             + (f"; one every {pace:.0f} s so far" if pace is not None else ""))
@@ -546,7 +571,7 @@ def decorate_calibration(node: qm.Node, plan: dict, searches: dict[str, dict]) -
 
     def regroup(n: qm.Node) -> None:
         kids = [c for c in n.children if not c.log]
-        if not kids:
+        if not kids or str(n.key[-1]).endswith("search"):  # a search keeps its own count: its rows only break it down
             return
         for child in kids:
             regroup(child)
@@ -559,6 +584,14 @@ def decorate_calibration(node: qm.Node, plan: dict, searches: dict[str, dict]) -
 
     visit(node)
     regroup(node)
+
+
+def search_last(records: list[dict]) -> float | None:
+    """When the search's last evaluation ended (seconds since the epoch), or None."""
+    try:
+        return time.mktime(time.strptime(str(records[-1].get("finished")), "%Y-%m-%d %H:%M:%S")) if records else None
+    except ValueError:
+        return None
 
 
 def search_pace(records: list[dict]) -> float | None:

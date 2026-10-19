@@ -534,7 +534,8 @@ class TestAdoptedPreview(unittest.TestCase):
                    "--output-dir", tmp + "/cal", "--adopt-from", tmp + "/rc1"]
             state, folder = runqueue._baselines_state(cal[1:])
             self.assertEqual(state, "missing")  # its own file decides whether the item runs: nothing is copied yet
-            self.assertEqual(runqueue._COUNTS[folder], (1, 2, "calibrations"))
+            self.assertEqual(runqueue._COUNTS[folder], (2, 2, "calibrations"))  # one adopted, one a published setting
+            self.assertTrue(any("authors' published setting" in line for line in runqueue._EARLIER[folder]))
             mine = str(Path(tmp).resolve() / "cal" / br.TUNED_NAME)
             self.assertEqual(runqueue._TUNED_PREVIEW[mine], [str(Path(tmp).resolve() / "rc1" / br.TUNED_NAME)])
             seen = []
@@ -578,15 +579,22 @@ class TestCalibrationProbes(unittest.TestCase):
             qb.decorate_calibration(node, plan, tuned)
         dblp, amazon = (pair.children[0] for pair in node.children)
         self.assertEqual((dblp.status, dblp.done, dblp.total, dblp.noun), ("done", 3, 3, "evaluations"))
-        self.assertEqual([row.label for row in dblp.children],
-                         ["γ 0.001 · F1 0.700 · 100 communities  ★ chosen", "γ 0.5 · F1 0.400 · 100 communities"])
-        self.assertTrue(all(row.log for row in dblp.children))
-        self.assertEqual((dblp.children[0].note, dblp.children[0].took), ("2 seeds", 12.0))
+        self.assertEqual([(row.label, row.done, row.total) for row in dblp.children],
+                         [("γ 0.001 · F1 0.700 · 100 communities · 2 seeds  ★ chosen", 2, 2),
+                          ("γ 0.5 · F1 0.400 · 100 communities · seed 0", 1, 1)])
+        self.assertEqual(dblp.children[0].took, 12.0)
         self.assertEqual(dblp.took, 18.0)  # its clock (60 s / 4 side by side) is less than its evaluations cost: reused
-        # the unfinished search is under way, priced from its own pace (one evaluation every 10 minutes)
-        self.assertEqual((amazon.status, amazon.done, amazon.total), ("running", 2, qb.SEARCH_EVALS["unlimited"]))
-        self.assertEqual((amazon.left, amazon.basis), ((qb.SEARCH_EVALS["unlimited"] - 2) * 600.0, "estimate"))
-        self.assertEqual((node.done, node.total, node.status), (5, 3 + qb.SEARCH_EVALS["unlimited"], "running"))
+        # the unfinished search is under way, priced from its own pace (one evaluation every 10 minutes); the rest of
+        # it is a row for the evaluation in flight and one for those to come, so every row has a bar
+        total = qb.SEARCH_EVALS["unlimited"]
+        self.assertEqual((amazon.status, amazon.done, amazon.total), ("running", 2, total))
+        self.assertEqual((amazon.left, amazon.basis), ((total - 2) * 600.0, "estimate"))
+        now, later = amazon.children[-2:]
+        self.assertEqual((now.status, now.done, now.total), ("running", 0, 1))
+        self.assertEqual((later.status, later.done, later.total, later.left), ("pending", 0, total - 3, (total - 3) * 600.0))
+        self.assertTrue(later.label.startswith(f"evaluations 4-{total}"))
+        self.assertEqual(sum(row.total for row in amazon.children), total)
+        self.assertEqual((node.done, node.total, node.status), (5, 3 + total, "running"))
         self.assertEqual(node.left, amazon.left)  # side by side: the longest search, not the sum
 
 
