@@ -1,0 +1,4 @@
+interface:
+  display_name: "SNAP Networks"
+  short_description: "Load SNAP graph/cover pairs and detect overlap with hedonic 2"
+  default_prompt: "Use $snap-networks to load a SNAP network:cover pair with the hedonic 2 loader, detect overlapping communities on its covered subgraph, and score the cover."
