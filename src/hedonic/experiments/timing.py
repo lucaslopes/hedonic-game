@@ -1,9 +1,4 @@
-"""The one clock every benchmark detector is timed with (``timing_scope = "detector-compute-v1"``).
-
-In hedonic 1 no runner uses this module: the disjoint store times its rows under its own rule
-(``disjoint.store.TIMING_SCOPE``, ``detector-call-v1``). It is kept, with its tests, as the shared clock primitive of
-the multi-method benchmark of hedonic 2, whose adapters the text below describes; its rule string is a record
-identity there and is left unchanged.
+"""The one clock every overlap detector is timed with (``timing_scope = "detector-compute-v1"``).
 
 The benchmark compares methods by detection wall-clock and peak memory, so every method's clock has to cover the
 same work. The rule, applied by every adapter through this module and nothing else:

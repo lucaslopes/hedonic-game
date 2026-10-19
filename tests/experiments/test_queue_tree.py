@@ -1,19 +1,19 @@
-"""The interactive queue view: the tree model (counts, formulas, ETAs), the queue's tree, the input and drawing of the
-viewer, and a pty run of the real loop.
-
-The model is generic (loops, units, costs); the toy family below has an outer loop of two values, A and B."""
+"""The interactive queue view: the tree model (counts, formulas, ETAs), the run builders, the input and drawing of the
+viewer, and a pty run of the real loop."""
 
 from __future__ import annotations
 
 import os
 import re
 import sys
+import tempfile
 import textwrap
 import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from hedonic.experiments.overlapping import queuebuild as qb
 from hedonic.experiments.overlapping import queuemodel as qm
 from hedonic.experiments.overlapping import queuetui as qt
 from hedonic.experiments.overlapping import runqueue
@@ -103,10 +103,205 @@ class TestModel(unittest.TestCase):
         self.assertEqual(done.status, "done")
 
 
+class TestBuilders(unittest.TestCase):
+    ROWS = [{"job": job, "dataset": job.split("-")[0], "cover": job.split("-")[1], "policy": policy, "gamma": gamma,
+             "seed": seed, "status": status, "seconds": 8.0 if status == "completed" else None, "f1": 0.5}
+            for job, status in (("amazon-all", "completed"), ("dblp-all", "pending"))
+            for policy in ("fixed_labels", "open_labels") for gamma in (0.0, 0.1, 1.0) for seed in (0, 1)]
+    OPTIONS = {"isolation_policies": ["fixed_labels", "open_labels"], "audit_resolutions": [0.0, 0.5, 1.0, 2.0], "workers": 8}
+
+    def _spectrum(self, stage="detector", audit_done=None, audit_seconds=None, log=""):
+        folder = Path(tempfile.mkdtemp())
+        (folder / "worker.log").write_text(log)
+        return qb.spectrum(self.ROWS, folder=folder, live={"stage": stage}, options=self.OPTIONS,
+                           audit_done=audit_done or {"amazon-all": 8, "dblp-all": 0},
+                           audit_seconds=audit_seconds if audit_seconds is not None else {"amazon-all": 400.0},
+                           unit_finished=lambda r: r.get("status") == "completed")
+
+    def test_the_spectrum_run_counts_audit_steps_and_detector_runs_from_the_loops(self):
+        model = self._spectrum()
+        audit, detector = model.families
+        self.assertEqual((len(audit.units), len(detector.units)), (16, 24))  # 2 pairs x 2 policies x 4 gammas / x 3 x 2 seeds
+        run = qm.run_node(1, "spec", "", "running", model, None)
+        self.assertEqual((run.done, run.total), (8 + 12, 40))
+        text = "\n".join(run.detail)
+        self.assertIn("16 audit steps = 2 pairs x 2 action policies x 4 resolutions", text)
+        self.assertIn("24 detector runs = 2 pairs x 2 action policies x 3 resolutions x 2 seeds", text)
+        policy = qm.family_nodes(detector, detector.units)[0].children[0]
+        self.assertIn("action policy: fixed labels", policy.detail[0])
+        self.assertIn("a vertex may only join a community that already exists", "\n".join(policy.detail))
+
+    def test_detector_runs_cost_what_the_pair_measured_divided_by_its_workers_and_others_are_scaled(self):
+        log = "[capacity] amazon-all: detector runs: 4 worker(s) · needs 1 GiB\n[capacity] dblp-all: detector runs: 2 worker(s)\n"
+        model = self._spectrum(log=log)
+        cost = model.families[1].cost
+        self.assertEqual(cost(qm.Unit(("Amazon · all", "fixed labels", "0", "0"), False)), (2.0, "measured"))
+        seconds, basis = cost(qm.Unit(("DBLP · all", "fixed labels", "0", "0"), False))
+        self.assertEqual(basis, "estimate")  # scaled by edges from Amazon, over DBLP's 2 workers
+        self.assertAlmostEqual(seconds, 8.0 * 1_049_866 / 925_872 / 2, places=6)
+
+    def test_the_running_audit_costs_its_ETA_spread_over_its_steps_and_the_next_one_is_scaled(self):
+        stage = "auditing dblp/all · fixed_labels · γ=0.5  4/8 resolutions · ETA ~1:00:00"
+        model = self._spectrum(stage=stage, audit_done={"amazon-all": 8, "dblp-all": 4})
+        cost = model.families[0].cost
+        self.assertEqual(cost(qm.Unit(("DBLP · all", "open labels", "0"), False)), (900.0, "measured"))  # 3600 s over 4 steps left
+        none = self._spectrum(audit_seconds={})  # nothing audited yet and nothing running: no basis
+        self.assertEqual(none.families[0].cost(qm.Unit(("DBLP · all", "open labels", "0"), False)), (None, ""))
+
+    def test_the_stage_line_eta_is_read_back_to_seconds(self):
+        self.assertEqual(qb.stage_eta("x ETA ~17:33:22"), 17 * 3600 + 33 * 60 + 22)
+        self.assertEqual(qb.stage_eta("x ETA ~5:07"), 5 * 60 + 7)
+        self.assertIsNone(qb.stage_eta("detector"))
+
+    def test_the_startcurve_run_costs_come_from_records_of_the_pair_even_at_earlier_settings(self):
+        plan = {"workers": 4, "settings": {"dblp": {"cap": 26, "gamma": 0.15}}}
+        keys = [{"network": "dblp", "level": level, "seed": seed, "key": f"k-{level}-{seed}"}
+                for level in (0.0, "random") for seed in (0, 1)]
+        records = {"k-0.0-0": {"network": "dblp", "level": "0", "seconds": 8.0, "workers": 4},
+                   "old": {"network": "dblp", "level": "random", "seconds": 40.0, "workers": 4}}
+        model = qb.startcurve(plan, records, keys)
+        family = model.families[0]
+        self.assertEqual([u.done for u in family.units], [True, False, False, False])
+        self.assertEqual(family.cost(family.units[1]), (2.0, "measured"))  # level 0 measured in this run: 8 s / 4
+        self.assertEqual(family.cost(family.units[2]), (10.0, "estimate"))  # random: only an earlier setting's record
+        self.assertIn("cap 26", "\n".join(model.notes))
+
+    def test_a_record_is_filed_under_its_pair_with_the_cover_it_was_scored_against(self):
+        self.assertEqual(qb.record_target({"network": "livejournal", "cover": "all"}), "livejournal")
+        self.assertEqual(qb.record_target({"network": "livejournal"}), "livejournal")  # written before covers existed
+        self.assertEqual(qb.record_target({"network": "livejournal", "cover": "top5000"}), "livejournal:top5000")
+        self.assertEqual(qb.record_target({"network": "livejournal:top5000", "cover": "top5000"}), "livejournal:top5000")
+
+    def test_the_cheap_top5000_records_do_not_price_the_all_cover_of_the_same_network(self):
+        """LiveJournal/all conditions took 83 s each and LiveJournal/top5000 ones 1.4 s. Filed by network alone, the
+        unfinished corruption levels of /all were priced from the /top5000 records (0.17 s a unit, 9 s for the pair)."""
+        plan = {"workers": 8, "settings": {"livejournal": {"cap": 20, "gamma": 0.1}, "livejournal:top5000": {"cap": 9, "gamma": 0.2}}}
+        keys = [{"network": net, "level": level, "seed": seed, "key": f"{net}-{level}-{seed}"}
+                for net in ("livejournal:top5000", "livejournal") for level in ("0", "0.1") for seed in (0, 1)]
+        records = {f"livejournal:top5000-{level}-{seed}": {"network": "livejournal", "cover": "top5000", "level": level,
+                                                          "seconds": 1.4, "workers": 8}
+                   for level in ("0", "0.1") for seed in (0, 1)}
+        records["livejournal-0-0"] = {"network": "livejournal", "cover": "all", "level": "0", "seconds": 83.0, "workers": 8}
+        family = qb.startcurve(plan, records, keys).families[0]
+        unit = lambda pair, level, seed: next(u for u in family.units if u.coords == (pair, level, seed))  # noqa: E731
+        seconds, basis = family.cost(unit("LiveJournal · all", "0", "1"))
+        self.assertEqual((round(seconds, 3), basis), (round(83.0 / 8, 3), "measured"))
+        seconds, basis = family.cost(unit("LiveJournal · all", "0.1", "0"))  # no /all record at this level: the pair's mean
+        self.assertEqual((round(seconds, 3), basis), (round(83.0 / 8, 3), "estimate"))
+        self.assertEqual(family.cost(unit("LiveJournal · top5k", "0.1", "0"))[1], "measured")  # its own cheap records
+
+    def test_the_notes_on_earlier_settings_name_the_pair_with_its_cover(self):
+        record = {"network": "youtube", "cover": "top5000", "cap": 9, "gamma": 0.2}
+        self.assertEqual(runqueue._startcurve_earlier({"settings": {"youtube:top5000": {"cap": 7, "gamma": 0.3}}},
+                                                      {"old": record}, set()),
+                         ["YouTube · top5k: 1 conditions ran at cap 9, gamma 0.2 (now cap 7, gamma 0.3); "
+                          "other settings and code (1.x); kept, not reused"])
+        # The same settings on other code: the note says the code, not the settings, is why.
+        self.assertEqual(runqueue._startcurve_earlier({"settings": {"youtube:top5000": {"cap": 9, "gamma": 0.2}}},
+                                                      {"old": record}, set()),
+                         ["YouTube · top5k: 1 conditions ran at cap 9, gamma 0.2; same settings, other code (1.x); "
+                          "kept, not reused"])
+
+    # ---- the benchmark: a unit's time includes its audit, and a unit past its estimate has no ETA
+    NOW = 1_000_000.0
+
+    def _benchmark(self, plan, finished_labels=(), seeds=(0, 1, 2)):
+        from types import SimpleNamespace
+
+        methods = {label: SimpleNamespace(label=label, key=label.lower()) for label in ("Hedonic", "BigCLAM")}
+        units = [("youtube:top5000", seed, methods[label]) for label in methods for seed in seeds]
+        finished = [(label, seed) in finished_labels for label in methods for seed in seeds]
+        cfg = SimpleNamespace(robustness=True, order="seed,network,method")
+        with patch.object(qb.qs, "expected_seconds", lambda m, c, n: {"Hedonic": 100.0, "BigCLAM": 1658.0}[m.label]):
+            return qb.benchmark(cfg, units, finished, {"plan": plan}, now=self.NOW).families[0]
+
+    def _row(self, label, seed, status, **fields):
+        return {"network": "youtube:top5000", "label": label, "seed": seed, "status": status, **fields}
+
+    def _cost(self, family, label, seed):
+        unit = next(u for u in family.units if u.coords == ("YouTube · top5k", label, str(seed)))
+        return family.cost(unit), unit
+
+    def test_a_cell_with_finished_units_is_priced_by_their_whole_time_audit_included(self):
+        plan = [self._row("Hedonic", 0, "completed", seconds=83.0, detection_seconds=2.2)]
+        family = self._benchmark(plan, {("Hedonic", 0)})
+        self.assertEqual(self._cost(family, "Hedonic", 1)[0], (83.0, "measured"))  # not the 2.2 s of detection
+        self.assertEqual(self._cost(family, "BigCLAM", 0)[0], (1658.0, "bound"))  # untimed here: the constant is detection alone
+
+    def test_a_running_unit_has_its_estimate_less_the_time_it_has_run(self):
+        plan = [self._row("BigCLAM", 0, "running", started=self.NOW - 600.0)]
+        self.assertEqual(self._cost(self._benchmark(plan), "BigCLAM", 0)[0], (1058.0, "bound"))
+
+    def test_a_unit_that_has_run_past_its_estimate_has_no_eta_and_says_why(self):
+        plan = [self._row("BigCLAM", 0, "running", started=self.NOW - 18_000.0, detection_seconds=993.0)]
+        family = self._benchmark(plan)
+        (seconds, basis), unit = self._cost(family, "BigCLAM", 0)
+        self.assertEqual((seconds, basis), (None, ""))  # it used to say 27:38 left after five hours
+        self.assertTrue(unit.running)
+        self.assertIn("detection took 16:33", unit.note)
+        self.assertIn("exact audit of its saved cover has run", unit.note)
+        self.assertIn("unknown", unit.note)
+        # the unit shows ?, and everything above it >= (part of the work has no estimate)
+        node = next(n for n in qm.family_nodes(family, family.units) if n.label == "YouTube · top5k")
+        self.assertGreaterEqual(node.unknown, 1)
+        self.assertTrue(qm.eta_text(node).startswith("≥"))
+
+    def test_the_other_seeds_of_an_overrun_cell_are_priced_at_least_as_long_as_the_first_took(self):
+        plan = [self._row("BigCLAM", 0, "running", started=self.NOW - 18_000.0, detection_seconds=993.0)]
+        family = self._benchmark(plan)
+        self.assertEqual(self._cost(family, "BigCLAM", 1)[0], (18_000.0, "bound"))
+        self.assertEqual(self._cost(family, "Hedonic", 1)[0], (100.0, "bound"))  # another method is not affected
+
+    def test_a_unit_inside_its_estimate_does_not_change_its_siblings(self):
+        plan = [self._row("BigCLAM", 0, "running", started=self.NOW - 600.0)]
+        self.assertEqual(self._cost(self._benchmark(plan), "BigCLAM", 1)[0], (1658.0, "bound"))
+
+    def _audit(self, eta, age=10.0, **extra):
+        return {"policy": "fixed_labels", "number": 1, "policies": 2, "done": 5000, "total": 39841, "elapsed": 600.0,
+                "eta_seconds": eta, "updated": self.NOW - age, **extra}
+
+    def test_a_running_unit_whose_audit_reports_progress_has_the_time_that_progress_implies(self):
+        plan = [self._row("BigCLAM", 0, "running", started=self.NOW - 18_000.0, detection_seconds=993.0, audit=self._audit(7200.0))]
+        family = self._benchmark(plan)
+        (seconds, basis), unit = self._cost(family, "BigCLAM", 0)
+        self.assertEqual((round(seconds), basis), (7190, "estimate"))  # the report's 7200 s, ten seconds old
+        self.assertIn("audited 5,000 of 39,841 vertices under policy 1 of 2", unit.note)
+        self.assertNotIn("unknown", unit.note)
+        node = next(n for n in qm.family_nodes(family, family.units) if n.label == "YouTube · top5k")
+        self.assertEqual(node.unknown, 0)  # a number, not a ?
+
+    def test_the_other_seeds_of_that_cell_are_priced_at_its_whole_length(self):
+        plan = [self._row("BigCLAM", 0, "running", started=self.NOW - 18_000.0, detection_seconds=993.0, audit=self._audit(7200.0))]
+        family = self._benchmark(plan)
+        self.assertEqual(self._cost(family, "BigCLAM", 1)[0], (18_000.0 + 7190.0, "estimate"))
+        self.assertEqual(self._cost(family, "Hedonic", 1)[0], (100.0, "bound"))
+
+    def test_progress_inside_the_estimate_changes_no_sibling(self):
+        plan = [self._row("BigCLAM", 0, "running", started=self.NOW - 600.0, audit=self._audit(300.0))]
+        family = self._benchmark(plan)
+        self.assertEqual(round(self._cost(family, "BigCLAM", 0)[0][0]), 290)
+        self.assertEqual(self._cost(family, "BigCLAM", 1)[0], (1658.0, "bound"))
+
+    def test_a_stale_report_is_not_trusted(self):
+        plan = [self._row("BigCLAM", 0, "running", started=self.NOW - 18_000.0, detection_seconds=993.0,
+                          audit=self._audit(7200.0, age=qb.AUDIT_FRESH_SECONDS + 1))]
+        (seconds, basis), unit = self._cost(self._benchmark(plan), "BigCLAM", 0)
+        self.assertEqual((seconds, basis), (None, ""))  # the audit or its worker is gone: back to "no ETA"
+        self.assertIn("unknown", unit.note)
+
+    def test_controlled_instances_follow_the_loops_of_the_grid(self):
+        grid = {"graph-seeds": ["0", "1"], "mus": ["0.1", "0.2"], "overlap-fractions": ["0.05", "0.1", "0.15"]}
+        model = qb.controlled({"instances": 12, "groups": 4, "workers": 2}, 5, grid)
+        units = model.families[0].units
+        self.assertEqual(len(units), 12)
+        self.assertEqual(sum(u.done for u in units), 5)
+        self.assertEqual(units[0].coords, ("0", "0.1", "0.05"))
+
+
 def _tree() -> qm.Node:
-    """queue-like: a done run, a running run with a running group, a pending run."""
+    """paper-like: a done run, a running run with a running pair, a pending run."""
     running = qm.run_node(2, "spec", "", "running", qm.RunModel([_family(done_pairs=("A",), cost=lambda u: (1.0, "measured"))]), None)
-    running.children[1].status = "running"  # B is the one being worked on
+    running.children[1].status = "running"  # pair B is the one being worked on
     done = qm.run_node(1, "calib", "", "done", None, (8, 8, "searches"))
     pending = qm.run_node(3, "bench", "", "pending", None, (0, 20, "units"))
     return qm.queue_node("q", [done, running, pending], "running")
@@ -247,25 +442,170 @@ class TestViewer(unittest.TestCase):
 
 class TestRunqueueTree(unittest.TestCase):
     def test_the_tree_of_a_queue_takes_each_run_from_its_files_and_keeps_the_report_numbers(self):
-        items = [{"name": "smoke", "run": ["disjoint", "--name", "smoke"]},
-                 {"name": "paper", "run": ["disjoint", "--name", "paper"], "title": "T"}]
+        folder = "/nowhere/spec"
+        model = qm.RunModel([_family(done_pairs=("A",), cost=lambda u: (1.0, "measured"))])
+        items = [{"name": "calib", "run": ["calibrate"]}, {"name": "spec", "run": ["spectrum", "--name", "spec"], "title": "T"}]
         entry = {"name": "q", "items": items, "file": ""}
-        states = {"smoke": ("completed", None), "paper": ("running", None)}
-        data = {"smoke": ("complete", "/nowhere/smoke"), "paper": ("partial", "/nowhere/paper")}
-        counts = {"smoke": (16, 16, "graphs"), "paper": (12, 24, "graphs")}
+        states = {"calib": ("completed", None), "spec": ("running", None)}
+        data = {"calibrate": ("complete", "/nowhere/cal"), "spectrum": ("partial", folder)}
+        counts = {"calibrate": (8, 8, "searches"), "spectrum": (12, 24, "conditions")}
         with patch.object(runqueue, "_status_of", lambda item, fresh=False: states[item["name"]]), \
-                patch.object(runqueue, "data_state", lambda run, fresh=False: data[run[2]]), \
-                patch.object(runqueue, "unit_counts", lambda run: counts[run[2]]), \
-                patch.object(runqueue.rm, "effective_status", return_value="running"):
+                patch.object(runqueue, "data_state", lambda run, fresh=False: data[run[0]]), \
+                patch.object(runqueue, "unit_counts", lambda run: counts[run[0]]), \
+                patch.dict(runqueue._MODEL, {folder: model}), patch.object(runqueue.rm, "effective_status", return_value="running"):
             root = runqueue.tree(entry, {})
-        smoke, paper = root.children
-        self.assertEqual((smoke.status, smoke.done, smoke.total), ("done", 16, 16))
-        self.assertEqual((paper.status, paper.done, paper.total, paper.noun), ("running", 12, 24, "graphs"))
-        self.assertEqual(paper.children, [])  # hedonic 1 has no unit model of a disjoint run: its counts only
-        self.assertEqual(qm.eta_text(paper), "?")  # no registry entry, so no ETA from its runner
-        self.assertEqual((root.done, root.total), (1, 2))
-        self.assertIn("T", paper.detail)  # the item's title
-        self.assertIn("2 runs execute one after another, each with every worker.", root.detail)
+        calib, spec = root.children
+        self.assertEqual((calib.status, calib.done, calib.total), ("done", 8, 8))
+        self.assertEqual((spec.status, spec.done, spec.total, spec.noun), ("running", 12, 24, "detector runs"))
+        self.assertEqual(spec.left, 12.0)
+        self.assertEqual((root.done, root.total, root.left), (1, 2, 12.0))
+        self.assertIn("whole run: 24 steps", spec.detail[0])  # what the row's number is made of comes first
+        self.assertIn("T", spec.detail)  # then the item's title
+
+    def _by_pair_entry(self):
+        items = [{"name": "a", "run": ["spectrum", "--name", "a"], "by_pair": True, "pairs": ["dblp:top5000", "amazon:top5000"]},
+                 {"name": "b", "run": ["calibrate"]}]
+        return {"name": "q", "items": items, "file": "", "pairs": ["dblp:top5000", "amazon:top5000"]}
+
+    def test_a_run_between_its_pairs_is_part_done_not_stopped_and_the_queue_names_its_order(self):
+        entry = self._by_pair_entry()
+        states = {"a": ("stopped", None), "b": ("new", None)}  # a: files say part done, no run of it going
+        with patch.object(runqueue, "_status_of", lambda item, fresh=False: states[item["name"]]), \
+                patch.object(runqueue, "data_state", lambda run, fresh=False: ("partial", "/nowhere/a")), \
+                patch.object(runqueue, "unit_counts", lambda run: (3, 9, "conditions")), \
+                patch.object(runqueue.rm, "effective_status", return_value="running"):
+            root = runqueue.tree(entry, {"current": 0, "pair": "amazon:top5000", "step": 3, "steps": [{}] * 26})
+        a, b = root.children
+        self.assertEqual((a.status, a.done, a.total), ("partial", 3, 9))
+        self.assertIn("dblp:top5k > amazon:top5k", "\n".join(root.detail))
+        self.assertTrue(any("pair by pair" in line and "2 pairs" in line for line in a.detail))
+        self.assertFalse(any("now on" in line for line in a.detail))  # it is not the run being worked on
+        self.assertFalse(any("pair by pair" in line for line in b.detail))
+
+    def test_the_run_being_worked_on_says_which_pair_and_which_step(self):
+        entry = self._by_pair_entry()
+        states = {"a": ("running", None), "b": ("new", None)}
+        with patch.object(runqueue, "_status_of", lambda item, fresh=False: states[item["name"]]), \
+                patch.object(runqueue, "data_state", lambda run, fresh=False: ("partial", "/nowhere/a")), \
+                patch.object(runqueue, "unit_counts", lambda run: (3, 9, "conditions")), \
+                patch.object(runqueue.rm, "effective_status", return_value="running"):
+            root = runqueue.tree(entry, {"current": 0, "pair": "amazon:top5000", "step": 3, "steps": [{}] * 26})
+        self.assertTrue(any("now on amazon:top5000 (step 4 of 26)" in line for line in root.children[0].detail))
+
+    def test_runs_sit_under_the_method_they_study_in_the_order_the_methods_first_appear(self):
+        items = [{"name": "cal", "run": ["calibrate"]}, {"name": "spec", "run": ["spectrum-full"]},
+                 {"name": "cal-codeseg", "run": ["calibrate-baselines", "--methods", "codeseg"]},
+                 {"name": "bench-codeseg", "run": ["exp", "--methods", "codeseg"]},
+                 {"name": "bench-fox", "run": ["exp", "--methods", "fox"]}]
+        states = {"cal": ("completed", None)}
+        with patch.object(runqueue, "_status_of", lambda item, fresh=False: states.get(item["name"], ("new", None))), \
+                patch.object(runqueue, "data_state", lambda run, fresh=False: ("missing", "/nowhere/" + run[0])), \
+                patch.object(runqueue, "unit_counts", lambda run: (0, 4, "units")), \
+                patch.object(runqueue.rm, "effective_status", return_value="running"):
+            root = runqueue.tree({"name": "q", "items": items, "file": ""}, {})
+        self.assertEqual([g.label for g in root.children], ["Hedonic", "CoDeSEG", "FOX"])
+        hedonic, codeseg, _ = root.children
+        self.assertEqual([r.label for r in codeseg.children], ["3. cal-codeseg", "4. bench-codeseg"])
+        self.assertEqual((hedonic.done, hedonic.total, hedonic.status), (1, 2, "partial"))
+        self.assertEqual((root.done, root.total), (1, 5))  # the root still counts runs
+        self.assertEqual((hedonic.depth, hedonic.children[0].depth), (1, 2))
+
+    def test_a_methods_bar_is_how_far_its_runs_are_not_how_many_finished(self):
+        runs = [qm.Node(key=("run", "cal"), label="cal", status="running", done=7, total=8),
+                qm.Node(key=("run", "bench"), label="bench", status="running", done=6, total=8),
+                qm.Node(key=("run", "h"), label="h", status="done", done=3, total=3)]
+        root = qm.queue_node("q", runs, groups=["NcGame", "NcGame", "Hedonic"])
+        ncgame = root.children[0]
+        self.assertEqual((ncgame.done, ncgame.total, ncgame.share), (0, 2, (7 / 8 + 6 / 8) / 2))
+        self.assertIn(" 81% ", qt.right_columns(ncgame, 120, runqueue.tui.glyphs(True)))  # 0/2 runs, yet 81% of the work
+        self.assertAlmostEqual(root.share, (7 / 8 + 6 / 8 + 1) / 3)
+
+    def test_one_method_keeps_the_runs_at_the_top(self):
+        runs = [qm.Node(key=("run", "a"), label="a"), qm.Node(key=("run", "b"), label="b")]
+        root = qm.queue_node("q", runs, groups=["Hedonic", "Hedonic"])
+        self.assertEqual([c.key for c in root.children], [("run", "a"), ("run", "b")])
+
+
+class TestAdoptedPreview(unittest.TestCase):
+    """Calibrations an earlier run finished are copied only when the item starts; the view counts them now, and a
+    benchmark waiting for the file is counted with them while it stays awaiting."""
+
+    def test_adopted_calibrations_count_and_the_waiting_benchmark_is_previewed_with_them(self):
+        import contextlib
+        import io
+
+        from hedonic.experiments.overlapping import baseline_run as br
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = br.resolve(["--networks", "dblp:top5000", "--methods", "codeseg", "--output-dir", tmp + "/rc1"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(br.run_calibration(source), 0)  # a fixed setting: nothing is loaded
+            cal = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000", "--methods", "codeseg",
+                   "--output-dir", tmp + "/cal", "--adopt-from", tmp + "/rc1"]
+            state, folder = runqueue._baselines_state(cal[1:])
+            self.assertEqual(state, "missing")  # its own file decides whether the item runs: nothing is copied yet
+            self.assertEqual(runqueue._COUNTS[folder], (2, 2, "calibrations"))  # one adopted, one a published setting
+            self.assertTrue(any("authors' published setting" in line for line in runqueue._EARLIER[folder]))
+            mine = str(Path(tmp).resolve() / "cal" / br.TUNED_NAME)
+            self.assertEqual(runqueue._TUNED_PREVIEW[mine], [str(Path(tmp).resolve() / "rc1" / br.TUNED_NAME)])
+            seen = []
+
+            def judged(run):
+                seen.append(runqueue._option(run, "--tuned"))
+                return "partial", tmp + "/bench"
+
+            bench = ["exp", "--methods", "codeseg", "--tuned", mine]
+            with patch.object(runqueue, "_data_state", judged):
+                self.assertEqual(runqueue._preview(bench), tmp + "/bench")
+                self.assertEqual(runqueue._preview(["exp", "--tuned", tmp + "/nothing.json"]), "")
+            self.assertEqual(seen, [str(Path(tmp).resolve() / "rc1" / br.TUNED_NAME)])
+            self.assertIn("adopt from rc1", runqueue._PREVIEWED[tmp + "/bench"])
+
+
+class TestCalibrationProbes(unittest.TestCase):
+    """A Hedonic search counts its evaluations and lists every setting it probed, read from the calibration's ledger."""
+
+    def _ledger(self, folder: Path) -> None:
+        def record(network, gamma, seed, f1, minute):
+            return {"instance": network, "config": {"phase": "local", "gamma": gamma, "M": -1, "seed": seed},
+                    "status": "completed", "finished": f"2026-10-19 03:{minute:02d}:00", "detection_seconds": 2.0,
+                    "scoring_seconds": 3.0, "audit_seconds": 1.0,
+                    "metrics": {"f1": f1, "onmi": 0.5, "predicted_community_count": 100}}
+        (folder / "ledger").mkdir(parents=True)
+        rows = [record("dblp:top5000", 0.5, 0, 0.4, 0), record("dblp:top5000", 1e-3, 0, 0.6, 2),
+                record("dblp:top5000", 1e-3, 1, 0.8, 4), record("amazon:top5000", 0.1, 0, 0.7, 0),
+                record("amazon:top5000", 0.01, 0, 0.75, 10)]
+        (folder / "ledger" / "evals-x.jsonl").write_text("\n".join(__import__("json").dumps(r) for r in rows) + "\ntorn{")
+
+    def test_each_search_counts_its_evaluations_with_a_row_per_setting_and_the_runs_eta_is_its_longest_search(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self._ledger(folder)
+            plan = {"output": str(folder), "networks": ["dblp:top5000", "amazon:top5000"], "cap": "unlimited"}
+            searches = [{"key": f"hedonic/{n}", "network": n, "phase": "local"} for n in plan["networks"]]
+            model = qb.calibrate(searches, {"hedonic/dblp:top5000"}, {"hedonic/dblp:top5000": 60.0})
+            node = qm.run_node(1, "cal", "", "running", model, None)
+            tuned = {"hedonic/dblp:top5000": {"absolute_resolution": 1e-3, "max_memberships": -1, "f1_median": 0.7}}
+            qb.decorate_calibration(node, plan, tuned)
+        dblp, amazon = (pair.children[0] for pair in node.children)
+        self.assertEqual((dblp.status, dblp.done, dblp.total, dblp.noun), ("done", 3, 3, "evaluations"))
+        self.assertEqual([(row.label, row.done, row.total) for row in dblp.children],
+                         [("γ 0.001 · F1 0.600 seed 0, 0.700 mean · 100 communities · 2 seeds  ★ chosen", 2, 2),
+                          ("γ 0.5 · F1 0.400 · 100 communities · seed 0", 1, 1)])
+        self.assertEqual(dblp.children[0].took, 12.0)
+        self.assertEqual(dblp.took, 18.0)  # its clock (60 s / 4 side by side) is less than its evaluations cost: reused
+        # the unfinished search is under way, priced from its own pace (one evaluation every 10 minutes); the rest of
+        # it is a row for the evaluation in flight and one for those to come, so every row has a bar
+        total = qb.SEARCH_EVALS["unlimited"]
+        self.assertEqual((amazon.status, amazon.done, amazon.total), ("running", 2, total))
+        self.assertEqual((amazon.left, amazon.basis), ((total - 2) * 600.0, "estimate"))
+        now, later = amazon.children[-2:]
+        self.assertEqual((now.status, now.done, now.total), ("running", 0, 1))
+        self.assertEqual((later.status, later.done, later.total, later.left), ("pending", 0, total - 3, (total - 3) * 600.0))
+        self.assertTrue(later.label.startswith(f"evaluations 4-{total}"))
+        self.assertEqual(sum(row.total for row in amazon.children), total)
+        self.assertEqual((node.done, node.total, node.status), (5, 3 + total, "running"))
+        self.assertEqual(node.left, amazon.left)  # side by side: the longest search, not the sum
 
 
 def _timed(done_pairs=(), parallel=1, seconds=2.0) -> qm.Family:
@@ -437,18 +777,18 @@ class TestFailureIsExplained(unittest.TestCase):
     """A red mark alone left the user asking why and where: the viewer says which run, which error and which step."""
 
     def _patched(self):
-        run_entry = {"name": "disjoint-paper"}
-        return (patch.object(runqueue, "_state", lambda name: ("failed", run_entry) if name == "disjoint-paper" else ("new", None)),
+        run_entry = {"name": "leveraging-gt"}
+        return (patch.object(runqueue, "_state", lambda name: ("failed", run_entry) if name == "leveraging-gt" else ("new", None)),
                 patch.object(runqueue.rm, "read_progress", lambda entry: {"reason": TRACEBACK}))
 
     def test_a_failed_run_gives_its_error_the_step_it_was_in_and_where_the_traceback_is(self):
         first, second = self._patched()
         with first, second:
-            lines = runqueue.failure_lines("disjoint-paper")
-            self.assertEqual(runqueue.failure_lines("other"), [])  # a run that never failed says nothing
+            lines = runqueue.failure_lines("leveraging-gt")
+            self.assertEqual(runqueue.failure_lines("benchmark"), [])  # a run that never failed says nothing
         self.assertEqual(lines[0], "why: ValueError: Invalid initial_membership: membership labels must be contiguous from 0")
         self.assertEqual(lines[1], "while: WorkerFailed: worker for item 80 failed")
-        self.assertEqual(lines[2], "whole traceback: hedonic run logs disjoint-paper")
+        self.assertEqual(lines[2], "whole traceback: hedonic run logs leveraging-gt")
 
     def test_a_failure_without_a_recorded_reason_says_nothing_instead_of_guessing(self):
         with patch.object(runqueue, "_state", lambda name: ("failed", {"name": name})), \
@@ -456,13 +796,13 @@ class TestFailureIsExplained(unittest.TestCase):
             self.assertEqual(runqueue.failure_lines("x"), [])
 
     def test_the_stop_lines_of_the_queue_carry_the_runs_error(self):
-        entry = {"name": "disjoint-queue", "items": [{"name": "calib", "run": ["disjoint"]}, {"name": "disjoint-paper", "run": ["disjoint"]}]}
+        entry = {"name": "paper-queue", "items": [{"name": "calib", "run": ["calibrate"]}, {"name": "leveraging-gt", "run": ["startcurve"]}]}
         first, second = self._patched()
         with first, second, patch.object(runqueue, "_status_of", lambda item, fresh=False: ("stopped", None)):
-            text = ANSI.sub("", "\n".join(runqueue.stop_lines(entry, {"current": 1, "reason": "disjoint-paper ended as failed"}, "failed")))
-        self.assertIn("failed at disjoint-paper (item 2 of 2)", text)
+            text = ANSI.sub("", "\n".join(runqueue.stop_lines(entry, {"current": 1, "reason": "leveraging-gt ended as failed"}, "failed")))
+        self.assertIn("failed at leveraging-gt (item 2 of 2)", text)
         self.assertIn("ValueError: Invalid initial_membership", text)
-        self.assertIn("hedonic run resume disjoint-queue", text)
+        self.assertIn("hedonic run resume paper-queue", text)
 
     def test_the_tree_view_shows_a_notice_under_the_header_and_still_fits_every_size(self):
         root = _tree()
@@ -475,6 +815,18 @@ class TestFailureIsExplained(unittest.TestCase):
         text = [ANSI.sub("", line) for line in qt.render(root, qt.View(), (110, 30), G, qt.header_line(root, "failed", 65.0, G), notice=notice)]
         self.assertIn("why: ValueError: boom", text[2])
         self.assertIn("progress", text[4])  # the column heads follow the notice, then the rows
+
+
+class TestModelFailure(unittest.TestCase):
+    def test_a_model_that_cannot_be_built_never_changes_a_runs_counts(self):
+        def broken(*_args, **_kwargs):
+            raise KeyError("job")
+        with patch.dict(runqueue._MODEL, {}, clear=True):
+            runqueue._set_model("/x", broken)
+            self.assertNotIn("/x", runqueue._MODEL)
+            runqueue._MODEL["/x"] = qm.RunModel()
+            runqueue._set_model("/x", broken)  # and a stale model is dropped, not kept
+            self.assertNotIn("/x", runqueue._MODEL)
 
 
 @unittest.skipUnless(os.name == "posix", "needs a pty")

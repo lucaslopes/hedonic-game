@@ -83,7 +83,7 @@ def parse_floats(value: str) -> list[float]:
 
 def parse_ints(value: str, what: str = "seeds") -> list[int]:
     """``0-4`` or ``2,3,5``; ``what`` names the values in an error (``communities``, ``seeds``)."""
-    from hedonic.experiments.overlapping import common as qs
+    from hedonic.experiments.overlapping import quickstart as qs
 
     try:
         return qs.parse_seeds(value)
@@ -419,7 +419,7 @@ def _human_bytes(n: float) -> str:
 
 
 def render_plan(settings: dict[str, Any], output: str | None = None) -> str:
-    from hedonic.experiments.overlapping import common as qs
+    from hedonic.experiments.overlapping import quickstart as qs
     from hedonic.experiments.overlapping.tui import style
 
     info = plan(settings)
@@ -547,7 +547,7 @@ def front_study(argv: list[str]) -> dict[str, Any]:
     and so its folder; without ``--output-dir`` the folder is ``<disjoint_output_root>/<name>``.
     """
     from hedonic.experiments.config import ensure_not_archived_v1020
-    from hedonic.experiments.overlapping import common as qs
+    from hedonic.experiments.overlapping import quickstart as qs
 
     args = front_parser().parse_args(list(argv))
     if not args.name:
@@ -560,7 +560,7 @@ def front_study(argv: list[str]) -> dict[str, Any]:
 
 
 def front_main(argv: list[str] | None = None) -> int:
-    from hedonic.experiments.overlapping import common as qs
+    from hedonic.experiments.overlapping import quickstart as qs
     from hedonic.experiments.overlapping import runmanager, tui
     from hedonic.experiments.overlapping.tui import style
 
@@ -631,7 +631,7 @@ def work(name: str, entry: dict, prog: dict, progress_file: Path | None = None) 
     """Run the sweep into the store, then table, figures and statistics; mirror progress."""
     from hedonic.experiments.disjoint import paper_stats
     from hedonic.experiments.disjoint import store as store_mod
-    from hedonic.experiments.overlapping import common as qs
+    from hedonic.experiments.overlapping import quickstart as qs
     from hedonic.experiments.overlapping import runmanager
     from hedonic.experiments.overlapping.tui import style
 
@@ -722,7 +722,7 @@ def work(name: str, entry: dict, prog: dict, progress_file: Path | None = None) 
 
 # --------------------------------------------------------------------------- viewer and check
 def snapshot(entry: dict, prog: dict, status: str, frame: str, table: bool) -> str:
-    from hedonic.experiments.overlapping import common as qs
+    from hedonic.experiments.overlapping import quickstart as qs
     from hedonic.experiments.overlapping import runmanager
     from hedonic.experiments.overlapping import tui
     from hedonic.experiments.overlapping.tui import style

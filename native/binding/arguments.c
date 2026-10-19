@@ -17,7 +17,7 @@
 */
 
 /*
- * Arguments of partition(): buffers of 64-bit integers and
+ * Arguments of partition() and cover(): buffers of 64-bit integers and
  * doubles checked for kind and length, the hig_graph_t over them, and the
  * optional count limits.
  */
