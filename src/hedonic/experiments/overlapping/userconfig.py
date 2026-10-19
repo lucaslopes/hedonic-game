@@ -2,9 +2,21 @@
 
 Example::
 
-    [defaults]          # machine settings
-    disjoint_output_root = "/data/hedonic/disjoint"   # parent folder of `hedonic run disjoint` runs and queues
-    threads = 10        # kept for your own scripts; no hedonic 1 run reads it
+    # what a bare `hedonic run` starts (a named config or a config-file path)
+    run = "paper"
+
+    [defaults]          # machine settings applied to every run, unless a flag overrides them
+    output_dir = "/data/hedonic/runs"
+    cache_dir = "~/.cache/hedonic"
+    network_root = "/data/snap"
+    threads = 10
+    disjoint_output_root = "/data/hedonic/disjoint"   # parent folder of `hedonic run disjoint` runs
+
+    [profiles.quick]    # your own named configs (any `hedonic run exp` setting)
+    networks = ["dblp", "amazon"]
+    methods = ["hedonic", "codeseg", "fox"]
+    nodes = 20000
+    seeds = "0-4"
 
 Manage it with ``hedonic config`` (show), ``hedonic config set KEY VALUE``,
 ``hedonic config unset KEY``, ``hedonic config path``; ``hedonic config example``
@@ -20,10 +32,10 @@ import sys
 import tomllib
 from pathlib import Path
 
-MACHINE_KEYS = ("threads",)
-# Machine paths read by one front end (the disjoint benchmark and its queues).
-OTHER_DEFAULT_KEYS = ("disjoint_output_root",)
-DEFAULT_KEYS = (*MACHINE_KEYS, *OTHER_DEFAULT_KEYS)  # everything [defaults] accepts
+MACHINE_KEYS = ("output_dir", "cache_dir", "network_root", "threads")
+# Machine paths used by other front ends; never copied into `hedonic run` configs.
+OTHER_DEFAULT_KEYS = ("disjoint_output_root", "pickle_dir")
+TOP_KEYS = ("run",)
 
 
 def path() -> Path:
@@ -48,6 +60,14 @@ def defaults() -> dict:
     return dict(load().get("defaults", {}))
 
 
+def profiles() -> dict:
+    return dict(load().get("profiles", {}))
+
+
+def favourite() -> str | None:
+    return load().get("run")
+
+
 # --------------------------------------------------------------------------- writing (small TOML subset)
 def _value(v) -> str:
     if isinstance(v, bool):
@@ -61,8 +81,13 @@ def _value(v) -> str:
 
 def save(data: dict) -> Path:
     lines = ["# hedonic user configuration — see `hedonic config --help`"]
+    top = [f"{key} = {_value(data[key])}" for key in TOP_KEYS if key in data]
+    if top:
+        lines += ["", *top]
     if data.get("defaults"):
         lines += ["", "[defaults]"] + [f"{k} = {_value(v)}" for k, v in data["defaults"].items()]
+    for name, table in (data.get("profiles") or {}).items():
+        lines += ["", f"[profiles.{name}]"] + [f"{k} = {_value(v)}" for k, v in table.items()]
     p = path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("\n".join(lines) + "\n")
@@ -76,13 +101,42 @@ def _parse(raw: str):
         return raw
 
 
-def _validate(name: str, value) -> None:
+def _validate(section: str, name: str, value) -> None:
     """Reject a setting that would only fail later, when a run starts."""
-    if name == "threads" and not (isinstance(value, int) and not isinstance(value, bool) and value >= 1):
-        raise SystemExit(f"threads must be a positive integer, not {value!r}")
-    if name != "threads" and not isinstance(value, str):
-        raise SystemExit(f"{name} must be a path; quote it if it looks like something else "
-                         f"(hedonic config set {name} \"...\")")
+    if section == "defaults":
+        if name == "threads" and not (isinstance(value, int) and not isinstance(value, bool) and value >= 1):
+            raise SystemExit(f"threads must be a positive integer, not {value!r}")
+        if name != "threads" and not isinstance(value, str):
+            raise SystemExit(f"{name} must be a path; quote it if it looks like something else "
+                             f"(hedonic config set {name} \"...\")")
+    elif section.startswith("profiles."):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        fields = set(qs.Config().__dict__) - {"profile"} | {"config"}
+        if name not in fields:
+            raise SystemExit(f"unknown run setting {name!r}; choose from: {', '.join(sorted(fields))}")
+        default = getattr(qs.Config(), name, None)
+        number = isinstance(value, (int, float)) and not isinstance(value, bool)
+        wrong = (isinstance(default, bool) and not isinstance(value, bool)
+                 or isinstance(default, int) and not isinstance(default, bool) and not (number and value == int(value))
+                 or isinstance(default, float) and not number
+                 or isinstance(default, list) and not isinstance(value, (list, str)))
+        if wrong:
+            kind = ("true or false" if isinstance(default, bool) else "a whole number" if isinstance(default, int)
+                    else "a number" if isinstance(default, float) else "a list or a comma-separated string")
+            raise SystemExit(f"{section}.{name} must be {kind} (like {default!r}), not {value!r}")
+        if name == "seeds" and isinstance(value, str):
+            try:
+                qs.parse_seeds(value)
+            except ValueError as exc:
+                raise SystemExit(f"{section}.{name}: {exc}") from None
+    elif name == "run":
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        known = {*qs.PROFILES, *load().get("profiles", {})}
+        if not isinstance(value, str) or (value not in known and not Path(value).expanduser().is_file()):
+            print(f"  note: {value!r} is not a known config or file yet (known: {', '.join(sorted(known))})",
+                  file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     data = load()
     if not argv or argv[0] == "show":
         p = path()
-        print(f"# {p}" + ("" if p.is_file() else "  (not created yet — `hedonic config set disjoint_output_root PATH`)"))
+        print(f"# {p}" + ("" if p.is_file() else "  (not created yet — `hedonic config set output_dir PATH`)"))
         if p.is_file():
             print(p.read_text().rstrip())
         return 0
@@ -108,17 +162,23 @@ def main(argv: list[str] | None = None) -> int:
     if argv[0] in ("set", "unset") and len(argv) >= 2:
         key = argv[1]
         section, _, name = key.rpartition(".")
-        if section and section != "defaults":
-            raise SystemExit(f"unknown section in {key!r}; hedonic 1 keeps machine settings only: "
-                             f"{', '.join(DEFAULT_KEYS)} (or defaults.KEY)")
-        target = data.setdefault("defaults", {})
+        if not section:
+            section = "" if key in TOP_KEYS else "defaults"
+        if section and section != "defaults" and not section.startswith("profiles."):
+            raise SystemExit(f"unknown section in {key!r}; use run, defaults.KEY, or profiles.NAME.KEY")
+        target = data
+        for part in [s for s in section.split(".") if s]:
+            target = target.setdefault(part, {})
         if argv[0] == "set":
             if len(argv) < 3:
                 raise SystemExit("usage: hedonic config set KEY VALUE")
-            if name not in DEFAULT_KEYS:
-                raise SystemExit(f"[defaults] accepts {', '.join(DEFAULT_KEYS)}")
+            if section == "defaults" and name not in (*MACHINE_KEYS, *OTHER_DEFAULT_KEYS):
+                raise SystemExit(
+                    f"[defaults] accepts {', '.join((*MACHINE_KEYS, *OTHER_DEFAULT_KEYS))}; "
+                    "experiment settings go in profiles.NAME"
+                )
             value = _parse(" ".join(argv[2:]))
-            _validate(name, value)
+            _validate(section, name, value)
             target[name] = value
         elif name not in target:
             print(f"  {key} is not set; nothing to remove")

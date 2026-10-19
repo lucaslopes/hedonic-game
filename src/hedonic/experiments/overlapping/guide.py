@@ -1,7 +1,7 @@
 """``hedonic guide``: a short, current tour of what the CLI can do and what to do next.
 
     hedonic guide             where you are (data, runs) and the topics
-    hedonic guide TOPIC       one topic: start, disjoint, runs, config, update
+    hedonic guide TOPIC       one topic: start, benchmark, paper, spectrum, disjoint, runs, config, data, update
     hedonic guide --list      topic names only
 
 In a terminal, the index is an arrow-key menu. Everything is read from the local
@@ -19,15 +19,17 @@ from hedonic.experiments.overlapping.tui import style
 
 TOPICS: dict[str, tuple[str, str]] = {
     "start": ("First steps", """
-        hedonic show disjoint                    the disjoint presets, grids, methods and estimates
-        hedonic run disjoint --preset smoke --dry-run   the plan of the smoke run
-        hedonic run disjoint --preset smoke      the whole pipeline in seconds (store, table, figures, statistics)
-        hedonic run queue disjoint --dry-run     the disjoint paper's queue and what is already done
-        hedonic detect                           one network x one method x one seed, here (`hedonic guide detect`)
+        hedonic                         in a terminal: the home screen (where things stand, then a menu)
+        hedonic show methods            which of the nine methods (Hedonic and eight baselines) can run here
+        hedonic show covers             which SNAP graph/cover pairs are on disk
+        hedonic setup --dry-run         what `hedonic setup` would download and build, and the system tools it needs
+        hedonic run exp --dry-run       the plan and time estimate of the default run
+        hedonic run exp                 a wizard (arrow keys, space, enter); the first choice is the quick default run, then a yes/no
+        hedonic detect                  one network x one method x one seed, in this terminal (see `hedonic guide detect`)
 
-        This release (1.x) reproduces the disjoint paper (the Physica A SBM benchmark). Everything runs
-        detached, so closing the terminal or pressing Ctrl-C only closes the view. The overlapping-communities
-        experiments come with release 2.
+        The default run takes about a minute: DBLP, a 5,000-vertex subgraph, seed 0, Hedonic and CoDeSEG.
+        Everything runs detached, so closing the terminal or pressing Ctrl-C only closes the view.
+        To reproduce the overlapping-communities paper, see `hedonic guide paper`.
     """),
     "detect": ("One network, one method (`hedonic detect`)", """
         hedonic detect                                    a wizard: network, its parameters, method, its parameters, seed
@@ -36,12 +38,77 @@ TOPICS: dict[str, tuple[str, str]] = {
         hedonic detect --graph lfr:n=1000,mu=0.3 --method leiden:resolution=0.05 --seed 3
         hedonic detect --graph famous:name=Zachary --method louvain
         hedonic detect --graph file:path=g.txt,truth=labels.txt --method infomap
+        hedonic detect --graph lfr_overlap:n=500 --method hedonic:max_memberships=2
+        hedonic detect --graph snap:pair=amazon:top5000 --method codeseg   (a pair on disk; download=yes fetches it)
 
         A network is SOURCE:name=value,... and a method METHOD:name=value,...; --seed seeds both. The answer is
-        scored against the network's ground truth (ARI, NMI, overlap) and saved as result.json under the data
-        folder's Detect/ (--output DIR, or --no-save). The run prints its own command line, so a wizard answer can
-        be repeated or scripted. It runs here, in this terminal: for many seeds or networks, use
-        `hedonic run disjoint` or a queue.
+        scored against the network's ground truth (ARI, NMI, overlap for partitions; F1, ONMI, Omega for covers) and
+        saved as result.json under the data folder's Detect/ (--output DIR, or --no-save). The run prints its own
+        command line, so a wizard answer can be repeated or scripted. It runs here, in this terminal: for many
+        seeds or networks, use `hedonic run exp`, `hedonic run disjoint` or a queue.
+    """),
+    "benchmark": ("Benchmark runs (`hedonic run exp`)", """
+        hedonic run exp --networks dblp,amazon --methods all --seeds 0-2 --nodes 20000
+        hedonic run exp --networks youtube --full --methods hedonic,fox,clique_percolation
+        hedonic run exp --config my.toml         a saved configuration (see `hedonic guide config`)
+
+        hedonic run exp --networks dblp,amazon --covers all,top5000 --induce covered --seeds 0-9
+                                                 every cover of each network, each method on the subgraph the cover
+                                                 induces (a network can name one: --networks dblp:top5000)
+
+        Every accuracy metric is defined by `hedonic show metrics`. Data and external tools are fetched on
+        first use; a method that cannot be prepared is reported as unavailable while the others still run.
+        `--dry-run` prints the plan first; `--save-config` writes it to a file.
+
+        How the loops nest is a setting: `--order seed,method,network` (outermost first) or, in a config file,
+        `order = ["seed", "method", "network"]`. It never invalidates a finished run.
+
+        A deterministic method (CoDeSEG at one thread, CliquePerc, FOX, BigCLAM, NcGame, NEO-K-Means) runs once
+        per network, at the lowest seed, since more seeds repeat its cover; Hedonic, ANGEL and Ego-Splitting run
+        at every seed. `--replication all` runs every method at every seed; both settings share their records.
+
+        A started or resumed run first scans the plan against the files on disk: a unit is done only when its record
+        is present, final, of the same settings, and its record and cover match the SHA-256 seal in RUN/integrity.
+        A record whose bytes changed is moved aside (renamed, never deleted) and rerun. To see the scan only:
+        hedonic run exp --config FILE --name NAME --scan
+    """),
+    "paper": ("Reproduce the overlapping-communities paper (`hedonic run queue paper`)", """
+        hedonic setup --all --dry-run           the eight graph/cover pairs and eight baselines it needs
+        hedonic setup --all                     download the pairs, build and install the baselines
+        hedonic run queue paper --dry-run       its runs, the order of their steps, with what is already done
+        hedonic run queue paper                 start it (durable, resumable; days on a laptop)
+        hedonic run queue paper --root DIR      the same, writing under DIR instead of OUTPUT_DIR/paper-queue
+        hedonic run attach paper-queue          the live tree view (q closes the view only)
+
+        The queue goes method by method. Hedonic first: its calibration (the resolution only, no membership cap),
+        the synthetic networks, then the ground-truth start curve, the robustness spectrum and its benchmark rows
+        one pair at a time, the shortest step first (--schedule file: pair by pair, top5000 covers first). Then
+        each baseline in turn, cheapest first: its calibration, then its benchmark on every pair, all benchmark
+        items writing into one folder so a finished unit is reused.
+        Every run decides from its files what is done, so starting the queue again continues it. The queue checks
+        that the data and methods are prepared and prints the `hedonic setup` command when they are not.
+
+        The runs can also be started one by one:
+        hedonic run calibrate --networks dblp:top5000 --mode auto   re-tune Hedonic's (gamma, cap); writes hoc_tuned.json
+        hedonic run calibrate --networks dblp:top5000 --cap unlimited   the resolution only, no cap (the paper's)
+        hedonic run calibrate-baselines --networks PAIRS --methods all   label-free baseline calibration
+            (--method-budget angel=3:60, --transfer PAIRS, --adopt-from DIR: the queue's budget, unsearched pairs
+            that take the nearest calibrated pair's setting, and searches copied from an earlier calibration)
+        hedonic run exp --config paper-benchmark --tuned FILE[,FILE]     the benchmark at the calibrated settings
+        hedonic run audit --source RUN          exact robustness of the covers a run saved without --robustness
+    """),
+    "spectrum": ("Ground-truth robustness spectrum (`hedonic run spectrum`)", """
+        hedonic show covers                       present / missing / unsupported graph/cover pairs
+        hedonic run spectrum --dry-run            cohort and plan; runs nothing
+        hedonic run spectrum --dry-run --inspect  also sizes and estimates: loads every pair (many GB for the large ones)
+        hedonic run spectrum                      wizard, then a durable run
+        hedonic run spectrum-full                 the eight paper pairs on their covered graphs (= --config full)
+        hedonic run spectrum --replot             rebuild figures and tables from a finished ledger
+
+        For every locally available overlapping cover it plots the fraction of vertices with no profitable
+        unilateral action against the resolution (fixed and open labels), and runs local moving from the exact
+        ground-truth cover, auditing and scoring every return. Nothing is downloaded without --provision.
+        --config NAME reads a shipped config (overlapping-gt-spectrum-NAME) or a TOML file of your own.
     """),
     "disjoint": ("Disjoint SBM benchmark (`hedonic run disjoint`, `hedonic run queue disjoint`)", """
         hedonic run queue disjoint --dry-run         the disjoint paper's queue: a smoke check, then the paper grid
@@ -71,26 +138,46 @@ TOPICS: dict[str, tuple[str, str]] = {
         hedonic run logs [NAME]         raw tmux pane or log file
         hedonic run stop NAME           explicit; nothing stops a run implicitly
         hedonic run resume [NAME]       continue an interrupted, stopped or failed run
-        hedonic run check [NAME]        morning check: replay sampled rows of a disjoint run from their seeds
+        hedonic run check [NAME]        morning check: replay sampled results from their seeds and compare
 
         Statuses: running, completed, completed_with_failures, stopped, interrupted (the worker vanished, for
         example after a reboot) and failed (an error, with its reason). NAME may be a unique fragment.
 
-        A queue opens as a tree you can open and close: the queue, then its runs with their progress and ETA.
-        The mouse wheel scrolls, a click selects or opens a row, the arrows move, and the pane under the tree
-        explains the selected row. Press ? for the keys, q or Ctrl-C to close the view (the queue keeps
-        running). HEDONIC_PLAIN_VIEW=1 prints the text view instead; `hedonic run queue FILE --report` prints
-        it once without starting anything.
+        A queue opens as a tree you can open and close: its runs, then each run's pairs, then the loops behind
+        every count (action policy, resolution, seed...). The mouse wheel scrolls, a click selects or opens a row,
+        the arrows move, and the pane under the tree explains the selected row: what its number counts, the
+        loops that multiply into it, and where its ETA comes from. Press ? for the keys, q or Ctrl-C to close
+        the view (the queue keeps running).
+
+        A queue file that lists `pairs` and marks runs `by_pair = true` goes pair by pair: the whole block of those
+        runs on the first pair, then on the next, in the order of `pairs`. A run between its pairs reads as part done
+        (the half-filled mark), not as stopped. `hedonic run queue FILE --dry-run` prints the steps in order.
+        `schedule = "shortest"` in the file (or --schedule shortest) still runs one step at a time, but takes at each
+        turn the ready step with the smallest estimate; a run that reads another's folder (--tuned) or names it in
+        `after = [...]` waits for it.
     """),
     "config": ("Your settings (`hedonic config`)", """
         hedonic config                                show ~/.config/hedonic/config.toml
-        hedonic config set disjoint_output_root ~/Databases/Hedonic/Disjoint   where disjoint runs and queues go
-        hedonic config set threads 8                  a machine setting kept for your own scripts
-        hedonic config unset KEY                      back to the default
+        hedonic config set output_dir ~/Databases/Hedonic/Overlap  where every run is saved
+        hedonic config set network_root ~/Databases/Hedonic/Networks   where SNAP files are looked up and downloaded
+        hedonic config set run paper                  what a bare `hedonic run` starts (it asks first)
+        hedonic config set profiles.quick.nodes 20000 your own named configuration
+
         hedonic config example                        a commented template of every setting
 
-        Machine settings apply to every run unless a flag overrides them. Keep machine paths out of
-        repositories. HEDONIC_CONFIG points at another file.
+        Machine settings (output_dir, cache_dir, network_root, threads) apply to every run unless a flag
+        overrides them. Keep machine paths out of repositories.
+    """),
+    "data": ("Data and caches", """
+        Data lives under ~/Databases/Hedonic (HEDONIC_DATA_DIR) and runs under ~/Databases/Hedonic/Overlap (HEDONIC_OUTPUT_DIR), unless
+        the user config says otherwise. SNAP archives are looked up in the network root (HEDONIC_NETWORKS_DIR or
+        `hedonic config set network_root`) and downloaded there on first use; `hedonic show networks --remote` shows
+        the download sizes. `hedonic show table` reads only pairs already on disk and writes a CSV analysis, a LaTeX
+        table and three figure panels next to it; `hedonic show figure` redraws the panels. Neither downloads. The
+        spectrum study never downloads unless you add --provision.
+        External method runtimes are prepared by `hedonic setup` (`--dry-run` first; `--methods M,...`,
+        `--pairs NETWORK:COVER,...` or `--all`) into ~/.cache/hedonic/codeseg and audited by
+        `hedonic-exp codeseg-doctor --require-all`.
     """),
     "update": ("Keeping hedonic current (`hedonic update`)", """
         hedonic update            compare the installed version with PyPI (one HTTPS GET; installs nothing)
@@ -108,7 +195,8 @@ def _body(topic: str) -> str:
 
 def next_steps() -> list[str]:
     """Suggestions from local state only (no network, no downloads)."""
-    from hedonic.experiments.overlapping import runmanager, userconfig
+    from hedonic.experiments.overlapping import gt_spectrum, runmanager, userconfig
+    from hedonic.experiments.config import NETWORKS_DIR
 
     steps = []
     try:
@@ -123,10 +211,14 @@ def next_steps() -> list[str]:
         steps.append(f"a run is in progress: hedonic run attach {running[-1]}")
     if unfinished:
         steps.append(f"an unfinished run can continue: hedonic run resume {unfinished[-1]}")
+    root = userconfig.defaults().get("network_root") or str(NETWORKS_DIR)
+    present = [r for r in gt_spectrum.discover(root) if r["status"] == "present"]
+    if present:
+        steps.append(f"{len(present)} graph/cover pairs are on disk: hedonic run spectrum --dry-run")
     if not entries:
-        steps.append("no runs yet: hedonic run disjoint --preset smoke   (seconds; the whole pipeline)")
+        steps.append("no runs yet: hedonic run exp   (a minute for the default experiment)")
     if not userconfig.path().is_file():
-        steps.append("set where results go: hedonic config set disjoint_output_root ~/Databases/Hedonic/Disjoint")
+        steps.append("set where results go: hedonic config set output_dir ~/Databases/Hedonic/Overlap")
     return steps
 
 

@@ -53,7 +53,7 @@ def core_source_sha256() -> str:
 
 
 def release_series() -> str:
-    """``major.minor`` of the installed version (``1.0`` for 1.0.0.dev1, 1.0.0rc1 and 1.0.3). A change of the Python
+    """``major.minor`` of the installed version (``2.0`` for 2.0.0.dev9, 2.0.0rc1 and 2.0.3). A change of the Python
     layer that changes results bumps the minor version; dev, rc and patch releases share the series."""
     import re
 

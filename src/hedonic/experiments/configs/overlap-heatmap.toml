@@ -1,0 +1,32 @@
+# Heatmap of Hedonic local moving over the generator parameters of the controlled-overlap study.
+#
+# Axes: mixing mu (8 values) x overlap fraction (8 values), 10 graph seeds per cell = 640 graphs.
+# Fixed: size n = 200, two memberships per overlapping vertex, secondary-edge probability 0.2,
+# detector cap 2, the reference-free neutral-disjoint start, density resolution (multiplier 1).
+#
+# This is LFR-derived controlled overlap (NetworkX LFR graphs with overlap planted by construction),
+# not canonical overlapping LFR. Some parameter combinations fail to generate; the report counts them.
+#
+#   hedonic run controlled --config overlap-heatmap --output-dir DIR --dry-run
+#   hedonic run controlled --config overlap-heatmap --output-dir DIR
+#
+# The output is DIR/controlled_overlap.json with a sibling CSV, one row per cell. Command-line flags override the file.
+
+[overlapping_controlled]
+n = 200
+mus = "0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8"
+overlap-fractions = "0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4"
+overlap-memberships = "2"
+secondary-edge-probabilities = "0.2"
+graph-seeds = "0,1,2,3,4,5,6,7,8,9"
+average-degree = 5
+min-community = 15
+max-community = 30
+lfr-max-iters = 500
+phases = "local"
+max-memberships = "2"
+starts = "neutral-disjoint"
+resolution-multipliers = "1"
+timeout-per-run = 60.0
+# The 80 (graph seed, mu) groups of instances are independent: 8 run side by side, one per performance core of the
+# M1 Max. The results do not depend on this number; a cell's elapsed_seconds is its wall-clock with 8 running together.
