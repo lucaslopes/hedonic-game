@@ -175,9 +175,11 @@ def right_columns(node: qm.Node, width: int, G: dict, count_width: int = MIN_COU
         return f" {blank}{unit} {qm.took_text(node):>{ETA_WIDTH}}"
     inner = node.sub if node.sub and node.done < node.total and node.sub[1] > 0 else None
     shown, of = (inner[0], inner[1]) if inner else (node.done, node.total)  # a unit under way fills its bar by its own steps
+    if node.share is not None and not inner and node.total:  # a method or the queue: how far its runs are
+        shown, of = (1.0 if node.status == "done" else node.share), 1.0
     percent = f"{min(100, int(100 * shown / of)):>3}%" if of else "  -"
     count = f"{node.done:,}/{node.total:,}" if node.total else ""
-    text = f" {bar(shown if inner else node.done, of if inner else node.total, BAR_WIDTH, G)} {percent} {count:>{count_width}}"
+    text = f" {bar(shown, of, BAR_WIDTH, G)} {percent} {count:>{count_width}}"
     if width >= 84:
         unit = (f"{inner[0]:.1f}/{inner[1]:g} {inner[2]}".replace(".0/","/") if inner
                 else strip_text(node.strip, UNIT_WIDTH, G) if len(node.strip) > 1 else node.noun)

@@ -95,6 +95,7 @@ class Node:
     depth: int = 0
     log: bool = False  # a record under a unit (a setting tried), not a unit: no bar, no count, never marked done or pending
     note: str = ""  # for a log row, the text of its unit column
+    share: float | None = None  # fraction of the work done, drawn in the bar when it is not done/total (a method's runs)
 
 
 # --------------------------------------------------------------------------- words
@@ -372,11 +373,21 @@ def run_node(index: int, name: str, title: str, status: str, model: RunModel | N
 
 
 # --------------------------------------------------------------------------- the queue
+def fraction(node: Node) -> float:
+    """How far a node's work is, in [0, 1]: its share when it has one, else done of total; a finished node is 1."""
+    if node.status == "done":
+        return 1.0
+    if node.share is not None:
+        return node.share
+    return min(1.0, node.done / node.total) if node.total else 0.0
+
+
 def group_node(label: str, runs: list[Node]) -> Node:
     """One method's runs (its calibration and its experiments): runs finished of runs, the sum of their ETAs."""
     group = Node(key=("group", label), label=label, noun="runs", children=runs)
     group.done = sum(r.status == "done" for r in runs)
     group.total = len(runs)
+    group.share = sum(map(fraction, runs)) / len(runs)  # the bar: how far its runs are, not only how many finished
     group.left = sum(r.left for r in runs)
     group.unknown = sum(r.unknown for r in runs)
     group.took = sum(r.took for r in runs)
@@ -409,6 +420,7 @@ def queue_node(name: str, runs: list[Node], status: str = "", file: str = "", or
         _stamp(child, 1)
     root.done = sum(r.status == "done" for r in runs)
     root.total = len(runs)
+    root.share = sum(map(fraction, runs)) / len(runs) if runs else None
     root.left = sum(r.left for r in runs)
     root.unknown = sum(r.unknown for r in runs)
     root.took = sum(r.took for r in runs)

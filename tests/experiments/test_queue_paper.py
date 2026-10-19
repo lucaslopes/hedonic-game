@@ -16,8 +16,9 @@ from hedonic.experiments.overlapping import codeseg_setup as cs
 from hedonic.experiments.overlapping import runqueue
 from hedonic.experiments.resources import CONFIG_DIR
 
-PAIRS = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000",
-         "dblp:all", "amazon:all", "youtube:all"]
+SMALL = ["dblp:top5000", "dblp:all", "amazon:top5000", "amazon:all", "youtube:top5000", "youtube:all"]
+LARGE = ["livejournal:top5000", "friendster:top5000"]
+PAIRS = SMALL + LARGE
 BASELINES = ["codeseg", "ncgame", "ego_splitting", "fox", "clique_percolation", "angel", "bigclam", "neo_kmeans"]
 
 
@@ -51,9 +52,9 @@ class TestShippedQueue(_Isolated):
     def test_root_is_substituted_everywhere_and_every_item_writes_under_it(self):
         root = self.root / "q"
         queue = runqueue.load_queue("paper", root=str(root))
-        self.assertEqual(queue["pairs"], PAIRS)
-        # the Hedonic experiments and the benchmark items reuse the folders of the earlier queue, so their records count
-        shared = {"leveraging-gt-gamma": "leveraging-gt", "gt-robustness-gamma": "gt-robustness"}
+        self.assertEqual(queue["pairs"], SMALL)
+        # the benchmark items share one folder and the large spectrum the first one's, so their records are reused
+        shared = {"gt-robustness-large": "gt-robustness"}
         for item in queue["items"]:
             text = " ".join(item["run"])
             self.assertNotIn("{root}", text)
@@ -76,12 +77,13 @@ class TestShippedQueue(_Isolated):
         """The same budget as the earlier calibration, whose finished searches each item adopts (see baseline_run)."""
         root = self.root / "q"
         queue = runqueue.load_queue("paper", root=str(root))
-        items = [i for i in queue["items"] if i["name"].startswith("calibration-")]
-        self.assertEqual(sorted(runqueue._option(i["run"], "--methods") for i in items), sorted(BASELINES))
+        items = [i for i in queue["items"] if i["name"].startswith("calibration-") and "hedonic" not in i["name"]]
+        self.assertEqual(sorted(runqueue._option(i["run"], "--methods") for i in items), sorted(2 * BASELINES))
         for item in items:
             run = item["run"]
             self.assertEqual(run[0], "calibrate-baselines")
-            self.assertEqual(runqueue._option(run, "--networks").split(","), PAIRS)
+            self.assertEqual(runqueue._option(run, "--networks").split(","),
+                             LARGE if item["name"].endswith("-large") else SMALL)
             self.assertEqual([runqueue._option(run, flag) for flag in
                               ("--max-evals", "--max-minutes", "--eval-timeout-minutes", "--replicates")],
                              ["8", "240", "60", "1"])

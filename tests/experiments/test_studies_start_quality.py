@@ -220,6 +220,23 @@ class TestRandomLevel(unittest.TestCase):
         self.assertEqual(record["start_symmetric_f1"], 1.0)  # the exact reference
         self.assertTrue(0.0 <= record["final_symmetric_f1"] <= 1.0)
 
+    def test_the_reference_cap_is_the_largest_reference_multiplicity_and_rides_along_in_the_key_and_argv(self):
+        """--cap reference (leveraging the ground truth): the cap is read from the loaded reference, the key names the
+        source, and a resume rebuilds the same plan."""
+        cover = [[0, 1, 2], [2, 3, 4], [2, 5, 6], [6, 7, 0]]  # vertex 2 is in three communities
+        prepared = SimpleNamespace(dataset=SimpleNamespace(graph=tiny_graph(), cover=cover))
+        job = gs.Job("tiny", "top5000", prepared, None)
+        setting = sq.with_cap({"cap": -1, "gamma": 0.1, "source": "test"}, "reference")
+        self.assertEqual(sq.setting_cap(job, setting), 3)
+        record = sq.run_condition(job, setting, 0, 0, "k", "local")
+        self.assertEqual((record["cap"], record["cap_source"]), (3, "reference"))
+        self.assertLessEqual(record["final_max_memberships"], 3)
+        self.assertIn("|cap=reference|", sq.condition_key("tiny", 0, 0, setting, "local"))
+        self.assertEqual(sq.with_cap({"cap": 4}, "tuned"), {"cap": 4})
+        plan = {"networks": ["tiny"], "phase": "local", "seeds": [0], "levels": [0], "output": "/x", "workers": 1,
+                "settings": {"tiny": setting}}
+        self.assertEqual(sq.launch_argv(plan)[-2:], ["--cap", "reference"])
+
 
 class TestResume(unittest.TestCase):
     def test_rerun_skips_recorded_conditions_and_extends_by_new_ones(self):

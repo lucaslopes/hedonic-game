@@ -1,5 +1,4 @@
-# The overlap paper's experiment queue, method by method: Hedonic first on every experiment and every pair, then the
-# baselines one at a time (each calibrated, then benchmarked on every pair).
+# The overlap paper's experiment queue, in two phases, each method by method.
 #
 #   hedonic setup --all                     # once: download the eight pairs and build the eight baselines
 #   hedonic run queue paper --dry-run       # the plan, what is already done, and what setup still misses
@@ -11,183 +10,314 @@
 # `hedonic config` (else ~/Databases/Hedonic/Overlap). Running the queue again skips what its files on disk show finished and
 # resumes the rest.
 #
-# Hedonic. `hedonic-calibration` searches the resolution gamma only, with no membership cap (max_memberships -1), on each
-# pair's covered subgraph against that pair's cover (`--cap unlimited`: a log grid over [1e-6, 0.5], then golden
-# section). The cap is never read from the reference: an unlimited cap is the one setting that needs no information.
-# The tuned gamma is in-sample (it shows the method's reach at its best resolution); the synthetic study crosses a
-# resolution grid with the planted cap and no cap, so a label-free resolution rule can be scored against the tuned one.
-# Then the Hedonic experiments: synthetic networks, and pair by pair leveraging-gt, gt-robustness and the Hedonic
-# benchmark rows.
+# Phase 1 runs every method on DBLP, Amazon and YouTube (top5000 and all covers); phase 2 runs every method again, Hedonic
+# first, on LiveJournal/top5000 and Friendster/top5000, the largest covered subgraphs (1.5 and 4 million edges), so a slow
+# method there cannot hold up the rest. Items run in the order of this file (`schedule = "file"`).
+#
+# Hedonic: synthetic networks, then the calibration, then pair by pair (the queue's `pairs`) the ground-truth robustness,
+# leveraging the ground truth and the benchmark rows. The calibration searches the resolution gamma only, with no
+# membership cap (max_memberships -1), on each pair's covered subgraph against that pair's cover (`--cap unlimited`: a
+# log grid over [1e-6, 0.5], then golden section): in-sample, it shows the method's reach at its best resolution. The
+# synthetic study crosses a resolution grid with the planted cap and no cap, so a label-free resolution rule can be
+# scored against the tuned one. Leveraging the ground truth starts from the corrupted reference and caps every vertex at
+# the reference's largest multiplicity (`--cap reference`).
 #
 # Baselines, in this order: the published-setting, deterministic ones whose results already exist (CoDeSEG, NcGame, FOX),
 # the calibrated deterministic ones (BigCLAM, NEO-K-Means, CliquePerc), then the seeded ones with ten runs per pair
 # (Ego-Splitting, ANGEL, the longest). Each has its own calibration folder (a fixed method's is its recorded published
 # setting) that adopts the searches baseline-calibration-rc1 finished, and every benchmark item writes into the one
-# `benchmark` folder, so a unit already on disk with the same settings is reused and the benchmark items run one after
-# another (an item waits for every earlier item whose folder its arguments name).
-#
-# `schedule = "shortest"` takes at each turn the ready step with the smallest estimate.
+# `benchmark` folder, so a unit already on disk with the same settings is reused.
 
 name = "paper-queue"
-schedule = "shortest"
-pairs = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000",
-         "dblp:all", "amazon:all", "youtube:all"]
+schedule = "file"
+pairs = ["dblp:top5000", "dblp:all", "amazon:top5000", "amazon:all", "youtube:top5000", "youtube:all"]
 
 [[items]]
-name = "hedonic-calibration-gamma"
-short = "calibrate"
-title = "precondition: Hedonic gamma per pair, no cap"
-about = "Searches Hedonic's resolution on each pair's covered subgraph with no membership cap (-1), scored against that pair's cover. Writes hoc_tuned.json, which every Hedonic experiment reads."
-run = ["calibrate", "--cap", "unlimited", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,friendster:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all", "--name", "hedonic-calibration-gamma", "--output-dir", "{root}/hedonic-calibration-gamma"]
-
-[[items]]
-name = "synthetic-gamma"
+name = "synthetic-hedonic"
 short = "synthetic"
-title = "Appendix: controlled overlap over a resolution grid"
-about = "Synthetic LFR-derived graphs with a controlled overlap (mu x overlap fraction x 10 seeds), Hedonic at twelve resolutions (density x 2^-6 .. 2^5) with the planted cap (2) and no cap. The best grid point is the tuned resolution a label-free rule is scored against."
-run = ["controlled", "--config", "overlap-heatmap-gamma", "--name", "synthetic-gamma", "--output-dir", "{root}/synthetic-gamma"]
-after = ["hedonic-calibration-gamma"]
+title = "Hedonic: synthetic networks"
+about = "LFR-derived graphs with a controlled overlap (mu x overlap fraction x 10 seeds), Hedonic at twelve resolutions (density x 2^-6 .. 2^5) with the planted cap (2) and no cap. The best grid point is the tuned resolution a label-free rule is scored against."
+run = ["controlled", "--config", "overlap-heatmap-gamma", "--name", "synthetic-hedonic", "--output-dir", "{root}/synthetic-hedonic"]
 
 [[items]]
-name = "leveraging-gt-gamma"
-by_pair = true
-short = "leverage"
-title = "Hedonic from a corrupted cover"
-about = "Hedonic local moving started from the ground-truth cover corrupted by degree-preserving incidence switches: 9 corruption levels x 10 seeds per pair, at the calibrated gamma and no cap (the start keeps the whole reference)."
-run = ["startcurve", "--config", "start-quality-hoc-local", "--tuned", "{root}/hedonic-calibration-gamma/hoc_tuned.json", "--name", "leveraging-gt-gamma", "--output-dir", "{root}/leveraging-gt"]
+name = "calibration-hedonic"
+short = "calibrate"
+title = "Hedonic: calibration (DBLP, Amazon and YouTube)"
+about = "Searches Hedonic's resolution on each pair's covered subgraph with no membership cap (-1), scored against that pair's cover. Writes hoc_tuned.json, which the Hedonic experiments read."
+run = ["calibrate", "--cap", "unlimited", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--name", "calibration-hedonic", "--output-dir", "{root}/calibration-hedonic"]
 
 [[items]]
-name = "gt-robustness-gamma"
+name = "gt-robustness"
 by_pair = true
 short = "gt-robust"
-title = "stability of the supplied covers"
-about = "Exact stability of every supplied ground-truth cover over resolution (fixed and open labels), then local moving from the exact cover at each resolution and seed, on the subgraph the cover induces. Each pair's calibrated resolution joins its grids; the conditions already on disk are reused."
-run = ["spectrum", "--config", "full", "--tuned", "{root}/hedonic-calibration-gamma/hoc_tuned.json", "--name", "gt-robustness-gamma", "--output-dir", "{root}/gt-robustness"]
+title = "Hedonic: ground-truth robustness (DBLP, Amazon and YouTube)"
+about = "Exact stability of every supplied ground-truth cover over resolution (fixed and open labels), then local moving from the exact cover at each resolution and seed, on the subgraph the cover induces. Each pair's calibrated resolution joins its grids."
+run = ["spectrum", "--config", "full", "--pairs", "dblp/top5000,dblp/all,amazon/top5000,amazon/all,youtube/top5000,youtube/all", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json", "--name", "gt-robustness", "--output-dir", "{root}/gt-robustness"]
+
+[[items]]
+name = "leveraging-gt"
+by_pair = true
+short = "leverage"
+title = "Hedonic: leveraging the ground truth (DBLP, Amazon and YouTube)"
+about = "Hedonic local moving started from the ground-truth cover corrupted by degree-preserving incidence switches: 9 corruption levels x 10 seeds per pair, at the calibrated gamma, with the cap set to the reference's largest number of communities on one vertex."
+run = ["startcurve", "--config", "start-quality-hoc-local", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--cap", "reference", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json", "--name", "leveraging-gt", "--output-dir", "{root}/leveraging-gt"]
 
 [[items]]
 name = "benchmark-hedonic"
 by_pair = true
 short = "bench-hed"
-title = "benchmark: Hedonic"
+title = "Hedonic: benchmark (DBLP, Amazon and YouTube)"
 about = "Hedonic at its calibrated gamma and no cap, seeds 0-9, on the subgraph each cover induces; every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--methods", "hedonic", "--tuned", "{root}/hedonic-calibration-gamma/hoc_tuned.json", "--name", "benchmark-hedonic", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json", "--name", "benchmark-hedonic", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-codeseg"
 short = "cal-codeseg"
-title = "precondition: CoDeSEG's parameters per pair"
+title = "CoDeSEG: calibration (DBLP, Amazon and YouTube)"
 about = "CoDeSEG on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,friendster:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all", "--methods", "codeseg", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-codeseg", "--output-dir", "{root}/calibration-codeseg"]
-after = ["benchmark-hedonic"]
+run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "codeseg", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-codeseg", "--output-dir", "{root}/calibration-codeseg"]
 
 [[items]]
 name = "benchmark-codeseg"
 short = "bench-codeseg"
-title = "benchmark: CoDeSEG"
+title = "CoDeSEG: benchmark (DBLP, Amazon and YouTube)"
 about = "CoDeSEG on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--methods", "codeseg", "--tuned", "{root}/calibration-codeseg/baseline_tuned.json", "--name", "benchmark-codeseg", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "codeseg", "--tuned", "{root}/calibration-codeseg/baseline_tuned.json", "--name", "benchmark-codeseg", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-ncgame"
 short = "cal-ncgame"
-title = "precondition: NcGame's parameters per pair"
+title = "NcGame: calibration (DBLP, Amazon and YouTube)"
 about = "NcGame on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,friendster:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all", "--methods", "ncgame", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-ncgame", "--output-dir", "{root}/calibration-ncgame"]
-after = ["benchmark-codeseg"]
+run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "ncgame", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-ncgame", "--output-dir", "{root}/calibration-ncgame"]
 
 [[items]]
 name = "benchmark-ncgame"
 short = "bench-ncgame"
-title = "benchmark: NcGame"
+title = "NcGame: benchmark (DBLP, Amazon and YouTube)"
 about = "NcGame on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--methods", "ncgame", "--tuned", "{root}/calibration-ncgame/baseline_tuned.json", "--name", "benchmark-ncgame", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "ncgame", "--tuned", "{root}/calibration-ncgame/baseline_tuned.json", "--name", "benchmark-ncgame", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-fox"
 short = "cal-fox"
-title = "precondition: FOX's parameters per pair"
+title = "FOX: calibration (DBLP, Amazon and YouTube)"
 about = "FOX on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,friendster:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all", "--methods", "fox", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-fox", "--output-dir", "{root}/calibration-fox"]
-after = ["benchmark-ncgame"]
+run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "fox", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-fox", "--output-dir", "{root}/calibration-fox"]
 
 [[items]]
 name = "benchmark-fox"
 short = "bench-fox"
-title = "benchmark: FOX"
+title = "FOX: benchmark (DBLP, Amazon and YouTube)"
 about = "FOX on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--methods", "fox", "--tuned", "{root}/calibration-fox/baseline_tuned.json", "--name", "benchmark-fox", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "fox", "--tuned", "{root}/calibration-fox/baseline_tuned.json", "--name", "benchmark-fox", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-bigclam"
 short = "cal-bigclam"
-title = "precondition: BigCLAM's parameters per pair"
+title = "BigCLAM: calibration (DBLP, Amazon and YouTube)"
 about = "BigCLAM on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,friendster:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all", "--methods", "bigclam", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-bigclam", "--output-dir", "{root}/calibration-bigclam"]
-after = ["benchmark-fox"]
+run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "bigclam", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-bigclam", "--output-dir", "{root}/calibration-bigclam"]
 
 [[items]]
 name = "benchmark-bigclam"
 short = "bench-bigclam"
-title = "benchmark: BigCLAM"
+title = "BigCLAM: benchmark (DBLP, Amazon and YouTube)"
 about = "BigCLAM on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--methods", "bigclam", "--tuned", "{root}/calibration-bigclam/baseline_tuned.json", "--name", "benchmark-bigclam", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "bigclam", "--tuned", "{root}/calibration-bigclam/baseline_tuned.json", "--name", "benchmark-bigclam", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-neo-kmeans"
 short = "cal-neo-kmea"
-title = "precondition: NEO-K-Means's parameters per pair"
+title = "NEO-K-Means: calibration (DBLP, Amazon and YouTube)"
 about = "NEO-K-Means on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,friendster:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all", "--methods", "neo_kmeans", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-neo-kmeans", "--output-dir", "{root}/calibration-neo-kmeans"]
-after = ["benchmark-bigclam"]
+run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "neo_kmeans", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-neo-kmeans", "--output-dir", "{root}/calibration-neo-kmeans"]
 
 [[items]]
 name = "benchmark-neo-kmeans"
 short = "bench-neo-kmea"
-title = "benchmark: NEO-K-Means"
+title = "NEO-K-Means: benchmark (DBLP, Amazon and YouTube)"
 about = "NEO-K-Means on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--methods", "neo_kmeans", "--tuned", "{root}/calibration-neo-kmeans/baseline_tuned.json", "--name", "benchmark-neo-kmeans", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "neo_kmeans", "--tuned", "{root}/calibration-neo-kmeans/baseline_tuned.json", "--name", "benchmark-neo-kmeans", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-clique-percolation"
 short = "cal-clique-p"
-title = "precondition: CliquePerc's parameters per pair"
+title = "CliquePerc: calibration (DBLP, Amazon and YouTube)"
 about = "CliquePerc on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,friendster:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all", "--methods", "clique_percolation", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-clique-percolation", "--output-dir", "{root}/calibration-clique-percolation"]
-after = ["benchmark-neo-kmeans"]
+run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "clique_percolation", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-clique-percolation", "--output-dir", "{root}/calibration-clique-percolation"]
 
 [[items]]
 name = "benchmark-clique-percolation"
 short = "bench-clique-p"
-title = "benchmark: CliquePerc"
+title = "CliquePerc: benchmark (DBLP, Amazon and YouTube)"
 about = "CliquePerc on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--methods", "clique_percolation", "--tuned", "{root}/calibration-clique-percolation/baseline_tuned.json", "--name", "benchmark-clique-percolation", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "clique_percolation", "--tuned", "{root}/calibration-clique-percolation/baseline_tuned.json", "--name", "benchmark-clique-percolation", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-ego-splitting"
 short = "cal-ego-spli"
-title = "precondition: Ego-Splitting's parameters per pair"
+title = "Ego-Splitting: calibration (DBLP, Amazon and YouTube)"
 about = "Ego-Splitting on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,friendster:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all", "--methods", "ego_splitting", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-ego-splitting", "--output-dir", "{root}/calibration-ego-splitting"]
-after = ["benchmark-clique-percolation"]
+run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "ego_splitting", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-ego-splitting", "--output-dir", "{root}/calibration-ego-splitting"]
 
 [[items]]
 name = "benchmark-ego-splitting"
 short = "bench-ego-spli"
-title = "benchmark: Ego-Splitting"
+title = "Ego-Splitting: benchmark (DBLP, Amazon and YouTube)"
 about = "Ego-Splitting on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--methods", "ego_splitting", "--tuned", "{root}/calibration-ego-splitting/baseline_tuned.json", "--name", "benchmark-ego-splitting", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "ego_splitting", "--tuned", "{root}/calibration-ego-splitting/baseline_tuned.json", "--name", "benchmark-ego-splitting", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-angel"
 short = "cal-angel"
-title = "precondition: ANGEL's parameters per pair"
+title = "ANGEL: calibration (DBLP, Amazon and YouTube)"
 about = "ANGEL on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000,youtube:top5000,friendster:top5000,livejournal:top5000,dblp:all,amazon:all,youtube:all", "--methods", "angel", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=3:60", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-angel", "--output-dir", "{root}/calibration-angel"]
-after = ["benchmark-ego-splitting"]
+run = ["calibrate-baselines", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "angel", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=3:60", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-angel", "--output-dir", "{root}/calibration-angel"]
 
 [[items]]
 name = "benchmark-angel"
 short = "bench-angel"
-title = "benchmark: ANGEL"
+title = "ANGEL: benchmark (DBLP, Amazon and YouTube)"
 about = "ANGEL on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
-run = ["exp", "--config", "paper-benchmark", "--methods", "angel", "--tuned", "{root}/calibration-angel/baseline_tuned.json", "--name", "benchmark-angel", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "angel", "--tuned", "{root}/calibration-angel/baseline_tuned.json", "--name", "benchmark-angel", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "calibration-hedonic-large"
+short = "calibrate-L"
+title = "Hedonic: calibration (LiveJournal/top5k and Friendster/top5k)"
+about = "Searches Hedonic's resolution on each pair's covered subgraph with no membership cap (-1), scored against that pair's cover. Writes hoc_tuned.json, which the Hedonic experiments read."
+run = ["calibrate", "--cap", "unlimited", "--networks", "livejournal:top5000,friendster:top5000", "--name", "calibration-hedonic-large", "--output-dir", "{root}/calibration-hedonic-large"]
+
+[[items]]
+name = "gt-robustness-large"
+short = "gt-robust-L"
+title = "Hedonic: ground-truth robustness (LiveJournal/top5k and Friendster/top5k)"
+about = "Exact stability of every supplied ground-truth cover over resolution (fixed and open labels), then local moving from the exact cover at each resolution and seed, on the subgraph the cover induces. Each pair's calibrated resolution joins its grids. The earlier pairs are listed so the coverage report describes all of them; their records are reused."
+run = ["spectrum", "--config", "full", "--pairs", "dblp/top5000,dblp/all,amazon/top5000,amazon/all,youtube/top5000,youtube/all,livejournal/top5000,friendster/top5000", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json,{root}/calibration-hedonic-large/hoc_tuned.json", "--name", "gt-robustness-large", "--output-dir", "{root}/gt-robustness"]
+
+[[items]]
+name = "leveraging-gt-large"
+short = "leverage-L"
+title = "Hedonic: leveraging the ground truth (LiveJournal/top5k and Friendster/top5k)"
+about = "Hedonic local moving started from the ground-truth cover corrupted by degree-preserving incidence switches: 9 corruption levels x 10 seeds per pair, at the calibrated gamma, with the cap set to the reference's largest number of communities on one vertex."
+run = ["startcurve", "--config", "start-quality-hoc-local", "--networks", "livejournal:top5000,friendster:top5000", "--cap", "reference", "--tuned", "{root}/calibration-hedonic-large/hoc_tuned.json", "--name", "leveraging-gt-large", "--output-dir", "{root}/leveraging-gt-large"]
+
+[[items]]
+name = "benchmark-hedonic-large"
+short = "bench-hed-L"
+title = "Hedonic: benchmark (LiveJournal/top5k and Friendster/top5k)"
+about = "Hedonic at its calibrated gamma and no cap, seeds 0-9, on the subgraph each cover induces; every saved cover is audited for robustness."
+run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic-large/hoc_tuned.json", "--name", "benchmark-hedonic-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "calibration-codeseg-large"
+short = "cal-codeseg-L"
+title = "CoDeSEG: calibration (LiveJournal/top5k and Friendster/top5k)"
+about = "CoDeSEG on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "codeseg", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-codeseg-large", "--output-dir", "{root}/calibration-codeseg-large"]
+
+[[items]]
+name = "benchmark-codeseg-large"
+short = "bench-codeseg-L"
+title = "CoDeSEG: benchmark (LiveJournal/top5k and Friendster/top5k)"
+about = "CoDeSEG on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
+run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "codeseg", "--tuned", "{root}/calibration-codeseg-large/baseline_tuned.json", "--name", "benchmark-codeseg-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "calibration-ncgame-large"
+short = "cal-ncgame-L"
+title = "NcGame: calibration (LiveJournal/top5k and Friendster/top5k)"
+about = "NcGame on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ncgame", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-ncgame-large", "--output-dir", "{root}/calibration-ncgame-large"]
+
+[[items]]
+name = "benchmark-ncgame-large"
+short = "bench-ncgame-L"
+title = "NcGame: benchmark (LiveJournal/top5k and Friendster/top5k)"
+about = "NcGame on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
+run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ncgame", "--tuned", "{root}/calibration-ncgame-large/baseline_tuned.json", "--name", "benchmark-ncgame-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "calibration-fox-large"
+short = "cal-fox-L"
+title = "FOX: calibration (LiveJournal/top5k and Friendster/top5k)"
+about = "FOX on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "fox", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-fox-large", "--output-dir", "{root}/calibration-fox-large"]
+
+[[items]]
+name = "benchmark-fox-large"
+short = "bench-fox-L"
+title = "FOX: benchmark (LiveJournal/top5k and Friendster/top5k)"
+about = "FOX on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
+run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "fox", "--tuned", "{root}/calibration-fox-large/baseline_tuned.json", "--name", "benchmark-fox-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "calibration-bigclam-large"
+short = "cal-bigclam-L"
+title = "BigCLAM: calibration (LiveJournal/top5k and Friendster/top5k)"
+about = "BigCLAM on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "bigclam", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-bigclam-large", "--output-dir", "{root}/calibration-bigclam-large"]
+
+[[items]]
+name = "benchmark-bigclam-large"
+short = "bench-bigclam-L"
+title = "BigCLAM: benchmark (LiveJournal/top5k and Friendster/top5k)"
+about = "BigCLAM on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
+run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "bigclam", "--tuned", "{root}/calibration-bigclam-large/baseline_tuned.json", "--name", "benchmark-bigclam-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "calibration-neo-kmeans-large"
+short = "cal-neo-kmea-L"
+title = "NEO-K-Means: calibration (LiveJournal/top5k and Friendster/top5k)"
+about = "NEO-K-Means on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "neo_kmeans", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-neo-kmeans-large", "--output-dir", "{root}/calibration-neo-kmeans-large"]
+
+[[items]]
+name = "benchmark-neo-kmeans-large"
+short = "bench-neo-kmea-L"
+title = "NEO-K-Means: benchmark (LiveJournal/top5k and Friendster/top5k)"
+about = "NEO-K-Means on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
+run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "neo_kmeans", "--tuned", "{root}/calibration-neo-kmeans-large/baseline_tuned.json", "--name", "benchmark-neo-kmeans-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "calibration-clique-percolation-large"
+short = "cal-clique-p-L"
+title = "CliquePerc: calibration (LiveJournal/top5k and Friendster/top5k)"
+about = "CliquePerc on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "clique_percolation", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-clique-percolation-large", "--output-dir", "{root}/calibration-clique-percolation-large"]
+
+[[items]]
+name = "benchmark-clique-percolation-large"
+short = "bench-clique-p-L"
+title = "CliquePerc: benchmark (LiveJournal/top5k and Friendster/top5k)"
+about = "CliquePerc on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
+run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "clique_percolation", "--tuned", "{root}/calibration-clique-percolation-large/baseline_tuned.json", "--name", "benchmark-clique-percolation-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "calibration-ego-splitting-large"
+short = "cal-ego-spli-L"
+title = "Ego-Splitting: calibration (LiveJournal/top5k and Friendster/top5k)"
+about = "Ego-Splitting on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ego_splitting", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-ego-splitting-large", "--output-dir", "{root}/calibration-ego-splitting-large"]
+
+[[items]]
+name = "benchmark-ego-splitting-large"
+short = "bench-ego-spli-L"
+title = "Ego-Splitting: benchmark (LiveJournal/top5k and Friendster/top5k)"
+about = "Ego-Splitting on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
+run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ego_splitting", "--tuned", "{root}/calibration-ego-splitting-large/baseline_tuned.json", "--name", "benchmark-ego-splitting-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+
+[[items]]
+name = "calibration-angel-large"
+short = "cal-angel-L"
+title = "ANGEL: calibration (LiveJournal/top5k and Friendster/top5k)"
+about = "ANGEL on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "angel", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=3:60", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-angel-large", "--output-dir", "{root}/calibration-angel-large"]
+
+[[items]]
+name = "benchmark-angel-large"
+short = "bench-angel-L"
+title = "ANGEL: benchmark (LiveJournal/top5k and Friendster/top5k)"
+about = "ANGEL on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); every saved cover is audited for robustness."
+run = ["exp", "--config", "paper-benchmark", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "angel", "--tuned", "{root}/calibration-angel-large/baseline_tuned.json", "--name", "benchmark-angel-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]

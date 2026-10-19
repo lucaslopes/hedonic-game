@@ -73,6 +73,8 @@ PHASE_NAME = {"local": "Hedonic local moving"}
 PHASE_DESCRIPTION = {"local": "local moves to an equilibrium"}
 DEFAULT_NETWORKS = ("dblp", "amazon", "youtube")
 DEFAULT_SEEDS = "0-4"
+CAP_SOURCES = ("tuned", "reference")
+REFERENCE_CAP = "reference"  # a setting's cap: the pair's largest reference multiplicity, read once its graph is loaded
 DEFAULT_LEVELS = ("0", "0.005", "0.02", "0.05", "0.1", "0.2", "0.5", "1", "random")
 DEFAULT_OUTPUT = RUNS_ROOT / "start-quality"
 SWAP_SEED_BASE = 100  # perturbation seed = 100 + detector seed
@@ -257,6 +259,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="calibrated settings (hoc_tuned.json of `hedonic run calibrate`, method key hedonic) "
                              "instead of quickstart.HOC_TUNED; a comma list or repeated flags, a later file overriding "
                              "an earlier one")
+    parser.add_argument("--cap", choices=CAP_SOURCES,
+                        help="membership cap: tuned (the calibrated cap, default) or reference (each pair's largest "
+                             "number of reference communities on one vertex: the experiment leverages the ground truth)")
     parser.add_argument("--workers", type=int, metavar="N",
                         help="conditions run side by side in forked workers (default: the performance cores, or "
                              "HEDONIC_WORKERS); 1 runs them one at a time in this process")
@@ -296,11 +301,23 @@ def resolve(argv: list[str]) -> dict[str, Any]:
         "levels": levels,
         "output": expand_path(args.output or DEFAULT_OUTPUT).resolve(),
         "tuned": ",".join(tuned_paths) or None,
-        "settings": {network: tuned_setting(network, phase, calibrated) for network in networks},
+        "settings": {network: with_cap(tuned_setting(network, phase, calibrated), args.cap) for network in networks},
         "workers": parallel.default_workers(args.workers),
         "dry_run": bool(args.dry_run),
         "overwrite": bool(args.overwrite),
     }
+
+
+def with_cap(setting: dict[str, Any], source: str | None) -> dict[str, Any]:
+    """The calibrated setting, or with its cap replaced by the reference's (``--cap reference``)."""
+    return {**setting, "cap": REFERENCE_CAP} if source == REFERENCE_CAP else setting
+
+
+def setting_cap(job: Any, setting: dict[str, Any]) -> int:
+    """The cap a condition runs at: the calibrated one, or the largest number of reference communities on one vertex."""
+    if setting["cap"] == REFERENCE_CAP:
+        return max(map(len, job.start(None).memberships))
+    return int(setting["cap"])
 
 
 def condition_key(network: str, level: float | str, seed: int, setting: dict[str, Any], phase: str) -> str:
@@ -517,7 +534,7 @@ def run_condition(job: Any, setting: dict[str, Any], level: float | str, seed: i
                   phase: str) -> dict[str, Any]:
     graph = job.graph
     n = graph.vcount()
-    cap, gamma = int(setting["cap"]), float(setting["gamma"])
+    cap, gamma = setting_cap(job, setting), float(setting["gamma"])
     # the cap projection of the reference when the cap is below its multiplicity; -1 (no cap) keeps the reference
     start = job.start(cap if cap >= 1 else None)
     reference = start.memberships
@@ -566,6 +583,7 @@ def run_condition(job: Any, setting: dict[str, Any], level: float | str, seed: i
         "final_communities": len(final_cover),
         "final_max_memberships": max(map(len, final_raw)),
         "cap": cap,
+        "cap_source": REFERENCE_CAP if setting["cap"] == REFERENCE_CAP else "tuned",
         "gamma": gamma,
         "n_vertices": n,
         "n_edges": graph.ecount(),
@@ -695,7 +713,8 @@ def run_study(plan: dict[str, Any], *, loader: Callable[[str], Any] = load_netwo
         job = loader(network)  # loaded here, before any fork, so the workers share it
         workers = min(int(plan.get("workers") or 1), len(pending))
         setting = plan["settings"][network]
-        job.start(int(setting["cap"]) if int(setting["cap"]) >= 1 else None)  # the cap projection is cached on the job: computed once here, not once per worker
+        cap = setting_cap(job, setting)
+        job.start(cap if cap >= 1 else None)  # the cap projection is cached on the job: computed once here, not once per worker
 
         def task(condition: dict[str, Any], job: Any = job, setting: dict[str, Any] = setting) -> dict[str, Any]:
             return run_condition(job, setting, condition["level"], condition["seed"], condition["key"], plan["phase"])
@@ -771,6 +790,9 @@ def _front_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tuned", action="append", metavar="FILE[,FILE]",
                         help="calibrated settings (hoc_tuned.json of `hedonic run calibrate`, method key hedonic) "
                              "instead of quickstart.HOC_TUNED; a comma list or repeated flags")
+    parser.add_argument("--cap", choices=CAP_SOURCES,
+                        help="membership cap: tuned (the calibrated cap, default) or reference (each pair's largest "
+                             "number of reference communities on one vertex: the experiment leverages the ground truth)")
     parser.add_argument("--workers", type=int, metavar="N",
                         help="conditions run side by side (default: the performance cores, or HEDONIC_WORKERS)")
     parser.add_argument("--name", help="run name (default: the config file's name)")
@@ -796,6 +818,8 @@ def front_plan(args: argparse.Namespace) -> dict[str, Any]:
         study += ["--covers", args.covers]
     for tuned in args.tuned or []:
         study += ["--tuned", tuned]
+    if args.cap:
+        study += ["--cap", args.cap]
     if args.workers is not None:
         study += ["--workers", str(args.workers)]
     if args.output_dir:
@@ -818,7 +842,8 @@ def launch_argv(plan: dict[str, Any]) -> list[str]:
     """Every setting spelled out (no config file), so a resume rebuilds the same plan even if the file moves."""
     return ["--networks", ",".join(plan["networks"]), "--phase", plan["phase"],
             "--seeds", ",".join(map(str, plan["seeds"])), "--levels", ",".join(token_of(level) for level in plan["levels"]),
-            "--output", str(plan["output"]), "--workers", str(plan.get("workers", 1))] + (["--tuned", plan["tuned"]] if plan.get("tuned") else [])
+            "--output", str(plan["output"]), "--workers", str(plan.get("workers", 1))] + (["--tuned", plan["tuned"]] if plan.get("tuned") else []) + (
+        ["--cap", REFERENCE_CAP] if any(s["cap"] == REFERENCE_CAP for s in plan["settings"].values()) else [])
 
 
 def describe(plan: dict[str, Any]) -> str:

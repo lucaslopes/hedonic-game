@@ -510,6 +510,16 @@ class TestRunqueueTree(unittest.TestCase):
         self.assertEqual((root.done, root.total), (1, 5))  # the root still counts runs
         self.assertEqual((hedonic.depth, hedonic.children[0].depth), (1, 2))
 
+    def test_a_methods_bar_is_how_far_its_runs_are_not_how_many_finished(self):
+        runs = [qm.Node(key=("run", "cal"), label="cal", status="running", done=7, total=8),
+                qm.Node(key=("run", "bench"), label="bench", status="running", done=6, total=8),
+                qm.Node(key=("run", "h"), label="h", status="done", done=3, total=3)]
+        root = qm.queue_node("q", runs, groups=["NcGame", "NcGame", "Hedonic"])
+        ncgame = root.children[0]
+        self.assertEqual((ncgame.done, ncgame.total, ncgame.share), (0, 2, (7 / 8 + 6 / 8) / 2))
+        self.assertIn(" 81% ", qt.right_columns(ncgame, 120, runqueue.tui.glyphs(True)))  # 0/2 runs, yet 81% of the work
+        self.assertAlmostEqual(root.share, (7 / 8 + 6 / 8 + 1) / 3)
+
     def test_one_method_keeps_the_runs_at_the_top(self):
         runs = [qm.Node(key=("run", "a"), label="a"), qm.Node(key=("run", "b"), label="b")]
         root = qm.queue_node("q", runs, groups=["Hedonic", "Hedonic"])

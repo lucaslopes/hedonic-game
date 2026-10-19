@@ -80,11 +80,12 @@ TOPICS: dict[str, tuple[str, str]] = {
         hedonic run queue paper --root DIR      the same, writing under DIR instead of OUTPUT_DIR/paper-queue
         hedonic run attach paper-queue          the live tree view (q closes the view only)
 
-        The queue goes method by method. Hedonic first: its calibration (the resolution only, no membership cap),
-        the synthetic networks, then the ground-truth start curve, the robustness spectrum and its benchmark rows
-        one pair at a time, the shortest step first (--schedule file: pair by pair, top5000 covers first). Then
-        each baseline in turn, cheapest first: its calibration, then its benchmark on every pair, all benchmark
-        items writing into one folder so a finished unit is reused.
+        The queue goes method by method, in two phases. Phase 1, on DBLP, Amazon and YouTube: Hedonic first (the
+        synthetic networks, its calibration of the resolution only with no membership cap, then the robustness
+        spectrum, the ground-truth start curve and its benchmark rows one pair at a time), then each baseline in
+        turn, cheapest first: its calibration, then its benchmark. Phase 2 repeats every method, Hedonic first, on
+        LiveJournal/top5000 and Friendster/top5000, the largest graphs, so they cannot hold up the rest. All
+        benchmark items write into one folder so a finished unit is reused.
         Every run decides from its files what is done, so starting the queue again continues it. The queue checks
         that the data and methods are prepared and prints the `hedonic setup` command when they are not.
 

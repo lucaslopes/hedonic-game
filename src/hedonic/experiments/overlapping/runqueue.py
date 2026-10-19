@@ -226,7 +226,7 @@ SCHEDULES = ("file", "shortest")
 
 def dependencies(queue: dict) -> dict[str, set[str]]:
     """Item name -> the earlier items it must wait for: those named in its ``after``, and those whose output folder one
-    of its arguments names (``--tuned {root}/hedonic-calibration/hoc_tuned.json`` waits for ``hedonic-calibration``)."""
+    of its arguments names (``--tuned {root}/calibration-hedonic/hoc_tuned.json`` waits for ``calibration-hedonic``)."""
     root = queue.get("root") or ""
     deps: dict[str, set[str]] = {}
     earlier: list[tuple[str, list[str]]] = []
@@ -585,7 +585,37 @@ def _benchmark_history(cfg: qs.Config, units: list, reusable: list[bool], audite
         m = (record.get("dataset_report") or {}).get("m")
         if isinstance(m, int) and m > 0:
             edges[net] = m
+    if cfg.induce == "covered":  # a pair with no finished unit: its covered subgraph's size from the Table 1 analysis
+        table = _covered_edges()
+        for net, _seed, _method in units:
+            if net not in edges and net in table:
+                edges[net] = table[net]
     return {"seconds": seconds, "edges": edges}
+
+
+def _covered_edges() -> dict[str, int]:
+    """Edges of each pair's covered subgraph ({"friendster:top5000": m, "dblp:all": m, "dblp": m}), read from the cached
+    analysis of ``hedonic show table``; {} without it. Without this a pair no unit has run on was priced by the whole
+    graph (Friendster: 1.8 billion edges, not the 4 million of its top5000 subgraph)."""
+    import csv
+
+    from hedonic.experiments.overlapping import snap
+
+    try:
+        with (Path(snap.networks_root()) / ".hedonic-cache" / "snap_table1.csv").open(newline="") as stream:
+            rows = [row for row in csv.DictReader(stream) if row.get("row_type") == "cover"]
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, int] = {}
+    for row in rows:
+        try:
+            m = int(row["edges"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        out[f"{row['dataset']}:{row['cover']}"] = m
+        if row["cover"] == "all":
+            out[row["dataset"]] = m
+    return out
 
 
 def _benchmark_state(run: list[str]) -> tuple[str, str]:

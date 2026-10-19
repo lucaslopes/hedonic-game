@@ -192,7 +192,7 @@ hedonic                                # in a terminal: the home screen (status 
 hedonic guide                          # state-aware tour of the commands
 hedonic setup --all [--dry-run]        # SNAP pairs and the eight baselines' runtimes
 hedonic run exp [--dry-run]            # benchmark front door (wizard in a terminal)
-hedonic run queue paper --root DIR     # the paper's queue, shortest step first; --schedule file, --dry-run, --report
+hedonic run queue paper --root DIR     # the paper's queue, in file order (two phases); --dry-run, --report
 hedonic run queue disjoint             # the disjoint paper (smoke, then the 100-seed grid)
 hedonic run list|status|attach|logs|stop|resume|check
 hedonic show methods|networks|covers|metrics
@@ -312,10 +312,18 @@ hedonic-exp list                       # analysis and utility commands
   `max_memberships` and `max_memberships_source = "unlimited"`; the robustness
   audit then plays the uncapped game. A search counts only under its own cap
   mode (`calibrate.same_cap_mode`).
-- **The paper queue goes method by method.** Hedonic first (calibration,
-  synthetic networks, then leveraging-gt, gt-robustness and its benchmark
-  rows pair by pair), then each baseline: `calibration-M` (adopting the
-  finished searches of `baseline-calibration-rc1`) and `benchmark-M`. Every
+- **The paper queue goes method by method, in two phases** (`schedule =
+  "file"`). Phase 1 is DBLP, Amazon and YouTube (`pairs`, each network's
+  `top5000` and `all` covers together): Hedonic first (`synthetic-hedonic`,
+  `calibration-hedonic`, then `gt-robustness`, `leveraging-gt` and
+  `benchmark-hedonic` pair by pair), then each baseline: `calibration-M`
+  (adopting the finished searches of `baseline-calibration-rc1`) and
+  `benchmark-M`. Phase 2 repeats every method, Hedonic first, on
+  LiveJournal/top5000 and Friendster/top5000 (the `-large` items: the largest
+  covered subgraphs, last so a slow method there cannot hold up the rest;
+  `gt-robustness-large` lists all eight pairs in the `gt-robustness` folder,
+  so one coverage report describes them). `leveraging-gt` caps every vertex
+  at the reference's largest multiplicity (`start-quality --cap reference`). Every
   benchmark item writes into `{root}/benchmark` (`--shared-folder`: the
   folder itself, not OUTPUT_DIR/NAME), so finished units are reused
   and each item waits for the earlier ones (an item depends on every earlier
@@ -324,7 +332,10 @@ hedonic-exp list                       # analysis and utility commands
 - **The queue view nests by method.** When a queue's items study more than one
   method, `hedonic run attach` groups its runs under one node per method
   (`runqueue.item_method`: Hedonic for its own verbs, else the single method of
-  `--methods`), then experiment > pair > loops. A Hedonic calibration search
+  `--methods`), then experiment > pair > loops. A method's row (and the root)
+  counts runs finished of runs but fills its bar and percent with the mean of
+  its runs' fractions (`queuemodel.fraction`, `Node.share`), so two runs at 7/8
+  and 6/8 read 0/2 runs and 81%. A Hedonic calibration search
   counts its evaluations (`queuebuild.decorate_calibration`, read from
   `ledger/evals*.jsonl`) and lists one row per probed setting (γ, F1, communities,
   seeds, ★ chosen); a search under way is priced from its own pace, and the run's
@@ -351,9 +362,8 @@ hedonic-exp list                       # analysis and utility commands
   terminal and registers it under its `--name`. A queue judges each item, and each pair of a
   by-pair item, from the files on disk; never reorder queue items to change
   the pair order (that is `pairs` in the queue file). The paper queue's pairs
-  are the manuscript's (Table 1's "in paper" marks): the `top5000` covers of
-  DBLP, Amazon, YouTube, Friendster and LiveJournal, then the `all` covers of
-  DBLP, Amazon and YouTube; every item lists them in that order.
+  are the manuscript's (Table 1's "in paper" marks): DBLP, Amazon and YouTube
+  with both covers in phase 1, LiveJournal and Friendster `top5000` in phase 2.
 - **Calibrated resolutions.** The benchmark, the start curve and the spectrum
   read `hoc_tuned.json` through `--tuned`. The spectrum takes only each
   pair's gamma and adds it to that pair's detector and audit grids

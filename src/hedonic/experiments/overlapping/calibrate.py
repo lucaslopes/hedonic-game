@@ -23,8 +23,8 @@ a good start), full otherwise. All end with the same confirmation on seeds 0-4. 
 ``<run>/ledger/``, a folder of this run only; it memoizes by configuration and never reuses an evaluation of another
 build.
 
-    hedonic run calibrate --networks dblp:top5000,amazon:top5000 --mode auto --name hedonic-calibration
-    hedonic run exp --config paper-benchmark --tuned ~/.../hedonic-calibration/hoc_tuned.json
+    hedonic run calibrate --networks dblp:top5000,amazon:top5000 --mode auto --name calibration-hedonic
+    hedonic run exp --config paper-benchmark --tuned ~/.../calibration-hedonic/hoc_tuned.json
 
 The search is the packaged ``hedonic.experiments.overlapping.calibration_search``, run as ``python -m``; ``--script FILE``
 runs a search script with the same command line instead (the 1.x ``bisect_tuning.py``).

@@ -84,7 +84,7 @@ part = g.community_hedonic(seed=0)                                          # ma
 - The default resolution is the graph's density. A density multiple does not
   transfer between a whole graph and its denser covered subgraph: use an
   absolute `resolution`, ideally the calibrated one (`hoc_tuned.json` of the
-  `hedonic-calibration` run, `settings.hedonic["dblp:top5000"]`).
+  `calibration-hedonic` run, `settings.hedonic["dblp:top5000"]`).
 - `max_memberships` is the per-vertex cap (`-1`: no practical cap). A cap taken
   from the reference cover's multiplicity is supervised: label it so.
 - `initial_membership` accepts flat labels or per-vertex lists (a ground-truth
