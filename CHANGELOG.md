@@ -155,6 +155,10 @@
     ends with an `audit` item that audits every saved cover, so all detector
     runs of a phase finish before any audit starts. Its rows are grouped as
     "Robustness audit" in the queue view, with per-unit progress and ETA.
+  - `hedonic show table` lists Orkut's `top5000` cover with SNAP's reported
+    counts of its induced subgraph (731,514 vertices, 21,992,510 edges), so
+    Table 1 does not rescan the 117-million-edge graph; the networks are
+    ordered D, A, Y, F, L, O and the cover descriptions are shorter.
   - Data defaults to `~/hedonic-data` and runs to `~/hedonic-runs`
     (`HEDONIC_DATA_DIR`, `HEDONIC_OUTPUT_DIR`, `HEDONIC_NETWORKS_DIR` and
     `~/.config/hedonic/config.toml` override them). `hedonic setup` and every

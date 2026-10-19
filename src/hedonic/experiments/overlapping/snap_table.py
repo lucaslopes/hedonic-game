@@ -34,11 +34,18 @@ NETWORK_SYMBOLS = {
     "dblp": "D", "amazon": "A", "youtube": "Y", "livejournal": "L",
     "friendster": "F", "orkut": "O",
 }
-# Covers left out of the table altogether (not listed, not analysed): Orkut's top5000 cover induces a 731,514-vertex,
-# 21,992,510-edge subgraph, 14.5x the edges of LiveJournal's and 5.5x those of Friendster's, the two top5000 covers we
-# do analyse; the manuscript's dataset section explains why it was not considered.
-NOT_CONSIDERED = {
-    "orkut": frozenset({"top5000"}),
+# Orkut's top5000 induced-graph counts were measured separately because loading
+# the raw graph requires substantial memory. Keep the cover in the descriptive
+# table and Figure 1 without rescanning the 117-million-edge source graph.
+CURATED_COVER_ROWS = {
+    ("orkut", "top5000"): {
+        "communities": 5_000, "vertices": 731_514, "edges": 21_992_510,
+        "network_vertices": 3_072_441, "network_edges": 117_185_083,
+        "directed": False,
+        "source_kind": "reported_snap_stats",
+        "source_graph": "SNAP com-orkut.ungraph.txt.gz",
+        "source_cover": "SNAP com-orkut.top5000.cmty.txt.gz",
+    },
 }
 ARTICLE_COVERS = {
     "dblp": frozenset({"all", "top5000"}),
@@ -51,32 +58,32 @@ DATASET_SEMANTICS = {
     "amazon": (
         "Product",
         "Co-purchase",
-        "Products in a category",
+        "Product categories",
     ),
     "dblp": (
         "Author",
         "Co-authorship",
-        "Authors sharing a venue",
+        "Venue authors",
     ),
     "youtube": (
         "User",
         "Friendship",
-        "Users in user-created groups",
+        "User groups",
     ),
     "livejournal": (
         "User",
-        "Declared friendship",
-        "Users in LiveJournal groups",
+        "Friendship",
+        "User groups",
     ),
     "orkut": (
         "User",
         "Friendship",
-        "Users in Orkut groups",
+        "User groups",
     ),
     "friendster": (
         "User",
         "Friendship",
-        "Users in Friendster groups",
+        "User groups",
     ),
 }
 
@@ -254,6 +261,20 @@ def _row(row_type: str, name: str, label: str, cover: str, communities: int,
     }
 
 
+def _add_curated_cover_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    present = {(row["dataset"], row["cover"]) for row in rows if row["row_type"] == "cover"}
+    for (name, variant), values in CURATED_COVER_ROWS.items():
+        if (name, variant) in present:
+            continue
+        label = quickstart.NETWORKS[name][0].split(" (")[0]
+        rows.append(_row("cover", name, label, variant,
+                         values["communities"], values["vertices"], values["edges"],
+                         values["network_vertices"], values["network_edges"],
+                         values["directed"], values["source_kind"], values["source_graph"],
+                         values["source_cover"]))
+    return rows
+
+
 def _analyze_raw(name: str, label: str, pairs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     first = pairs[0]
     spec = snap.SPECS[name]
@@ -310,7 +331,7 @@ def analyze(root: Path, progress: Callable[[str], None] | None = None
         base = snap._dataset_dir(root, spec)
         local_pairs = []
         for variant in ("all", "top5000"):
-            if variant in NOT_CONSIDERED.get(name, ()):
+            if (name, variant) in CURATED_COVER_ROWS:
                 continue
             pair = _source_pair(root, name, variant)
             if pair is None:
@@ -329,7 +350,7 @@ def analyze(root: Path, progress: Callable[[str], None] | None = None
         pickle_pairs = [p for p in local_pairs if p["kind"] == "igraph_pickle"]
         if pickle_pairs:
             rows.extend(_analyze_pickles(name, label, pickle_pairs))
-    return rows, _signature(pairs_for_signature), missing
+    return _add_curated_cover_rows(rows), _signature(pairs_for_signature), missing
 
 
 def _load_csv(path: Path) -> list[dict[str, Any]]:
@@ -432,6 +453,28 @@ def _tex_rows(rows: list[dict[str, Any]]) -> tuple[str, str, int, int]:
     return "\n".join(lines) + "\n", counts, len(networks), len(pairs)
 
 
+def _hatch(out: list[str], color: str, x0: float, end: float, bottom: float, top: float, *,
+           forward: bool = True, backward: bool = False, spacing: float | None = None) -> None:
+    """Thin coloured 45-degree strokes clipped to a bar: "/" for the all cover, "/" plus "\\" (crosses) for top5000.
+
+    Drawn as lines rather than a TeX pattern, so the colour follows the network in every PDF viewer and the
+    strokes have the same weight and spacing in all three panels.
+    """
+    height = top - bottom
+    spacing = spacing or 0.105
+    out.append(r"\begin{scope}")
+    out.append(rf"\clip ({x0:.3f},{bottom:.3f}) rectangle ({end:.3f},{top:.3f});")
+    first = math.floor(-height / spacing) - 1
+    last = math.ceil((end - x0) / spacing) + 1
+    for index in range(first, last + 1):
+        start = x0 + index * spacing
+        if forward:
+            out.append(rf"\path[draw={color}!90,line width=0.012cm] ({start:.3f},{bottom:.3f})--({start + height:.3f},{top:.3f});")
+        if backward:
+            out.append(rf"\path[draw={color}!90,line width=0.012cm] ({start + height:.3f},{bottom:.3f})--({start:.3f},{top:.3f});")
+    out.append(r"\end{scope}")
+
+
 def _figure_panel(rows: list[dict[str, Any]], *, metric: str, low: int, high: int,
                   ticks: list[int], axis_label: str,
                   separate_tracks: bool = False) -> str:
@@ -486,9 +529,9 @@ def _figure_panel(rows: list[dict[str, Any]], *, metric: str, low: int, high: in
             # of making their bar lengths look like nested set sizes.
             tracks = [(row, y + 0.105, None)]
             if "all" in available:
-                tracks.append((available["all"], y, "north east lines"))
+                tracks.append((available["all"], y, "all"))
             if "top5000" in available:
-                tracks.append((available["top5000"], y - 0.105, "north west lines"))
+                tracks.append((available["top5000"], y - 0.105, "top5000"))
             for item, center, pattern in tracks:
                 end = x_of(float(item[metric]))
                 if end <= x0:
@@ -496,9 +539,8 @@ def _figure_panel(rows: list[dict[str, Any]], *, metric: str, low: int, high: in
                 top, bottom = center + 0.035, center - 0.035
                 out.append(rf"\path[fill={color}!12,draw={color}!65,line width=0.012cm] ({x0:.3f},{bottom:.3f}) rectangle ({end:.3f},{top:.3f});")
                 if pattern is not None:
-                    out.append(rf"\path[pattern={pattern},pattern color={color}!90] ({x0:.3f},{bottom:.3f}) rectangle ({end:.3f},{top:.3f});")
-                if item.get("cover") == "top5000" and "all" in available:
-                    out.append(rf"\path[pattern=north east lines,pattern color={color}!90] ({x0:.3f},{bottom:.3f}) rectangle ({end:.3f},{top:.3f});")
+                    _hatch(out, color, x0, end, bottom, top, backward=item.get("cover") == "top5000")
+                    out.append(rf"\path[draw={color}!65,line width=0.012cm] ({x0:.3f},{bottom:.3f}) rectangle ({end:.3f},{top:.3f});")
         else:
             out.append(rf"\path[fill={color}!12] ({x0:.3f},{xa:.3f}) rectangle ({full_x:.3f},{xb:.3f});")
             for variant in ("all", "top5000"):
@@ -513,10 +555,7 @@ def _figure_panel(rows: list[dict[str, Any]], *, metric: str, low: int, high: in
                 # hatches and visibly reads as a subset of all.
                 out.append(rf"\path[fill=white] ({x0:.3f},{xa:.3f}) rectangle ({end:.3f},{xb:.3f});")
                 out.append(rf"\path[fill={color}!12] ({x0:.3f},{xa:.3f}) rectangle ({end:.3f},{xb:.3f});")
-                if variant == "all" or "all" in available:
-                    out.append(rf"\path[pattern=north east lines,pattern color={color}!90] ({x0:.3f},{xa:.3f}) rectangle ({end:.3f},{xb:.3f});")
-                if variant == "top5000":
-                    out.append(rf"\path[pattern=north west lines,pattern color={color}!90] ({x0:.3f},{xa:.3f}) rectangle ({end:.3f},{xb:.3f});")
+                _hatch(out, color, x0, end, xa, xb, backward=variant == "top5000")
             out.append(rf"\path[draw={color}!65,line width=0.016cm] ({x0:.3f},{xa:.3f}) rectangle ({full_x:.3f},{xb:.3f});")
     out.append(rf"\path[draw=black,line width=0.021cm] ({x0:.3f},0.98)--({x1:.3f},0.98);")
     out.append(rf"\path[draw=black,line width=0.021cm] ({x0:.3f},0.98)--({x0:.3f},3.62);")
@@ -595,7 +634,7 @@ def run(root: Path, *, cache_dir: Path, rows_tex: Path, counts_tex: Path,
     missing = []
     for name in NETWORK_ORDER:
         for variant in ("all", "top5000"):
-            if variant in NOT_CONSIDERED.get(name, ()):
+            if (name, variant) in CURATED_COVER_ROWS:
                 continue
             pair = _source_pair(root, name, variant)
             if pair is None:
@@ -621,7 +660,7 @@ def run(root: Path, *, cache_dir: Path, rows_tex: Path, counts_tex: Path,
                                              "rows": len(rows)}, indent=2) + "\n", encoding="utf-8")
         refreshed = True
     else:
-        rows, refreshed = cached, False
+        rows, refreshed = _add_curated_cover_rows(cached), False
         if _canonicalize_source_paths(rows, root):
             _save_csv(csv_path, rows)
     figure_a_tex = figure_a_tex or rows_tex.with_name("snap_networks_figure_a.tex")
