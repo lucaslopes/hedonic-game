@@ -769,6 +769,16 @@ def params_label(params: dict) -> str:
     return ", ".join(f"{k}={v}" for k, v in params.items() if k != "threads") or "published setting"
 
 
+def search_budget(plan: dict, method: str) -> tuple[int, float]:
+    """The settings (0: unbounded) and seconds (0: unbounded) one search of ``method`` may spend on a pair: its
+    ``--method-budget`` when it has one, else the run's ``--max-evals`` and ``--max-minutes`` (``baseline_run.budget_of``)."""
+    evals, minutes = (plan.get("method_budgets") or {}).get(method, (plan.get("max_evals") or 0, plan.get("max_minutes") or 0))
+    evals = int(evals or 0)
+    if method in SEARCH_CAP:
+        evals = min(evals, SEARCH_CAP[method]) if evals else SEARCH_CAP[method]
+    return evals, float(minutes or 0) * 60
+
+
 def read_ledger(folder: Path, target: str, method: str) -> list[dict]:
     path = folder / "ledger" / target.replace(":", "_") / f"evals-{method}.jsonl"
     records = []
@@ -798,7 +808,7 @@ def baselines(plan: dict, searches: list[dict], results: dict[str, dict]) -> qm.
     setting cost on this pair (its own ledger); the methods of a pair run side by side, so each unfinished search is
     charged its share of the time (the pair waits for the longest, not for the sum)."""
     folder = Path(plan["output"])
-    budget, workers = int(plan.get("max_evals") or 8), max(1, int(plan.get("workers") or 0) or 8)
+    workers = max(1, int(plan.get("workers") or 0) or 8)
     pair_dim = qm.Dim("pair", "pairs", about="a network with one cover; the settings are calibrated on, and used for, that pair")
     method_dim = qm.Dim("method", "methods", about="a baseline; its parameters are chosen on G[S] alone, by the rule its row names")
     ledgers = {(s["network"], s["method"]): read_ledger(folder, s["network"], s["method"]) for s in searches}
@@ -824,7 +834,8 @@ def baselines(plan: dict, searches: list[dict], results: dict[str, dict]) -> qm.
                 note += " · not bracketed"
         else:
             tried = len(settings_of(ledgers[(s["network"], s["method"])]))
-            note = f"{tried} of ≤{budget} settings tried" if tried else ""
+            cap = search_budget(plan, s["method"])[0]
+            note = (f"{tried} of ≤{cap} settings tried" if cap else f"{tried} settings tried") if tried else ""
         units.append(qm.Unit((pair_label(s["network"]), method_label(s["method"])), s["key"] in results,
                              res.get("seconds") if res else None, note, False,
                              (res.get("seconds") if res else None)))
@@ -840,8 +851,13 @@ def baselines(plan: dict, searches: list[dict], results: dict[str, dict]) -> qm.
             if not measured:
                 return None, ""
             each = statistics.fmean(measured)  # the same method on another pair: a rough guide
-        left = max(0, SEARCH_CAP.get(method, budget) - len(settings_of(ledgers[(target, method)])))
-        return left * each / share.get(target, 1), "estimate"
+        cap, seconds = search_budget(plan, method)
+        groups = settings_of(ledgers[(target, method)])
+        left = max(0, (cap or 8) - len(groups)) * each
+        if seconds:  # the search stops starting settings once its time budget is spent
+            spent = sum(r.get("detect_seconds", 0.0) + r.get("score_seconds", 0.0) for g in groups.values() for r in g)
+            left = min(left, max(0.0, seconds - spent))
+        return left / share.get(target, 1), "estimate"
 
     family = qm.Family(
         "calibrations", "calibrations", "the search that sets one baseline's parameters on one pair, scored without the ground truth",
@@ -920,7 +936,7 @@ def decorate_baselines(node: qm.Node, plan: dict, results: dict[str, dict]) -> N
             if best:
                 n.detail.append(f"best by the criterion: {params_label(next(iter(groups[best[1]]))['params'])}")
         if not res and method not in FIXED_METHODS:
-            cap = SEARCH_CAP.get(method) or int(plan.get("max_evals") or 0)
+            cap = search_budget(plan, method)[0]
             more = max(0, cap - len(groups)) if cap else 0
             if more:  # the settings the search may still try: they keep the method's total honest, and carry its ETA
                 rest = qm.Node(key=n.key + ("more",), label=f"up to {more} more settings", noun="settings", depth=n.depth + 1,

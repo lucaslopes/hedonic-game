@@ -539,6 +539,30 @@ class TestSingleRunTree(unittest.TestCase):
 
 
 class TestUnitProgress(unittest.TestCase):
+    def test_a_method_budget_sets_the_settings_counted_and_bounds_the_estimate(self):
+        from hedonic.experiments.overlapping import queuebuild as qb
+        from hedonic.experiments.overlapping import queuemodel as qm
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = br.resolve(["--networks", "dblp:top5000", "--methods", "angel", "--output-dir", tmp, "--max-evals", "8",
+                               "--method-budget", "angel=3:60"])
+            ledger = Path(tmp) / "ledger" / "dblp_top5000"
+            ledger.mkdir(parents=True)
+            row = {"method": "angel", "params": {"threshold": 0.2, "min_community_size": 3}, "replica": 0,
+                   "status": "completed", "score": -2.0, "detect_seconds": 1800.0, "score_seconds": 0.0}
+            (ledger / "evals-angel.jsonl").write_text(json.dumps(row))
+            todo = br.searches(plan)
+            model = qb.baselines(plan, todo, {})
+            unit = model.families[0].units[0]
+            self.assertEqual(unit.note, "1 of ≤3 settings tried")  # the method's 3, not the run's 8
+            # two settings left at 30 minutes each, but the search starts none after its 60 minutes: 30 minutes remain
+            self.assertEqual(model.families[0].cost(unit), (1800.0, "estimate"))
+            node = qm.run_node(1, "t", "", "running", model, (0, 1, "calibrations"))
+            qb.decorate_baselines(node, plan, {})
+            method = node.children[0].children[0]
+            self.assertEqual((method.done, method.total), (1, 3))
+            self.assertIn("up to 2 more settings", [c.label for c in method.children])
+
     @patch.dict(bc.REPLICATION, REPLICAS_POLICY)
     def test_a_search_under_way_fills_its_bar_by_settings_tried(self):
         from hedonic.experiments.overlapping import queuebuild as qb

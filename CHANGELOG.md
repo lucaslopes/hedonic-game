@@ -100,6 +100,10 @@
     selected row's highlight flickered. Closing the view always prints how
     to reopen or stop the queue (a state check on the view's own thread
     used to swallow it).
+  - A baseline calibration in the queue view counts the settings of the
+    method's own `--method-budget` (ANGEL's 3 in the overlap queue), not the
+    run's `--max-evals`, and prices what is left within the method's minutes
+    per pair: the view showed ANGEL at 0/8 settings and an ETA of six hours.
   - `hedonic setup [--pairs P,...] [--methods M,...] [--all] [--dry-run]`
     downloads SNAP pairs and builds or installs the external baselines,
     after checking the system tools they need.
