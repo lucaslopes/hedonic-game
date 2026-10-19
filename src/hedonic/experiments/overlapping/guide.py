@@ -1,7 +1,7 @@
 """``hedonic guide``: a short, current tour of what the CLI can do and what to do next.
 
     hedonic guide             where you are (data, runs) and the topics
-    hedonic guide TOPIC       one topic: start, benchmark, paper, spectrum, disjoint, runs, config, data, update
+    hedonic guide TOPIC       one topic: start, benchmark, overlap, spectrum, disjoint, runs, config, data, update
     hedonic guide --list      topic names only
 
 In a terminal, the index is an arrow-key menu. Everything is read from the local
@@ -29,7 +29,7 @@ TOPICS: dict[str, tuple[str, str]] = {
 
         The default run takes about a minute: DBLP, a 5,000-vertex subgraph, seed 0, Hedonic and CoDeSEG.
         Everything runs detached, so closing the terminal or pressing Ctrl-C only closes the view.
-        To reproduce the overlapping-communities paper, see `hedonic guide paper`.
+        To reproduce the overlapping-communities paper, see `hedonic guide overlap`.
     """),
     "detect": ("One network, one method (`hedonic detect`)", """
         hedonic detect                                    a wizard: network, its parameters, method, its parameters, seed
@@ -72,13 +72,13 @@ TOPICS: dict[str, tuple[str, str]] = {
         A record whose bytes changed is moved aside (renamed, never deleted) and rerun. To see the scan only:
         hedonic run exp --config FILE --name NAME --scan
     """),
-    "paper": ("Reproduce the overlapping-communities paper (`hedonic run queue paper`)", """
+    "overlap": ("Reproduce the overlapping-communities paper (`hedonic run queue overlap`)", """
         hedonic setup --all --dry-run           the eight graph/cover pairs and eight baselines it needs
         hedonic setup --all                     download the pairs, build and install the baselines
-        hedonic run queue paper --dry-run       its runs, the order of their steps, with what is already done
-        hedonic run queue paper                 start it (durable, resumable; days on a laptop)
-        hedonic run queue paper --root DIR      the same, writing under DIR instead of OUTPUT_DIR/paper-queue
-        hedonic run attach paper-queue          the live tree view (q closes the view only)
+        hedonic run queue overlap --dry-run       its runs, the order of their steps, with what is already done
+        hedonic run queue overlap                 start it (durable, resumable; days on a laptop)
+        hedonic run queue overlap --root DIR      the same, writing under DIR instead of OUTPUT_DIR/overlap-queue
+        hedonic run attach overlap-queue          the live tree view (q closes the view only)
 
         The queue goes method by method, in two phases. Phase 1, on DBLP, Amazon and YouTube: Hedonic first (the
         synthetic networks, its calibration of the resolution only with no membership cap, then the robustness
@@ -156,6 +156,10 @@ TOPICS: dict[str, tuple[str, str]] = {
         `schedule = "shortest"` in the file (or --schedule shortest) still runs one step at a time, but takes at each
         turn the ready step with the smallest estimate; a run that reads another's folder (--tuned) or names it in
         `after = [...]` waits for it.
+
+        An item can be a whole queue: `run = ["queue", "overlap"]` (a shipped name or a file, optionally with
+        "--root", DIR). It starts that queue, waits until it completes and goes on, so `hedonic run queue all` runs
+        the overlap paper's queue and then the disjoint paper's. The tree shows the inner queue's runs under it.
     """),
     "config": ("Your settings (`hedonic config`)", """
         hedonic config                                show ~/.config/hedonic/config.toml

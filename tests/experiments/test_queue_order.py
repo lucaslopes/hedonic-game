@@ -89,7 +89,7 @@ class TestShippedBenchmark(unittest.TestCase):
 
     def test_the_queue_item_reads_that_file_and_the_queue_still_loads(self):
         with tempfile.TemporaryDirectory() as tmp:
-            queue = runqueue.load_queue("paper", root=tmp)
+            queue = runqueue.load_queue("overlap", root=tmp)
         row = next(item for item in queue["items"] if item["name"] == "benchmark-hedonic")
         self.assertEqual(runqueue._option(row["run"], "--config"), str(CONFIG_DIR / "paper-benchmark.toml"))  # stored absolute
         self.assertNotIn("--order", row["run"])  # the nesting is not repeated on the command line

@@ -3,7 +3,7 @@
 Two console scripts share this module:
 
 * ``hedonic`` (:func:`hedonic_main`) is the task-oriented front door: ``hedonic
-  run`` starts and manages durable runs (``hedonic run queue paper`` is the
+  run`` starts and manages durable runs (``hedonic run queue overlap`` is the
   overlap paper's experiment queue, ``hedonic run disjoint --preset paper`` the
   disjoint paper's benchmark), ``hedonic setup`` downloads data and prepares the
   external methods, and ``hedonic show``, ``guide``, ``config``, ``pickle`` and
@@ -16,7 +16,7 @@ Examples::
 
     hedonic --help
     hedonic setup --dry-run --all
-    hedonic run queue paper --dry-run
+    hedonic run queue overlap --dry-run
     hedonic run disjoint --preset smoke --foreground
     hedonic run exp --yes
     hedonic-exp list
@@ -364,7 +364,7 @@ HELP_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
                                      "scored against its ground truth (a wizard without options; --list)"),
     )),
     ("Overlapping communities (SNAP networks)", (
-        ("hedonic run queue paper", "the overlap paper's experiments, one after another (--dry-run plans, --root DIR)"),
+        ("hedonic run queue overlap", "the overlap paper's experiments, one after another (--dry-run plans, --root DIR)"),
         ("hedonic run exp [options]", "a benchmark: networks x methods x seeds (a wizard without options)"),
         ("hedonic run paper", "the whole-graph benchmark profile (= run exp --config paper)"),
         ("hedonic run paper-hoc", "only its Hedonic rows, at the tuned per-network settings"),

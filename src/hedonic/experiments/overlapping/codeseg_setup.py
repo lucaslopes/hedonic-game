@@ -1,7 +1,7 @@
 """Prepare the data and the external runtimes of the overlapping benchmark.
 
 ``hedonic setup`` (this module's :func:`setup_main`) is the one command that
-makes a fresh machine ready for ``hedonic run queue paper``:
+makes a fresh machine ready for ``hedonic run queue overlap``:
 
 * ``--pairs dblp:top5000,...`` downloads the official SNAP graph and cover of
   each network:cover pair into the network root (``hedonic show covers`` lists
@@ -1308,7 +1308,7 @@ def _setup_parser(prog: str = "hedonic setup") -> argparse.ArgumentParser:
         epilog=(
             "examples:\n"
             "  hedonic setup --dry-run --all                 # the plan and the tool check, nothing fetched\n"
-            "  hedonic setup --all                           # everything `hedonic run queue paper` needs\n"
+            "  hedonic setup --all                           # everything `hedonic run queue overlap` needs\n"
             "  hedonic setup --pairs dblp:top5000,amazon:top5000\n"
             "  hedonic setup --methods codeseg,fox,angel\n"
         ),

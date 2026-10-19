@@ -345,10 +345,12 @@ calibrated resolution from the Hedonic calibration:
 ```bash
 hedonic setup --all --dry-run    # the pairs, the eight baselines and the system tools they need
 hedonic setup --all              # download the pairs; build and install the baselines
-hedonic run queue paper --dry-run
-hedonic run queue paper          # detached and resumable; days on a laptop
-hedonic run attach paper-queue   # live view (q or Ctrl-C closes the view, never the run)
-hedonic run queue paper --report # what is done, run by run and pair by pair
+hedonic run queue overlap --dry-run
+hedonic run queue overlap          # detached and resumable; days on a laptop
+hedonic run attach overlap-queue   # live view (q or Ctrl-C closes the view, never the run)
+hedonic run queue overlap --report # what is done, run by run and pair by pair
+hedonic run queue disjoint         # the disjoint paper's queue (the SBM smoke check, then the 100-seed grid)
+hedonic run queue all              # both: the overlap queue, then the disjoint one
 ```
 
 `hedonic setup` needs git, a C and C++ compiler, CMake and make, a C++
@@ -356,7 +358,11 @@ compiler with OpenMP for FOX (Homebrew `g++` on macOS) and
 [`uv`](https://docs.astral.sh/uv/) for the locked CDlib environment of ANGEL
 and Ego-Splitting; `--dry-run` says which are missing. Starting the queue
 again continues it: every run decides from its files what is already done.
-The queue writes under `--root DIR` (default `~/Databases/Hedonic/Overlap/paper-queue`).
+The queue writes under `--root DIR` (default `~/Databases/Hedonic/Overlap/overlap-queue`).
+A queue item can itself be a queue (`run = ["queue", "overlap"]`, optionally
+with `"--root", DIR`): it is started, waited for and judged from its files, so
+a queue file of your own can chain both papers, or anything else, in the
+order you want (`queue-all.toml` is the shipped example).
 
 The benchmark runs a deterministic method (CoDeSEG at one thread, CliquePerc,
 FOX, BigCLAM, NcGame, NEO-K-Means) once per pair, at the lowest seed of the

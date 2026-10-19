@@ -2,7 +2,7 @@
 
 A queue file lists the runs in the order they should execute::
 
-    name = "paper-queue"
+    name = "overlap-queue"
 
     [[items]]
     name = "gt-robustness"          # the run's name: the queue looks the run up by it
@@ -11,7 +11,7 @@ A queue file lists the runs in the order they should execute::
 ``run`` holds the arguments after ``hedonic run``; ``--name`` repeats the item's name. ``{root}`` in an argument is the
 queue's root folder: ``hedonic run queue FILE --root DIR``, by default ``<output_dir>/<queue name>`` with the user
 config's ``[defaults] output_dir`` (else ``~/Databases/Hedonic/Overlap``). A shipped queue is named without its file:
-``hedonic run queue paper`` reads ``queue-paper.toml`` from the package's configs.
+``hedonic run queue overlap`` reads ``queue-overlap.toml`` from the package's configs.
 
 Each item is an ordinary durable run (its own tmux session, its own row in ``hedonic run list``, its own
 ``attach``/``stop``/``resume``). The queue starts an item with ``--detach`` only after the previous one has
@@ -291,7 +291,7 @@ def step_costs(entry: dict, steps: list[dict], prog: dict | None = None) -> dict
 
 
 def shipped_queues() -> list[str]:
-    """The names of the queues shipped with the package (``paper`` for ``queue-paper.toml``)."""
+    """The names of the queues shipped with the package (``paper`` for ``queue-overlap.toml``)."""
     from hedonic.experiments import resources
 
     return [p.stem.removeprefix("queue-") for p in resources.shipped_configs()
@@ -300,7 +300,7 @@ def shipped_queues() -> list[str]:
 
 def queue_file(name_or_path: str) -> Path:
     """The queue file a ``hedonic run queue`` argument names: a file as given, else a shipped queue by its name
-    (``paper`` -> ``queue-paper.toml``) or by its file name."""
+    (``paper`` -> ``queue-overlap.toml``) or by its file name."""
     from hedonic.experiments import resources
 
     raw = Path(str(name_or_path)).expanduser()
@@ -310,7 +310,10 @@ def queue_file(name_or_path: str) -> Path:
         if candidate.is_file():
             return candidate
     shipped = ", ".join(shipped_queues()) or "none"
-    raise SystemExit(f"no queue file {name_or_path}; shipped queues: {shipped} (for example `hedonic run queue paper`)")
+    if str(name_or_path) in ("paper", "queue-paper"):  # 2.0 ships one queue per paper
+        raise SystemExit("`paper` names no queue: `hedonic run queue overlap` runs the overlapping-communities paper, "
+                         "`hedonic run queue disjoint` the disjoint one, `hedonic run queue all` both")
+    raise SystemExit(f"no queue file {name_or_path}; shipped queues: {shipped} (for example `hedonic run queue overlap`)")
 
 
 def default_root(name: str) -> Path:
@@ -333,12 +336,15 @@ def default_disjoint_root(name: str) -> Path:
     return (Path(os.path.expanduser(str(base))) if base else Path(config.DISJOINT_RUNS_ROOT)) / name
 
 
-def load_queue(path: str, root: str | Path | None = None) -> dict:
+def load_queue(path: str, root: str | Path | None = None, _within: tuple[str, ...] = ()) -> dict:
     """Read and check a queue file; every problem is reported before anything starts.
 
-    ``{root}`` in an item's arguments becomes ``root`` (default :func:`default_root`), made absolute."""
+    ``{root}`` in an item's arguments becomes ``root`` (default :func:`default_root`), made absolute. An item whose
+    run is ``["queue", FILE|NAME, ("--root", DIR)]`` is a whole queue (see :func:`_queue_item`)."""
     file = queue_file(path)
     path = str(file)
+    if str(file.resolve()) in _within:
+        raise SystemExit(f"{path} runs itself: a queue item names a queue that contains it")
     data = tomllib.loads(file.read_text())
     try:
         name = qs.parse_name(str(data.get("name") or file.stem))
@@ -368,6 +374,14 @@ def load_queue(path: str, root: str | Path | None = None) -> dict:
         run = item.get("run")
         if not isinstance(run, list) or not run or not all(isinstance(arg, str) for arg in run):
             raise SystemExit(f"{path}: item {number} needs run = [\"VERB\", ...], for example run = [\"spectrum\"]")
+        if run[0] == "queue":
+            row = _queue_item(path, number, item, [arg.replace("{root}", str(root_dir)) for arg in run],
+                              (*_within, str(file.resolve())))
+            if row["name"] in seen or row["name"] == name:
+                raise SystemExit(f"{path}: the run name {row['name']!r} is used more than once")
+            seen.add(row["name"])
+            items.append(row)
+            continue
         try:
             item_name = qs.parse_name(str(item.get("name", "")))
         except ValueError as exc:
@@ -411,6 +425,27 @@ def load_queue(path: str, root: str | Path | None = None) -> dict:
         raise SystemExit(f"{path}: schedule must be one of {', '.join(SCHEDULES)}, not {plan!r}")
     return {"name": name, "items": items, "file": str(file.resolve()), "root": str(root_dir), "schedule": plan,
             **({"pairs": pairs} if pairs else {})}
+
+
+def _queue_item(path: str, number: int, item: dict, run: list[str], within: tuple[str, ...]) -> dict:
+    """A queue item that is a whole queue: ``run = ["queue", FILE|NAME, ("--root", DIR), (other flags)]``.
+
+    The inner queue is read and checked now, with everything it contains. The item runs under the inner queue's own
+    name (its registry entry), so that is the item's name; ``name`` may be omitted, and must equal it when given. The
+    stored run names the inner file absolutely and its root, so a resume from anywhere starts the same queue."""
+    if len(run) < 2 or run[1].startswith("-"):
+        raise SystemExit(f"{path}: item {number}: run = [\"queue\", FILE|NAME, ...] needs the queue to run")
+    rest = run[2:]
+    given = _option(rest, "--root")
+    inner = load_queue(run[1], root=given, _within=within)
+    name = inner["name"]
+    if item.get("name") and str(item["name"]) != name:
+        raise SystemExit(f"{path}: item {number} runs the queue {name!r}; its name must be that name (or be omitted)")
+    if item.get("by_pair") or item.get("after"):
+        raise SystemExit(f"{path}: item {name!r} is a queue: it takes no by_pair or after (items run in file order)")
+    rest = _with_option(rest, "--root", inner["root"])
+    return {"name": name, "run": ["queue", inner["file"], *rest], "queue": inner,
+            **{key: str(item[key]) for key in ("title", "about", "short", "note") if item.get(key)}}
 
 
 def _covered_pairs(path: str, item_name: str, run: list[str], order: list[str]) -> list[str]:
@@ -1134,7 +1169,7 @@ def _expand_list(text: str) -> list[str]:
     return values
 
 
-def _data_state(run: list[str]) -> tuple[str, str]:
+def _data_state(run: list[str], fresh: bool = False) -> tuple[str, str]:
     verb, args = run[0], run[1:]
     if verb in BENCHMARK_VERBS:
         return _benchmark_state(run)
@@ -1152,7 +1187,26 @@ def _data_state(run: list[str]) -> tuple[str, str]:
         return _baselines_state(args)
     if verb == "disjoint":
         return _disjoint_state(args)
+    if verb == "queue":
+        return _queue_state(run, fresh)
     return "unknown", ""  # no data check for this kind: the registry decides
+
+
+def inner_queue(run: list[str]) -> dict:
+    """The queue a ``["queue", FILE, "--root", DIR]`` item runs, read from its file as a start would read it."""
+    return load_queue(run[1], root=_option(run[2:], "--root"))
+
+
+def _queue_state(run: list[str], fresh: bool = False) -> tuple[str, str]:
+    """A queue run as an item of another queue: complete when every one of its items is, judged as it judges them."""
+    inner = inner_queue(run)
+    states = [_status_of(item, fresh)[0] for item in inner["items"]]
+    done = sum(state == "completed" for state in states)
+    key = f"queue#{inner['name']}"
+    _note(key, done, len(states), "runs")
+    if done == len(states):
+        return "complete", key
+    return ("partial" if done or any(state not in ("new", "awaiting") for state in states) else "missing"), key
 
 
 def data_state(run: list[str], fresh: bool = False) -> tuple[str, str]:
@@ -1169,7 +1223,7 @@ def data_state(run: list[str], fresh: bool = False) -> tuple[str, str]:
         return cached[1]
     try:  # the planners print their own errors; a bad argument is reported when the item starts, not while viewing
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            result = _data_state(run)
+            result = _data_state(run, fresh)
     except qs.TunedMissing:
         result = ("awaiting", _preview(run))
     except (SystemExit, Exception):  # noqa: BLE001
@@ -1315,11 +1369,17 @@ def _decision(first: str, second: str) -> str:
 
 def _launch_item(name: str, run: list[str], resuming: bool) -> int:
     """Start one item detached, or resume it when it already has a registry entry."""
-    if resuming:
+    if resuming and run[0] != "queue":  # a queue is started again: it judges its items from the files
         return rm.cmd_resume(name, attach=False)
     from hedonic.experiments.CLI import hedonic_main
 
-    return hedonic_main(["run", *run, "--detach"])
+    try:
+        return hedonic_main(["run", *run, "--detach"])
+    except SystemExit as exc:  # a queue refuses to start (setup missing, a foreign root): the reason, not a crash
+        if exc.code in (None, 0):
+            return 0
+        print(style(f"  {name} was not started: {exc.code}", "red"), flush=True)
+        return 1
 
 
 def _run_item(row: dict, prog: dict, ppath: Path, launch_item) -> str:
@@ -1881,6 +1941,8 @@ def tree(entry: dict, prog: dict) -> qm.Node:
                      *failure_lines(item["name"])):
             if line:
                 node.detail.append(line)
+        if item["run"][0] == "queue":
+            _nest_queue(node, item)
         if item.get("by_pair"):
             now = prog.get("pair") if status in ACTIVE and prog.get("current") == number - 1 else None
             node.detail.append(f"runs pair by pair, in the queue's order ({len(item.get('pairs') or [])} pairs)"
@@ -1890,6 +1952,33 @@ def tree(entry: dict, prog: dict) -> qm.Node:
                          order=list(entry.get("pairs") or []), groups=[item_method(item) for item in items])
 
 
+def _nest_queue(node: qm.Node, item: dict) -> None:
+    """Hang a queue item's own tree under its node: its runs (by method, as the queue shows them), counted as its root."""
+    try:
+        inner = inner_queue(item["run"])
+    except SystemExit as exc:
+        node.detail.append(f"its queue file cannot be read: {exc}")
+        return
+    status, entry = _state(inner["name"])
+    if entry is None or entry.get("kind") != "queue":
+        entry, progress = {"name": inner["name"], "items": inner["items"], "file": inner["file"],
+                           **({"pairs": inner["pairs"]} if inner.get("pairs") else {})}, {}
+    else:
+        progress = rm.read_progress(entry)
+    sub = tree(entry, progress)
+
+    def rekey(child: qm.Node) -> qm.Node:
+        child.key = ("in", item["name"], *child.key)
+        for grandchild in child.children:
+            rekey(grandchild)
+        return child
+
+    node.children = [rekey(child) for child in sub.children]
+    for field in ("done", "total", "noun", "share", "left", "unknown", "basis", "took", "took_missing"):
+        setattr(node, field, getattr(sub, field))
+    node.detail.append(f"a queue: {inner['file']} under {inner['root']} ({len(inner['items'])} runs, one after another)")
+
+
 HEDONIC_VERBS = ("calibrate", "startcurve", "spectrum", "spectrum-full", "controlled", "posthoc")
 
 
@@ -1897,6 +1986,8 @@ def item_method(item: dict) -> str:
     """The method a queue item studies, for the view's top level: Hedonic for its own experiments, else the one method
     a benchmark or a baseline calibration names with --methods ("several methods" when it names more)."""
     run = item["run"]
+    if run[0] == "queue":
+        return "queues"
     if run[0] in HEDONIC_VERBS:
         return "Hedonic"
     names = [m for m in (_option(run, "--methods") or "").split(",") if m]
@@ -1958,6 +2049,14 @@ def requirements(queue: dict) -> tuple[list[str], list[str]]:
     for item in queue["items"]:
         run = item["run"]
         verb = run[0]
+        if verb == "queue":  # a whole queue needs what its items need
+            try:
+                inner_pairs, inner_methods = requirements(item.get("queue") or inner_queue(run))
+            except SystemExit:
+                continue
+            pairs += [p for p in inner_pairs if p not in pairs]
+            methods += [m for m in inner_methods if m not in methods]
+            continue
         try:
             targets = item_targets(run)
         except (SystemExit, ValueError):

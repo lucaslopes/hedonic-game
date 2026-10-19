@@ -62,7 +62,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 hedonic = ["py.typed"]
-# Shipped run configs (`hedonic run queue paper`, `--config NAME`) and the external-method workers, including the
+# Shipped run configs (`hedonic run queue overlap`, `--config NAME`) and the external-method workers, including the
 # locked CDlib project (slpa_env/pyproject.toml and uv.lock): hedonic.experiments.resources finds them.
 "hedonic.experiments" = ["configs/*.toml", "workers/*.py", "workers/*.md", "workers/slpa_env/*.py",
                          "workers/slpa_env/pyproject.toml", "workers/slpa_env/uv.lock"]

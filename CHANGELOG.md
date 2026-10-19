@@ -75,11 +75,13 @@
   installs `hedonic` (runs) and `hedonic-exp` (analysis and utility
   commands), with the run configs and the external-method workers as package
   data.
-  - `hedonic run queue paper` runs the overlapping-communities paper's six
-    experiments on eight SNAP graph/cover pairs, pair by pair, writing under
-    `--root DIR` (default `OUTPUT_DIR/paper-queue`); `--dry-run` prints the
+  - `hedonic run queue overlap` runs the overlapping-communities paper's
+    experiments on eight SNAP graph/cover pairs, method by method, writing under
+    `--root DIR` (default `OUTPUT_DIR/overlap-queue`); `--dry-run` prints the
     plan and what is already done, and a started queue checks that its data
-    and methods are prepared.
+    and methods are prepared. `hedonic run queue disjoint` runs the disjoint
+    paper's, and `hedonic run queue all` both; a queue item can be a whole
+    queue (`run = ["queue", NAME|FILE]`).
   - `hedonic setup [--pairs P,...] [--methods M,...] [--all] [--dry-run]`
     downloads SNAP pairs and builds or installs the external baselines,
     after checking the system tools they need.

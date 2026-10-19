@@ -796,13 +796,13 @@ class TestFailureIsExplained(unittest.TestCase):
             self.assertEqual(runqueue.failure_lines("x"), [])
 
     def test_the_stop_lines_of_the_queue_carry_the_runs_error(self):
-        entry = {"name": "paper-queue", "items": [{"name": "calib", "run": ["calibrate"]}, {"name": "leveraging-gt", "run": ["startcurve"]}]}
+        entry = {"name": "overlap-queue", "items": [{"name": "calib", "run": ["calibrate"]}, {"name": "leveraging-gt", "run": ["startcurve"]}]}
         first, second = self._patched()
         with first, second, patch.object(runqueue, "_status_of", lambda item, fresh=False: ("stopped", None)):
             text = ANSI.sub("", "\n".join(runqueue.stop_lines(entry, {"current": 1, "reason": "leveraging-gt ended as failed"}, "failed")))
         self.assertIn("failed at leveraging-gt (item 2 of 2)", text)
         self.assertIn("ValueError: Invalid initial_membership", text)
-        self.assertIn("hedonic run resume paper-queue", text)
+        self.assertIn("hedonic run resume overlap-queue", text)
 
     def test_the_tree_view_shows_a_notice_under_the_header_and_still_fits_every_size(self):
         root = _tree()

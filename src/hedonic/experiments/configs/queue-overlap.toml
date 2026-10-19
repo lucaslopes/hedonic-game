@@ -1,12 +1,12 @@
 # The overlap paper's experiment queue, in two phases, each method by method.
 #
 #   hedonic setup --all                     # once: download the eight pairs and build the eight baselines
-#   hedonic run queue paper --dry-run       # the plan, what is already done, and what setup still misses
-#   hedonic run queue paper                 # start (durable: closing the terminal does not stop it)
-#   hedonic run status paper-queue          # progress; `hedonic run attach paper-queue` opens the live tree
-#   hedonic run stop paper-queue            # stop; run the same `hedonic run queue paper` again to continue
+#   hedonic run queue overlap --dry-run       # the plan, what is already done, and what setup still misses
+#   hedonic run queue overlap                 # start (durable: closing the terminal does not stop it)
+#   hedonic run status overlap-queue          # progress; `hedonic run attach overlap-queue` opens the live tree
+#   hedonic run stop overlap-queue            # stop; run the same `hedonic run queue overlap` again to continue
 #
-# {root} is the folder every run writes into: `--root DIR`, by default <output_dir>/paper-queue with the output_dir of
+# {root} is the folder every run writes into: `--root DIR`, by default <output_dir>/overlap-queue with the output_dir of
 # `hedonic config` (else ~/Databases/Hedonic/Overlap). Running the queue again skips what its files on disk show finished and
 # resumes the rest.
 #
@@ -28,7 +28,7 @@
 # setting) that adopts the searches baseline-calibration-rc1 finished, and every benchmark item writes into the one
 # `benchmark` folder, so a unit already on disk with the same settings is reused.
 
-name = "paper-queue"
+name = "overlap-queue"
 schedule = "file"
 pairs = ["dblp:top5000", "dblp:all", "amazon:top5000", "amazon:all", "youtube:top5000", "youtube:all"]
 

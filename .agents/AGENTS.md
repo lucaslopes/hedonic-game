@@ -99,7 +99,7 @@ src/hedonic/
     ├── config.py        # DATA_ROOT, RUNS_ROOT, NETWORKS_DIR, codeseg_cache_dir()
     ├── resources.py     # shipped configs and worker scripts (package data)
     ├── runtime.py       # the identity every record carries (release series, digest of the core's sources)
-    ├── configs/         # run configs and the paper queue (queue-paper.toml)
+    ├── configs/         # run configs and the queues (queue-overlap.toml, queue-disjoint.toml, queue-all.toml)
     ├── workers/         # scripts external methods run in their own environments
     ├── disjoint/        # SBM sweep, Parquet result store, `hedonic run disjoint`
     ├── plots/           # figures
@@ -192,7 +192,7 @@ hedonic                                # in a terminal: the home screen (status 
 hedonic guide                          # state-aware tour of the commands
 hedonic setup --all [--dry-run]        # SNAP pairs and the eight baselines' runtimes
 hedonic run exp [--dry-run]            # benchmark front door (wizard in a terminal)
-hedonic run queue paper --root DIR     # the paper's queue, in file order (two phases); --dry-run, --report
+hedonic run queue overlap --root DIR     # the paper's queue, in file order (two phases); --dry-run, --report
 hedonic run queue disjoint             # the disjoint paper (smoke, then the 100-seed grid)
 hedonic run list|status|attach|logs|stop|resume|check
 hedonic show methods|networks|covers|metrics
@@ -206,7 +206,7 @@ hedonic-exp list                       # analysis and utility commands
   `info.method_status`, the run registry; a queue's progress is not counted).
   Every menu item is a `hedonic` argv that is printed before
   `CLI.hedonic_main` runs it: views (`back=True`: lists, `show`, `setup
-  --dry-run`, `run queue paper --dry-run`, `config show`, `update`) return to
+  --dry-run`, `run queue overlap --dry-run`, `config show`, `update`) return to
   the menu, runs and the wizards hand the terminal over; every wizard ends
   with a yes/no (`quickstart.confirm_start`) and resuming asks first. Keep
   each item a real command, never a screen-only action;
@@ -254,8 +254,8 @@ hedonic-exp list                       # analysis and utility commands
 - **Paths.** Everything defaults to one folder, `~/Databases/Hedonic`
   (`config.DATA_ROOT`, `HEDONIC_DATA_DIR`): SNAP files under `Networks/`
   (`HEDONIC_NETWORKS_DIR`), overlapping runs under `Overlap/`
-  (`config.RUNS_ROOT`, `HEDONIC_OUTPUT_DIR`; the paper queue in
-  `Overlap/paper-queue`), disjoint runs under `Disjoint/`
+  (`config.RUNS_ROOT`, `HEDONIC_OUTPUT_DIR`; the overlap queue in
+  `Overlap/overlap-queue`), disjoint runs under `Disjoint/`
   (`config.DISJOINT_RUNS_ROOT`, `HEDONIC_DISJOINT_OUTPUT_DIR`), pickles under
   `Pickles/`. Tests point these at temporary folders. External
   runtimes live in `config.codeseg_cache_dir()`: `DIR/codeseg` for a `--cache-dir DIR` flag (the
@@ -307,12 +307,21 @@ hedonic-exp list                       # analysis and utility commands
   detector's cap is the vertex count), on a log grid over [1e-6, 0.5] at
   factor-4 spacing before golden section (`calibration_search.WIDE_SCAN`),
   because the F1 profile can peak two to three decades below the density.
-  The paper queue uses it: the cap is the one setting that never reads the
+  The overlap queue uses it: the cap is the one setting that never reads the
   reference. A record of an uncapped Hedonic unit carries the vertex count as
   `max_memberships` and `max_memberships_source = "unlimited"`; the robustness
   audit then plays the uncapped game. A search counts only under its own cap
   mode (`calibrate.same_cap_mode`).
-- **The paper queue goes method by method, in two phases** (`schedule =
+- **One queue per paper, and queues of queues.** The shipped queues are
+  `overlap` (`queue-overlap.toml`, run `overlap-queue`), `disjoint` and `all`
+  (both, one after the other); `paper` is refused with a message naming them.
+  An item `run = ["queue", FILE|NAME, ("--root", DIR)]` is a whole queue
+  (`runqueue._queue_item`): it runs under the inner queue's name, is started
+  with `hedonic run queue ... --detach` (never `resume`, so it re-judges its
+  items), is complete when every inner item is (`_queue_state`), adds the inner
+  requirements to the setup check, and the tree hangs the inner tree under it
+  (keys prefixed `("in", NAME)`). A queue that contains itself is refused.
+- **The overlap queue goes method by method, in two phases** (`schedule =
   "file"`). Phase 1 is DBLP, Amazon and YouTube (`pairs`, each network's
   `top5000` and `all` covers together): Hedonic first (`synthetic-hedonic`,
   `calibration-hedonic`, then `gt-robustness`, `leveraging-gt` and
@@ -348,7 +357,7 @@ hedonic-exp list                       # analysis and utility commands
   take the authors' setting on every pair (`bc.FIXED_METHODS`): without
   `--sensitivity` their per-pair record is written without loading `G[S]`.
 - **Baseline calibration.** `hedonic run calibrate-baselines` takes
-  `--method-budget M=N[:MIN]` (the paper queue: ANGEL at 3 settings, 60 min
+  `--method-budget M=N[:MIN]` (the overlap queue: ANGEL at 3 settings, 60 min
   per pair), `--transfer PAIRS` (not searched: each searched method takes the
   nearest calibrated pair's setting, same network first, else nearest
   density, K scaled by n for BigCLAM and NEO-K-Means), `--transfer-missing`
@@ -361,7 +370,7 @@ hedonic-exp list                       # analysis and utility commands
   resumes from its files. `--foreground` runs the same worker in the
   terminal and registers it under its `--name`. A queue judges each item, and each pair of a
   by-pair item, from the files on disk; never reorder queue items to change
-  the pair order (that is `pairs` in the queue file). The paper queue's pairs
+  the pair order (that is `pairs` in the queue file). The overlap queue's pairs
   are the manuscript's (Table 1's "in paper" marks): DBLP, Amazon and YouTube
   with both covers in phase 1, LiveJournal and Friendster `top5000` in phase 2.
 - **Calibrated resolutions.** The benchmark, the start curve and the spectrum

@@ -43,15 +43,17 @@ class _Isolated(unittest.TestCase):
 
 class TestShippedQueue(_Isolated):
     def test_the_queue_is_found_by_name_and_by_file_name(self):
-        self.assertIn("paper", runqueue.shipped_queues())
-        self.assertEqual(runqueue.queue_file("paper"), CONFIG_DIR / "queue-paper.toml")
-        self.assertEqual(runqueue.queue_file("queue-paper"), CONFIG_DIR / "queue-paper.toml")
-        with self.assertRaisesRegex(SystemExit, "shipped queues: disjoint, paper"):
+        self.assertEqual(sorted(runqueue.shipped_queues()), ["all", "disjoint", "overlap"])
+        self.assertEqual(runqueue.queue_file("overlap"), CONFIG_DIR / "queue-overlap.toml")
+        with self.assertRaisesRegex(SystemExit, "queue overlap.*queue disjoint"):  # 2.0: one queue per paper
+            runqueue.queue_file("paper")
+        self.assertEqual(runqueue.queue_file("queue-overlap"), CONFIG_DIR / "queue-overlap.toml")
+        with self.assertRaisesRegex(SystemExit, "shipped queues: all, disjoint, overlap"):
             runqueue.queue_file("nope")
 
     def test_root_is_substituted_everywhere_and_every_item_writes_under_it(self):
         root = self.root / "q"
-        queue = runqueue.load_queue("paper", root=str(root))
+        queue = runqueue.load_queue("overlap", root=str(root))
         self.assertEqual(queue["pairs"], SMALL)
         # the benchmark items share one folder and the large spectrum the first one's, so their records are reused
         shared = {"gt-robustness-large": "gt-robustness"}
@@ -67,16 +69,16 @@ class TestShippedQueue(_Isolated):
 
     def test_the_default_root_is_the_output_dir_then_the_runs_root(self):
         with patch("hedonic.experiments.overlapping.userconfig.defaults", return_value={"output_dir": str(self.root / "o")}):
-            self.assertEqual(runqueue.default_root("paper-queue"), self.root / "o" / "paper-queue")
+            self.assertEqual(runqueue.default_root("overlap-queue"), self.root / "o" / "overlap-queue")
         with patch("hedonic.experiments.overlapping.userconfig.defaults", return_value={}):
             from hedonic.experiments import config
 
-            self.assertEqual(runqueue.default_root("paper-queue"), Path(config.RUNS_ROOT) / "paper-queue")
+            self.assertEqual(runqueue.default_root("overlap-queue"), Path(config.RUNS_ROOT) / "overlap-queue")
 
     def test_the_baseline_items_have_the_settings_of_the_earlier_calibration(self):
         """The same budget as the earlier calibration, whose finished searches each item adopts (see baseline_run)."""
         root = self.root / "q"
-        queue = runqueue.load_queue("paper", root=str(root))
+        queue = runqueue.load_queue("overlap", root=str(root))
         items = [i for i in queue["items"] if i["name"].startswith("calibration-") and "hedonic" not in i["name"]]
         self.assertEqual(sorted(runqueue._option(i["run"], "--methods") for i in items), sorted(2 * BASELINES))
         for item in items:
@@ -90,7 +92,7 @@ class TestShippedQueue(_Isolated):
             self.assertEqual(runqueue._option(run, "--adopt-from"), str(root.resolve() / "baseline-calibration-rc1"))
 
     def test_no_item_asks_for_the_multilevel_phase(self):
-        queue = runqueue.load_queue("paper", root=str(self.root / "q"))
+        queue = runqueue.load_queue("overlap", root=str(self.root / "q"))
         for item in queue["items"]:
             self.assertNotIn("multilevel", " ".join(item["run"]))
         self.assertNotIn("multilevel", (CONFIG_DIR / "start-quality-hoc-local.toml").read_text().split("#")[0])
@@ -98,20 +100,20 @@ class TestShippedQueue(_Isolated):
 
 class TestSetupCheck(_Isolated):
     def test_requirements_are_the_pairs_and_the_methods_of_the_items(self):
-        queue = runqueue.load_queue("paper", root=str(self.root / "q"))
+        queue = runqueue.load_queue("overlap", root=str(self.root / "q"))
         pairs, methods = runqueue.requirements(queue)
         self.assertEqual(list(dict.fromkeys(pairs)), PAIRS)
         self.assertEqual(set(methods), {"hedonic", *BASELINES})
 
     def test_nothing_prepared_names_the_setup_command(self):
-        queue = runqueue.load_queue("paper", root=str(self.root / "q"))
+        queue = runqueue.load_queue("overlap", root=str(self.root / "q"))
         check = runqueue.setup_check(queue)
         self.assertTrue(check["command"].startswith("hedonic setup --pairs " + ",".join(PAIRS)))
         self.assertNotIn("hedonic", check["command"].split("--methods")[1].split(","))  # built in, never set up
         self.assertEqual(set(check["command"].split("--methods ")[1].split(",")), {m for m in BASELINES if cs.needs_setup(m)})
 
     def test_a_ready_manifest_and_present_files_need_nothing(self):
-        queue = runqueue.load_queue("paper", root=str(self.root / "q"))
+        queue = runqueue.load_queue("overlap", root=str(self.root / "q"))
         manifest = {"methods": {m: {"status": "ready"} for m in BASELINES}}
         with patch.object(cs, "load_setup_manifest", return_value=manifest), \
                 patch.object(cs, "slpa_environment_receipt", return_value={"ready": True}), \
@@ -120,7 +122,7 @@ class TestSetupCheck(_Isolated):
         self.assertIsNone(check["command"])
 
     def test_an_items_network_root_is_where_its_pairs_are_looked_for(self):
-        queue = runqueue.load_queue("paper", root=str(self.root / "q"))
+        queue = runqueue.load_queue("overlap", root=str(self.root / "q"))
         elsewhere = self.root / "elsewhere"
         for item in queue["items"]:
             if item["run"][0] == "calibrate-baselines":
@@ -156,20 +158,20 @@ class TestSetupCheck(_Isolated):
     def test_the_dry_run_prints_the_plan_and_the_setup_command_and_starts_nothing(self):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            code = CLI.hedonic_main(["run", "queue", "paper", "--dry-run", "--root", str(self.root / "q")])
+            code = CLI.hedonic_main(["run", "queue", "overlap", "--dry-run", "--root", str(self.root / "q")])
         self.assertEqual(code, 0, err.getvalue())
         text = out.getvalue()
         self.assertIn("hedonic setup --pairs", text)
         self.assertIn("benchmark", text)
         self.assertFalse((self.root / "q").exists())
-        self.assertFalse((self.root / "registry" / "paper-queue.json").exists())
+        self.assertFalse((self.root / "registry" / "overlap-queue.json").exists())
 
     def test_a_start_with_nothing_prepared_is_refused_with_the_setup_command(self):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), \
                 self.assertRaisesRegex(SystemExit, "not started: run `hedonic setup --pairs"):
-            runqueue.front_main(["paper", "--root", str(self.root / "q")])
+            runqueue.front_main(["overlap", "--root", str(self.root / "q")])
         self.assertFalse((self.root / "q").exists())
-        self.assertFalse(any((self.root / "registry").glob("**/paper-queue*")) if (self.root / "registry").exists() else False)
+        self.assertFalse(any((self.root / "registry").glob("**/overlap-queue*")) if (self.root / "registry").exists() else False)
 
 
 class TestRoot(_Isolated):
@@ -185,13 +187,13 @@ class TestRoot(_Isolated):
         with self.ready(), patch.object(runqueue, "launch", side_effect=lambda q: launched.append(q) or
                                         {"name": q["name"], "backend": "process", "log": "x", "session": ""}), \
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            runqueue.front_main(["paper", "--root", str(self.root / "q"), "--detach", *extra])
+            runqueue.front_main(["overlap", "--root", str(self.root / "q"), "--detach", *extra])
         return launched
 
     def test_a_new_or_empty_root_is_taken_and_stamped(self):
         self.assertEqual(len(self.start()), 1)
         stamp = json.loads((self.root / "q" / runqueue.ROOT_STAMP).read_text())
-        self.assertEqual(stamp["queue"], "paper-queue")
+        self.assertEqual(stamp["queue"], "overlap-queue")
         from hedonic.experiments import runtime
 
         self.assertEqual(stamp["hedonic"], runtime.hedonic_version())
@@ -207,7 +209,7 @@ class TestRoot(_Isolated):
 
     def test_a_root_stamped_by_another_major_version_is_refused(self):
         (self.root / "q").mkdir()
-        (self.root / "q" / runqueue.ROOT_STAMP).write_text(json.dumps({"queue": "paper-queue", "hedonic": "1.6.0"}))
+        (self.root / "q" / runqueue.ROOT_STAMP).write_text(json.dumps({"queue": "overlap-queue", "hedonic": "1.6.0"}))
         with self.assertRaisesRegex(SystemExit, "hedonic 1.6.0 queue"):
             self.start()
 
@@ -215,7 +217,7 @@ class TestRoot(_Isolated):
         (self.root / "q" / "benchmark").mkdir(parents=True)
         out = io.StringIO()
         with self.ready(), redirect_stdout(out), redirect_stderr(io.StringIO()):
-            self.assertEqual(runqueue.front_main(["paper", "--root", str(self.root / "q"), "--dry-run"]), 0)
+            self.assertEqual(runqueue.front_main(["overlap", "--root", str(self.root / "q"), "--dry-run"]), 0)
         self.assertIn("--adopt-root", out.getvalue())
         self.assertFalse((self.root / "q" / runqueue.ROOT_STAMP).exists())
 

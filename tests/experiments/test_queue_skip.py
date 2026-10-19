@@ -20,7 +20,7 @@ from hedonic.experiments.overlapping import start_quality as sq
 
 from hedonic.experiments.resources import CONFIG_DIR
 
-QUEUE = str(CONFIG_DIR / "queue-paper.toml")
+QUEUE = str(CONFIG_DIR / "queue-overlap.toml")
 HEDONIC_ITEMS = ["synthetic-hedonic", "calibration-hedonic", "gt-robustness", "leveraging-gt", "benchmark-hedonic"]
 LARGE_HEDONIC = ["calibration-hedonic-large", "gt-robustness-large", "leveraging-gt-large", "benchmark-hedonic-large"]
 # the baselines one at a time: published-setting deterministic ones with results, calibrated deterministic ones, then
@@ -130,12 +130,48 @@ class TestWhatIsFinished(_Base):
             # amazon whole, DBLP all but the new resolution's conditions (10 per pair / 5 resolutions)
             self.assertEqual(runqueue.unit_counts(run)[:2], (18, 20))
 
+    def test_two_items_sharing_a_spectrum_folder_keep_their_own_counts_and_rows_on_the_new_grid(self):
+        from hedonic.experiments.overlapping import gt_spectrum as gs
+
+        folder = self.overlap / "study"
+        folder.mkdir(parents=True)
+        plan = [{"job": job, "policy": "open_labels", "gamma": g, "seed": 0, "status": "completed"}
+                for job in ("dblp-top5000", "lj-top5000") for g in (0.1, 0.5)]
+        (folder / "progress.json").write_text(json.dumps({"plan": plan, "jobs": ["dblp/top5000", "lj/top5000"],
+                                                          "tracked_files_sha256": gs.tracked_digest()}))
+        (folder / "coverage_report.json").write_text(json.dumps(
+            {"complete": True, "expected_detector_conditions": 4, "recorded_detector_conditions": 4,
+             "jobs": ["dblp-top5000", "lj-top5000"]}))
+        (folder / "manifest.json").write_text(json.dumps(
+            {"identity": {"tracked_files_sha256": gs.tracked_digest()},
+             "effective_grid": {"tuned_resolutions": {"dblp/top5000": 0.5, "lj/top5000": 0.5}}}))
+
+        def options(pairs, tuned):
+            return {"pairs": pairs, "isolation_policies": ["open_labels"], "detector_seeds": [0],
+                    "detector_resolutions": [0.1], "tuned_resolutions": tuned}
+
+        small = ["spectrum", "--name", "study", "--tuned", "t.json"]
+        large = ["spectrum", "--name", "study-large", "--output-dir", str(folder), "--tuned", "t.json"]
+        found = {"study": options([("dblp", "top5000")], {"dblp/top5000": 0.4}),
+                 "study-large": options([("dblp", "top5000"), ("lj", "top5000")], {"dblp/top5000": 0.4, "lj/top5000": 0.5})}
+        with patch.object(runqueue, "_spectrum_options", lambda verb, args: found[runqueue._option(args, "--name")]), \
+                patch.object(gs, "job_settings",
+                             lambda o, d, c: [{"gamma": g, "label": None} for g in sorted({0.1, o["tuned_resolutions"][f"{d}/{c}"]})]), \
+                patch.object(runqueue.qs, "load_tuned_file", lambda file: {}):
+            self.assertEqual(self._state(small), "partial")
+            self.assertEqual(self._state(large), "partial")
+            # dblp's new resolution 0.4 is pending (0.1 is recorded, 0.5 left the grid); lj is unchanged
+            self.assertEqual(runqueue.unit_counts(small)[:2], (1, 2))
+            self.assertEqual(runqueue.unit_counts(large)[:2], (3, 4))
+            self.assertNotEqual(runqueue.data_state(small)[1], runqueue.data_state(large)[1])
+
     def test_an_explicit_output_folder_is_the_one_that_is_checked(self):
         elsewhere = self.root / "elsewhere"
         _coverage(elsewhere, expected=2, recorded=2)
         run = ["spectrum", "--name", "study", "--output-dir", str(elsewhere)]
         self.assertEqual(self._state(run), "complete")
-        self.assertEqual(Path(runqueue.data_state(run)[1]).resolve(), elsewhere.resolve())
+        # the key is the folder, with the item's name after it when the name is not the folder's (a shared folder)
+        self.assertEqual(Path(runqueue.data_state(run)[1].split("#")[0]).resolve(), elsewhere.resolve())
 
     def test_a_start_curve_is_complete_when_every_condition_has_a_record(self):
         config = self.root / "start.toml"
@@ -463,8 +499,8 @@ class TestQueueFile(_Base):
         self.assertEqual(queue["items"][0]["run"][2], str((self.root / "heatmap.toml").resolve()))
 
     def test_the_paper_queue_lists_every_item_under_its_own_name_with_existing_configs(self):
-        queue = runqueue.load_queue("paper", root=str(self.root / "q"))
-        self.assertEqual(queue["name"], "paper-queue")
+        queue = runqueue.load_queue("overlap", root=str(self.root / "q"))
+        self.assertEqual(queue["name"], "overlap-queue")
         self.assertEqual([item["name"] for item in queue["items"]], PAPER_ITEMS)
         for item in queue["items"]:
             self.assertEqual(runqueue._option(item["run"], "--name"), item["name"])

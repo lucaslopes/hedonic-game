@@ -127,7 +127,7 @@ hedonic pickle run dblp:top5000 --tuned PATH/hoc_tuned.json   # HOC-local per pi
 clique_percolation, angel, bigclam, ego_splitting, ncgame, neo_kmeans) and which
 runtimes are ready; `hedonic-exp codeseg-setup` / `codeseg-doctor` provision
 and check them. The paper's whole programme is `hedonic run queue
-configs/queue-paper.toml` (`--dry-run`, `--report`).
+configs/queue-overlap.toml` (`--dry-run`, `--report`).
 
 ## Raw inspection
 
