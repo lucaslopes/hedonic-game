@@ -1,0 +1,23 @@
+# Start-quality curve: how much does Hedonic local moving lose when its start is corrupted from the SNAP ground-truth
+# cover up to a fully random start?
+#
+# Detector: Hedonic local moving at one calibrated (gamma, cap) per network:cover pair: those of --tuned FILE (the
+# hoc_tuned.json of `hedonic run calibrate`; the paper queue passes it), else the frozen whole-graph settings of
+# quickstart.HOC_TUNED, else DBLP's. Seeds 0-9. The analysis graph is the covered-induced graph of the pair's cover. Every
+# start is a corruption of the same reference (its cap projection when a vertex is above the cap): nine levels, eight of
+# degree-preserving incidence switches (distance d = the fraction of reference incidences lost, 0 to 1) and a random
+# level that keeps each vertex's label count. 8 pairs x 9 levels x 10 seeds = 720 runs.
+#
+#   hedonic run startcurve --config start-quality-hoc-local --output-dir DIR --dry-run
+#   hedonic run startcurve --config start-quality-hoc-local --output-dir DIR
+#
+# Output: DIR/start_quality.jsonl (one line per condition) and start_quality_summary.csv. A rerun resumes: a condition
+# already recorded (same pair, level, seed, cap and gamma) is not run again; --overwrite starts again.
+
+[start_quality]
+# The eight network/cover pairs in run order. A pair runs all its levels and seeds before the next pair starts, because
+# its graph is loaded once and shared by the conditions running side by side.
+networks = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000", "dblp:all", "amazon:all", "youtube:all"]
+seeds = "0-9"
+levels = [0, 0.005, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, "random"]
+phase = "local"

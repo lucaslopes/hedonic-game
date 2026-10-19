@@ -9,11 +9,11 @@
 #
 # Branch pushes and pull requests only build and test. A tag publishes exactly
 # those artifacts once every job has passed, and the tag sets their version
-# (tools/release_version.py; pyproject.toml holds the release, e.g. 1.0.0):
+# (tools/release_version.py; pyproject.toml holds the release, e.g. 2.0.0):
 #
-#   v1.0.0.dev1  -> TestPyPI (trial uploads; environment `testpypi`)
-#   v1.0.0rc1    -> PyPI, a pre-release pip installs only with --pre
-#   v1.0.0       -> PyPI (environment `pypi`)
+#   v2.0.0.dev1  -> TestPyPI (trial uploads; environment `testpypi`)
+#   v2.0.0rc1    -> PyPI, a pre-release pip installs only with --pre
+#   v2.0.0       -> PyPI (environment `pypi`)
 #
 # Publishing is trusted publishing (no token): each index needs a trusted
 # publisher for this repository, workflow `wheels.yml` and that environment.

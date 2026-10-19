@@ -34,5 +34,10 @@
 #include "shared/heap.c"
 #include "partition/visit.c"
 #include "partition/partition.c"
+#include "cover/rows.c"
+#include "cover/visit.c"
+#include "cover/start.c"
+#include "cover/cover.c"
 #include "check/check.c"
 
+#include "check/audit.c"

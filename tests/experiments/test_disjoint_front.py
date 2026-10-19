@@ -19,7 +19,7 @@ class TestDefaultOutput(unittest.TestCase):
         self.check({}, Path(config.DISJOINT_RUNS_ROOT) / "sbm100")
 
     def test_the_user_config_moves_it(self):
-        # A stray output_dir (a [defaults] key of earlier releases) never moves the disjoint runs' folder.
+        # The overlap runs' folder is not the disjoint runs' folder.
         self.check({"output_dir": "/data/runs"}, Path(config.DISJOINT_RUNS_ROOT) / "sbm100")
         self.check({"output_dir": "/data/runs", "disjoint_output_root": "/data/disjoint"}, Path("/data/disjoint/sbm100"))
 
