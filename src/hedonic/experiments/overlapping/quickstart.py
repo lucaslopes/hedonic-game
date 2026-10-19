@@ -1144,13 +1144,13 @@ def unit_argv(cfg: Config, net: str, seed: int, m: Method, binary: Path | None) 
 
 def unit_digest(cfg: Config, net: str, seed: int, m: Method, binary: Path | None) -> str | None:
     """The config digest the runner would stamp on this unit's record now (its identity, with no detector work)."""
-    from hedonic.experiments.overlapping import codeseg_reproduction as cr, extra_methods
+    from hedonic.experiments.overlapping import codeseg_reproduction as cr, extra_methods, threadio
 
     extra_methods.install()  # the runner only knows ego_splitting and the controls once they are registered
     argv, _ = unit_argv(cfg, net, seed, m, binary)
     buffer = io.StringIO()
     try:
-        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
+        with threadio.redirected(stdout=buffer):  # the view certifies units on a thread of its own
             cr.main([*argv, "--identity-only"])
         return json.loads(buffer.getvalue().strip().splitlines()[-1]).get("config_digest")
     except (SystemExit, Exception):  # noqa: BLE001 - an identity that cannot be read is not reused; the runner decides

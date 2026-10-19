@@ -12,14 +12,13 @@ their next probe from the last one, so only ``timeout`` bounds them, probe by pr
 
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import statistics
 from pathlib import Path
 
 from hedonic.experiments.overlapping import limits
 from hedonic.experiments.overlapping import quickstart as qs
+from hedonic.experiments.overlapping import threadio
 
 BENCHMARK_VERBS = ("exp", "paper", "paper-hoc")
 SPECTRUM_VERBS = ("spectrum", "spectrum-full")
@@ -139,7 +138,7 @@ def _pick(target: str, measured: dict[str, list[float]], edges: dict[str, int],
 
 def _benchmark(run: list[str]) -> dict[str, tuple[float, str]]:
     rest = run[1:] if run[0] == "exp" else ["--config", run[0], *run[1:]]
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    with threadio.redirected():
         args = qs.build_parser().parse_args(rest)
         cfg = qs.config_from_args(args)
     if args.name:
@@ -179,7 +178,7 @@ def _benchmark(run: list[str]) -> dict[str, tuple[float, str]]:
 def _baselines(run: list[str]) -> dict[str, tuple[float, str]]:
     from hedonic.experiments.overlapping import baseline_run as br
 
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    with threadio.redirected():
         plan = br.resolve(run[1:])
     cap = limits.effective(plan["eval_timeout_minutes"] * 60, plan.get("limit"))
     folders = [plan["output"], *plan.get("adopt_from", [])]

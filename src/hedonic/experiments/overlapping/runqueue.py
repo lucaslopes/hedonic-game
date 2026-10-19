@@ -58,6 +58,7 @@ from pathlib import Path
 from hedonic.experiments.overlapping import limits as lim
 from hedonic.experiments.overlapping import queuebuild as qb
 from hedonic.experiments.overlapping import queuelimits as ql
+from hedonic.experiments.overlapping import threadio
 from hedonic.experiments.overlapping import queuemodel as qm
 from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.overlapping import runmanager as rm
@@ -171,7 +172,7 @@ def item_targets(run: list[str]) -> list[str]:
     """
     run = _without_option(run, "--tuned")
     verb, args = run[0], run[1:]
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    with threadio.redirected():
         if verb in BENCHMARK_VERBS:
             return list(qs.config_from_args(qs.build_parser().parse_args(args if verb == "exp" else ["--config", verb, *args])).networks)
         if verb == "startcurve":
@@ -405,7 +406,7 @@ def load_queue(path: str, root: str | Path | None = None, _within: tuple[str, ..
             raise SystemExit(f"{path}: item {item_name!r} needs --name {item_name}; a benchmark's name is otherwise generated")
         problem = io.StringIO()
         try:
-            with contextlib.redirect_stderr(problem):
+            with threadio.redirected(stdout=threadio.KEEP, stderr=problem):
                 _check_arguments(run)
         except (SystemExit, ValueError) as exc:  # argparse has printed its usage error; its last line says why
             reason = str(exc) if isinstance(exc, ValueError) else (problem.getvalue().strip().splitlines() or ["invalid arguments"])[-1]
@@ -494,7 +495,7 @@ def _covered_pairs(path: str, item_name: str, run: list[str], order: list[str]) 
             raise SystemExit(f"{path}: item {item_name!r} restricted to {pair}: the study did not take --pairs")
         problem = io.StringIO()
         try:
-            with contextlib.redirect_stderr(problem):
+            with threadio.redirected(stdout=threadio.KEEP, stderr=problem):
                 _check_arguments(sliced)
         except (SystemExit, ValueError) as exc:
             reason = str(exc) if isinstance(exc, ValueError) else (problem.getvalue().strip().splitlines() or ["invalid arguments"])[-1]
@@ -553,6 +554,7 @@ _MODEL: dict[str, qm.RunModel] = {}
 # A step of a pair-by-pair queue asks the same state checks about one pair of an item. The notes above are the item's, kept
 # per folder for the view, so a check made for a step must not write them: inside ``_quiet`` they stay as they were.
 _SCRATCH = threading.local()
+
 
 
 @contextlib.contextmanager
@@ -618,11 +620,16 @@ def _unit_reusable(cfg: qs.Config, net: str, seed: int, method: qs.Method, binar
 
 
 def _benchmark_history(cfg: qs.Config, units: list, reusable: list[bool], audited: dict | None) -> dict:
-    """What the finished units of a benchmark took, read from their records: ``{"seconds": {(target, method key):
-    [unit seconds]}, "edges": {target: edges of the graph the detectors saw}}``. A unit's seconds are its record's
-    runtime plus the audits of its cover (when the run audits), the same span the worker times a unit by, so a pair
-    whose units have not run is priced from the same method on the pairs that have."""
+    """What the finished units of a benchmark took, read from their records.
+
+    ``{"seconds": {(target, method key): [unit seconds]}, "units": {(target, seed, method key): unit seconds},
+    "audits": {(target, method key, profile): [audit seconds]}, "edges": {target: edges of the graph the detectors saw}}``. A unit's seconds are its record's own time (detection and
+    scoring) plus the audits of its cover (when the run audits), the span the worker times a unit by, so a pair whose
+    units have not run is priced from the same method on the pairs that have. A unit whose audits are not all recorded
+    is still running: its time is not a finished unit's, but its finished audits price the profiles still to come."""
     seconds: dict[tuple[str, str], list[float]] = {}
+    took_of: dict[tuple[str, int, str], float] = {}
+    audits: dict[tuple[str, str, str], list[float]] = {}
     edges: dict[str, int] = {}
     if audited is not None:
         from hedonic.experiments.overlapping import cover_audit as ca
@@ -633,22 +640,32 @@ def _benchmark_history(cfg: qs.Config, units: list, reusable: list[bool], audite
             record = qs.unit_record(cfg, net, seed, method)
         except (OSError, ValueError):
             continue
-        took = record.get("runtime_seconds")
-        if not isinstance(took, (int, float)):
-            continue
-        if audited is not None:
-            took += sum(float((audited.get(key) or {}).get("audit_seconds") or 0.0)
-                        for key in ca.unit_keys(net, seed, method.key))
-        seconds.setdefault((net, method.key), []).append(float(took))
         m = (record.get("dataset_report") or {}).get("m")
         if isinstance(m, int) and m > 0:
             edges[net] = m
+        took = record.get("unit_seconds")
+        if not isinstance(took, (int, float)):
+            took = record.get("runtime_seconds")
+        if not isinstance(took, (int, float)):
+            continue
+        if audited is not None:
+            keys = ca.unit_keys(net, seed, method.key)
+            done = [key for key in keys if key in audited]
+            for key in done:
+                spent = (audited.get(key) or {}).get("audit_seconds")
+                if isinstance(spent, (int, float)):
+                    audits.setdefault((net, method.key, key.rpartition("/")[2]), []).append(float(spent))
+            if len(done) < len(keys):  # its audits are still running
+                continue
+            took += sum(float((audited.get(key) or {}).get("audit_seconds") or 0.0) for key in keys)
+        seconds.setdefault((net, method.key), []).append(float(took))
+        took_of[net, seed, method.key] = float(took)
     if cfg.induce == "covered":  # a pair with no finished unit: its covered subgraph's size from the Table 1 analysis
         table = _covered_edges()
         for net, _seed, _method in units:
             if net not in edges and net in table:
                 edges[net] = table[net]
-    return {"seconds": seconds, "edges": edges}
+    return {"seconds": seconds, "units": took_of, "audits": audits, "edges": edges}
 
 
 def _covered_edges() -> dict[str, int]:
@@ -1266,7 +1283,7 @@ def data_state(run: list[str], fresh: bool = False) -> tuple[str, str]:
     if cached and time.time() - cached[0] < (LIVE_TTL if run[0] in LIVE_VERBS else DATA_TTL):
         return cached[1]
     try:  # the planners print their own errors; a bad argument is reported when the item starts, not while viewing
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with threadio.redirected():
             result = _data_state(run, fresh)
     except qs.TunedMissing:
         result = ("awaiting", _preview(run))
@@ -1296,7 +1313,7 @@ def _preview(run: list[str]) -> str:
     swapped = list(run)
     swapped[swapped.index("--tuned") + 1] = ",".join(files)
     try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with threadio.redirected():
             _, folder = _data_state(swapped)
     except (SystemExit, Exception):  # noqa: BLE001
         return ""
@@ -2167,7 +2184,7 @@ def requirements(queue: dict) -> tuple[list[str], list[str]]:
         if verb in BENCHMARK_VERBS:
             args = _without_option(run, "--tuned")[1:]
             try:
-                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with threadio.redirected():
                     cfg = qs.config_from_args(qs.build_parser().parse_args(
                         args if verb == "exp" else ["--config", verb, *args]))
                 methods += list(cfg.methods)

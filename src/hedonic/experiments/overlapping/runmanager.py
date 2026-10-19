@@ -833,7 +833,7 @@ def _audit_reporter(prog: dict, item: dict, ppath: Path, tag: str) -> Callable[[
     def report(info: dict) -> None:
         text = info.get("detail") or info.get("text") or ""
         item["audit"] = {key: info.get(key) for key in ("policy", "number", "policies", "done", "total", "elapsed",
-                                                        "eta_seconds", "updated", "since") if info.get(key) is not None}
+                                                        "eta_seconds", "updated", "since", "key") if info.get(key) is not None}
         prog["stage"], prog["updated"] = f"robustness audit of the saved cover · {tag} · {text}", time.time()
         write_json(ppath, prog)
 
