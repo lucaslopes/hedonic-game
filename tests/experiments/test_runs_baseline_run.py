@@ -130,7 +130,8 @@ class TestRun(unittest.TestCase):
             plan = plan_for(tmp)
             loader = Loader()
             self.assertEqual(self.run_plan(plan, loader), 0)
-            self.assertEqual(loader.targets, ["amazon"] * 5 + ["dblp:top5000"] * 5)  # each method loads each pair, in a child
+            # each searched method loads each pair, in a child; CoDeSEG and NcGame take the authors' setting and load nothing
+            self.assertEqual(loader.targets, ["amazon"] * 3 + ["dblp:top5000"] * 3)
             data = br.read_tuned(plan)
             self.assertTrue(data["complete"])
             self.assertFalse(data["uses_ground_truth"])
@@ -146,6 +147,18 @@ class TestRun(unittest.TestCase):
             again = Loader()
             self.assertEqual(self.run_plan(plan, again), 0)
             self.assertEqual(again.targets, [])  # everything is recorded: no graph is loaded
+
+    def test_a_fixed_setting_loads_a_graph_only_for_a_sensitivity_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            loader = Loader()
+            self.assertEqual(self.run_plan(plan_for(tmp, "--methods", "codeseg,ncgame,ego_splitting"), loader), 0)
+            self.assertEqual(loader.targets, [])
+            data = br.read_tuned(plan_for(tmp, "--methods", "codeseg,ncgame,ego_splitting"))
+            self.assertEqual(data["searches"]["codeseg/amazon"]["status"], "fixed")
+            self.assertEqual(data["settings"]["codeseg"]["amazon"], {"tau": 0.3, "alpha": 1.0, "iterations": 10})
+            loader = Loader()
+            self.run_plan(plan_for(tmp + "/s", "--methods", "codeseg", "--sensitivity"), loader)
+            self.assertEqual(loader.targets, ["amazon", "dblp:top5000"])
 
     def test_a_run_goes_method_by_method_and_the_pairs_of_a_method_may_overlap(self):
         with tempfile.TemporaryDirectory() as tmp:

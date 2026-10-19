@@ -481,8 +481,12 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
     sizes = {s_["network"]: s_.get("graph") for s_ in (read_tuned(plan).get("searches") or {}).values()}
 
     def calibrate_one(search):
-        """One method on one pair, in a forked child that loads the pair's graph (an unloaded graph costs nothing to hold)."""
+        """One method on one pair, in a forked child that loads the pair's graph (an unloaded graph costs nothing to hold).
+        A fixed-protocol method without a sensitivity check runs nothing, so its graph is not loaded: the record is the
+        authors' setting, the same on every pair."""
         target = search["network"]
+        if search["method"] in bc.FIXED_METHODS and not plan["sensitivity"]:
+            return bc.calibrate(search["method"], None), sizes.get(target) or {}
         ctx = bc.load_context(target, network_root=plan["network_root"], induce="covered", seed=plan["seed"],
                               budget=budget_of(plan, search["method"]), ledger_dir=out / "ledger" / target.replace(":", "_"), runtime=runtime)
         bc.with_replicates(ctx, plan["replicates"])

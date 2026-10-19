@@ -516,6 +516,41 @@ class TestRunqueueTree(unittest.TestCase):
         self.assertEqual([c.key for c in root.children], [("run", "a"), ("run", "b")])
 
 
+class TestAdoptedPreview(unittest.TestCase):
+    """Calibrations an earlier run finished are copied only when the item starts; the view counts them now, and a
+    benchmark waiting for the file is counted with them while it stays awaiting."""
+
+    def test_adopted_calibrations_count_and_the_waiting_benchmark_is_previewed_with_them(self):
+        import contextlib
+        import io
+
+        from hedonic.experiments.overlapping import baseline_run as br
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = br.resolve(["--networks", "dblp:top5000", "--methods", "codeseg", "--output-dir", tmp + "/rc1"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(br.run_calibration(source), 0)  # a fixed setting: nothing is loaded
+            cal = ["calibrate-baselines", "--networks", "dblp:top5000,amazon:top5000", "--methods", "codeseg",
+                   "--output-dir", tmp + "/cal", "--adopt-from", tmp + "/rc1"]
+            state, folder = runqueue._baselines_state(cal[1:])
+            self.assertEqual(state, "missing")  # its own file decides whether the item runs: nothing is copied yet
+            self.assertEqual(runqueue._COUNTS[folder], (1, 2, "calibrations"))
+            mine = str(Path(tmp).resolve() / "cal" / br.TUNED_NAME)
+            self.assertEqual(runqueue._TUNED_PREVIEW[mine], [str(Path(tmp).resolve() / "rc1" / br.TUNED_NAME)])
+            seen = []
+
+            def judged(run):
+                seen.append(runqueue._option(run, "--tuned"))
+                return "partial", tmp + "/bench"
+
+            bench = ["exp", "--methods", "codeseg", "--tuned", mine]
+            with patch.object(runqueue, "_data_state", judged):
+                self.assertEqual(runqueue._preview(bench), tmp + "/bench")
+                self.assertEqual(runqueue._preview(["exp", "--tuned", tmp + "/nothing.json"]), "")
+            self.assertEqual(seen, [str(Path(tmp).resolve() / "rc1" / br.TUNED_NAME)])
+            self.assertIn("adopt from rc1", runqueue._PREVIEWED[tmp + "/bench"])
+
+
 class TestCalibrationProbes(unittest.TestCase):
     """A Hedonic search counts its evaluations and lists every setting it probed, read from the calibration's ledger."""
 

@@ -512,6 +512,8 @@ def _is_quiet() -> bool:
 
 
 _DECORATE: dict[str, Callable] = {}  # folder -> adds rows to a run's node after it is built
+_TUNED_PREVIEW: dict[str, list[str]] = {}  # a calibration file not written yet -> the finished files its run adopts from
+_PREVIEWED: dict[str, str] = {}  # folder -> why its counts are a preview
 
 
 def _set_model(key: str | Path, build, *args, **kwargs) -> None:
@@ -913,16 +915,33 @@ def _calibrate_state(args: list[str]) -> tuple[str, str]:
 
 
 def _baselines_state(args: list[str]) -> tuple[str, str]:
-    """The baselines' calibration: its folder, and whether baseline_tuned.json holds every (method, pair) of its plan."""
+    """The baselines' calibration: its folder, and whether baseline_tuned.json holds every (method, pair) of its plan.
+
+    Searches an earlier calibration finished (``--adopt-from``) are copied only when the run starts, so its state is that
+    of its own file; the view counts them as done already, and a benchmark waiting for this file is previewed with them
+    (``_TUNED_PREVIEW``)."""
     from hedonic.experiments.overlapping import baseline_run as br
 
     plan = br.front_study(args)
     todo = br.searches(plan)
-    have = br.recorded(plan)
+    own = br.read_tuned(plan).get("searches") or {}
+    adopted: dict[str, dict] = {}
+    for source, keys in br.adoptable(plan).items():
+        found = br.read_tuned({"output": Path(source)}).get("searches") or {}
+        adopted.update({key: {**found[key], "adopted_from": source} for key in keys})
+    results = {**adopted, **own}
+    have = set(results)
+    earlier = ([f"{len(adopted)} finished calibration(s) of {', '.join(sorted({Path(v['adopted_from']).name for v in adopted.values()}))} "
+                "are copied in when this run starts (counted as done here)"] if adopted else [])
     _note(plan["output"], len(have & {s["key"] for s in todo}), len(todo), "calibrations",
           [(_pair_label(network), "calibrations", [f"{method}/{network}" in have for method in plan["methods"]])
-           for network in plan["networks"]])
-    results = br.read_tuned(plan).get("searches") or {}
+           for network in plan["networks"]], earlier=earlier)
+    file = str(Path(plan["output"]) / br.TUNED_NAME)
+    sources = [str(Path(s) / br.TUNED_NAME) for s in plan.get("adopt_from") or [] if (Path(s) / br.TUNED_NAME).is_file()]
+    if adopted and sources and not (Path(file).is_file() and br.read_tuned(plan).get("complete")):
+        _TUNED_PREVIEW[file] = sources
+    else:
+        _TUNED_PREVIEW.pop(file, None)
     _set_model(plan["output"], qb.baselines, plan, todo, results)
     _DECORATE[str(plan["output"])] = lambda node, plan=plan, results=results: qb.decorate_baselines(node, plan, results)
     return br.state_of(plan), str(plan["output"])
@@ -1046,17 +1065,48 @@ def data_state(run: list[str], fresh: bool = False) -> tuple[str, str]:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             result = _data_state(run)
     except qs.TunedMissing:
-        result = ("awaiting", "")
+        result = ("awaiting", _preview(run))
     except (SystemExit, Exception):  # noqa: BLE001
         result = ("unknown", "")
     _DATA_CACHE[key] = (time.time(), result)
     return result
 
 
+def _preview(run: list[str]) -> str:
+    """The folder of an item that waits for a calibration file, counted (for the view only) with the finished files
+    that calibration will adopt; "" when a file it reads has no such stand-in. The item stays "awaiting": it is judged
+    with the real file when its turn comes."""
+    value = _option(run, "--tuned")
+    if not value:
+        return ""
+    files, used = [], []
+    for file in qs.tuned_files(value):
+        path = str(qs.expand_path(file))
+        if Path(path).is_file():
+            files.append(file)
+        elif path in _TUNED_PREVIEW:
+            files += _TUNED_PREVIEW[path]
+            used += _TUNED_PREVIEW[path]
+        else:
+            return ""
+    swapped = list(run)
+    swapped[swapped.index("--tuned") + 1] = ",".join(files)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            _, folder = _data_state(swapped)
+    except (SystemExit, Exception):  # noqa: BLE001
+        return ""
+    if folder:
+        _PREVIEWED[folder] = ("counted with the settings its calibration will adopt from "
+                              + ", ".join(sorted({Path(f).parent.name for f in used}))
+                              + "; judged again with the calibration's own file when its turn comes")
+    return folder
+
+
 def unit_counts(run: list[str]) -> tuple[int, int, str] | None:
     """(finished, total, noun) for one item from its files, or None when its kind has no such count or is not judged yet."""
     state, folder = data_state(run)
-    if state in ("unknown", "awaiting"):
+    if state == "unknown" or not folder:  # an awaiting item with a folder was previewed (_preview)
         return None
     return _COUNTS.get(folder)
 
@@ -1695,7 +1745,7 @@ def tree(entry: dict, prog: dict) -> qm.Node:
             status = "partial"
         state, folder = data_state(item["run"])
         count = unit_counts(item["run"])
-        model = None if state in ("unknown", "awaiting") else _MODEL.get(folder)
+        model = None if state == "unknown" or not folder else _MODEL.get(folder)  # an awaiting item with a folder: preview
         eta: qm.Cost = (None, "")
         if run_entry is not None:
             progress = rm.read_progress(run_entry)
@@ -1715,7 +1765,8 @@ def tree(entry: dict, prog: dict) -> qm.Node:
                 _DECORATE[folder](node)  # rows below a leaf that the model cannot hold (the settings a search tried)
             except Exception:  # noqa: BLE001 - the view only decorates; it never changes a count
                 pass
-        for line in (_check_line(item), _STALE.get(folder, ""), *_EARLIER.get(folder, []), item.get("note", ""),
+        for line in (_check_line(item), _STALE.get(folder, ""), *_EARLIER.get(folder, []),
+                     _PREVIEWED.get(folder, "") if state == "awaiting" else "", item.get("note", ""),
                      *failure_lines(item["name"])):
             if line:
                 node.detail.append(line)

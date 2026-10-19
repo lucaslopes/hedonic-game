@@ -329,6 +329,13 @@ hedonic-exp list                       # analysis and utility commands
   `ledger/evals*.jsonl`) and lists one row per probed setting (γ, F1, communities,
   seeds, ★ chosen); a search under way is priced from its own pace, and the run's
   ETA is its longest search, since they run side by side.
+  A baseline calibration counts the searches it will adopt (`--adopt-from`,
+  copied only when it starts) as done, and a benchmark waiting for its
+  `--tuned` file is counted with the adopted files (`runqueue._preview`); it
+  stays `awaiting` and is judged with the real file at its turn.
+- **Fixed-setting baselines load nothing.** CoDeSEG, NcGame and Ego-Splitting
+  take the authors' setting on every pair (`bc.FIXED_METHODS`): without
+  `--sensitivity` their per-pair record is written without loading `G[S]`.
 - **Baseline calibration.** `hedonic run calibrate-baselines` takes
   `--method-budget M=N[:MIN]` (the paper queue: ANGEL at 3 settings, 60 min
   per pair), `--transfer PAIRS` (not searched: each searched method takes the
