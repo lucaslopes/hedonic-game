@@ -504,8 +504,11 @@ def decorate_calibration(node: qm.Node, plan: dict, searches: dict[str, dict]) -
             ok = [r for r in group if r.get("status") == "completed" and isinstance(r.get("metrics"), dict)]
             f1 = statistics.fmean(r["metrics"]["f1"] for r in ok) if ok else None
             counts = [r["metrics"].get("predicted_community_count") for r in ok if r["metrics"].get("predicted_community_count")]
-            label = (f"γ {gamma:.3g}" + (f" · cap {cap}" if cap > 0 else "")
-                     + (f" · F1 {f1:.3f}" if f1 is not None else f" · {group[0].get('status', '?')}")
+            first = next((r for r in ok if int(r["config"].get("seed", 0)) == 0), None)
+            # the other probes ran seed 0 only: a confirmed setting shows its seed-0 F1 too, so the rows compare
+            score = (f" · F1 {first['metrics']['f1']:.3f} seed 0, {f1:.3f} mean" if first is not None and len(ok) > 1
+                     else f" · F1 {f1:.3f}" if f1 is not None else f" · {group[0].get('status', '?')}")
+            label = (f"γ {gamma:.3g}" + (f" · cap {cap}" if cap > 0 else "") + score
                      + (f" · {int(statistics.median(counts)):,} communities" if counts else ""))
             seeds = sorted({int(r["config"].get("seed", 0)) for r in group})
             label += (f" · seed {seeds[0]}" if len(seeds) == 1 else f" · {len(seeds)} seeds") + (

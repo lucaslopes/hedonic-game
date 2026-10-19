@@ -580,7 +580,7 @@ class TestCalibrationProbes(unittest.TestCase):
         dblp, amazon = (pair.children[0] for pair in node.children)
         self.assertEqual((dblp.status, dblp.done, dblp.total, dblp.noun), ("done", 3, 3, "evaluations"))
         self.assertEqual([(row.label, row.done, row.total) for row in dblp.children],
-                         [("γ 0.001 · F1 0.700 · 100 communities · 2 seeds  ★ chosen", 2, 2),
+                         [("γ 0.001 · F1 0.600 seed 0, 0.700 mean · 100 communities · 2 seeds  ★ chosen", 2, 2),
                           ("γ 0.5 · F1 0.400 · 100 communities · seed 0", 1, 1)])
         self.assertEqual(dblp.children[0].took, 12.0)
         self.assertEqual(dblp.took, 18.0)  # its clock (60 s / 4 side by side) is less than its evaluations cost: reused
