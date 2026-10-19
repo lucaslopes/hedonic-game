@@ -451,6 +451,130 @@ def calibrate(searches: list[dict], have: set[str], seconds: dict[str, float] | 
     return qm.RunModel([family])
 
 
+# A search's evaluations are not known in advance (each result picks the next probe): these are the usual totals, so a
+# search under way has a bar. Resolution only (--cap unlimited): the wide scan's 11 points and golden section up to 20,
+# the clique-regime probe, the snap and four more confirmation seeds. A cap search alternates resolution and cap.
+SEARCH_EVALS = {"unlimited": 26, "search": 40}
+
+
+def calibration_evals(folder: Path, network: str) -> list[dict]:
+    """Every evaluation of ``network`` in the calibration's ledger, oldest first (a search may reuse another's)."""
+    out = []
+    for path in sorted((folder / "ledger").glob("evals*.jsonl")):
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict) and record.get("instance") == network and isinstance(record.get("config"), dict):
+                out.append(record)
+    return sorted(out, key=lambda r: str(r.get("finished", "")))
+
+
+def decorate_calibration(node: qm.Node, plan: dict, searches: dict[str, dict]) -> None:
+    """Count each Hedonic search in its evaluations (detector runs, each scored and audited) instead of as one unit,
+    and list under it a row per setting it probed: resolution, cap when there is one, F1 over the seeds that ran it and
+    the communities found; ★ marks the setting it chose. Parents count the evaluations under them."""
+    folder = Path(plan["output"])
+    labels = {pair_label(t): t for t in plan["networks"]}
+    running = node.status == "running"
+    expected = SEARCH_EVALS.get(plan.get("cap") or "search", 40)
+
+    def visit(n: qm.Node) -> None:
+        for child in n.children:
+            visit(child)
+        if n.children or len(n.key) < 2 or not str(n.key[-1]).endswith("search"):
+            return
+        target = labels.get(n.key[-2])
+        if not target:
+            return
+        records = calibration_evals(folder, target)
+        entry = searches.get(f"hedonic/{target}") or {}
+        chosen = ((float(f"{float(entry['absolute_resolution']):.6g}"), int(entry["max_memberships"]))
+                  if entry.get("absolute_resolution") is not None else None)
+        groups: dict[tuple, list[dict]] = {}
+        for record in records:
+            config = record["config"]
+            groups.setdefault((float(f"{float(config['gamma']):.6g}"), int(config["M"])), []).append(record)
+        for (gamma, cap), group in sorted(groups.items()):
+            ok = [r for r in group if r.get("status") == "completed" and isinstance(r.get("metrics"), dict)]
+            f1 = statistics.fmean(r["metrics"]["f1"] for r in ok) if ok else None
+            counts = [r["metrics"].get("predicted_community_count") for r in ok if r["metrics"].get("predicted_community_count")]
+            label = (f"γ {gamma:.3g}" + (f" · cap {cap}" if cap > 0 else "")
+                     + (f" · F1 {f1:.3f}" if f1 is not None else f" · {group[0].get('status', '?')}")
+                     + (f" · {int(statistics.median(counts)):,} communities" if counts else "")
+                     + ("  ★ chosen" if chosen == (gamma, cap) else ""))
+            seeds = sorted({int(r["config"].get("seed", 0)) for r in group})
+            row = qm.Node(key=n.key + ("probe", gamma, cap), label=label, depth=n.depth + 1, log=True,
+                          note=f"seed {seeds[0]}" if len(seeds) == 1 else f"{len(seeds)} seeds")
+            row.took = sum(float(r.get(k) or 0.0) for r in group
+                           for k in ("detection_seconds", "scoring_seconds", "audit_seconds"))
+            row.detail = [f"γ = {gamma:.6g}" + (f", cap {cap}" if cap > 0 else ", no cap")]
+            for r in group:
+                m, lf = r.get("metrics") or {}, r.get("label_free") or {}
+                row.detail.append(
+                    f"  seed {r['config'].get('seed', 0)}: {r.get('status')}"
+                    + (f" · F1 {m['f1']:.4f} · ONMI {m.get('onmi', 0):.4f} · {m.get('predicted_community_count', '?'):,} communities"
+                       f" · max regret {lf.get('max_regret', float('nan')):.2g} · detection {float(r.get('detection_seconds') or 0):.1f} s"
+                       if m else f" · {str(r.get('reason') or '')[:120]}"))
+            n.children.append(row)
+        done = len(records)
+        spent = sum(row.took for row in n.children)
+        if n.status == "done" and spent > n.took:  # its evaluations were reused from the ledger: show what they cost
+            n.took = spent
+            n.detail.append("its evaluations were reused from the ledger; the time shown is what they cost when they ran")
+        n.noun = "evaluations"
+        n.total = done if n.status == "done" else max(done + 1, expected)
+        n.done = done if n.status != "done" else n.total
+        if n.status != "done":
+            if done and running:  # every unfinished search of a running calibration is under way
+                n.status = "running"
+            pace = search_pace(records)
+            if pace is not None:
+                n.left, n.basis, n.unknown = (n.total - n.done) * pace, "estimate", 0
+            n.detail.append(f"{done} evaluations so far; a search like this one usually takes about {expected} "
+                            "(each result chooses the next probe, so the total is not known in advance)"
+                            + (f"; one every {pace:.0f} s so far" if pace is not None else ""))
+        if entry:
+            n.detail.append(f"chosen: γ {float(entry['absolute_resolution']):.6g}"
+                            + (f", cap {entry['max_memberships']}" if int(entry["max_memberships"]) > 0 else ", no cap")
+                            + f" · F1 median {entry.get('f1_median', float('nan')):.4f} over seeds {entry.get('confirm_seeds')}")
+
+    def regroup(n: qm.Node) -> None:
+        kids = [c for c in n.children if not c.log]
+        if not kids:
+            return
+        for child in kids:
+            regroup(child)
+        status = n.status
+        qm._aggregate(n, kids)
+        n.noun, n.strip = "evaluations", []
+        if len(n.key) <= 2:  # the run: keep its own state unless every search has finished
+            n.status = status if status != "done" or n.done >= n.total else "running"
+            n.left = max((k.left for k in kids), default=0.0)  # the searches run side by side: the longest decides
+
+    visit(node)
+    regroup(node)
+
+
+def search_pace(records: list[dict]) -> float | None:
+    """Wall-clock seconds per evaluation of one search so far (evaluations inside it overlap, so this is not their
+    summed cost), or None with fewer than two finished evaluations."""
+    stamps = []
+    for record in records:
+        try:
+            stamps.append(time.mktime(time.strptime(str(record.get("finished")), "%Y-%m-%d %H:%M:%S")))
+        except ValueError:
+            continue
+    if len(stamps) < 2 or max(stamps) <= min(stamps):
+        return None
+    return (max(stamps) - min(stamps)) / (len(stamps) - 1)
+
+
 # --------------------------------------------------------------------------- the controlled-overlap study
 def controlled(plan: dict, done: int, grid: dict[str, list[str]]) -> qm.RunModel:
     """LFR-derived controlled overlap: one generated graph per (graph seed, mu, overlap fraction); done is a count."""

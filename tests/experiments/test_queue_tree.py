@@ -492,6 +492,68 @@ class TestRunqueueTree(unittest.TestCase):
             root = runqueue.tree(entry, {"current": 0, "pair": "amazon:top5000", "step": 3, "steps": [{}] * 26})
         self.assertTrue(any("now on amazon:top5000 (step 4 of 26)" in line for line in root.children[0].detail))
 
+    def test_runs_sit_under_the_method_they_study_in_the_order_the_methods_first_appear(self):
+        items = [{"name": "cal", "run": ["calibrate"]}, {"name": "spec", "run": ["spectrum-full"]},
+                 {"name": "cal-codeseg", "run": ["calibrate-baselines", "--methods", "codeseg"]},
+                 {"name": "bench-codeseg", "run": ["exp", "--methods", "codeseg"]},
+                 {"name": "bench-fox", "run": ["exp", "--methods", "fox"]}]
+        states = {"cal": ("completed", None)}
+        with patch.object(runqueue, "_status_of", lambda item, fresh=False: states.get(item["name"], ("new", None))), \
+                patch.object(runqueue, "data_state", lambda run, fresh=False: ("missing", "/nowhere/" + run[0])), \
+                patch.object(runqueue, "unit_counts", lambda run: (0, 4, "units")), \
+                patch.object(runqueue.rm, "effective_status", return_value="running"):
+            root = runqueue.tree({"name": "q", "items": items, "file": ""}, {})
+        self.assertEqual([g.label for g in root.children], ["Hedonic", "CoDeSEG", "FOX"])
+        hedonic, codeseg, _ = root.children
+        self.assertEqual([r.label for r in codeseg.children], ["3. cal-codeseg", "4. bench-codeseg"])
+        self.assertEqual((hedonic.done, hedonic.total, hedonic.status), (1, 2, "partial"))
+        self.assertEqual((root.done, root.total), (1, 5))  # the root still counts runs
+        self.assertEqual((hedonic.depth, hedonic.children[0].depth), (1, 2))
+
+    def test_one_method_keeps_the_runs_at_the_top(self):
+        runs = [qm.Node(key=("run", "a"), label="a"), qm.Node(key=("run", "b"), label="b")]
+        root = qm.queue_node("q", runs, groups=["Hedonic", "Hedonic"])
+        self.assertEqual([c.key for c in root.children], [("run", "a"), ("run", "b")])
+
+
+class TestCalibrationProbes(unittest.TestCase):
+    """A Hedonic search counts its evaluations and lists every setting it probed, read from the calibration's ledger."""
+
+    def _ledger(self, folder: Path) -> None:
+        def record(network, gamma, seed, f1, minute):
+            return {"instance": network, "config": {"phase": "local", "gamma": gamma, "M": -1, "seed": seed},
+                    "status": "completed", "finished": f"2026-10-19 03:{minute:02d}:00", "detection_seconds": 2.0,
+                    "scoring_seconds": 3.0, "audit_seconds": 1.0,
+                    "metrics": {"f1": f1, "onmi": 0.5, "predicted_community_count": 100}}
+        (folder / "ledger").mkdir(parents=True)
+        rows = [record("dblp:top5000", 0.5, 0, 0.4, 0), record("dblp:top5000", 1e-3, 0, 0.6, 2),
+                record("dblp:top5000", 1e-3, 1, 0.8, 4), record("amazon:top5000", 0.1, 0, 0.7, 0),
+                record("amazon:top5000", 0.01, 0, 0.75, 10)]
+        (folder / "ledger" / "evals-x.jsonl").write_text("\n".join(__import__("json").dumps(r) for r in rows) + "\ntorn{")
+
+    def test_each_search_counts_its_evaluations_with_a_row_per_setting_and_the_runs_eta_is_its_longest_search(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self._ledger(folder)
+            plan = {"output": str(folder), "networks": ["dblp:top5000", "amazon:top5000"], "cap": "unlimited"}
+            searches = [{"key": f"hedonic/{n}", "network": n, "phase": "local"} for n in plan["networks"]]
+            model = qb.calibrate(searches, {"hedonic/dblp:top5000"}, {"hedonic/dblp:top5000": 60.0})
+            node = qm.run_node(1, "cal", "", "running", model, None)
+            tuned = {"hedonic/dblp:top5000": {"absolute_resolution": 1e-3, "max_memberships": -1, "f1_median": 0.7}}
+            qb.decorate_calibration(node, plan, tuned)
+        dblp, amazon = (pair.children[0] for pair in node.children)
+        self.assertEqual((dblp.status, dblp.done, dblp.total, dblp.noun), ("done", 3, 3, "evaluations"))
+        self.assertEqual([row.label for row in dblp.children],
+                         ["γ 0.001 · F1 0.700 · 100 communities  ★ chosen", "γ 0.5 · F1 0.400 · 100 communities"])
+        self.assertTrue(all(row.log for row in dblp.children))
+        self.assertEqual((dblp.children[0].note, dblp.children[0].took), ("2 seeds", 12.0))
+        self.assertEqual(dblp.took, 18.0)  # its clock (60 s / 4 side by side) is less than its evaluations cost: reused
+        # the unfinished search is under way, priced from its own pace (one evaluation every 10 minutes)
+        self.assertEqual((amazon.status, amazon.done, amazon.total), ("running", 2, qb.SEARCH_EVALS["unlimited"]))
+        self.assertEqual((amazon.left, amazon.basis), ((qb.SEARCH_EVALS["unlimited"] - 2) * 600.0, "estimate"))
+        self.assertEqual((node.done, node.total, node.status), (5, 3 + qb.SEARCH_EVALS["unlimited"], "running"))
+        self.assertEqual(node.left, amazon.left)  # side by side: the longest search, not the sum
+
 
 def _timed(done_pairs=(), parallel=1, seconds=2.0) -> qm.Family:
     """Like ``_family`` but the finished units carry the time they took."""

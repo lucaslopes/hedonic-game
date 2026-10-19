@@ -321,6 +321,14 @@ hedonic-exp list                       # analysis and utility commands
   and each item waits for the earlier ones (an item depends on every earlier
   item whose folder its arguments name). `tests/experiments/test_queue_skip.py`
   pins the order.
+- **The queue view nests by method.** When a queue's items study more than one
+  method, `hedonic run attach` groups its runs under one node per method
+  (`runqueue.item_method`: Hedonic for its own verbs, else the single method of
+  `--methods`), then experiment > pair > loops. A Hedonic calibration search
+  counts its evaluations (`queuebuild.decorate_calibration`, read from
+  `ledger/evals*.jsonl`) and lists one row per probed setting (γ, F1, communities,
+  seeds, ★ chosen); a search under way is priced from its own pace, and the run's
+  ETA is its longest search, since they run side by side.
 - **Baseline calibration.** `hedonic run calibrate-baselines` takes
   `--method-budget M=N[:MIN]` (the paper queue: ANGEL at 3 settings, 60 min
   per pair), `--transfer PAIRS` (not searched: each searched method takes the

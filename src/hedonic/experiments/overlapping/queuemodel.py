@@ -372,14 +372,41 @@ def run_node(index: int, name: str, title: str, status: str, model: RunModel | N
 
 
 # --------------------------------------------------------------------------- the queue
-def queue_node(name: str, runs: list[Node], status: str = "", file: str = "", order: list[str] | None = None) -> Node:
+def group_node(label: str, runs: list[Node]) -> Node:
+    """One method's runs (its calibration and its experiments): runs finished of runs, the sum of their ETAs."""
+    group = Node(key=("group", label), label=label, noun="runs", children=runs)
+    group.done = sum(r.status == "done" for r in runs)
+    group.total = len(runs)
+    group.left = sum(r.left for r in runs)
+    group.unknown = sum(r.unknown for r in runs)
+    group.took = sum(r.took for r in runs)
+    group.took_missing = sum(r.took_missing for r in runs if r.status == "done")
+    group.basis = max((r.basis for r in runs if r.status != "done"), key=RANK.__getitem__, default="")
+    states = {r.status for r in runs}
+    group.status = ("done" if states == {"done"} else "running" if "running" in states
+                    else "failed" if "failed" in states else "partial" if states & {"done", "partial", "stopped"} else "pending")
+    group.detail = [f"{label}: {len(runs)} run{'s' if len(runs) != 1 else ''}, one after another"]
+    group.detail += [f"  {r.label}: {r.status} · " + ("took " + (took_text(r) or "(no time recorded)") if r.status == "done"
+                                                       else f"ETA {eta_text(r)}") for r in runs]
+    return group
+
+
+def queue_node(name: str, runs: list[Node], status: str = "", file: str = "", order: list[str] | None = None,
+               groups: list[str] | None = None) -> Node:
     """The root: its count is runs finished of runs, its ETA the sum of the runs' (they execute one after another).
 
-    ``order`` is the queue's pairs when it runs pair by pair: the runs then take turns on each pair in that order."""
+    ``order`` is the queue's pairs when it runs pair by pair: the runs then take turns on each pair in that order.
+    ``groups`` names each run's method; when there is more than one, the runs sit under a node per method, in the
+    order the methods first appear (method > experiment > pair > ...)."""
     root = Node(key=("queue",), label=f"queue {name}", status=status, noun="runs", depth=0)
     root.children = runs
-    for run in runs:
-        _stamp(run, 1)
+    if groups and len(set(groups)) > 1:
+        by: dict[str, list[Node]] = {}
+        for run, group in zip(runs, groups):
+            by.setdefault(group, []).append(run)
+        root.children = [group_node(label, members) for label, members in by.items()]
+    for child in root.children:
+        _stamp(child, 1)
     root.done = sum(r.status == "done" for r in runs)
     root.total = len(runs)
     root.left = sum(r.left for r in runs)

@@ -904,6 +904,7 @@ def _calibrate_state(args: list[str]) -> tuple[str, str]:
     seconds = {key: float(detail["wall_hours"]) * 3600 for key, detail in searches.items()
                if isinstance(detail, dict) and isinstance(detail.get("wall_hours"), (int, float))}
     _set_model(plan["output"], qb.calibrate, cal.searches(plan), have, seconds)
+    _DECORATE[str(plan["output"])] = lambda node, plan=plan, searches=searches: qb.decorate_calibration(node, plan, searches)
     other = cal.other_build(plan) & wanted
     if other and not _is_quiet():
         _STALE[str(plan["output"])] = (f"{len(other)} search(es) were made by another build (hedonic or its core); "
@@ -1724,7 +1725,22 @@ def tree(entry: dict, prog: dict) -> qm.Node:
                                + (f"; now on {now} (step {int(prog.get('taken') or int(prog.get('step') or 0) + 1)} of {len(prog.get('steps') or [])})" if now else ""))
         runs.append(node)
     return qm.queue_node(entry["name"], runs, rm.effective_status(entry, prog), entry.get("file", ""),
-                         order=list(entry.get("pairs") or []))
+                         order=list(entry.get("pairs") or []), groups=[item_method(item) for item in items])
+
+
+HEDONIC_VERBS = ("calibrate", "startcurve", "spectrum", "spectrum-full", "controlled", "posthoc")
+
+
+def item_method(item: dict) -> str:
+    """The method a queue item studies, for the view's top level: Hedonic for its own experiments, else the one method
+    a benchmark or a baseline calibration names with --methods ("several methods" when it names more)."""
+    run = item["run"]
+    if run[0] in HEDONIC_VERBS:
+        return "Hedonic"
+    names = [m for m in (_option(run, "--methods") or "").split(",") if m]
+    if len(names) == 1:
+        return qb.method_label(names[0]).split(" (")[0]
+    return "several methods" if names else "other runs"
 
 
 def _queue_item_named(name: str) -> dict | None:
