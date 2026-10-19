@@ -107,6 +107,29 @@ class TestWhatIsFinished(_Base):
         _coverage(self.overlap / "study", expected=3, recorded=3)
         self.assertEqual(self._state(run), "complete")
 
+    def test_a_spectrum_written_with_another_calibration_runs_again_on_the_retuned_pairs(self):
+        from hedonic.experiments.overlapping import gt_spectrum as gs
+
+        folder = self.overlap / "study"
+        report = {"complete": True, "expected_detector_conditions": 20, "recorded_detector_conditions": 20,
+                  "jobs": ["dblp-top5000", "amazon-top5000"]}
+        folder.mkdir(parents=True)
+        (folder / "coverage_report.json").write_text(json.dumps(report))
+        (folder / "manifest.json").write_text(json.dumps(
+            {"identity": {"tracked_files_sha256": gs.tracked_digest()},
+             "effective_grid": {"tuned_resolutions": {"dblp/top5000": 0.5, "amazon/top5000": 0.25}}}))
+        run = ["spectrum", "--name", "study", "--tuned", "t.json"]
+        options = {"pairs": [("dblp", "top5000"), ("amazon", "top5000")], "detector_resolutions": [0.0, 0.1, 1.0, 0.7],
+                   "tuned_resolutions": {"dblp/top5000": 0.5, "amazon/top5000": 0.25}}
+        with patch.object(runqueue, "_spectrum_options", lambda verb, args: options), \
+                patch.object(runqueue.qs, "load_tuned_file", lambda file: {}):
+            self.assertEqual(self._state(run), "complete")  # the same calibration: nothing to do
+            options["tuned_resolutions"] = {"dblp/top5000": 0.4, "amazon/top5000": 0.25}
+            self.assertEqual(self._state(run), "partial")  # DBLP's new resolution is not in the records
+            runqueue._DATA_CACHE.clear()
+            # amazon whole, DBLP all but the new resolution's conditions (10 per pair / 5 resolutions)
+            self.assertEqual(runqueue.unit_counts(run)[:2], (18, 20))
+
     def test_an_explicit_output_folder_is_the_one_that_is_checked(self):
         elsewhere = self.root / "elsewhere"
         _coverage(elsewhere, expected=2, recorded=2)

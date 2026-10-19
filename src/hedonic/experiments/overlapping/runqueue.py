@@ -679,6 +679,27 @@ def _spectrum_pairs(verb: str, args: list[str]) -> list[str] | None:
     return [f"{dataset}-{cover}" for dataset, cover in pairs] if pairs else None
 
 
+def _retuned_pairs(options: dict, manifest: dict) -> set[str]:
+    """The jobs (``dataset-cover``) whose calibrated resolution in ``options`` differs from the one the folder's manifest
+    was written with (none when the item reads no calibration)."""
+    from hedonic.experiments.overlapping import gt_spectrum as gs
+
+    wanted = options.get("tuned_resolutions")
+    if wanted is None or not manifest:
+        return set()
+    stored = ((manifest.get("effective_grid") or {}).get("tuned_resolutions")
+              or (manifest.get("options") or {}).get("tuned_resolutions") or {})
+    out = set()
+    for dataset, cover in options.get("pairs") or []:
+        try:
+            gamma = gs.tuned_gamma(options, dataset, cover)
+        except ValueError:
+            continue
+        if gamma is not None and stored.get(f"{dataset}/{cover}") != gamma:
+            out.add(f"{dataset}-{cover}")
+    return out
+
+
 def _spectrum_state(args: list[str], verb: str = "spectrum") -> tuple[str, str]:
     """A spectrum study: its folder, and whether its coverage report accounts for every condition of every planned pair.
 
@@ -712,6 +733,16 @@ def _spectrum_state(args: list[str], verb: str = "spectrum") -> tuple[str, str]:
     # Records carry the hash of the code that wrote them and are reused only when it equals the current one. The study's
     # plan says which code it ran under; a coverage report is judged by the manifest written with it.
     manifest = _read(folder / "manifest.json") or {}
+    # A pair's calibrated resolution joins its grids: a report written with another calibration lacks this one's
+    # conditions, so that pair is not done (the study, resuming, runs only the new resolution's conditions).
+    retuned = _retuned_pairs(_spectrum_options(verb, args), manifest) & listed
+    per_pair = expected / len(listed) if listed else 0.0
+    if retuned:
+        listed -= retuned
+        recorded = int(per_pair * len(listed)) if report.get("complete") is True else max(0, recorded - int(
+            per_pair * len(retuned)))
+    # The view keeps counts and models by this key: items that share the folder (a later phase that lists more pairs)
+    key = f"{folder}#{name}" if name and folder.name != name else str(folder)
     report_digest = gs.canonical_digest((manifest.get("identity") or {}).get("tracked_files_sha256"))
     plan_current = gs.canonical_digest(live.get("tracked_files_sha256")) == current
     report_current = report_digest == current if manifest else True
@@ -729,31 +760,64 @@ def _spectrum_state(args: list[str], verb: str = "spectrum") -> tuple[str, str]:
         elif live_jobs and live_jobs < set(planned):  # a step of a pair-by-pair queue: the study has the first pairs only
             done_jobs = set(listed) if report_current and report.get("complete") is True else set()
             rows = _stepped_plan(verb, args, live["plan"], planned, done_jobs)
+    if rows and planned is not None:  # the study may list more pairs than this item (a later phase, in the same folder)
+        rows = [row for row in rows if str(row.get("job")) in planned]
+    if rows and retuned:
+        rows = _retuned_rows(_spectrum_options(verb, args), rows, retuned)
     if rows:
         _note_spectrum_parts(parts, rows)
         _note_spectrum_audit(parts, rows, folder, live, current)
-        _note(folder, sum(rm.unit_finished(row) for row in rows), len(rows), "conditions", parts)
+        _note(key, sum(rm.unit_finished(row) for row in rows), len(rows), "conditions", parts)
         total, done, seconds = _spectrum_audit_progress(folder, rows, live, current)
-        _set_model(folder, qb.spectrum, rows, folder=folder, live=live, options=_spectrum_options(verb, args),
+        _set_model(key, qb.spectrum, rows, folder=folder, live=live, options=_spectrum_options(verb, args),
                    audit_done=done, audit_seconds=seconds, unit_finished=rm.unit_finished)
-    elif planned and expected and listed:  # the report lags a widened study: scale it to the planned pairs
-        per_pair = expected / len(listed)
+    elif planned and expected and per_pair:  # the report lags a widened study: scale it to the planned pairs
         valid = report_current
+        options = _spectrum_options(verb, args) if retuned else {}
+        done = 0
         for pair in planned:
-            parts.append((_spectrum_label(pair), "conditions", [bool(valid and pair in listed)] * int(per_pair)))
-        done = min(recorded, per_pair * len(planned)) if valid else 0
-        _note(folder, done, per_pair * len(planned), "conditions", parts, stale)
+            n = int(per_pair)
+            if valid and pair in retuned:  # its other resolutions are recorded; the new one's conditions run
+                dataset, cover = pair.split("-", 1)
+                left = max(1, round(n / max(1, len(gs.detector_resolutions(options, dataset, cover)))))
+                marks = [True] * (n - left) + [False] * left
+            else:
+                marks = [bool(valid and pair in listed)] * n
+            parts.append((_spectrum_label(pair), "conditions", marks))
+            done += sum(marks)
+        _note(key, done, per_pair * len(planned), "conditions", parts, stale)
     elif expected:
-        _note(folder, recorded if report_current else 0, expected, "conditions", [], stale)
+        _note(key, recorded if report_current else 0, expected, "conditions", [], stale)
     if not _is_quiet():
-        _EARLIER[str(folder)] = _spectrum_earlier(folder, current)
+        _EARLIER[key] = _spectrum_earlier(folder, current)
     if stale and not (live.get("plan") and plan_current):
-        return "missing", str(folder)
+        return "missing", key
     if planned is not None and not set(planned) <= listed:
-        return ("partial" if recorded else "missing"), str(folder)
+        return ("partial" if recorded or retuned else "missing"), key
     if report.get("complete") is True and expected and recorded >= expected:
-        return "complete", str(folder)
-    return ("partial" if recorded else "missing"), str(folder)
+        return "complete", key
+    return ("partial" if recorded else "missing"), key
+
+
+def _retuned_rows(options: dict, rows: list[dict], retuned: set[str]) -> list[dict]:
+    """The plan with each retuned pair's rows rebuilt on its current grid: a condition already recorded (the same policy,
+    resolution and seed among the finished rows) stays finished, the new resolution's conditions are pending."""
+    from hedonic.experiments.overlapping import gt_spectrum as gs
+
+    finished = {(str(r.get("job")), r.get("policy"), r.get("gamma"), r.get("seed")): r for r in rows if rm.unit_finished(r)}
+    out = [row for row in rows if str(row.get("job")) not in retuned]
+    for dataset, cover in options.get("pairs") or []:
+        job = f"{dataset}-{cover}"
+        if job not in retuned:
+            continue
+        for policy in options["isolation_policies"]:
+            for setting in gs.job_settings(options, dataset, cover):
+                for seed in options["detector_seeds"]:
+                    old = finished.get((job, policy, setting["gamma"], seed))
+                    out.append(old or {"job": job, "dataset": dataset, "cover": cover, "policy": policy,
+                                       "gamma": setting["gamma"], "seed": seed, "status": "pending",
+                                       **({"setting": setting["label"]} if setting["label"] is not None else {})})
+    return out
 
 
 def _stepped_plan(verb: str, args: list[str], plan: list[dict], planned: list[str], done_jobs: set[str]) -> list[dict]:
