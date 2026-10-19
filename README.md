@@ -363,6 +363,12 @@ A queue item can itself be a queue (`run = ["queue", "overlap"]`, optionally
 with `"--root", DIR`): it is started, waited for and judged from its files, so
 a queue file of your own can chain both papers, or anything else, in the
 order you want (`queue-all.toml` is the shipped example).
+A `[limits]` table in a queue file (or `limits = { ... }` on one item, or
+`--timeout`/`--max-eta`) sets `timeout = "2h"`, which stops a single run still
+going after two hours, and `max_eta = "6h"`, which skips a pair whose single run
+is estimated longer. Both apply to one detector run, calibration probe or
+condition, never to a total, and a run stopped by a limit runs again under a
+larger one.
 
 The benchmark runs a deterministic method (CoDeSEG at one thread, CliquePerc,
 FOX, BigCLAM, NcGame, NEO-K-Means) once per pair, at the lowest seed of the
