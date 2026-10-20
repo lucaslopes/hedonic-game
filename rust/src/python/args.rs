@@ -9,7 +9,9 @@ use std::ffi::CStr;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::intern;
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
 use crate::error::{Error, Kind};
 use crate::graph::Edges;
@@ -214,7 +216,9 @@ const MT_N: usize = 624;
 /// The caller's generator. An exact random.Random runs here on a copy of its
 /// state (written back by `release`); any other is called as getrandbits(32).
 pub enum PyRng<'py> {
-    Native { mt: Mt19937, rng: Bound<'py, PyAny>, gauss_next: Bound<'py, PyAny> },
+    /// An exact random.Random run natively; `gauss_next` is None when its
+    /// state is read and written in place (`direct_layout`).
+    Native { mt: Mt19937, rng: Bound<'py, PyAny>, gauss_next: Option<Bound<'py, PyAny>> },
     Calls { getrandbits: Bound<'py, PyAny>, error: Option<PyErr> },
 }
 
@@ -236,12 +240,99 @@ impl Rng for PyRng<'_> {
     }
 }
 
+// The generator of CPython's _random.Random is `{PyObject_HEAD; int index;
+// uint32_t state[624];}` (Modules/_randommodule.c). Reading and writing it in
+// place gives the same state as getstate/setstate (gauss_next, a Python
+// attribute, is untouched either way) without two tuples of 625 ints per
+// call. The layout is relied on only after a probe at first use agrees with
+// getstate and setstate; otherwise the tuples are used, as in the C binding.
+const MT_INDEX_AT: usize = std::mem::size_of::<ffi::PyObject>();
+const MT_STATE_AT: usize = MT_INDEX_AT + 4;
+
+/// The state of an exact random.Random read in place; None for an index
+/// outside 0..=624. Safety: the layout passed `direct_layout`.
+unsafe fn read_direct(rng: &Bound<'_, PyAny>) -> Option<Mt19937> {
+    let base = rng.as_ptr() as *const u8;
+    let index = std::ptr::read_unaligned(base.add(MT_INDEX_AT) as *const i32);
+    if !(0..=MT_N as i32).contains(&index) {
+        return None;
+    }
+    let mut mt = Mt19937 { state: [0; MT_N], index: index as usize };
+    std::ptr::copy_nonoverlapping(base.add(MT_STATE_AT), mt.state.as_mut_ptr() as *mut u8, 4 * MT_N);
+    Some(mt)
+}
+
+/// Writes a state in place. Safety: as `read_direct`.
+unsafe fn write_direct(rng: &Bound<'_, PyAny>, mt: &Mt19937) {
+    let base = rng.as_ptr() as *mut u8;
+    std::ptr::write_unaligned(base.add(MT_INDEX_AT) as *mut i32, mt.index as i32);
+    std::ptr::copy_nonoverlapping(mt.state.as_ptr() as *const u8, base.add(MT_STATE_AT), 4 * MT_N);
+}
+
+/// Whether random.Random has the layout above: its size fits it, and on a
+/// probe generator the words read in place are getstate's, words written in
+/// place are what getstate then returns, and the next draws follow from them.
+fn direct_layout(py: Python<'_>) -> bool {
+    static DIRECT: PyOnceLock<bool> = PyOnceLock::new();
+    *DIRECT.get_or_init(py, || {
+        let probe = || -> PyResult<bool> {
+            // A free-threaded build guards the generator with its own lock.
+            let sysconfig = py.import("sysconfig")?;
+            if sysconfig.call_method1("get_config_var", ("Py_GIL_DISABLED",))?.is_truthy()? {
+                return Ok(false);
+            }
+            let random = py.import("random")?.getattr("Random")?;
+            let size: usize = random.getattr("__basicsize__")?.extract()?;
+            if size < MT_STATE_AT + 4 * MT_N {
+                return Ok(false);
+            }
+            let a = random.call1((20261020,))?;
+            a.call_method1("getrandbits", (32 * 700,))?; // past a refill, index inside
+            let state = a.call_method0("getstate")?;
+            let words: Vec<u64> = state.get_item(1)?.extract()?;
+            // SAFETY: the size covers the layout; a is an exact random.Random.
+            let Some(mt) = (unsafe { read_direct(&a) }) else { return Ok(false) };
+            if mt.state.iter().map(|&w| w as u64).chain([mt.index as u64]).ne(words.iter().copied()) {
+                return Ok(false);
+            }
+            let b = random.call1((7,))?;
+            // SAFETY: as above.
+            unsafe { write_direct(&b, &mt) };
+            if !b.call_method0("getstate")?.get_item(1)?.eq(state.get_item(1)?)? {
+                return Ok(false);
+            }
+            let (x, y): (u64, u64) = (a.call_method1("getrandbits", (64,))?.extract()?, b.call_method1("getrandbits", (64,))?.extract()?);
+            Ok(x == y)
+        };
+        probe().unwrap_or(false)
+    })
+}
+
+/// The generator's words and index as the tuple setstate takes.
+fn state_words<'py>(py: Python<'py>, mt: &Mt19937) -> PyResult<Bound<'py, PyTuple>> {
+    // SAFETY: a new tuple of MT_N + 1 slots, each set once to a new reference
+    // (PyTuple_SET_ITEM steals it) before the tuple is used.
+    unsafe {
+        let words = Bound::from_owned_ptr_or_err(py, ffi::PyTuple_New(MT_N as ffi::Py_ssize_t + 1))?;
+        for i in 0..=MT_N {
+            let value = if i < MT_N { mt.state[i] as u64 } else { mt.index as u64 };
+            let item = ffi::PyLong_FromUnsignedLongLong(value);
+            if item.is_null() {
+                return Err(PyErr::fetch(py));
+            }
+            ffi::PyTuple_SET_ITEM(words.as_ptr(), i as ffi::Py_ssize_t, item);
+        }
+        Ok(words.cast_into_unchecked())
+    }
+}
+
 /// `mt_take`: the state of an exact random.Random whose methods are the
 /// class's, or None when the generator is to be called instead.
 fn take_state<'py>(rng: &Bound<'py, PyAny>) -> PyResult<Option<PyRng<'py>>> {
     let py = rng.py();
-    let random_type = py.import("random")?.getattr("Random")?;
-    if !rng.get_type().is(&random_type) {
+    static RANDOM: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    let random_type = RANDOM.import(py, "random", "Random")?;
+    if !rng.get_type().is(random_type) {
         return Ok(None);
     }
     // SAFETY: rng is a live object; a NULL context is the documented use.
@@ -257,7 +348,14 @@ fn take_state<'py>(rng: &Bound<'py, PyAny>) -> PyResult<Option<PyRng<'py>>> {
             }
         }
     }
-    let got = rng.call_method0("getstate")?;
+    if direct_layout(py) {
+        // SAFETY: the layout was checked against getstate/setstate; rng is an
+        // exact random.Random.
+        if let Some(mt) = unsafe { read_direct(rng) } {
+            return Ok(Some(PyRng::Native { mt, rng: rng.clone(), gauss_next: None }));
+        }
+    }
+    let got = rng.call_method0(intern!(py, "getstate"))?;
     let Ok(got) = got.cast::<PyTuple>() else { return Ok(None) };
     if got.len() != 3 {
         return Ok(None);
@@ -269,8 +367,13 @@ fn take_state<'py>(rng: &Bound<'py, PyAny>) -> PyResult<Option<PyRng<'py>>> {
         return Ok(None);
     }
     let mut mt = Mt19937 { state: [0; MT_N], index: 0 };
-    for (i, word) in words.iter().enumerate() {
-        let Ok(value) = word.extract::<u64>() else { return Ok(None) };
+    for i in 0..=MT_N {
+        // SAFETY: words is a tuple of MT_N + 1 items (checked above); the
+        // item is borrowed while the tuple lives.
+        let value = unsafe { ffi::PyLong_AsUnsignedLongLong(ffi::PyTuple_GET_ITEM(words.as_ptr(), i as ffi::Py_ssize_t)) };
+        if value == u64::MAX && PyErr::take(py).is_some() {
+            return Ok(None);
+        }
         if i < MT_N {
             if value > 0xffff_ffff {
                 return Ok(None);
@@ -283,7 +386,7 @@ fn take_state<'py>(rng: &Bound<'py, PyAny>) -> PyResult<Option<PyRng<'py>>> {
             mt.index = value as usize;
         }
     }
-    Ok(Some(PyRng::Native { mt, rng: rng.clone(), gauss_next: got.get_item(2)? }))
+    Ok(Some(PyRng::Native { mt, rng: rng.clone(), gauss_next: Some(got.get_item(2)?) }))
 }
 
 impl<'py> PyRng<'py> {
@@ -313,9 +416,17 @@ impl<'py> PyRng<'py> {
     pub fn release<T>(self, result: PyResult<T>) -> PyResult<T> {
         if let PyRng::Native { mt, rng, gauss_next } = self {
             let py = rng.py();
-            let words: Vec<u64> = mt.state.iter().map(|&w| w as u64).chain([mt.index as u64]).collect();
-            let written = PyTuple::new(py, words)
-                .and_then(|words| rng.call_method1("setstate", ((3, words, gauss_next),)));
+            let written = match gauss_next {
+                // SAFETY: direct_layout checked this layout; rng is an exact
+                // random.Random, alive while bound.
+                None => {
+                    unsafe { write_direct(&rng, &mt) };
+                    Ok(())
+                }
+                Some(gauss_next) => state_words(py, &mt)
+                    .and_then(|words| rng.call_method1(intern!(py, "setstate"), ((3, words, gauss_next),)))
+                    .map(drop),
+            };
             if let Err(e) = written {
                 return Err(match result {
                     Err(first) => first,
@@ -521,7 +632,8 @@ pub fn read_start_rows(obj: &Bound<'_, PyAny>, n: i64, max_memberships: i64) -> 
     if seq.is_empty() {
         return Ok(None);
     }
-    let integral = py.import("numbers")?.getattr("Integral")?;
+    static INTEGRAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+    let integral = INTEGRAL.import(py, "numbers", "Integral")?;
     let is_row = |o: &Bound<'_, PyAny>| o.is_instance_of::<PyList>() || o.is_instance_of::<PyTuple>();
     let nested = is_row(&seq[0]);
     let mut labels: Vec<i64> = Vec::with_capacity(seq.len());

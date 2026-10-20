@@ -18,6 +18,7 @@ use crate::error::{filled, Error, Result};
 use crate::fma::fma;
 use crate::graph::{check_input, compact_labels, limit_set, Adjacency, Graph, Id, Options};
 use crate::heap::{Group, Heap, Tail};
+use crate::prefetch::{prefetch, wanted};
 use crate::queue::{Callbacks, Queue};
 use crate::trace::Trace;
 
@@ -56,7 +57,13 @@ struct State<'t> {
     queue: Queue,
     slack: f64,
     trace: Option<&'t mut Trace>,
+    prefetch: bool,
 }
+
+const PREFETCH_FAR: usize = 8;
+const PREFETCH_MID: usize = 4;
+const PREFETCH_NEAR: usize = 2;
+const PREFETCH_DEGREE: usize = 16;
 
 /// What a visit found, for the rare paths that bound its payoffs.
 struct Recall {
@@ -438,31 +445,42 @@ impl<'t> State<'t> {
         {
             let adj = &self.graph.adj[begin..end];
             let weights: &[f64] = if W { &self.graph.weight[begin..end] } else { &[] };
-            let membership = &self.membership;
-            let group = &mut self.group;
-            let candidate = &mut self.candidate;
-            let candidate_weight = &mut self.candidate_weight;
+            let membership = &self.membership[..];
+            let group = &mut self.group[..];
+            let candidate = &mut self.candidate[..];
+            let candidate_weight = &mut self.candidate_weight[..];
+            debug_assert!(adj.len() < candidate.len());
             for (i, &u) in adj.iter().enumerate() {
-                let c = membership[u as usize];
+                debug_assert!((u as usize) < membership.len());
+                // SAFETY: a neighbour is a vertex id below n = membership.len().
+                let c = unsafe { *membership.get_unchecked(u as usize) };
                 // Own support needs no sparse lookup: the same unit additions
                 // in CSR order (0 + 1 is exactly the first assignment of 1).
                 if !W && c == c0 {
                     own_weight += 1.0;
                     continue;
                 }
-                let w = if W { weights[i] } else { 1.0 };
-                let g = &mut group[c as usize];
-                let slot = g.slot;
+                debug_assert!(!W || weights.len() == adj.len());
+                // SAFETY: a weighted adjacency has one weight per neighbour.
+                let w = if W { unsafe { *weights.get_unchecked(i) } } else { 1.0 };
                 if W {
                     abs_weight += w.abs();
                 }
-                if slot < 0 {
-                    g.slot = count as Id;
-                    candidate[count] = c;
-                    candidate_weight[count] = w;
-                    count += 1;
-                } else {
-                    candidate_weight[slot as usize] += w;
+                debug_assert!((c as usize) < group.len() && count < candidate.len());
+                // SAFETY: a community id is below n = group.len(); count is at
+                // most the degree, below candidate.len() = max degree + 1; a
+                // slot is a position already written, below count.
+                unsafe {
+                    let g = group.get_unchecked_mut(c as usize);
+                    let slot = g.slot;
+                    if slot < 0 {
+                        g.slot = count as Id;
+                        *candidate.get_unchecked_mut(count) = c;
+                        *candidate_weight.get_unchecked_mut(count) = w;
+                        count += 1;
+                    } else {
+                        *candidate_weight.get_unchecked_mut(slot as usize) += w;
+                    }
                 }
             }
         }
@@ -490,10 +508,13 @@ impl<'t> State<'t> {
             own_weight,
         );
         let mut best_gain = stay;
-        for k in 0..count {
-            let c = self.candidate[k];
+        let group = &self.group[..];
+        for (k, (&c, &weight)) in self.candidate[..count].iter().zip(&self.candidate_weight[..count]).enumerate() {
             if c != c0 {
-                let gain = fma(-gn, self.group[c as usize].mass, self.candidate_weight[k]);
+                debug_assert!((c as usize) < group.len());
+                // SAFETY: a candidate is a community id, below n = group.len().
+                let mass = unsafe { group.get_unchecked(c as usize).mass };
+                let gain = fma(-gn, mass, weight);
                 other_gain = if gain > other_gain { gain } else { other_gain };
                 if gain > best_gain {
                     best = c;
@@ -540,8 +561,11 @@ impl<'t> State<'t> {
                 }
             }
         }
-        for k in 0..count {
-            self.group[self.candidate[k] as usize].slot = -1;
+        let group = &mut self.group[..];
+        for &c in &self.candidate[..count] {
+            debug_assert!((c as usize) < group.len());
+            // SAFETY: a candidate is a community id, below n = group.len().
+            unsafe { group.get_unchecked_mut(c as usize).slot = -1 };
         }
         status?;
 
@@ -576,9 +600,43 @@ impl<'t> State<'t> {
         Ok(())
     }
 
+    /// Prefetches, in stages, what the visits of the next queued vertices
+    /// will read: their adjacency offsets 8 visits ahead, adjacency blocks 4
+    /// ahead, the neighbours' communities 2 ahead and those communities'
+    /// records 1 ahead. Only cache hints: no value depends on them.
+    #[inline(always)]
+    fn prefetch_ahead(&self) {
+        let (g, q) = (&self.graph, &self.queue);
+        if let Some(u) = q.peek(PREFETCH_FAR) {
+            prefetch(&g.start, u as usize);
+            prefetch(&self.membership, u as usize);
+        }
+        if let Some(u) = q.peek(PREFETCH_MID) {
+            let b = g.start[u as usize] as usize;
+            prefetch(&g.adj, b);
+            prefetch(&self.group, self.membership[u as usize] as usize);
+        }
+        if let Some(u) = q.peek(PREFETCH_NEAR) {
+            let (b, e) = (g.start[u as usize] as usize, g.start[u as usize + 1] as usize);
+            for &w in &g.adj[b..e.min(b + PREFETCH_DEGREE)] {
+                prefetch(&self.membership, w as usize);
+            }
+        }
+        if let Some(u) = q.peek(0) {
+            let (b, e) = (g.start[u as usize] as usize, g.start[u as usize + 1] as usize);
+            for &w in &g.adj[b..e.min(b + PREFETCH_DEGREE)] {
+                prefetch(&self.group, self.membership[w as usize] as usize);
+            }
+        }
+    }
+
     fn run(&mut self, cb: &mut Callbacks) -> Result<()> {
         let weighted = self.graph.weighted;
+        let ahead = self.prefetch;
         while let Some(v) = self.queue.next(cb)? {
+            if ahead {
+                self.prefetch_ahead();
+            }
             if weighted {
                 self.visit::<true>(v)?;
             } else {
@@ -686,6 +744,9 @@ pub fn partition(
         c -= 1;
     }
     let max_degree = adjacency.max_degree as usize;
+    // membership, group, tail, start, the queue's ring, flags, order and
+    // record per vertex; the adjacency (and weights) per half-edge.
+    let working_set = n as usize * 69 + adjacency.adj.len() * if adjacency.weighted { 12 } else { 4 };
     let mut s = State {
         gamma,
         isolation,
@@ -709,6 +770,7 @@ pub fn partition(
         queue: Queue::new(0, cb)?, // replaced below, after the masses
         slack: 0.0,
         trace: None,
+        prefetch: wanted(working_set),
     };
     s.rebuild_masses(); // the masses, theta and the heap
     s.queue = Queue::new(n, cb)?;

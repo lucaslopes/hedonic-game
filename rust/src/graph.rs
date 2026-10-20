@@ -283,9 +283,29 @@ impl Adjacency {
         for v in 0..n as usize {
             a.total_node_weight += if node_weighted { a.node_weight[v] } else { 1.0 };
         }
+        match graph.edges {
+            Edges::Flat(flat) => a.fill(n, m, graph.edge_weights, unit, |e| (flat[2 * e], flat[2 * e + 1]))?,
+            Edges::Split(first, second) => a.fill(n, m, graph.edge_weights, unit, |e| (first[e], second[e]))?,
+        }
+        Ok(a)
+    }
+
+    /// The counting sort of `build`, for one layout of the edge list (`ends`
+    /// gives edge e's two vertices, checked to lie in 0..n by check_input).
+    #[inline(always)]
+    fn fill(
+        &mut self,
+        n: Id,
+        m: i64,
+        weights: Option<&[f64]>,
+        unit: bool,
+        ends: impl Fn(usize) -> (i64, i64),
+    ) -> Result<()> {
+        let a = self;
+        let m = m as usize;
         let mut start = filled(n as usize + 1, 0i64)?;
         for e in 0..m {
-            let (x, y) = (graph.end(2 * e), graph.end(2 * e + 1));
+            let (x, y) = ends(e);
             if x != y {
                 start[x as usize + 1] += 1;
                 start[y as usize + 1] += 1;
@@ -304,8 +324,9 @@ impl Adjacency {
         }
         // start[v + 1] is the end of v's block; filling backwards moves it to
         // the block's beginning, so afterwards start[v + 1] = begin(v).
+        let weights = if unit { &[][..] } else { &weights.unwrap()[..m] };
         for e in (0..m).rev() {
-            let (x, y) = (graph.end(2 * e), graph.end(2 * e + 1));
+            let (x, y) = ends(e);
             if x != y {
                 start[x as usize + 1] -= 1;
                 start[y as usize + 1] -= 1;
@@ -314,7 +335,7 @@ impl Adjacency {
                 a.adj[ia] = y as Id;
                 a.adj[ib] = x as Id;
                 if !unit {
-                    let w = graph.edge_weight(e);
+                    let w = weights[e];
                     a.weight[ia] = w;
                     a.weight[ib] = w;
                 }
@@ -323,7 +344,7 @@ impl Adjacency {
         start.copy_within(1..=n as usize, 0);
         start[n as usize] = half_edges;
         a.start = start;
-        Ok(a)
+        Ok(())
     }
 
     #[inline(always)]
