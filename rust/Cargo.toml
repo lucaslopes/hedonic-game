@@ -1,0 +1,30 @@
+[package]
+name = "hedonic-core-rs"
+version = "2.0.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "The hedonic core in Rust: best-response local moving for the CPM hedonic game, bit-identical to native/."
+publish = false
+build = "build.rs"
+
+[lib]
+name = "hedonic_core_rs"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# The CPython module (maturin turns it on, see pyproject.toml).
+python = ["dep:pyo3"]
+# The soft fma everywhere (tests): the counterpart of HIG_FORCE_SOFT_FMA.
+force-soft-fma = []
+
+[dependencies]
+pyo3 = { version = "0.27.2", optional = true, features = ["extension-module"] }
+
+[profile.release]
+# Rounding is fixed by the source (no fast-math exists in Rust, and rustc never
+# contracts a * b + c); these only trade build time for speed.
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"

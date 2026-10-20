@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "hedonic-core-rs"
+version = "2.0.0"
+description = "The hedonic core in Rust (experimental): hedonic._core's functions, bit for bit."
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+
+[tool.maturin]
+features = ["python"]
+module-name = "hedonic_core_rs"
