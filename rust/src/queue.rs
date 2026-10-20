@@ -97,9 +97,41 @@ impl Queue {
         }
     }
 
+    /// push(u) without bounds checks.
+    ///
+    /// # Safety
+    /// u is a vertex id, below n.
+    #[inline(always)]
+    pub unsafe fn push_unchecked(&mut self, u: Id) {
+        debug_assert!((u as usize) < self.queued.len());
+        // SAFETY: u < n = queued.len(); u is not queued, so fewer than n are
+        // and the tail position is below n = ring.len().
+        let queued = unsafe { self.queued.get_unchecked_mut(u as usize) };
+        if *queued == 0 {
+            *queued = 1;
+            let mut tail = self.head + self.count;
+            if tail >= self.n {
+                tail -= self.n;
+            }
+            debug_assert!(tail < self.ring.len());
+            unsafe { *self.ring.get_unchecked_mut(tail) = u };
+            self.count += 1;
+        }
+    }
+
     #[inline(always)]
     pub fn settle(&mut self, v: Id) {
         self.settled[v as usize].at = self.moves;
+    }
+
+    /// settle(v) without a bounds check.
+    ///
+    /// # Safety
+    /// v is a vertex id, below n.
+    #[inline(always)]
+    pub unsafe fn settle_unchecked(&mut self, v: Id) {
+        debug_assert!((v as usize) < self.settled.len());
+        unsafe { self.settled.get_unchecked_mut(v as usize).at = self.moves };
     }
 
     #[inline(always)]
@@ -129,35 +161,57 @@ impl Queue {
     }
 
     /// The next vertex to visit; None when every vertex is settled.
+    #[inline(always)]
     pub fn next(&mut self, cb: &mut Callbacks) -> Result<Option<Id>> {
-        if self.count == 0 {
-            // The unsettled vertices, in a fresh random order (Fisher-Yates
-            // over them only).
-            self.head = 0;
-            for i in 0..self.n {
-                let u = self.order[i];
-                if self.settled[u as usize].at != self.moves {
-                    self.push(u);
-                }
-            }
-            if self.count == 0 {
-                return Ok(None);
-            }
-            let mut i = self.count - 1;
-            while i > 0 {
-                let j = random_below(cb.rng, i as u32 + 1)? as usize;
-                self.ring.swap(i, j);
-                i -= 1;
-            }
+        if self.count == 0 && !self.refill(cb)? {
+            return Ok(None);
         }
-        let v = self.ring[self.head];
+        debug_assert!(self.head < self.ring.len());
+        // SAFETY: head < n = ring.len() (it starts at 0 and wraps at n), and
+        // the ring holds vertex ids, below n = queued.len() (push indexes
+        // queued, checked, before it writes one).
+        let v = unsafe { *self.ring.get_unchecked(self.head) };
         self.head = if self.head + 1 == self.n { 0 } else { self.head + 1 };
         self.count -= 1;
-        self.queued[v as usize] = 0;
+        debug_assert!((v as usize) < self.queued.len());
+        unsafe { *self.queued.get_unchecked_mut(v as usize) = 0 };
         self.visits += 1;
-        if self.visits % VISITS_PER_INTERRUPTION_CHECK == 0 && cb.interrupted() {
-            return Err(Error::interrupted("Interrupted."));
+        if self.visits % VISITS_PER_INTERRUPTION_CHECK == 0 {
+            Self::check_interrupt(cb)?;
         }
         Ok(Some(v))
+    }
+
+    /// A new round: the unsettled vertices, in a fresh random order
+    /// (Fisher-Yates over them only); false when every vertex is settled.
+    #[cold]
+    #[inline(never)]
+    fn refill(&mut self, cb: &mut Callbacks) -> Result<bool> {
+        self.head = 0;
+        for i in 0..self.n {
+            let u = self.order[i];
+            if self.settled[u as usize].at != self.moves {
+                self.push(u);
+            }
+        }
+        if self.count == 0 {
+            return Ok(false);
+        }
+        let mut i = self.count - 1;
+        while i > 0 {
+            let j = random_below(cb.rng, i as u32 + 1)? as usize;
+            self.ring.swap(i, j);
+            i -= 1;
+        }
+        Ok(true)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn check_interrupt(cb: &mut Callbacks) -> Result<()> {
+        if cb.interrupted() {
+            return Err(Error::interrupted("Interrupted."));
+        }
+        Ok(())
     }
 }

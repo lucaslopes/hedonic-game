@@ -20,12 +20,16 @@ results, exceptions and messages. `HEDONIC_CORE=rust` makes the package load
 it in place of the C extension; `source_sha256` is the digest of this crate's
 sources (setup.py's format), so records name the Rust core apart.
 
-What is safer: the engines are safe Rust except the hot scans (the
-neighbour scans of both engines, the partition's scoring and slot reset),
-whose indexing invariants are stated and debug-asserted, and the prefetch
-hints (`prefetch.rs`), which read nothing; allocation failures are errors,
-not aborts; Python buffers are borrowed only while no Python code can run,
-and copied for a generator that calls Python on each draw.
+What is safer: the engines are safe Rust except the hot paths (the
+neighbour scans of both engines; the partition's visit, scoring, slot reset
+and requeueing; the queue's next vertex; the adjacency's fill), whose
+indexing invariants are stated and debug-asserted, and the prefetch hints
+(`prefetch.rs`), which read nothing. `Adjacency::build` checks every edge
+end against the vertex range itself before its unchecked fill, so no
+caller's check is relied upon; the visits rely on the shape it builds
+(`Adjacency::well_formed`, asserted in debug builds). Allocation failures
+are errors, not aborts; Python buffers are borrowed only while no Python
+code can run, and copied for a generator that calls Python on each draw.
 
 What is faster (the same visits, moves and bits as C, in less time):
 
@@ -42,16 +46,23 @@ What is faster (the same visits, moves and bits as C, in less time):
   It pays only past the caches, so it runs when a game's working set
   exceeds 12 MB (the L2 of an M1 cluster): BA 300k runs 1.3 (partition) to
   1.6 (cover) times faster; below that it is off.
-- **Less per visit.** The cover's best-prefix selection sorts in a
-  persistent buffer (C's is the same; the first port copied a 512-byte
-  array per visit); rows are packed in one buffer at the start; short rows
-  are insertion-sorted; the slack's sort is unstable over a total order.
+- **Less per visit.** The queue's next vertex is inlined, its refill and
+  interruption check are out of line (it was a call returning through
+  memory on every visit); the partition scores candidates with selects, not
+  branches (as C does), and its visit header and requeueing are unchecked.
+  The cover's best-prefix selection sorts in a persistent buffer (C's is
+  the same; the first port copied a 512-byte array per visit); rows are
+  packed in one buffer at the start; short rows are insertion-sorted; the
+  slack's sort is unstable over a total order. Per call, the partition now
+  retires fewer instructions than C: 59.6M against 60.4M (weighted SBM
+  20k), 65.8M against 67.4M (SBM 20k), 127M against 129M (BA 50k).
 
 `python rust/bench/bench.py [--quick] [--reps N]` times `detect` of both
 cores, interleaved, on the same calls (and checks the results are equal);
-on an M1 Max under load, the geometric mean of C time / Rust time is 1.18,
-with the in-cache mid-size games (BA 50k, SBM 20k, ER 100k) at parity
-(0.90 to 1.03).
+on an M1 Max under load, the geometric mean of C time / Rust time is 1.35;
+every partition case is faster (1.15 to 2.0, the weighted SBM 20k 1.20),
+and the in-cache mid-size covers (BA 50k, SBM 20k weighted) are at parity
+(0.97 to 1.04).
 
 ## Build and test
 
@@ -68,4 +79,5 @@ python -m pytest -x -q rust/tests/test_differential.py   # C against Rust, bit f
 `cargo run --release --example profile_cover -- EDGES GAMMA CAP REPS [w]` is a
 profiling loop over an edge-list file (`a b` lines, or `a b w` with `w`);
 `ab_prefetch` times prefetching off and on in one process and checks the
-results agree.
+results agree; `phases` times the input check, the adjacency build and the
+partition apart.
