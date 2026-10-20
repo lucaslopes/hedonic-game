@@ -1,0 +1,1265 @@
+//! The overlapping game (native/core/cover/): best-response local moving of
+//! a cover, the unit-l2 game.
+//!
+//! Vertex v holds a sorted row of k_v labels and puts intensity
+//! f_v = 1 / sqrt(k_v) on each; label c has mass S_c = sum of n_u f_u over its
+//! holders. With v's own contribution taken out, label c is worth
+//!
+//! ```text
+//! g_c(v) = sum_{u ~ v holding c} w_uv f_u - gamma n_v (S_c - n_v f_v [c in sigma_v])
+//! ```
+//!
+//! to v, and a set sigma is worth sum_{c in sigma} g_c / sqrt(|sigma|). The best
+//! set of at most M labels is a prefix of the labels sorted by g_c
+//! (native/README.md, "The best set is a prefix"). v adopts it when that
+//! certainly raises its exact payoff. A visit that does not move v bounds,
+//! from above, the exact gain of every set v could hold instead: the largest
+//! such bound after the last move is the equilibrium slack. Every expression
+//! is the C core's, in the same order, so the results are the same bits.
+
+use crate::arith::*;
+use crate::error::{filled, push, Error, Result};
+use crate::fma::fma;
+use crate::graph::{check_input, compact_labels, limit_set, Adjacency, Graph, Id, Options, ID_MAX};
+use crate::heap::{Group, Heap, Tail};
+use crate::queue::{Callbacks, Queue};
+use crate::trace::Trace;
+
+/// KAPPA bounds the relative error of a mass term n_u f_u as stored.
+const KAPPA: f64 = 5.0 * U;
+const SHORT_SELECTION: Id = 32;
+
+/// A cover as CSR: row v is `labels[offset[v]..offset[v + 1]]`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Cover {
+    pub offset: Vec<i64>,
+    pub labels: Vec<i64>,
+}
+
+impl Cover {
+    pub fn vertex_count(&self) -> i64 {
+        self.offset.len().saturating_sub(1) as i64
+    }
+
+    pub fn row(&self, v: usize) -> &[i64] {
+        &self.labels[self.offset[v] as usize..self.offset[v + 1] as usize]
+    }
+
+    /// From one row per vertex.
+    pub fn from_rows<R: AsRef<[i64]>>(rows: &[R]) -> Cover {
+        let mut offset = vec![0i64];
+        let mut labels = Vec::new();
+        for row in rows {
+            labels.extend_from_slice(row.as_ref());
+            offset.push(labels.len() as i64);
+        }
+        Cover { offset, labels }
+    }
+
+    /// Offsets start at 0, never decrease and end at the number of labels.
+    pub fn validate(&self) -> Result<()> {
+        let ok = !self.offset.is_empty()
+            && self.offset[0] == 0
+            && self.offset.windows(2).all(|w| w[0] <= w[1])
+            && *self.offset.last().unwrap() == self.labels.len() as i64;
+        if ok {
+            Ok(())
+        } else {
+            Err(Error::inval("The cover's offsets do not describe its labels."))
+        }
+    }
+}
+
+/// A cover's result: sorted rows with labels 0 .. count - 1 in order of
+/// first appearance, the quality and the slack.
+#[derive(Clone, Debug)]
+pub struct CoverResult {
+    pub cover: Cover,
+    pub count: i64,
+    pub quality: f64,
+    pub raw_slack: f64,
+    pub slack: f64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct RowRef {
+    start: usize,
+    size: Id,
+    capacity: Id,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Scored {
+    gain: f64,
+    label: Id,
+    index: Id,
+}
+
+#[inline(always)]
+fn scored_before(gain_a: f64, label_a: Id, gain_b: f64, label_b: Id) -> bool {
+    gain_a > gain_b || (gain_a == gain_b && label_a < label_b)
+}
+
+/// A bound of |exact gain - r|, r = fl(s - gn m): s the computed support
+/// (error <= es), m the mass without v (error <= em), gn = fl(gamma n_v)
+/// (error <= eg).
+#[inline]
+fn gain_bound(r: f64, es: f64, gn: f64, m: f64, em: f64, eg: f64) -> f64 {
+    add_up(
+        add_up(add_up(mul_up(U, r.abs()), ETA), es),
+        add_up(mul_up(gn.abs(), em), mul_up(eg, add_up(m, em))),
+    )
+}
+
+/// >= 1 / sqrt(k) given f = fl(1 / fl(sqrt(k))).
+#[inline(always)]
+fn inv_sqrt_up(f: f64) -> f64 {
+    fma(f, 8.0 * U, f)
+}
+
+/// What a visit computed, for its decision and for the bounds.
+struct VisitRecord {
+    k: Id,
+    mandatory: Id,
+    single: i64,
+    j_best: Id,
+    count: usize,
+    uses_fresh: bool,
+    gn: f64,
+    old_term: f64,
+    eg: f64,
+    es_coef: f64,
+    es_floor: f64,
+    current: f64,
+    abs_current: f64,
+    e_pre: f64,
+    max_support: f64,
+    max_mass: f64,
+    min_other: f64,
+    max_other: f64,
+}
+
+struct State<'t> {
+    graph: Adjacency,
+    gamma: f64,
+    cap: Id,
+    isolation: bool,
+    exact: bool,
+    max_total: i64,
+    sqrt_cap_up: f64,
+
+    row: Vec<RowRef>,
+    pool: Vec<Id>,
+    pool_live: usize,
+
+    group: Vec<Group>,
+    tail: Vec<Tail>,
+    theta: f64,
+    theta_below: f64,
+    rebuild: bool,
+    tiny_mass: f64,
+    tiny_support: bool,
+    label_count: Id,
+    free_ids: Vec<Id>,
+    occupied: Id,
+
+    inv_sqrt: Vec<f64>,
+    use_heap: bool,
+    heap_ready: bool,
+    heap: Heap,
+
+    candidate: Vec<Id>,
+    value: Vec<f64>,
+    top: Vec<Scored>,
+    chosen: Vec<Id>,
+    queue: Queue,
+    own_support: Vec<f64>,
+    slack: f64,
+    trace: Option<&'t mut Trace>,
+}
+
+fn row_capacity(cap: Id, size: Id) -> Id {
+    let mut capacity: Id = 2;
+    while capacity < size {
+        capacity *= 2;
+    }
+    capacity.min(cap)
+}
+
+impl<'t> State<'t> {
+    // ---- Labels ------------------------------------------------------------
+
+    fn reserve_labels(&mut self, ids: usize) -> Result<()> {
+        let capacity = self.group.len();
+        if ids <= capacity {
+            return Ok(());
+        }
+        let grown = if capacity < 8 { 16 } else { 2 * capacity }.max(ids);
+        self.group.try_reserve_exact(grown - capacity).map_err(|_| Error::nomem())?;
+        self.tail.try_reserve_exact(grown - capacity).map_err(|_| Error::nomem())?;
+        self.group.resize(grown, Group::EMPTY);
+        self.tail.resize(grown, Tail::default());
+        if self.heap_ready {
+            self.heap.reserve(grown)?;
+        }
+        Ok(())
+    }
+
+    fn fresh_label(&mut self) -> Result<Id> {
+        if let Some(label) = self.free_ids.pop() {
+            return Ok(label);
+        }
+        if self.label_count >= ID_MAX - 1 {
+            return Err(Error::overflow("The overlapping game ran out of label ids."));
+        }
+        self.reserve_labels(self.label_count as usize + 1)?;
+        let label = self.label_count;
+        self.label_count += 1;
+        Ok(label)
+    }
+
+    /// Keeps theta above c's error ratio, or asks for a rebuild. The division
+    /// is skipped when error <= fl(theta_below hi), a normal double: then
+    /// neither theta nor the rebuild flag would change.
+    #[inline(always)]
+    fn track(&mut self, c: Id) {
+        let t = self.tail[c as usize];
+        let error = add_up(t.err, t.lo.abs());
+        if error != 0.0 {
+            let hi = self.group[c as usize].mass;
+            let below = self.theta_below * hi;
+            if below >= DBL_MIN && error <= below {
+                return;
+            }
+            if !(error <= REBUILD_RATIO * hi) {
+                self.rebuild = true;
+            } else {
+                let ratio = ratio_up(error, hi);
+                if ratio > self.theta {
+                    self.theta = ratio;
+                    self.theta_below = if ratio >= DBL_MIN { ratio * (1.0 - 16.0 * U) } else { 0.0 };
+                }
+            }
+        }
+    }
+
+    /// Every mass summed afresh from the rows (and the heap reordered).
+    fn rebuild_masses(&mut self) {
+        let labels = self.label_count as usize;
+        for c in 0..labels {
+            self.group[c].mass = 0.0;
+            self.tail[c] = Tail::default();
+        }
+        for v in 0..self.graph.n as usize {
+            let r = self.row[v];
+            let term = self.graph.node_weight(v as Id) * self.inv_sqrt[r.size as usize];
+            for i in 0..r.size as usize {
+                let c = self.pool[r.start + i] as usize;
+                let (g, t) = (&mut self.group[c], &mut self.tail[c]);
+                mass_add(&mut g.mass, &mut t.lo, &mut t.err, term);
+            }
+        }
+        self.theta = 0.0;
+        self.theta_below = 0.0;
+        for c in 0..labels {
+            if self.group[c].members > 0 {
+                self.track(c as Id);
+            }
+        }
+        self.rebuild = false; // a fresh sum is as good as it gets
+        if self.heap_ready {
+            self.heap.clear();
+            for c in 0..labels {
+                if self.group[c].members > 0 {
+                    self.heap.insert(&self.group, c as Id);
+                }
+            }
+        }
+    }
+
+    fn leave(&mut self, c: Id, term: f64) -> Result<()> {
+        let cu = c as usize;
+        self.group[cu].members -= 1;
+        if self.group[cu].members == 0 {
+            self.group[cu].mass = 0.0;
+            self.tail[cu] = Tail::default();
+            push(&mut self.free_ids, c)?;
+            self.occupied -= 1;
+            if self.heap_ready {
+                self.heap.remove(&self.group, c);
+            }
+        } else {
+            let (g, t) = (&mut self.group[cu], &mut self.tail[cu]);
+            mass_add(&mut g.mass, &mut t.lo, &mut t.err, -term);
+            self.track(c);
+            if self.heap_ready {
+                self.heap.update(&self.group, c);
+            }
+        }
+        Ok(())
+    }
+
+    fn join(&mut self, c: Id, term: f64) {
+        let cu = c as usize;
+        let was = self.group[cu].members;
+        self.group[cu].members += 1;
+        if was == 0 {
+            self.group[cu].mass = term;
+            self.tail[cu] = Tail::default();
+            self.occupied += 1;
+            if self.heap_ready {
+                self.heap.insert(&self.group, c);
+            }
+        } else {
+            let (g, t) = (&mut self.group[cu], &mut self.tail[cu]);
+            mass_add(&mut g.mass, &mut t.lo, &mut t.err, term);
+            self.track(c);
+            if self.heap_ready {
+                self.heap.update(&self.group, c);
+            }
+        }
+    }
+
+    fn rescale(&mut self, c: Id, old_term: f64, new_term: f64) {
+        let cu = c as usize;
+        {
+            let (g, t) = (&mut self.group[cu], &mut self.tail[cu]);
+            mass_add(&mut g.mass, &mut t.lo, &mut t.err, -old_term);
+            mass_add(&mut g.mass, &mut t.lo, &mut t.err, new_term);
+        }
+        self.track(c);
+        if self.heap_ready {
+            self.heap.update(&self.group, c);
+        }
+    }
+
+    /// Built only when a visit first needs labels without edge support: the
+    /// same mass/id order as one maintained since the start.
+    fn prepare_heap(&mut self) -> Result<()> {
+        self.heap.reserve(self.group.len())?;
+        for c in 0..self.label_count {
+            if self.group[c as usize].members > 0 {
+                self.heap.insert(&self.group, c);
+            }
+        }
+        self.heap_ready = true;
+        Ok(())
+    }
+
+    // ---- Rows --------------------------------------------------------------
+
+    /// Rewrites the pool with every row at the front of its own capacity.
+    fn compact_pool(&mut self) -> Result<()> {
+        let mut pool: Vec<Id> = Vec::new();
+        pool.try_reserve_exact(self.pool_live + 1024).map_err(|_| Error::nomem())?;
+        for r in self.row.iter_mut() {
+            let used = pool.len();
+            pool.extend_from_slice(&self.pool[r.start..r.start + r.size as usize]);
+            pool.resize(used + r.capacity as usize, 0);
+            r.start = used;
+        }
+        self.pool = pool;
+        Ok(())
+    }
+
+    fn write_row(&mut self, v: Id, size: Id) -> Result<()> {
+        let vu = v as usize;
+        if size > self.row[vu].capacity {
+            let capacity = row_capacity(self.cap, size);
+            let start = self.pool.len();
+            self.pool.try_reserve(capacity as usize).map_err(|_| Error::nomem())?;
+            self.pool.resize(start + capacity as usize, 0);
+            self.pool_live += (capacity - self.row[vu].capacity) as usize;
+            self.row[vu].start = start;
+            self.row[vu].capacity = capacity;
+        }
+        let start = self.row[vu].start;
+        self.pool[start..start + size as usize].copy_from_slice(&self.chosen[..size as usize]);
+        self.row[vu].size = size;
+        if self.pool.len() > 2 * self.pool_live + 4096 {
+            self.compact_pool()?;
+        }
+        Ok(())
+    }
+
+    // ---- A visit -----------------------------------------------------------
+
+    fn reserve_candidates(&mut self, needed: usize) -> Result<()> {
+        let capacity = self.candidate.len();
+        if needed <= capacity {
+            return Ok(());
+        }
+        let grown = if capacity < 8 { 16 } else { 2 * capacity }.max(needed);
+        self.candidate.try_reserve_exact(grown - capacity).map_err(|_| Error::nomem())?;
+        self.value.try_reserve_exact(grown - capacity).map_err(|_| Error::nomem())?;
+        self.candidate.resize(grown, 0);
+        self.value.resize(grown, 0.0);
+        Ok(())
+    }
+
+    /// The `limit` best positive gains, best first; returns how many.
+    fn top_positive(&mut self, count: usize, limit: Id) -> Result<usize> {
+        if limit <= 0 {
+            return Ok(0);
+        }
+        self.top.clear();
+        let (values, labels) = (&self.value[..count], &self.candidate[..count]);
+        if limit <= SHORT_SELECTION {
+            let limit = limit as usize;
+            if self.top.capacity() < limit {
+                self.top.try_reserve(limit).map_err(|_| Error::nomem())?;
+            }
+            // Insertion into a sorted buffer of at most `limit` entries.
+            let mut buffer = [Scored { gain: 0.0, label: 0, index: 0 }; SHORT_SELECTION as usize];
+            let top = &mut buffer[..limit];
+            let mut kept = 0usize;
+            for (i, (&gain, &label)) in values.iter().zip(labels).enumerate() {
+                if !(gain > 0.0) {
+                    continue;
+                }
+                let mut slot;
+                if kept < limit {
+                    slot = kept;
+                    kept += 1;
+                } else if scored_before(gain, label, top[kept - 1].gain, top[kept - 1].label) {
+                    slot = kept - 1;
+                } else {
+                    continue;
+                }
+                while slot > 0 && scored_before(gain, label, top[slot - 1].gain, top[slot - 1].label) {
+                    top[slot] = top[slot - 1];
+                    slot -= 1;
+                }
+                top[slot] = Scored { gain, label, index: i as Id };
+            }
+            self.top.extend_from_slice(&top[..kept]);
+        } else {
+            if self.top.capacity() < count {
+                self.top.try_reserve(count).map_err(|_| Error::nomem())?;
+            }
+            for (i, (&gain, &label)) in values.iter().zip(labels).enumerate() {
+                if gain > 0.0 {
+                    self.top.push(Scored { gain, label, index: i as Id });
+                }
+            }
+            // Labels are distinct, so (gain desc, label asc) is a total order.
+            self.top.sort_unstable_by(|x, y| {
+                if scored_before(x.gain, x.label, y.gain, y.label) {
+                    std::cmp::Ordering::Less
+                } else if scored_before(y.gain, y.label, x.gain, x.label) {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            });
+            self.top.truncate(limit as usize);
+        }
+        Ok(self.top.len())
+    }
+
+    /// The rigorous bounds of a visit's comparison: `move` for the
+    /// improvement of the best set over v's row, `gain` for the gain of any
+    /// set v could hold. v's own labels are candidates 0..k-1.
+    #[inline(never)]
+    fn bounds(&self, x: &VisitRecord) -> (f64, f64) {
+        let k = x.k as usize;
+        let (mut own_bounds, mut own_max) = (0.0f64, 0.0f64);
+        for i in 0..k {
+            let c = self.candidate[i] as usize;
+            let g = self.group[c];
+            if g.members != 1 {
+                let (m1, t1) = two_sum(g.mass, -x.old_term);
+                let (mass, t2) = two_sum(m1, self.tail[c].lo);
+                let mut em = add_up(add_up(t1.abs(), t2.abs()), self.tail[c].err);
+                em = add_up(add_up(em, mul_up(KAPPA, add_up(mass.abs(), em))), self.tiny_mass);
+                let bound = gain_bound(
+                    self.value[i],
+                    add_up(mul_up(x.es_coef, self.own_support[i]), x.es_floor),
+                    x.gn,
+                    mass.abs(),
+                    em,
+                    x.eg,
+                );
+                own_bounds = add_up(own_bounds, bound);
+                if bound > own_max {
+                    own_max = bound;
+                }
+            }
+        }
+        let theta_c = add_up(self.theta, mul_up(KAPPA, add_up(1.0, self.theta)));
+        let em = add_up(mul_up(theta_c, x.max_mass), self.tiny_mass);
+        let abs_gain = if x.max_other > -x.min_other { x.max_other } else { -x.min_other };
+        let mut bmax = if x.count > k {
+            gain_bound(
+                abs_gain,
+                add_up(mul_up(x.es_coef, x.max_support), x.es_floor),
+                x.gn,
+                x.max_mass,
+                em,
+                x.eg,
+            )
+        } else {
+            0.0
+        };
+        if own_max > bmax {
+            bmax = own_max;
+        }
+        let e_cur = add_up(
+            mul_up(
+                inv_sqrt_up(self.inv_sqrt[k]),
+                add_up(own_bounds, mul_up(gamma_k(x.k as f64), x.abs_current)),
+            ),
+            add_up(mul_up(6.0 * U, x.current.abs()), 2.0 * ETA),
+        );
+        let e_best = if x.uses_fresh || (x.single < 0 && x.j_best == 0) {
+            0.0 // a fresh label, or the mandatory labels alone: exactly 0
+        } else if x.single >= 0 {
+            bmax
+        } else {
+            add_up(
+                mul_up(
+                    inv_sqrt_up(self.inv_sqrt[(x.mandatory + x.j_best) as usize]),
+                    mul_up(x.j_best as f64, bmax),
+                ),
+                x.e_pre,
+            )
+        };
+        let mv = add_up(e_best, e_cur);
+        let gain = add_up(add_up(x.e_pre, mul_up(self.sqrt_cap_up, bmax)), e_cur);
+        (mv, gain)
+    }
+
+    /// Candidates of v after its own k labels: its neighbours' labels with
+    /// their supports, in the order the C core finds them; returns the count.
+    /// One reservation covers every neighbour (a candidate is a distinct
+    /// label held by v or a neighbour, at most cap of them per neighbour).
+    #[inline(always)]
+    fn collect<const W: bool>(&mut self, ku: usize, begin: usize, end: usize) -> Result<usize> {
+        let most = ku + (end - begin) * self.cap as usize;
+        self.reserve_candidates(most.min(self.label_count as usize + 1))?;
+        let State { graph, row, pool, inv_sqrt, group, candidate, value, .. } = self;
+        let adj = &graph.adj[begin..end];
+        let weight: &[f64] = if W { &graph.weight[begin..end] } else { &[] };
+        let mut count = ku;
+        let (group, candidate, value) = (&mut group[..], &mut candidate[..], &mut value[..]);
+        for (i, &u) in adj.iter().enumerate() {
+            let ru = row[u as usize];
+            let w = if W { weight[i] } else { 1.0 };
+            let support = w * inv_sqrt[ru.size as usize];
+            for &c in &pool[ru.start..ru.start + ru.size as usize] {
+                debug_assert!((c as usize) < group.len() && count < candidate.len());
+                // SAFETY: a row holds label ids below label_count <= group.len();
+                // count stays below the reservation above (distinct labels);
+                // a slot is a position already written, below count.
+                unsafe {
+                    let g = group.get_unchecked_mut(c as usize);
+                    if g.slot < 0 {
+                        g.slot = count as Id;
+                        *candidate.get_unchecked_mut(count) = c;
+                        *value.get_unchecked_mut(count) = support;
+                        count += 1;
+                    } else {
+                        *value.get_unchecked_mut(g.slot as usize) += support;
+                    }
+                }
+            }
+        }
+        Ok(count)
+    }
+
+    /// A visit of v. With `probe`, v does not move: the bound of the exact
+    /// gain of v's best deviation is returned, and the state is unchanged.
+    #[inline(always)]
+    fn visit<const W: bool>(&mut self, v: Id, probe: bool) -> Result<f64> {
+        let vu = v as usize;
+        let r = self.row[vu];
+        let k = r.size;
+        let ku = k as usize;
+        let begin = self.graph.start[vu] as usize;
+        let end = self.graph.start[vu + 1] as usize;
+        let nv = self.graph.node_weight(v);
+        let gn = self.gamma * nv;
+        let old_term = nv * self.inv_sqrt[ku];
+        let fresh_allowed = self.isolation
+            && !self.exact
+            && (self.max_total < 0 || (self.occupied as i64) < self.max_total);
+        let mut count: usize;
+        let slotted: usize;
+        let mut mandatory: Id = 0;
+        let mut single: i64 = -1;
+        let mut j_best: Id = 0;
+        let mut current = 0.0f64;
+        let mut max_gain = f64::NEG_INFINITY;
+        let best_score: f64;
+        let mut min_other = f64::INFINITY;
+        let mut max_other = f64::NEG_INFINITY;
+        let mut max_support = 0.0f64;
+        let mut max_mass = 0.0f64;
+        let mut abs_current = 0.0f64;
+        let mut own_hi = 0.0f64;
+        let mut own_support_max = 0.0f64;
+        let mut e_pre = 0.0f64;
+        let mut uses_fresh = false;
+        let same: bool;
+
+        // Candidates: v's labels first, then its neighbours' labels.
+        self.reserve_candidates(ku + 1)?;
+        for i in 0..ku {
+            let c = self.pool[r.start + i];
+            self.group[c as usize].slot = i as Id;
+            self.candidate[i] = c;
+            self.value[i] = 0.0;
+        }
+        let mut status: Result<()> = Ok(());
+        match self.collect::<W>(ku, begin, end) {
+            Ok(c) => count = c,
+            Err(e) => {
+                count = ku;
+                status = Err(e);
+            }
+        }
+        slotted = count;
+
+        let eg = if self.graph.node_weighted { product_error(self.gamma, nv, gn) } else { 0.0 };
+        let es_coef = gamma_k((end - begin) as f64 + 8.0);
+        let es_floor = if self.tiny_support { (end - begin) as f64 * ETA } else { 0.0 };
+
+        if status.is_ok() {
+            // Gains, and the payoff of v's row.
+            for i in 0..ku {
+                let c = self.candidate[i] as usize;
+                let g = self.group[c];
+                let gain;
+                self.own_support[i] = self.value[i];
+                if g.members == 1 {
+                    gain = 0.0; // v alone holds it: no support, no crowding (exactly)
+                    mandatory += self.exact as Id;
+                } else {
+                    gain = fma(-gn, (g.mass - old_term) + self.tail[c].lo, self.value[i]);
+                    own_hi = if g.mass > own_hi { g.mass } else { own_hi };
+                    own_support_max =
+                        if self.value[i] > own_support_max { self.value[i] } else { own_support_max };
+                }
+                current += gain;
+                abs_current += gain.abs();
+                self.value[i] = gain;
+                if gain > max_gain {
+                    max_gain = gain;
+                }
+            }
+            // The other labels: their bounds are taken together.
+            let group = &self.group;
+            for (value, &c) in self.value[ku..count].iter_mut().zip(&self.candidate[ku..count]) {
+                let mass = group[c as usize].mass;
+                let support = *value;
+                let gain = fma(-gn, mass, support);
+                if support > max_support {
+                    max_support = support;
+                }
+                if mass > max_mass {
+                    max_mass = mass;
+                }
+                if gain < min_other {
+                    min_other = gain;
+                }
+                if gain > max_other {
+                    max_other = gain;
+                }
+                *value = gain;
+            }
+            if max_other > max_gain {
+                max_gain = max_other;
+            }
+            current *= self.inv_sqrt[ku];
+            if fresh_allowed && max_gain < 0.0 {
+                max_gain = 0.0;
+            }
+
+            // Labels v has no support from: the walk's labels stand for all.
+            if self.use_heap && (gn < 0.0 || max_gain < 0.0) {
+                let want = if gn < 0.0 { self.cap } else { 1 };
+                let mut taken: Id = 0;
+                if !self.heap_ready {
+                    status = self.prepare_heap();
+                }
+                if status.is_ok() {
+                    self.heap.walk_begin();
+                    while taken < want {
+                        let c = match self.heap.walk_next(&self.group) {
+                            Err(err) => {
+                                status = Err(err);
+                                break;
+                            }
+                            Ok(None) => break,
+                            Ok(Some(c)) => c,
+                        };
+                        if self.group[c as usize].slot >= 0 {
+                            continue;
+                        }
+                        if let Err(err) = self.reserve_candidates(count + 1) {
+                            status = Err(err);
+                            break;
+                        }
+                        let mass = self.group[c as usize].mass;
+                        let gain = -gn * mass;
+                        self.candidate[count] = c;
+                        self.value[count] = gain;
+                        if mass > max_mass {
+                            max_mass = mass;
+                        }
+                        if gain < min_other {
+                            min_other = gain;
+                        }
+                        if gain > max_other {
+                            max_other = gain;
+                        }
+                        count += 1;
+                        taken += 1;
+                    }
+                }
+            }
+        }
+        for &c in &self.candidate[..slotted] {
+            self.group[c as usize].slot = -1;
+        }
+        status?;
+
+        // The best set: the mandatory labels and the best prefix of the
+        // positive gains, or the single best label. `same`: it is v's row.
+        let kept = self.top_positive(count, self.cap - mandatory)?;
+        if mandatory == 0 && kept == 0 {
+            let mut best_gain = f64::NEG_INFINITY;
+            for i in 0..count {
+                if single < 0
+                    || scored_before(
+                        self.value[i],
+                        self.candidate[i],
+                        best_gain,
+                        self.candidate[single as usize],
+                    )
+                {
+                    single = i as i64;
+                    best_gain = self.value[i];
+                }
+            }
+            if fresh_allowed && (single < 0 || best_gain < 0.0) {
+                uses_fresh = true;
+                best_gain = 0.0;
+            }
+            best_score = best_gain;
+            same = !uses_fresh && k == 1 && single == 0;
+        } else {
+            let mut prefix = 0.0f64;
+            let mut best = 0.0f64; // j = 0: the mandatory labels alone, worth 0
+            for j in 1..=kept {
+                prefix += self.top[j - 1].gain;
+                let score = prefix * self.inv_sqrt[mandatory as usize + j];
+                if (mandatory == 0 && j == 1) || score > best {
+                    best = score;
+                    j_best = j as Id;
+                }
+            }
+            best_score = best;
+            if best_score > 0.0 {
+                // Each computed prefix score is positive, at most best_score,
+                // and within (j + 4) roundings of its exact value.
+                e_pre = add_up(mul_up(gamma_k(self.cap as f64 + 6.0), best_score), 2.0 * ETA);
+            }
+            let mut s = mandatory + j_best == k;
+            let mut j = 0;
+            while s && j < j_best as usize {
+                s = self.top[j].index < k;
+                j += 1;
+            }
+            same = s;
+        }
+
+        let x = VisitRecord {
+            k,
+            mandatory,
+            single,
+            j_best,
+            count,
+            uses_fresh,
+            gn,
+            old_term,
+            eg,
+            es_coef,
+            es_floor,
+            current,
+            abs_current,
+            e_pre,
+            max_support,
+            max_mass,
+            min_other,
+            max_other,
+        };
+        if probe {
+            let (_, gain) = self.bounds(&x);
+            let (d, e) = difference(best_score, current, gain);
+            return Ok(gain_up(d, e));
+        }
+
+        // `coarse` bounds both full bounds and the rounding of the
+        // difference (native/README.md, "The coarse bound").
+        let mut d = best_score - current;
+        let mut e;
+        let coarse = {
+            let other = if max_other > -min_other { max_other } else { -min_other };
+            let abs_gain = if other > abs_current { other } else { abs_current };
+            let own_mass = (1.0 + self.theta) * own_hi + old_term;
+            let own_em = self.theta * own_hi + 3.0 * U * own_mass;
+            let mass = if own_mass > max_mass { own_mass } else { max_mass };
+            let support = if own_support_max > max_support { own_support_max } else { max_support };
+            let em = own_em
+                + (self.theta + KAPPA * (1.0 + self.theta) + 4.0 * U) * (mass + own_em)
+                + self.tiny_mass
+                + 2.0 * ETA;
+            let b = U * abs_gain
+                + 8.0 * ETA
+                + es_coef * support
+                + es_floor
+                + gn.abs() * em
+                + eg * (mass + em);
+            let root_k = self.inv_sqrt[ku] * k as f64;
+            2.0 * (e_pre
+                + self.sqrt_cap_up * b
+                + root_k * (b + 1.125 * U * abs_gain)
+                + 6.0 * U * current.abs()
+                + U * d.abs()
+                + 32.0 * ETA)
+        };
+        // The bound recorded with a visit that does not move v: the full one
+        // (>= 0), or minus a coarse one (< 0) that the slack replaces by the
+        // full one if it matters.
+        if same {
+            let t = d + coarse;
+            let bound = if t > 0.0 { -up(t) } else { 0.0 };
+            self.queue.settle_bound(v, bound);
+            return Ok(0.0);
+        }
+        if d > coarse && self.trace.is_none() {
+            e = 0.0; // certainly an improvement: d > coarse >= the full bound
+        } else if !(d + coarse > 0.0) {
+            self.queue.settle_bound(v, 0.0); // certainly no improvement, nor any gain
+            return Ok(0.0);
+        } else {
+            let (mv, gain) = self.bounds(&x);
+            (d, e) = difference(best_score, current, mv);
+            if !(d > e) {
+                (d, e) = difference(best_score, current, gain);
+                let bound = gain_up(d, e);
+                self.queue.settle_bound(v, bound);
+                return Ok(0.0);
+            }
+        }
+
+        // The new row, sorted.
+        self.chosen.clear();
+        if mandatory > 0 {
+            for i in 0..ku {
+                let c = self.pool[r.start + i];
+                if self.group[c as usize].members == 1 {
+                    self.chosen.push(c);
+                }
+            }
+        }
+        if mandatory > 0 || kept > 0 {
+            for j in 0..j_best as usize {
+                let label = self.top[j].label;
+                self.chosen.push(label);
+            }
+        } else if !uses_fresh {
+            let c = self.candidate[single as usize];
+            self.chosen.push(c);
+        }
+        self.chosen.sort_unstable();
+        if uses_fresh {
+            let fresh = self.fresh_label()?;
+            self.chosen.push(fresh); // the only label: still sorted
+        }
+        let chosen_size = self.chosen.len();
+
+        // Masses: leave, rescale, join (rows are sorted: merge them).
+        {
+            let new_term = nv * self.inv_sqrt[chosen_size];
+            let (mut a, mut b) = (0usize, 0usize);
+            while a < ku || b < chosen_size {
+                let own_a = if a < ku { self.pool[r.start + a] } else { 0 };
+                let chosen_b = if b < chosen_size { self.chosen[b] } else { 0 };
+                if b >= chosen_size || (a < ku && own_a < chosen_b) {
+                    self.leave(own_a, old_term)?;
+                    a += 1;
+                } else if a >= ku || chosen_b < own_a {
+                    self.join(chosen_b, new_term);
+                    b += 1;
+                } else {
+                    if chosen_size != ku {
+                        self.rescale(own_a, old_term, new_term);
+                    }
+                    a += 1;
+                    b += 1;
+                }
+            }
+        }
+        self.write_row(v, chosen_size as Id)?;
+        self.queue.moved(v);
+        if self.rebuild {
+            self.rebuild_masses();
+        }
+        if let Some(trace) = self.trace.as_deref_mut() {
+            trace.record_move(v as i64, d, e, &self.chosen);
+        }
+        for i in begin..end {
+            let u = self.graph.adj[i];
+            self.queue.push(u);
+        }
+        Ok(0.0)
+    }
+
+    fn visit_any(&mut self, v: Id, probe: bool) -> Result<f64> {
+        if self.graph.weighted {
+            self.visit::<true>(v, probe)
+        } else {
+            self.visit::<false>(v, probe)
+        }
+    }
+
+    fn run(&mut self, cb: &mut Callbacks) -> Result<()> {
+        let weighted = self.graph.weighted;
+        while let Some(v) = self.queue.next(cb)? {
+            if weighted {
+                self.visit::<true>(v, false)?;
+            } else {
+                self.visit::<false>(v, false)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The slack: the largest gain bound of the last visits, all made in the
+    /// final state. Coarse bounds are replaced by full ones, largest first,
+    /// until the next coarse bound cannot raise the maximum: the same value
+    /// as recording every full bound.
+    fn compute_slack(&mut self) -> Result<()> {
+        let mut slack = 0.0f64;
+        for s in &self.queue.settled {
+            if s.bound > slack {
+                slack = s.bound;
+            }
+        }
+        let mut open: Vec<(f64, Id)> = Vec::new();
+        for (v, s) in self.queue.settled.iter().enumerate() {
+            if -s.bound > slack {
+                push(&mut open, (-s.bound, v as Id))?;
+            }
+        }
+        // Descending; ties (equal coarse bounds) in vertex order. Which of
+        // two tied vertices goes first cannot change the maximum: a full
+        // bound never exceeds its coarse one.
+        open.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        for &(gain, v) in &open {
+            if !(gain > slack) {
+                break;
+            }
+            let full = self.visit_any(v, true)?;
+            if full > slack {
+                slack = full;
+            }
+        }
+        self.slack = slack;
+        Ok(())
+    }
+
+    /// The rows with labels 0, 1, ... in order of first appearance, sorted.
+    fn result(&self) -> Result<(Cover, i64)> {
+        let n = self.graph.n as usize;
+        let total: usize = self.row.iter().map(|r| r.size as usize).sum();
+        let mut offset = filled(n + 1, 0i64)?;
+        let mut labels = filled(total, 0i64)?;
+        let mut relabel = filled(self.label_count as usize, -1i64)?;
+        let mut next = 0i64;
+        for v in 0..n {
+            let r = self.row[v];
+            let base = offset[v] as usize;
+            let out = &mut labels[base..base + r.size as usize];
+            for (i, o) in out.iter_mut().enumerate() {
+                let c = self.pool[r.start + i] as usize;
+                if relabel[c] < 0 {
+                    relabel[c] = next;
+                    next += 1;
+                }
+                *o = relabel[c];
+            }
+            out.sort_unstable();
+            offset[v + 1] = offset[v] + r.size as i64;
+        }
+        Ok((Cover { offset, labels }, next))
+    }
+}
+
+fn shared_labels(a: &[i64], b: &[i64]) -> i64 {
+    let (mut i, mut j, mut shared) = (0, 0, 0);
+    while i < a.len() && j < b.len() {
+        if a[i] < b[j] {
+            i += 1;
+        } else if a[i] > b[j] {
+            j += 1;
+        } else {
+            shared += 1;
+            i += 1;
+            j += 1;
+        }
+    }
+    shared
+}
+
+/// (sum_edges 2 w |sigma_a & sigma_b| f_a f_b - gamma sum_c S_c^2) / 2W.
+fn quality(graph: &Graph, gamma: f64, cover: &Cover, count: i64, inv_sqrt: &[f64]) -> Result<f64> {
+    let mut mass = filled(count as usize, 0.0f64)?;
+    let (mut q, mut total) = (0.0f64, 0.0f64);
+    for e in 0..graph.edge_count {
+        let (a, b) = (graph.end(2 * e) as usize, graph.end(2 * e + 1) as usize);
+        let (ra, rb) = (cover.row(a), cover.row(b));
+        let w = graph.edge_weight(e);
+        let shared = shared_labels(ra, rb);
+        total += w;
+        if shared > 0 {
+            q += 2.0 * w * shared as f64 * inv_sqrt[ra.len()] * inv_sqrt[rb.len()];
+        }
+    }
+    for v in 0..graph.vertex_count as usize {
+        let row = cover.row(v);
+        let term = graph.node_weight(v as i64) * inv_sqrt[row.len()];
+        for &c in row {
+            mass[c as usize] += term;
+        }
+    }
+    for &m in &mass {
+        q = fma(-(gamma * m), m, q);
+    }
+    Ok(q / (2.0 * total))
+}
+
+/// The start rows (the caller's or the default): labels compacted, rows
+/// sorted and duplicate-free, count limits checked. Returns the rows (one
+/// Vec per vertex, internal ids) and the number of labels.
+fn start_rows(options: &Options, n: Id, cap: Id, start: Option<&Cover>) -> Result<(Vec<Vec<Id>>, i64)> {
+    let nu = n as usize;
+    let mut offset = filled(nu + 1, 0i64)?;
+    let labels: Vec<i64>;
+    match start {
+        Some(start) => {
+            if start.offset.is_empty() || start.vertex_count() != n as i64 {
+                return Err(Error::inval(
+                    "Initial membership list length does not equal the number of vertices.",
+                ));
+            }
+            for v in 0..nu {
+                let size = start.offset[v + 1] - start.offset[v];
+                if size < 1 {
+                    return Err(Error::inval(
+                        "Initial overlapping membership vectors must be non-empty.",
+                    ));
+                }
+                offset[v + 1] = offset[v] + size;
+            }
+            let mut l = filled(offset[nu] as usize, 0i64)?;
+            for v in 0..nu {
+                let row = start.row(v);
+                for (i, &x) in row.iter().enumerate() {
+                    l[offset[v] as usize + i] = x;
+                    if x < 0 {
+                        return Err(Error::inval(
+                            "Initial overlapping membership indices must be non-negative.",
+                        ));
+                    }
+                }
+            }
+            labels = l;
+        }
+        None => {
+            // Singletons; under a count limit, K labels round-robin (with more
+            // labels than vertices, the extra ones are spread over the rows).
+            let n64 = n as i64;
+            let target: i64 = if limit_set(options.n_communities) {
+                options.n_communities
+            } else if limit_set(options.max_total_communities) && options.max_total_communities < n64 {
+                options.max_total_communities
+            } else {
+                n64
+            };
+            let extra = if target > n64 { target - n64 } else { 0 };
+            for v in 0..nu {
+                offset[v + 1] = offset[v] + 1 + extra / n64 + ((v as i64) < extra % n64) as i64;
+            }
+            let mut l = filled(offset[nu] as usize, 0i64)?;
+            for v in 0..nu {
+                let mut i = offset[v] as usize;
+                let v64 = v as i64;
+                l[i] = if target < n64 { v64 % target } else { v64 };
+                i += 1;
+                let mut c = n64 + v64;
+                while c < target {
+                    l[i] = c;
+                    i += 1;
+                    c += n64;
+                }
+            }
+            labels = l;
+        }
+    }
+    let mut ids = filled(labels.len(), 0 as Id)?;
+    let distinct = compact_labels(&labels, &mut ids)?;
+    let mut rows = Vec::new();
+    rows.try_reserve_exact(nu).map_err(|_| Error::nomem())?;
+    for v in 0..nu {
+        let mut row = ids[offset[v] as usize..offset[v + 1] as usize].to_vec();
+        row.sort_unstable();
+        row.dedup();
+        if row.len() > cap as usize {
+            return Err(Error::inval("Initial overlapping membership vector exceeds max_memberships."));
+        }
+        rows.push(row);
+    }
+    if limit_set(options.max_total_communities) && distinct > options.max_total_communities {
+        return Err(Error::inval("Initial cover exceeds max_total_communities."));
+    }
+    if limit_set(options.n_communities) && distinct != options.n_communities {
+        return Err(Error::inval("Initial cover does not contain exactly n_communities labels."));
+    }
+    Ok((rows, distinct))
+}
+
+/// Local moving of a cover (`hig_cover` / `hig_cover_traced`). `start`: a
+/// non-empty row of non-negative labels per vertex (a repeated label counts
+/// once), or None for singletons (under a count limit, a round-robin start
+/// that occupies K labels).
+pub fn cover(
+    graph: &Graph,
+    options: &Options,
+    start: Option<&Cover>,
+    cb: &mut Callbacks,
+    mut trace: Option<&mut Trace>,
+) -> Result<CoverResult> {
+    let mut options = *options;
+    check_input(graph, &mut options, true)?;
+    let n = graph.vertex_count as Id;
+    let nu = n as usize;
+    let gamma = options.resolution;
+    let cap = options.max_memberships as Id;
+    let isolation = options.allow_isolation;
+    let exact = limit_set(options.n_communities);
+    let max_total = options.max_total_communities;
+    let sqrt_cap_up = up((cap as f64).sqrt());
+
+    if let Some(start) = start {
+        if start.offset.len() == nu + 1 {
+            start.validate()?;
+        }
+    }
+    let (rows, distinct) = start_rows(&options, n, cap, start)?;
+    let adjacency = Adjacency::build(graph)?;
+
+    // Rows into the pool, each at the front of its own capacity.
+    let mut row = filled(nu, RowRef::default())?;
+    let mut pool_live = 0usize;
+    for v in 0..nu {
+        let size = rows[v].len() as Id;
+        let capacity = row_capacity(cap, size);
+        row[v] = RowRef { start: pool_live, size, capacity };
+        pool_live += capacity as usize;
+    }
+    let mut pool: Vec<Id> = Vec::new();
+    pool.try_reserve_exact(pool_live + pool_live / 2 + 1024).map_err(|_| Error::nomem())?;
+    pool.resize(pool_live, 0);
+    for v in 0..nu {
+        pool[row[v].start..row[v].start + rows[v].len()].copy_from_slice(&rows[v]);
+    }
+    drop(rows);
+
+    let mut inv_sqrt = filled(cap as usize + 1, 0.0f64)?;
+    for k in 1..=cap as usize {
+        inv_sqrt[k] = 1.0 / (k as f64).sqrt();
+    }
+    // Can a term n_u f_u or w f_u fall below DBL_MIN (and lose its relative
+    // accuracy)? f_u >= 1 / sqrt(cap) > 1 / (2 sqrt(cap)).
+    let smallest = 2.0 * DBL_MIN * 2.0 * sqrt_cap_up;
+    let mut tiny_mass = 0.0;
+    if adjacency.node_weighted {
+        for &w in &adjacency.node_weight {
+            if w > 0.0 && w < smallest {
+                tiny_mass = n as f64 * ETA;
+                break;
+            }
+        }
+    }
+    let tiny_support = adjacency.weighted && adjacency.weight.iter().any(|&w| w > 0.0 && w < smallest);
+
+    let mut s = State {
+        graph: adjacency,
+        gamma,
+        cap,
+        isolation,
+        exact,
+        max_total,
+        sqrt_cap_up,
+        row,
+        pool,
+        pool_live,
+        group: Vec::new(),
+        tail: Vec::new(),
+        theta: 0.0,
+        theta_below: 0.0,
+        rebuild: false,
+        tiny_mass,
+        tiny_support,
+        label_count: distinct as Id,
+        free_ids: Vec::new(),
+        occupied: 0,
+        inv_sqrt,
+        use_heap: gamma < 0.0 || !isolation || limit_set(max_total) || exact,
+        heap_ready: false,
+        heap: Heap::new(gamma < 0.0),
+        candidate: Vec::new(),
+        value: Vec::new(),
+        top: Vec::new(),
+        chosen: filled(0, 0 as Id)?,
+        queue: Queue::new(0, cb)?, // replaced below
+        own_support: filled(cap as usize + 1, 0.0)?,
+        slack: 0.0,
+        trace: None,
+    };
+    s.chosen.try_reserve_exact(cap as usize + 1).map_err(|_| Error::nomem())?;
+    s.reserve_labels(distinct as usize + nu + 16)?;
+    for v in 0..nu {
+        let r = s.row[v];
+        for i in 0..r.size as usize {
+            let c = s.pool[r.start + i] as usize;
+            s.group[c].members += 1;
+        }
+    }
+    s.occupied = s.label_count;
+    s.rebuild_masses(); // the masses, theta and the heap
+    s.reserve_candidates(256)?;
+    s.queue = Queue::new(n, cb)?;
+    if let Some(t) = trace.as_deref_mut() {
+        for v in 0..nu {
+            let r = s.row[v];
+            t.record_start(&s.pool[r.start..r.start + r.size as usize]);
+        }
+    }
+    s.trace = trace;
+    s.run(cb)?;
+    s.compute_slack()?;
+    let (cover, count) = s.result()?;
+    let q = quality(graph, options.resolution, &cover, count, &s.inv_sqrt)?;
+    let raw_slack = s.slack;
+    Ok(CoverResult {
+        cover,
+        count,
+        quality: q,
+        raw_slack,
+        slack: normalized_slack(raw_slack, graph.total_edge_weight()),
+    })
+}
