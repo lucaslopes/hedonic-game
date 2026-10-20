@@ -146,6 +146,13 @@ struct VisitRecord {
     max_other: f64,
 }
 
+/// The overlapping game's state. The visits read it unchecked where these
+/// hold (made so by `cover` and kept by every change; `invariants` checks
+/// them in debug builds): the adjacency is as `Adjacency::build` made it;
+/// row has n entries, each row's capacity lies in the pool and holds at most
+/// cap labels; every label in a row is below label_count <= group.len() =
+/// tail.len(); inv_sqrt and own_support have cap + 1 entries; candidate and
+/// value have the same length; a group's slot is -1 outside a visit.
 struct State<'t> {
     graph: Adjacency,
     gamma: f64,
@@ -196,6 +203,30 @@ fn row_capacity(cap: Id, size: Id) -> Id {
 }
 
 impl<'t> State<'t> {
+    /// The invariants the visits rely on (debug builds only).
+    #[cfg(debug_assertions)]
+    fn invariants(&self) -> bool {
+        let n = self.graph.n as usize;
+        let cap = self.cap as usize;
+        self.graph.well_formed()
+            && self.row.len() == n
+            && self.row.iter().all(|r| {
+                0 <= r.size
+                    && r.size <= r.capacity
+                    && r.capacity as usize <= cap
+                    && r.start + r.capacity as usize <= self.pool.len()
+                    && self.pool[r.start..r.start + r.size as usize]
+                        .iter()
+                        .all(|&c| 0 <= c && c < self.label_count)
+            })
+            && self.label_count as usize <= self.group.len()
+            && self.group.len() == self.tail.len()
+            && self.inv_sqrt.len() == cap + 1
+            && self.own_support.len() == cap + 1
+            && self.candidate.len() == self.value.len()
+            && self.group.iter().all(|g| g.slot == -1)
+    }
+
     // ---- Labels ------------------------------------------------------------
 
     fn reserve_labels(&mut self, ids: usize) -> Result<()> {
@@ -427,20 +458,30 @@ impl<'t> State<'t> {
                 if !(gain > 0.0) {
                     continue;
                 }
+                // SAFETY (this loop): 1 <= kept <= limit = top.len() wherever
+                // top[kept - 1] is read, and 0 <= slot - 1 < slot < kept.
                 let mut slot;
                 if kept < limit {
                     slot = kept;
                     kept += 1;
-                } else if scored_before(gain, label, top[kept - 1].gain, top[kept - 1].label) {
-                    slot = kept - 1;
                 } else {
-                    continue;
+                    let last = unsafe { *top.get_unchecked(kept - 1) };
+                    if scored_before(gain, label, last.gain, last.label) {
+                        slot = kept - 1;
+                    } else {
+                        continue;
+                    }
                 }
-                while slot > 0 && scored_before(gain, label, top[slot - 1].gain, top[slot - 1].label) {
-                    top[slot] = top[slot - 1];
+                while slot > 0 {
+                    let previous = unsafe { *top.get_unchecked(slot - 1) };
+                    if !scored_before(gain, label, previous.gain, previous.label) {
+                        break;
+                    }
+                    unsafe { *top.get_unchecked_mut(slot) = previous };
                     slot -= 1;
                 }
-                top[slot] = Scored { gain, label, index: i as Id };
+                debug_assert!(slot < top.len());
+                unsafe { *top.get_unchecked_mut(slot) = Scored { gain, label, index: i as Id } };
             }
             Ok(kept)
         } else {
@@ -549,16 +590,23 @@ impl<'t> State<'t> {
         let most = ku + (end - begin) * self.cap as usize;
         self.reserve_candidates(most.min(self.label_count as usize + 1))?;
         let State { graph, row, pool, inv_sqrt, group, candidate, value, .. } = self;
-        let adj = &graph.adj[begin..end];
-        let weight: &[f64] = if W { &graph.weight[begin..end] } else { &[] };
+        debug_assert!(begin <= end && end <= graph.adj.len() && (!W || graph.weight.len() == graph.adj.len()));
+        // SAFETY (this block): begin..end is a block of the well-formed
+        // adjacency (weighted: one weight per half-edge); a neighbour is a
+        // vertex, below n = row.len(); a row's labels lie in the pool and
+        // its size is at most cap, below inv_sqrt.len() (State's invariants).
+        let adj = unsafe { graph.adj.get_unchecked(begin..end) };
+        let weight: &[f64] = if W { unsafe { graph.weight.get_unchecked(begin..end) } } else { &[] };
         let mut count = ku;
         let (row, pool, inv_sqrt) = (&row[..], &pool[..], &inv_sqrt[..]);
         let (group, candidate, value) = (&mut group[..], &mut candidate[..], &mut value[..]);
         for (i, &u) in adj.iter().enumerate() {
-            let ru = row[u as usize];
-            let w = if W { weight[i] } else { 1.0 };
-            let support = w * inv_sqrt[ru.size as usize];
-            for &c in &pool[ru.start..ru.start + ru.size as usize] {
+            debug_assert!((u as usize) < row.len());
+            let ru = unsafe { *row.get_unchecked(u as usize) };
+            let w = if W { unsafe { *weight.get_unchecked(i) } } else { 1.0 };
+            debug_assert!((ru.size as usize) < inv_sqrt.len() && ru.start + ru.size as usize <= pool.len());
+            let support = w * unsafe { *inv_sqrt.get_unchecked(ru.size as usize) };
+            for &c in unsafe { pool.get_unchecked(ru.start..ru.start + ru.size as usize) } {
                 debug_assert!((c as usize) < group.len() && count < candidate.len());
                 // SAFETY: a row holds label ids below label_count <= group.len();
                 // count stays below the reservation above (distinct labels);
@@ -584,14 +632,18 @@ impl<'t> State<'t> {
     #[inline(always)]
     fn visit<const W: bool>(&mut self, v: Id, probe: bool) -> Result<f64> {
         let vu = v as usize;
-        let r = self.row[vu];
+        debug_assert!(vu < self.row.len());
+        // SAFETY: v is a vertex (from the queue, or the slack's pass over
+        // the settled ones), below n = row.len(); the adjacency is well formed; a row's size is at most cap, below
+        // inv_sqrt.len() (State's invariants).
+        let r = unsafe { *self.row.get_unchecked(vu) };
         let k = r.size;
         let ku = k as usize;
-        let begin = self.graph.start[vu] as usize;
-        let end = self.graph.start[vu + 1] as usize;
-        let nv = self.graph.node_weight(v);
+        let (begin, end) = unsafe { self.graph.range_unchecked(v) };
+        let nv = unsafe { self.graph.node_weight_unchecked(v) };
         let gn = self.gamma * nv;
-        let old_term = nv * self.inv_sqrt[ku];
+        debug_assert!(ku < self.inv_sqrt.len());
+        let old_term = nv * unsafe { *self.inv_sqrt.get_unchecked(ku) };
         let fresh_allowed = self.isolation
             && !self.exact
             && (self.max_total < 0 || (self.occupied as i64) < self.max_total);
@@ -616,11 +668,20 @@ impl<'t> State<'t> {
 
         // Candidates: v's labels first, then its neighbours' labels.
         self.reserve_candidates(ku + 1)?;
-        for i in 0..ku {
-            let c = self.pool[r.start + i];
-            self.group[c as usize].slot = i as Id;
-            self.candidate[i] = c;
-            self.value[i] = 0.0;
+        {
+            debug_assert!(r.start + ku <= self.pool.len() && ku < self.candidate.len());
+            // SAFETY: v's row lies in the pool, its labels below group.len();
+            // ku + 1 candidates are reserved (State's invariants).
+            let own = unsafe { self.pool.get_unchecked(r.start..r.start + ku) };
+            let (group, candidate, value) = (&mut self.group[..], &mut self.candidate[..], &mut self.value[..]);
+            for (i, &c) in own.iter().enumerate() {
+                debug_assert!((c as usize) < group.len());
+                unsafe {
+                    group.get_unchecked_mut(c as usize).slot = i as Id;
+                    *candidate.get_unchecked_mut(i) = c;
+                    *value.get_unchecked_mut(i) = 0.0;
+                }
+            }
         }
         let mut status: Result<()> = Ok(());
         match self.collect::<W>(ku, begin, end) {
@@ -638,31 +699,45 @@ impl<'t> State<'t> {
 
         if status.is_ok() {
             // Gains, and the payoff of v's row.
-            for i in 0..ku {
-                let c = self.candidate[i] as usize;
-                let g = self.group[c];
+            let exact = self.exact as Id;
+            let (group, tail) = (&self.group[..], &self.tail[..]);
+            debug_assert!(ku <= count && ku < self.own_support.len());
+            // SAFETY: the first ku candidates are v's labels (below
+            // group.len() = tail.len()); ku <= cap < own_support.len().
+            let own_support = unsafe { self.own_support.get_unchecked_mut(..ku) };
+            let own = unsafe { self.candidate.get_unchecked(..ku) };
+            let values = unsafe { self.value.get_unchecked_mut(..ku) };
+            for ((value, support), &c) in values.iter_mut().zip(own_support).zip(own) {
+                let c = c as usize;
+                debug_assert!(c < group.len());
+                let g = unsafe { *group.get_unchecked(c) };
                 let gain;
-                self.own_support[i] = self.value[i];
+                *support = *value;
                 if g.members == 1 {
                     gain = 0.0; // v alone holds it: no support, no crowding (exactly)
-                    mandatory += self.exact as Id;
+                    mandatory += exact;
                 } else {
-                    gain = fma(-gn, (g.mass - old_term) + self.tail[c].lo, self.value[i]);
+                    let lo = unsafe { tail.get_unchecked(c).lo };
+                    gain = fma(-gn, (g.mass - old_term) + lo, *value);
                     own_hi = if g.mass > own_hi { g.mass } else { own_hi };
-                    own_support_max =
-                        if self.value[i] > own_support_max { self.value[i] } else { own_support_max };
+                    own_support_max = if *value > own_support_max { *value } else { own_support_max };
                 }
                 current += gain;
                 abs_current += gain.abs();
-                self.value[i] = gain;
+                *value = gain;
                 if gain > max_gain {
                     max_gain = gain;
                 }
             }
             // The other labels: their bounds are taken together.
-            let group = &self.group;
-            for (value, &c) in self.value[ku..count].iter_mut().zip(&self.candidate[ku..count]) {
-                let mass = group[c as usize].mass;
+            let group = &self.group[..];
+            debug_assert!(count <= self.candidate.len());
+            // SAFETY: ku <= count <= candidate.len() = value.len(); a
+            // candidate is a label, below group.len().
+            let values = unsafe { self.value.get_unchecked_mut(ku..count) };
+            for (value, &c) in values.iter_mut().zip(unsafe { self.candidate.get_unchecked(ku..count) }) {
+                debug_assert!((c as usize) < group.len());
+                let mass = unsafe { group.get_unchecked(c as usize).mass };
                 let support = *value;
                 let gain = fma(-gn, mass, support);
                 if support > max_support {
@@ -731,8 +806,15 @@ impl<'t> State<'t> {
                 }
             }
         }
-        for &c in &self.candidate[..slotted] {
-            self.group[c as usize].slot = -1;
+        {
+            debug_assert!(slotted <= self.candidate.len());
+            let group = &mut self.group[..];
+            // SAFETY: slotted <= candidate.len(); a candidate is a label,
+            // below group.len().
+            for &c in unsafe { self.candidate.get_unchecked(..slotted) } {
+                debug_assert!((c as usize) < group.len());
+                unsafe { group.get_unchecked_mut(c as usize).slot = -1 };
+            }
         }
         status?;
 
@@ -922,9 +1004,11 @@ impl<'t> State<'t> {
         if let Some(trace) = self.trace.as_deref_mut() {
             trace.record_move(v as i64, d, e, &self.chosen);
         }
-        for i in begin..end {
-            let u = self.graph.adj[i];
-            self.queue.push(u);
+        debug_assert!(begin <= end && end <= self.graph.adj.len());
+        // SAFETY: v's block of the well-formed adjacency; neighbours are
+        // vertices, below n.
+        for &u in unsafe { self.graph.adj.get_unchecked(begin..end) } {
+            unsafe { self.queue.push_unchecked(u) };
         }
         Ok(0.0)
     }
@@ -980,6 +1064,8 @@ impl<'t> State<'t> {
     fn run(&mut self, cb: &mut Callbacks) -> Result<()> {
         let weighted = self.graph.weighted;
         let ahead = self.prefetch;
+        #[cfg(debug_assertions)]
+        assert!(self.invariants());
         while let Some(v) = self.queue.next(cb)? {
             if ahead {
                 self.prefetch_ahead();
@@ -990,6 +1076,8 @@ impl<'t> State<'t> {
                 self.visit::<false>(v, false)?;
             }
         }
+        #[cfg(debug_assertions)]
+        assert!(self.invariants());
         Ok(())
     }
 
