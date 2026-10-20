@@ -113,6 +113,21 @@ impl Queue {
         self.settled[v as usize].at = -1;
     }
 
+    /// The vertex `ahead` places after the next one to visit, if queued
+    /// (for prefetching only: the queue may change before its turn).
+    #[inline(always)]
+    pub fn peek(&self, ahead: usize) -> Option<Id> {
+        if ahead < self.count {
+            let mut at = self.head + ahead;
+            if at >= self.n {
+                at -= self.n;
+            }
+            Some(self.ring[at])
+        } else {
+            None
+        }
+    }
+
     /// The next vertex to visit; None when every vertex is settled.
     pub fn next(&mut self, cb: &mut Callbacks) -> Result<Option<Id>> {
         if self.count == 0 {

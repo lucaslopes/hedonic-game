@@ -20,6 +20,7 @@
 use crate::arith::*;
 use crate::error::{filled, push, Error, Result};
 use crate::fma::fma;
+use crate::prefetch::{prefetch, wanted};
 use crate::graph::{check_input, compact_labels, limit_set, Adjacency, Graph, Id, Options, ID_MAX};
 use crate::heap::{Group, Heap, Tail};
 use crate::queue::{Callbacks, Queue};
@@ -28,6 +29,12 @@ use crate::trace::Trace;
 /// KAPPA bounds the relative error of a mass term n_u f_u as stored.
 const KAPPA: f64 = 5.0 * U;
 const SHORT_SELECTION: Id = 32;
+/// Prefetch stages, in visits ahead of the next one (see `prefetch_ahead`).
+const PREFETCH_FAR: usize = 8;
+const PREFETCH_MID: usize = 4;
+const PREFETCH_NEAR: usize = 2;
+const PREFETCH_ONE: usize = 1;
+const PREFETCH_DEGREE: usize = 16;
 
 /// A cover as CSR: row v is `labels[offset[v]..offset[v + 1]]`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -176,6 +183,8 @@ struct State<'t> {
     own_support: Vec<f64>,
     slack: f64,
     trace: Option<&'t mut Trace>,
+    /// Whether the visits prefetch ahead (a working set past the caches).
+    prefetch: bool,
 }
 
 fn row_capacity(cap: Id, size: Id) -> Id {
@@ -397,21 +406,22 @@ impl<'t> State<'t> {
         Ok(())
     }
 
-    /// The `limit` best positive gains, best first; returns how many.
+    /// The `limit` best positive gains, best first, in the first entries of
+    /// `top`; returns how many.
     fn top_positive(&mut self, count: usize, limit: Id) -> Result<usize> {
         if limit <= 0 {
             return Ok(0);
         }
-        self.top.clear();
         let (values, labels) = (&self.value[..count], &self.candidate[..count]);
         if limit <= SHORT_SELECTION {
             let limit = limit as usize;
-            if self.top.capacity() < limit {
-                self.top.try_reserve(limit).map_err(|_| Error::nomem())?;
+            if self.top.len() < limit {
+                self.top.try_reserve(limit - self.top.len()).map_err(|_| Error::nomem())?;
+                self.top.resize(limit, Scored { gain: 0.0, label: 0, index: 0 });
             }
-            // Insertion into a sorted buffer of at most `limit` entries.
-            let mut buffer = [Scored { gain: 0.0, label: 0, index: 0 }; SHORT_SELECTION as usize];
-            let top = &mut buffer[..limit];
+            // Insertion into a sorted buffer of at most `limit` entries (the
+            // first `kept` of self.top; what lies past them is stale).
+            let top = &mut self.top[..limit];
             let mut kept = 0usize;
             for (i, (&gain, &label)) in values.iter().zip(labels).enumerate() {
                 if !(gain > 0.0) {
@@ -432,8 +442,9 @@ impl<'t> State<'t> {
                 }
                 top[slot] = Scored { gain, label, index: i as Id };
             }
-            self.top.extend_from_slice(&top[..kept]);
+            Ok(kept)
         } else {
+            self.top.clear();
             if self.top.capacity() < count {
                 self.top.try_reserve(count).map_err(|_| Error::nomem())?;
             }
@@ -453,8 +464,8 @@ impl<'t> State<'t> {
                 }
             });
             self.top.truncate(limit as usize);
+            Ok(self.top.len())
         }
-        Ok(self.top.len())
     }
 
     /// The rigorous bounds of a visit's comparison: `move` for the
@@ -541,6 +552,7 @@ impl<'t> State<'t> {
         let adj = &graph.adj[begin..end];
         let weight: &[f64] = if W { &graph.weight[begin..end] } else { &[] };
         let mut count = ku;
+        let (row, pool, inv_sqrt) = (&row[..], &pool[..], &inv_sqrt[..]);
         let (group, candidate, value) = (&mut group[..], &mut candidate[..], &mut value[..]);
         for (i, &u) in adj.iter().enumerate() {
             let ru = row[u as usize];
@@ -873,7 +885,7 @@ impl<'t> State<'t> {
             let c = self.candidate[single as usize];
             self.chosen.push(c);
         }
-        self.chosen.sort_unstable();
+        sort_ids(&mut self.chosen);
         if uses_fresh {
             let fresh = self.fresh_label()?;
             self.chosen.push(fresh); // the only label: still sorted
@@ -925,9 +937,53 @@ impl<'t> State<'t> {
         }
     }
 
+    /// Prefetches, in stages, what the visits of the next queued vertices
+    /// will read: adjacency offsets and rows 8 visits ahead, adjacency blocks
+    /// and own labels 4 ahead, the neighbours' rows 2 ahead, their labels 1
+    /// ahead and those labels' records for the next visit. Only cache hints:
+    /// no value depends on them.
+    #[inline(always)]
+    fn prefetch_ahead(&self) {
+        let (g, q) = (&self.graph, &self.queue);
+        let neighbours = |u: Id| {
+            let (b, e) = (g.start[u as usize] as usize, g.start[u as usize + 1] as usize);
+            &g.adj[b..e.min(b + PREFETCH_DEGREE)]
+        };
+        if let Some(u) = q.peek(PREFETCH_FAR) {
+            prefetch(&g.start, u as usize);
+            prefetch(&self.row, u as usize);
+        }
+        if let Some(u) = q.peek(PREFETCH_MID) {
+            prefetch(&g.adj, g.start[u as usize] as usize);
+            prefetch(&self.pool, self.row[u as usize].start);
+        }
+        if let Some(u) = q.peek(PREFETCH_NEAR) {
+            for &w in neighbours(u) {
+                prefetch(&self.row, w as usize);
+            }
+        }
+        if let Some(u) = q.peek(PREFETCH_ONE) {
+            for &w in neighbours(u) {
+                prefetch(&self.pool, self.row[w as usize].start);
+            }
+        }
+        if let Some(u) = q.peek(0) {
+            for &w in neighbours(u) {
+                let r = self.row[w as usize];
+                for &c in &self.pool[r.start..r.start + r.size as usize] {
+                    prefetch(&self.group, c as usize);
+                }
+            }
+        }
+    }
+
     fn run(&mut self, cb: &mut Callbacks) -> Result<()> {
         let weighted = self.graph.weighted;
+        let ahead = self.prefetch;
         while let Some(v) = self.queue.next(cb)? {
+            if ahead {
+                self.prefetch_ahead();
+            }
             if weighted {
                 self.visit::<true>(v, false)?;
             } else {
@@ -954,10 +1010,10 @@ impl<'t> State<'t> {
                 push(&mut open, (-s.bound, v as Id))?;
             }
         }
-        // Descending; ties (equal coarse bounds) in vertex order. Which of
-        // two tied vertices goes first cannot change the maximum: a full
-        // bound never exceeds its coarse one.
-        open.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        // Descending; ties (equal coarse bounds) in vertex order, a total
+        // order (vertices are distinct). Which of two tied vertices goes first
+        // cannot change the maximum: a full bound never exceeds its coarse one.
+        open.sort_unstable_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         for &(gain, v) in &open {
             if !(gain > slack) {
                 break;
@@ -991,10 +1047,28 @@ impl<'t> State<'t> {
                 }
                 *o = relabel[c];
             }
-            out.sort_unstable();
+            sort_ids(out);
             offset[v + 1] = offset[v] + r.size as i64;
         }
         Ok((Cover { offset, labels }, next))
+    }
+}
+
+/// Sorts labels ascending: insertion for the short rows of a cover (as
+/// hig_sort_ids), the library's sort past them.
+fn sort_ids<T: Ord + Copy>(a: &mut [T]) {
+    if a.len() > 16 {
+        a.sort_unstable();
+        return;
+    }
+    for i in 1..a.len() {
+        let x = a[i];
+        let mut j = i;
+        while j > 0 && a[j - 1] > x {
+            a[j] = a[j - 1];
+            j -= 1;
+        }
+        a[j] = x;
     }
 }
 
@@ -1044,7 +1118,7 @@ fn quality(graph: &Graph, gamma: f64, cover: &Cover, count: i64, inv_sqrt: &[f64
 /// The start rows (the caller's or the default): labels compacted, rows
 /// sorted and duplicate-free, count limits checked. Returns the rows (one
 /// Vec per vertex, internal ids) and the number of labels.
-fn start_rows(options: &Options, n: Id, cap: Id, start: Option<&Cover>) -> Result<(Vec<Vec<Id>>, i64)> {
+fn start_rows(options: &Options, n: Id, cap: Id, start: Option<&Cover>) -> Result<(Vec<usize>, Vec<Id>, i64)> {
     let nu = n as usize;
     let mut offset = filled(nu + 1, 0i64)?;
     let labels: Vec<i64>;
@@ -1111,24 +1185,35 @@ fn start_rows(options: &Options, n: Id, cap: Id, start: Option<&Cover>) -> Resul
     }
     let mut ids = filled(labels.len(), 0 as Id)?;
     let distinct = compact_labels(&labels, &mut ids)?;
-    let mut rows = Vec::new();
-    rows.try_reserve_exact(nu).map_err(|_| Error::nomem())?;
+    // Each row sorted and deduplicated in place, packed to the front of ids
+    // (a row is written at or before where it was read).
+    let mut bounds = filled(nu + 1, 0usize)?;
+    let mut kept = 0usize;
     for v in 0..nu {
-        let mut row = ids[offset[v] as usize..offset[v + 1] as usize].to_vec();
-        row.sort_unstable();
-        row.dedup();
-        if row.len() > cap as usize {
+        let (b, e) = (offset[v] as usize, offset[v + 1] as usize);
+        sort_ids(&mut ids[b..e]);
+        let mut size = 0usize;
+        for i in b..e {
+            let x = ids[i];
+            if size == 0 || ids[kept + size - 1] != x {
+                ids[kept + size] = x;
+                size += 1;
+            }
+        }
+        if size > cap as usize {
             return Err(Error::inval("Initial overlapping membership vector exceeds max_memberships."));
         }
-        rows.push(row);
+        kept += size;
+        bounds[v + 1] = kept;
     }
+    ids.truncate(kept);
     if limit_set(options.max_total_communities) && distinct > options.max_total_communities {
         return Err(Error::inval("Initial cover exceeds max_total_communities."));
     }
     if limit_set(options.n_communities) && distinct != options.n_communities {
         return Err(Error::inval("Initial cover does not contain exactly n_communities labels."));
     }
-    Ok((rows, distinct))
+    Ok((bounds, ids, distinct))
 }
 
 /// Local moving of a cover (`hig_cover` / `hig_cover_traced`). `start`: a
@@ -1158,14 +1243,14 @@ pub fn cover(
             start.validate()?;
         }
     }
-    let (rows, distinct) = start_rows(&options, n, cap, start)?;
+    let (bounds, rows, distinct) = start_rows(&options, n, cap, start)?;
     let adjacency = Adjacency::build(graph)?;
 
     // Rows into the pool, each at the front of its own capacity.
     let mut row = filled(nu, RowRef::default())?;
     let mut pool_live = 0usize;
     for v in 0..nu {
-        let size = rows[v].len() as Id;
+        let size = (bounds[v + 1] - bounds[v]) as Id;
         let capacity = row_capacity(cap, size);
         row[v] = RowRef { start: pool_live, size, capacity };
         pool_live += capacity as usize;
@@ -1174,9 +1259,11 @@ pub fn cover(
     pool.try_reserve_exact(pool_live + pool_live / 2 + 1024).map_err(|_| Error::nomem())?;
     pool.resize(pool_live, 0);
     for v in 0..nu {
-        pool[row[v].start..row[v].start + rows[v].len()].copy_from_slice(&rows[v]);
+        let labels = &rows[bounds[v]..bounds[v + 1]];
+        pool[row[v].start..row[v].start + labels.len()].copy_from_slice(labels);
     }
     drop(rows);
+    drop(bounds);
 
     let mut inv_sqrt = filled(cap as usize + 1, 0.0f64)?;
     for k in 1..=cap as usize {
@@ -1229,6 +1316,7 @@ pub fn cover(
         own_support: filled(cap as usize + 1, 0.0)?,
         slack: 0.0,
         trace: None,
+        prefetch: false,
     };
     s.chosen.try_reserve_exact(cap as usize + 1).map_err(|_| Error::nomem())?;
     s.reserve_labels(distinct as usize + nu + 16)?;
@@ -1243,6 +1331,12 @@ pub fn cover(
     s.rebuild_masses(); // the masses, theta and the heap
     s.reserve_candidates(256)?;
     s.queue = Queue::new(n, cb)?;
+    // row, start, the queue and records per vertex, the pool's labels, group,
+    // tail and heap entries per label, the adjacency (and weights).
+    let labels = s.group.len();
+    let working_set = nu * 72 + s.pool.len() * 4 + labels * 48
+        + s.graph.adj.len() * if s.graph.weighted { 12 } else { 4 };
+    s.prefetch = wanted(working_set);
     if let Some(t) = trace.as_deref_mut() {
         for v in 0..nu {
             let r = s.row[v];
