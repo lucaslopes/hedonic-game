@@ -318,11 +318,15 @@ impl<'t> State<'t> {
         if self.rebuild {
             self.rebuild_masses();
         }
-        for i in begin..end {
-            let u = self.graph.adj[i];
-            if self.membership[u as usize] != best {
+        debug_assert!(begin <= end && end <= self.graph.adj.len());
+        // SAFETY: begin..end is v's block of the well-formed adjacency, and
+        // a neighbour is a vertex id, below n = membership.len().
+        let adj = unsafe { self.graph.adj.get_unchecked(begin..end) };
+        for &u in adj {
+            debug_assert!((u as usize) < self.membership.len());
+            if unsafe { *self.membership.get_unchecked(u as usize) } != best {
                 // native/README.md, "Requeueing"
-                self.queue.push(u);
+                unsafe { self.queue.push_unchecked(u) };
             }
         }
         best
@@ -422,11 +426,17 @@ impl<'t> State<'t> {
     #[inline(always)]
     fn visit<const W: bool>(&mut self, v: Id) -> Result<()> {
         let vu = v as usize;
-        let c0 = self.membership[vu];
-        let alone = self.group[c0 as usize].members == 1;
-        let begin = self.graph.start[vu] as usize;
-        let end = self.graph.start[vu + 1] as usize;
-        let nv = self.graph.node_weight(v);
+        debug_assert!(vu < self.membership.len());
+        // SAFETY: the queue holds vertex ids below n = membership.len(); a
+        // community id is below n = group.len(); the adjacency is well formed
+        // (as Adjacency::build makes it), so begin <= end <= adj.len().
+        let (c0, alone, begin, end, nv) = unsafe {
+            let c0 = *self.membership.get_unchecked(vu);
+            debug_assert!((c0 as usize) < self.group.len());
+            let alone = self.group.get_unchecked(c0 as usize).members == 1;
+            let (begin, end) = self.graph.range_unchecked(v);
+            (c0, alone, begin, end, self.graph.node_weight_unchecked(v))
+        };
         let gn = self.gamma * nv;
         let mut count = 0usize;
         let mut best = c0;
@@ -443,8 +453,11 @@ impl<'t> State<'t> {
             return Ok(());
         }
         {
-            let adj = &self.graph.adj[begin..end];
-            let weights: &[f64] = if W { &self.graph.weight[begin..end] } else { &[] };
+            debug_assert!(begin <= end && end <= self.graph.adj.len());
+            debug_assert!(!W || self.graph.weight.len() == self.graph.adj.len());
+            // SAFETY: begin <= end <= adj.len() = weight.len() when weighted.
+            let adj = unsafe { self.graph.adj.get_unchecked(begin..end) };
+            let weights: &[f64] = if W { unsafe { self.graph.weight.get_unchecked(begin..end) } } else { &[] };
             let membership = &self.membership[..];
             let group = &mut self.group[..];
             let candidate = &mut self.candidate[..];
@@ -495,33 +508,38 @@ impl<'t> State<'t> {
                 count += 1;
             }
         }
-        if W && self.group[c0 as usize].slot >= 0 {
-            own_weight = self.candidate_weight[self.group[c0 as usize].slot as usize];
+        debug_assert!((c0 as usize) < self.group.len() && self.group.len() == self.tail.len());
+        debug_assert!(count <= self.candidate.len() && self.candidate.len() == self.candidate_weight.len());
+        // SAFETY: c0 is a community id, below n = group.len() = tail.len();
+        // a slot is a position written by the scan, below count; count is at
+        // most the degree + 1 <= candidate.len() = candidate_weight.len().
+        let (g0, lo0) = unsafe { (*self.group.get_unchecked(c0 as usize), self.tail.get_unchecked(c0 as usize).lo) };
+        if W && g0.slot >= 0 {
+            own_weight = unsafe { *self.candidate_weight.get_unchecked(g0.slot as usize) };
         }
-        let stay = fma(
-            -gn,
-            if alone {
-                0.0
-            } else {
-                (self.group[c0 as usize].mass - nv) + self.tail[c0 as usize].lo
-            },
-            own_weight,
-        );
+        let stay = fma(-gn, if alone { 0.0 } else { (g0.mass - nv) + lo0 }, own_weight);
         let mut best_gain = stay;
         let group = &self.group[..];
-        for (k, (&c, &weight)) in self.candidate[..count].iter().zip(&self.candidate_weight[..count]).enumerate() {
+        let (candidate, candidate_weight) =
+            unsafe { (self.candidate.get_unchecked(..count), self.candidate_weight.get_unchecked(..count)) };
+        // Selects, not branches: the order of encounter decides ties, and
+        // the loop stays short (most visits score a few candidates).
+        let mut k = 0;
+        while k < count {
+            // SAFETY: k < count, the length of both slices.
+            let (c, weight) = unsafe { (*candidate.get_unchecked(k), *candidate_weight.get_unchecked(k)) };
             if c != c0 {
                 debug_assert!((c as usize) < group.len());
                 // SAFETY: a candidate is a community id, below n = group.len().
                 let mass = unsafe { group.get_unchecked(c as usize).mass };
                 let gain = fma(-gn, mass, weight);
                 other_gain = if gain > other_gain { gain } else { other_gain };
-                if gain > best_gain {
-                    best = c;
-                    alt = k;
-                    best_gain = gain;
-                }
+                let better = gain > best_gain;
+                best = if better { c } else { best };
+                alt = if better { k } else { alt };
+                best_gain = if better { gain } else { best_gain };
             }
+            k += 1;
         }
         let isolation = self.isolation
             && !self.exact
@@ -596,7 +614,8 @@ impl<'t> State<'t> {
         {
             self.raise_slack(v, count, walked, walk, cutoff, other_gain > cutoff);
         }
-        self.queue.settle(v);
+        // SAFETY: v came from the queue, a vertex id below n.
+        unsafe { self.queue.settle_unchecked(v) };
         Ok(())
     }
 
@@ -692,13 +711,14 @@ fn start_labels(options: &Options, n: Id, start: Option<&[i64]>) -> Result<(Vec<
 fn quality(graph: &Graph, gamma: f64, membership: &[i64], count: i64) -> Result<f64> {
     let mut mass = filled(count as usize, 0.0f64)?;
     let (mut q, mut total) = (0.0f64, 0.0f64);
-    for e in 0..graph.edge_count {
-        let w = graph.edge_weight(e);
+    let weights = graph.edge_weights;
+    graph.each_edge(|e, a, b| {
+        let w = weights.map_or(1.0, |w| w[e]);
         total += w;
-        if membership[graph.end(2 * e) as usize] == membership[graph.end(2 * e + 1) as usize] {
+        if membership[a as usize] == membership[b as usize] {
             q += 2.0 * w;
         }
-    }
+    });
     for v in 0..graph.vertex_count {
         mass[membership[v as usize] as usize] += graph.node_weight(v);
     }
@@ -728,6 +748,10 @@ pub fn partition(
     let exact = limit_set(options.n_communities);
     let max_total = options.max_total_communities;
     let adjacency = Adjacency::build(graph)?;
+    // The visits read it unchecked: build makes it so (n + 1 offsets that
+    // are prefix sums of the degrees, every neighbour an edge end it checked
+    // below n), and the state, private to this module, never changes it.
+    debug_assert!(adjacency.well_formed());
     // N is a sum of n non-negative terms: N(1 + gamma_n) bounds the exact one,
     // and every community's mass stays below twice that.
     let total = adjacency.total_node_weight;

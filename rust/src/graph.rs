@@ -1,7 +1,7 @@
 //! Inputs (native/core/shared/inputs.c): the graph and the options, their
 //! checks, the adjacency and the labels of a start.
 
-use crate::error::{filled, Error, Result};
+use crate::error::{filled, with_capacity, Error, Result};
 
 /// Vertex, community and label ids (32 bits, as the C core's `hig_id`).
 pub type Id = i32;
@@ -87,6 +87,34 @@ impl<'a> Graph<'a> {
         self.node_weights.map_or(1.0, |w| w[v as usize])
     }
 
+    /// Whether every edge end lies in [0, n): one unsigned comparison per
+    /// entry, without branches (it vectorises).
+    pub fn ends_in_range(&self) -> bool {
+        let n = self.vertex_count.max(0) as u64;
+        let outside = |ends: &[i64]| ends.iter().fold(0u8, |acc, &x| acc | ((x as u64 >= n) as u8)) != 0;
+        match self.edges {
+            Edges::Flat(flat) => !outside(flat),
+            Edges::Split(first, second) => !outside(first) && !outside(second),
+        }
+    }
+
+    /// Calls `f(e, a, b)` for every edge in order, the layout matched once.
+    #[inline(always)]
+    pub fn each_edge(&self, mut f: impl FnMut(usize, i64, i64)) {
+        match self.edges {
+            Edges::Flat(flat) => {
+                for (e, p) in flat.chunks_exact(2).enumerate() {
+                    f(e, p[0], p[1]);
+                }
+            }
+            Edges::Split(first, second) => {
+                for (e, (&a, &b)) in first.iter().zip(second).enumerate() {
+                    f(e, a, b);
+                }
+            }
+        }
+    }
+
     /// The sum of the edge weights, in edge order (W).
     pub fn total_edge_weight(&self) -> f64 {
         let mut total = 0.0;
@@ -150,14 +178,19 @@ pub fn check_input(graph: &Graph, options: &mut Options, cover: bool) -> Result<
     if n > (ID_MAX - 1) as i64 {
         return Err(Error::overflow(format!("The core handles at most {} vertices.", ID_MAX - 1)));
     }
-    for h in 0..2 * m {
-        let end = graph.end(h);
-        if end < 0 || end >= n {
-            return Err(Error::inval(format!(
-                "Edge {} has an end outside [0, {}).",
-                h / 2,
-                n
-            )));
+    // Every end in [0, n): a branch-free pass over the list (one unsigned
+    // comparison per entry, which vectorises), then the first offender only
+    // when there is one.
+    if !graph.ends_in_range() {
+        for h in 0..2 * m {
+            let end = graph.end(h);
+            if end < 0 || end >= n {
+                return Err(Error::inval(format!(
+                    "Edge {} has an end outside [0, {}).",
+                    h / 2,
+                    n
+                )));
+            }
         }
     }
     if !options.resolution.is_finite() {
@@ -183,10 +216,12 @@ pub fn check_input(graph: &Graph, options: &mut Options, cover: bool) -> Result<
                 "{game} requires a nonempty graph with at least one edge."
             )));
         }
-        for e in 0..m {
-            if graph.end(2 * e) == graph.end(2 * e + 1) {
-                return Err(Error::inval(format!("{game} requires a loopless graph.")));
-            }
+        let looped = match graph.edges {
+            Edges::Flat(flat) => flat.chunks_exact(2).fold(0u8, |acc, p| acc | (p[0] == p[1]) as u8),
+            Edges::Split(first, second) => first.iter().zip(second).fold(0u8, |acc, (a, b)| acc | (a == b) as u8),
+        };
+        if looped != 0 {
+            return Err(Error::inval(format!("{game} requires a loopless graph.")));
         }
         if options.max_memberships > n {
             return Err(Error::inval(format!(
@@ -208,17 +243,26 @@ pub fn check_input(graph: &Graph, options: &mut Options, cover: bool) -> Result<
             ));
         }
     }
-    for e in 0..m {
-        let w = graph.edge_weight(e);
-        if !w.is_finite() || (cover && w < 0.0) {
-            return Err(Error::inval(if cover {
-                format!("{game} edge weights must be finite and non-negative.")
-            } else {
-                format!("{game} edge weights must be finite.")
-            }));
+    match graph.edge_weights {
+        Some(weights) => {
+            for &w in weights {
+                if !w.is_finite() || (cover && w < 0.0) {
+                    return Err(Error::inval(if cover {
+                        format!("{game} edge weights must be finite and non-negative.")
+                    } else {
+                        format!("{game} edge weights must be finite.")
+                    }));
+                }
+                abs_edge_weight += w.abs();
+                total_edge_weight += w;
+            }
         }
-        abs_edge_weight += w.abs();
-        total_edge_weight += w;
+        None => {
+            for _ in 0..m {
+                abs_edge_weight += 1.0;
+                total_edge_weight += 1.0;
+            }
+        }
     }
     if !(abs_edge_weight <= ARITHMETIC_BOUND) {
         return Err(Error::overflow(format!("{game} total edge weight would overflow.")));
@@ -226,14 +270,22 @@ pub fn check_input(graph: &Graph, options: &mut Options, cover: bool) -> Result<
     if cover && !(total_edge_weight > 0.0) {
         return Err(Error::inval(format!("{game} requires positive finite total edge weight.")));
     }
-    for v in 0..n {
-        let w = graph.node_weight(v);
-        if !w.is_finite() || w < 0.0 {
-            return Err(Error::inval(format!(
-                "{game} node weights must be finite and non-negative."
-            )));
+    match graph.node_weights {
+        Some(weights) => {
+            for &w in weights {
+                if !w.is_finite() || w < 0.0 {
+                    return Err(Error::inval(format!(
+                        "{game} node weights must be finite and non-negative."
+                    )));
+                }
+                total_node_weight += w;
+            }
         }
-        total_node_weight += w;
+        None => {
+            for _ in 0..n {
+                total_node_weight += 1.0;
+            }
+        }
     }
     // |gamma| N^2 m bounds every crowding sum (m labels of mass <= N each).
     let scale = if total_node_weight > 1.0 { total_node_weight } else { 1.0 };
@@ -266,6 +318,11 @@ impl Adjacency {
     /// Counting sort of the half-edges by owner, edges placed from the last
     /// to the first so each block lists v's edges in increasing edge id.
     pub fn build(graph: &Graph) -> Result<Adjacency> {
+        // The callers' input checks did this already, but fill relies on it,
+        // so build checks it itself (one branch-free pass).
+        if graph.vertex_count < 0 || graph.vertex_count > ID_MAX as i64 || !graph.ends_in_range() {
+            return Err(Error::inval("An edge has an end outside the vertex range."));
+        }
         let n = graph.vertex_count as Id;
         let m = graph.edge_count;
         let unit = match graph.edge_weights {
@@ -304,11 +361,16 @@ impl Adjacency {
         let a = self;
         let m = m as usize;
         let mut start = filled(n as usize + 1, 0i64)?;
+        let counts = &mut start[..];
         for e in 0..m {
             let (x, y) = ends(e);
+            debug_assert!((0..n as i64).contains(&x) && (0..n as i64).contains(&y));
             if x != y {
-                start[x as usize + 1] += 1;
-                start[y as usize + 1] += 1;
+                // SAFETY: build checked both ends lie in [0, n); counts has n + 1.
+                unsafe {
+                    *counts.get_unchecked_mut(x as usize + 1) += 1;
+                    *counts.get_unchecked_mut(y as usize + 1) += 1;
+                }
             }
         }
         for v in 0..n as usize {
@@ -317,34 +379,97 @@ impl Adjacency {
             }
             start[v + 1] += start[v];
         }
-        let half_edges = start[n as usize];
-        a.adj = filled(half_edges as usize, 0 as Id)?;
-        if !unit {
-            a.weight = filled(half_edges as usize, 0.0)?;
-        }
-        // start[v + 1] is the end of v's block; filling backwards moves it to
-        // the block's beginning, so afterwards start[v + 1] = begin(v).
-        let weights = if unit { &[][..] } else { &weights.unwrap()[..m] };
-        for e in (0..m).rev() {
-            let (x, y) = ends(e);
-            if x != y {
-                start[x as usize + 1] -= 1;
-                start[y as usize + 1] -= 1;
-                let ia = start[x as usize + 1] as usize;
-                let ib = start[y as usize + 1] as usize;
-                a.adj[ia] = y as Id;
-                a.adj[ib] = x as Id;
-                if !unit {
-                    let w = weights[e];
-                    a.weight[ia] = w;
-                    a.weight[ib] = w;
+        let half_edges = start[n as usize] as usize;
+        // Written in place below, once each, without a zero fill first.
+        let mut adj: Vec<Id> = with_capacity(half_edges)?;
+        let mut weight: Vec<f64> = if unit { Vec::new() } else { with_capacity(half_edges)? };
+        {
+            let adj_slots = &mut adj.spare_capacity_mut()[..half_edges];
+            let weight_slots = if unit { &mut [][..] } else { &mut weight.spare_capacity_mut()[..half_edges] };
+            // start[v + 1] is the end of v's block; filling backwards moves it
+            // to the block's beginning, so afterwards start[v + 1] = begin(v).
+            let weights = if unit { &[][..] } else { &weights.unwrap()[..m] };
+            for e in (0..m).rev() {
+                let (x, y) = ends(e);
+                if x != y {
+                    // SAFETY: both ends lie in [0, n) (checked by build); a
+                    // block position lies below half_edges (see below); e < m
+                    // = weights.len().
+                    unsafe {
+                        let sx = start.get_unchecked_mut(x as usize + 1);
+                        *sx -= 1;
+                        let ia = *sx as usize;
+                        let sy = start.get_unchecked_mut(y as usize + 1);
+                        *sy -= 1;
+                        let ib = *sy as usize;
+                        adj_slots.get_unchecked_mut(ia).write(y as Id);
+                        adj_slots.get_unchecked_mut(ib).write(x as Id);
+                        if !unit {
+                            let w = *weights.get_unchecked(e);
+                            weight_slots.get_unchecked_mut(ia).write(w);
+                            weight_slots.get_unchecked_mut(ib).write(w);
+                        }
+                    }
                 }
             }
         }
+        // SAFETY: v's block holds exactly its count of non-loop half-edges,
+        // and the pass above takes each block's positions down from its end
+        // once per half-edge: every one of the half_edges positions (of adj,
+        // and of weight when weighted) was written exactly once.
+        unsafe {
+            adj.set_len(half_edges);
+            if !unit {
+                weight.set_len(half_edges);
+            }
+        }
+        a.adj = adj;
+        a.weight = weight;
+        let half_edges = half_edges as i64;
         start.copy_within(1..=n as usize, 0);
         start[n as usize] = half_edges;
         a.start = start;
         Ok(())
+    }
+
+    /// The shape the engines' unchecked reads rely on: n + 1 offsets that
+    /// rise from 0 to the half-edge count, each neighbour a vertex id, one
+    /// weight per half-edge (or none) and one per vertex (or none).
+    pub fn well_formed(&self) -> bool {
+        let (n, h) = (self.n.max(0) as usize, self.adj.len());
+        self.start.len() == n + 1
+            && self.start[0] == 0
+            && self.start[n] as usize == h
+            && self.start.windows(2).all(|w| w[0] <= w[1])
+            && self.adj.iter().all(|&u| (u as u64) < n as u64)
+            && self.weight.len() == if self.weighted { h } else { 0 }
+            && self.node_weight.len() == if self.node_weighted { n } else { 0 }
+    }
+
+    /// The node weight of a vertex below n of a well-formed adjacency.
+    ///
+    /// # Safety
+    /// v < n and `well_formed()`.
+    #[inline(always)]
+    pub unsafe fn node_weight_unchecked(&self, v: Id) -> f64 {
+        debug_assert!(!self.node_weighted || (v as usize) < self.node_weight.len());
+        if self.node_weighted {
+            unsafe { *self.node_weight.get_unchecked(v as usize) }
+        } else {
+            1.0
+        }
+    }
+
+    /// The block of a vertex below n of a well-formed adjacency.
+    ///
+    /// # Safety
+    /// v < n and `well_formed()`.
+    #[inline(always)]
+    pub unsafe fn range_unchecked(&self, v: Id) -> (usize, usize) {
+        debug_assert!((v as usize) + 1 < self.start.len());
+        unsafe {
+            (*self.start.get_unchecked(v as usize) as usize, *self.start.get_unchecked(v as usize + 1) as usize)
+        }
     }
 
     #[inline(always)]
