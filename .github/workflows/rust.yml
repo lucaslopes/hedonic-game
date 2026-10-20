@@ -1,0 +1,73 @@
+name: Rust core
+
+# The Rust port of the core (rust/): its own tests, and the extension against
+# the C core, bit for bit, on every platform the wheels cover. Nothing is
+# published.
+on:
+  push:
+    branches: ['rust/**']
+  pull_request:
+    paths: ['rust/**', 'native/**', '.github/workflows/rust.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust_core:
+    name: Rust core (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+          # Also x86_64, cross-compiled and run under Rosetta 2.
+          - name: macos
+            os: macos-latest
+          - name: windows-amd64
+            os: windows-2022
+          - name: windows-arm64
+            os: windows-11-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      # The C core's bit pins, the soft fma against the instruction, and the
+      # same with the soft fma everywhere; the debug build checks every
+      # debug assertion the unchecked paths state.
+      - name: Cargo tests (release, soft fma, debug)
+        working-directory: rust
+        run: |
+          cargo test --release --locked
+          cargo test --release --locked --features force-soft-fma
+          cargo test --locked
+      - name: Cargo tests on x86_64 under Rosetta 2
+        if: runner.os == 'macOS'
+        working-directory: rust
+        run: |
+          rustup target add x86_64-apple-darwin
+          cargo test --release --locked --target x86_64-apple-darwin
+          cargo test --release --locked --target x86_64-apple-darwin --features force-soft-fma
+      # Both extensions in one environment: hedonic with its C core, and the
+      # Rust core as hedonic_core_rs.
+      - name: Build both cores
+        run: |
+          python -m pip install -U pip
+          python -m pip install . ./rust pytest
+      - name: Rust against C, bit for bit
+        run: HIG_DIFF_CASES=400 python -m pytest -x -q rust/tests/test_differential.py
+      - name: The pinned Python tests on the Rust core
+        run: HEDONIC_CORE=rust python tools/native_tests.py
