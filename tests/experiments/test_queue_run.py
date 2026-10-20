@@ -21,7 +21,7 @@ def _register(root: Path, name: str, status: str) -> None:
     """A registered run that already has the given status (stands in for a real worker)."""
     out = root / "runs" / name
     out.mkdir(parents=True, exist_ok=True)
-    entry = {"name": name, "kind": "disjoint", "output_dir": str(out), "created": time.time(), "session": "",
+    entry = {"name": name, "kind": "spectrum", "output_dir": str(out), "created": time.time(), "session": "",
              "backend": "process", "log": str(out / "worker.log"), "argv": []}
     rm.write_json(rm.entry_path(name), entry)
     rm.write_json(rm.progress_path(entry), {"status": status, "plan": [], "setup": []})
@@ -42,26 +42,33 @@ class FakeLauncher:
 def _queue(root: Path, names: list[str]) -> dict:
     out = root / "queues" / "q"
     out.mkdir(parents=True, exist_ok=True)
-    return {"name": "q", "kind": "queue", "items": [{"name": n, "run": ["x"]} for n in names],
+    return {"name": "q", "kind": "queue", "items": [{"name": n, "run": ["spectrum-full"]} for n in names],
             "file": "", "output_dir": str(out), "created": time.time(), "session": "", "backend": "process",
             "log": str(out / "worker.log")}
 
 
-def _register_live(root: Path, name: str, done: int, graphs: int, stage: str = "sweep", started: float | None = None) -> None:
-    """A registered disjoint run in progress, with the counts its worker wrote (the test fakes the worker alive)."""
+def _register_benchmark(root: Path, name: str, plan: list[dict]) -> None:
+    """A registered benchmark run in progress, with the plan its worker wrote (the test fakes the worker alive)."""
     out = root / "runs" / name
     out.mkdir(parents=True, exist_ok=True)
-    started = time.time() - 300 if started is None else started
-    entry = {"name": name, "kind": "disjoint", "output_dir": str(out), "created": started, "session": "",
+    entry = {"name": name, "config": {}, "output_dir": str(out), "created": time.time() - 300, "session": "",
              "backend": "process", "log": str(out / "worker.log")}
     rm.write_json(rm.entry_path(name), entry)
-    rm.write_json(rm.progress_path(entry), {"status": "running", "started": started, "updated": started + 300,
-                                            "stage": stage, "graphs": graphs, "done": done})
+    rm.write_json(rm.progress_path(entry), {"status": "running", "started": time.time() - 300,
+                                            "updated": time.time(), "setup": [], "plan": plan})
 
 
-def _disjoint_item(root: Path, name: str) -> str:
-    return (f'[[items]]\nname = "{name}"\nrun = ["disjoint", "--preset", "smoke", "--name", "{name}", '
-            f'"--output-dir", "{root / "stores" / name}", "--yes"]\n')
+def _plan_in_progress() -> list[dict]:
+    """Ten DBLP units: four finished, the fifth (seed 3, CoDeSEG) running for 30 s, five still pending."""
+    finished = [("Hedonic", "hedonic", 0), ("CoDeSEG", "codeseg", 0), ("CoDeSEG", "codeseg", 1),
+                ("CoDeSEG", "codeseg", 2)]
+    plan = [{"network": "dblp", "seed": seed, "method": method, "label": label, "expected": 60.0,
+             "status": "completed", "seconds": 50.0} for label, method, seed in finished]
+    plan.append({"network": "dblp", "seed": 3, "method": "codeseg", "label": "CoDeSEG", "expected": 60.0,
+                 "status": "running", "started": time.time() - 30})
+    plan += [{"network": "dblp", "seed": seed, "method": "codeseg", "label": "CoDeSEG", "expected": 60.0,
+              "status": "pending"} for seed in range(4, 9)]
+    return plan
 
 
 class TestRunQueue(unittest.TestCase):
@@ -120,42 +127,28 @@ class TestRunQueue(unittest.TestCase):
 
     def test_queue_file_is_checked_before_anything_starts(self):
         path = self.root / "q.toml"
-        path.write_text('name = "q"\n' + _disjoint_item(self.root, "a") + _disjoint_item(self.root, "a"))
+        path.write_text('name = "q"\n[[items]]\nname = "a"\nrun = ["spectrum-full"]\n'
+                        '[[items]]\nname = "a"\nrun = ["spectrum-full"]\n')
         with self.assertRaises(SystemExit):  # the same run name twice
             runqueue.load_queue(str(path))
         path.write_text('name = "q"\n[[items]]\nname = "a"\n')  # no run
         with self.assertRaises(SystemExit):
             runqueue.load_queue(str(path))
-        path.write_text('name = "q"\n[[items]]\nname = "a"\nrun = ["spectrum-full"]\n')  # an overlap run: hedonic 2
-        with self.assertRaises(SystemExit):
-            runqueue.load_queue(str(path))
-        path.write_text('name = "q"\n' + _disjoint_item(self.root, "a"))
-        (item,) = runqueue.load_queue(str(path))["items"]
-        self.assertEqual((item["name"], item["run"][:4]), ("a", ["disjoint", "--preset", "smoke", "--name"]))
+        path.write_text('name = "q"\n[[items]]\nname = "a"\nrun = ["spectrum-full"]\n')
+        self.assertEqual(runqueue.load_queue(str(path))["items"], [{"name": "a", "run": ["spectrum-full"]}])
 
     def test_dry_run_through_the_cli_lists_the_plan_without_starting_anything(self):
         path = self.root / "q.toml"
-        path.write_text('name = "q"\n' + _disjoint_item(self.root, "a") + _disjoint_item(self.root, "b"))
+        path.write_text('name = "q"\n[[items]]\nname = "a"\nrun = ["spectrum-full"]\n'
+                        '[[items]]\nname = "b"\nrun = ["spectrum-full"]\n')
+        _register(self.root, "a", "completed")
         out = io.StringIO()
         with redirect_stdout(out):
-            code = CLI.hedonic_main(["run", "queue", str(path), "--dry-run", "--root", str(self.root / "root")])
+            code = CLI.hedonic_main(["run", "queue", str(path), "--dry-run"])
         self.assertEqual(code, 0)
-        text = out.getvalue()
-        for part in ("queue q · 2 runs", "1. a", "2. b", "→ start", "overview", "total: 0 of 2 runs complete"):
-            self.assertIn(part, text)
+        self.assertIn("skip: already completed", out.getvalue())
+        self.assertIn("start", out.getvalue())
         self.assertFalse(rm.entry_path("q").is_file())  # nothing was registered
-        self.assertFalse((self.root / "stores").exists())  # and no store was written
-        self.assertFalse((self.root / "root").exists())
-
-    def test_report_prints_the_sections_without_starting_anything(self):
-        path = self.root / "q.toml"
-        path.write_text('name = "q"\n' + _disjoint_item(self.root, "a"))
-        out = io.StringIO()
-        with redirect_stdout(out):
-            code = CLI.hedonic_main(["run", "queue", str(path), "--report", "--root", str(self.root / "root")])
-        self.assertEqual(code, 0)
-        self.assertIn("0/16 graphs", out.getvalue())  # the smoke grid, counted from its (empty) store
-        self.assertFalse(rm.entry_path("q").is_file())
 
     def test_snapshot_lists_every_item_with_its_status(self):
         _register(self.root, "alpha-run", "completed")
@@ -165,27 +158,53 @@ class TestRunQueue(unittest.TestCase):
         self.assertIn("beta-run", text)
         self.assertIn("pending", text)
 
-    def test_the_running_item_shows_its_own_progress_inside_its_section(self):
+    def test_the_running_item_shows_its_own_progress_under_its_line(self):
         _register(self.root, "done-run", "completed")
-        _register_live(self.root, "live-run", done=4, graphs=10, stage="sweep")
+        _register_benchmark(self.root, "live-run", _plan_in_progress())
         with patch.object(rm, "worker_alive", return_value=True):
             text = runqueue.snapshot(_queue(self.root, ["done-run", "live-run"]), {"status": "running"})
         lines = text.splitlines()
-        self.assertTrue(text.startswith("queue q · 2 runs"))
-        for part in ("overview", "1. done-run", "2. live-run", "total: ", "4/10 · 40%", "now      sweep"):
-            self.assertIn(part, text)
-        self.assertNotIn("running now", text)
-        self.assertLess(text.index("2. live-run"), text.index("4/10 · 40%"))  # after its heading
+        self.assertIn("live-run", text)
+        self.assertIn("4/10", text)  # units done out of the total
+        self.assertIn("40%", text)
+        self.assertIn("ETA ~", text)
+        self.assertIn("[5/10] DBLP · seed 3 · CoDeSEG", text)  # the unit in progress
         self.assertNotIn("%", next(line for line in lines if "done-run" in line))  # a finished item stays one line
         for line in lines:
             self.assertLessEqual(tui.visible_len(line), 80)
 
+    def test_the_live_view_is_the_whole_report_with_no_separate_running_block(self):
+        _register(self.root, "done-run", "completed")
+        _register_benchmark(self.root, "live-run", _plan_in_progress())
+        with patch.object(rm, "worker_alive", return_value=True):
+            text = runqueue.snapshot(_queue(self.root, ["done-run", "live-run"]), {"status": "running"})
+        self.assertTrue(text.startswith("queue q · 2 runs"))
+        for part in ("overview", "all pairs", "1. done-run", "2. live-run", "total: "):
+            self.assertIn(part, text)
+        self.assertNotIn("running now", text)
+        # the running run's progress sits inside its own section, after its heading
+        self.assertLess(text.index("2. live-run"), text.index("[5/10] DBLP"))
+
     def test_a_running_item_without_units_yet_says_starting(self):
-        _register_live(self.root, "fresh-run", done=0, graphs=0)
+        _register_benchmark(self.root, "fresh-run", [])
         with patch.object(rm, "worker_alive", return_value=True):
             text = runqueue.snapshot(_queue(self.root, ["fresh-run"]), {"status": "running"})
         self.assertIn("starting", text)
         self.assertNotIn("ETA", text)
+
+    def test_the_detail_lines_stay_within_eighty_columns(self):
+        label = "CliquePerc (clique percolation)"  # the longest method label, with a 151-unit plan
+        plan = [{"network": "dblp", "seed": 0, "method": "clique_percolation", "label": label, "expected": 3600.0,
+                 "status": "running", "started": time.time() - 3700}]
+        plan += [{"network": "dblp", "seed": s, "method": "clique_percolation", "label": label, "expected": 3600.0,
+                  "status": "pending"} for s in range(1, 151)]
+        _register_benchmark(self.root, "long-run", plan)
+        with patch.object(rm, "worker_alive", return_value=True):
+            text = runqueue.snapshot(_queue(self.root, ["long-run"]), {"status": "running"})
+        self.assertIn("0/151", text)
+        self.assertIn("0%", text)
+        for line in text.splitlines():
+            self.assertLessEqual(tui.visible_len(line), 80, line)
 
 
 NOW = 1_800_000_000.0  # the clock of the progress tests; a live run in them started 300 s before it
@@ -204,8 +223,33 @@ class _FrozenClock:
         return getattr(time, name)
 
 
+def _unit(method: str, label: str, seed: int, status: str, *, expected: float, seconds: float | None = None,
+          detection: float | None = None, started: float | None = None) -> dict:
+    """One plan unit of a DBLP run, as the worker writes it."""
+    unit = {"network": "dblp", "seed": seed, "method": method, "label": label, "expected": expected,
+            "status": status}
+    for key, value in (("seconds", seconds), ("detection_seconds", detection), ("started", started)):
+        if value is not None:
+            unit[key] = value
+    return unit
+
+
+def _twenty_units(running_elapsed: float = 30.0, codeseg_finished: bool = False) -> list[dict]:
+    """Twenty DBLP units in two methods. Hedonic (planning constant 100 s): seeds 0-2 finished (wall 40, 50 and 60 s,
+    detection 30, 40 and 50 s), seed 3 running, seeds 4-9 pending. CoDeSEG (planning constant 60 s): nothing finished
+    yet, unless ``codeseg_finished`` gives seed 0 a measured unit (wall 90 s, detection 80 s)."""
+    hoc = [_unit("hedonic", "Hedonic", seed, "completed", expected=100.0, seconds=wall, detection=detection)
+           for seed, wall, detection in ((0, 40.0, 30.0), (1, 50.0, 40.0), (2, 60.0, 50.0))]
+    hoc.append(_unit("hedonic", "Hedonic", 3, "running", expected=100.0, started=NOW - running_elapsed))
+    hoc += [_unit("hedonic", "Hedonic", seed, "pending", expected=100.0) for seed in range(4, 10)]
+    codeseg = [_unit("codeseg", "CoDeSEG", seed, "pending", expected=60.0) for seed in range(10)]
+    if codeseg_finished:
+        codeseg[0] = _unit("codeseg", "CoDeSEG", 0, "completed", expected=60.0, seconds=90.0, detection=80.0)
+    return hoc + codeseg
+
+
 class TestProgressDisplay(unittest.TestCase):
-    """What `hedonic run status` and `attach` show for a queue: the bar, the time, the stage, the log and the records."""
+    """What `hedonic run status` and `attach` show for a queue: the bar, the plan grid, measured times and the ETA."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -222,10 +266,16 @@ class TestProgressDisplay(unittest.TestCase):
         self._env.stop()
         self._tmp.cleanup()
 
-    def _live_run(self, name: str, done: int, graphs: int, log: str = "") -> None:
-        """A disjoint run in progress: its registry entry, its progress counts, and its worker log."""
-        _register_live(self.root, name, done, graphs, started=NOW - 300)
-        (self.root / "runs" / name / "worker.log").write_text(log)
+    def _live_run(self, name: str, plan: list[dict], log: str = "") -> None:
+        """A benchmark run in progress: its registry entry, its progress with the plan, and its worker log."""
+        out = self.root / "runs" / name
+        out.mkdir(parents=True, exist_ok=True)
+        entry = {"name": name, "config": {}, "output_dir": str(out), "created": NOW - 300, "session": "",
+                 "backend": "process", "log": str(out / "worker.log")}
+        rm.write_json(rm.entry_path(name), entry)
+        rm.write_json(rm.progress_path(entry), {"status": "running", "started": NOW - 300, "updated": NOW,
+                                                "setup": [], "plan": plan})
+        (out / "worker.log").write_text(log)
 
     def _show(self, entry: dict, prog: dict, *, unicode_glyphs: bool, frame: str | None = None) -> str:
         """The queue as `hedonic run status` prints it: its progress is read back from disk, and the clock is fixed."""
@@ -239,9 +289,9 @@ class TestProgressDisplay(unittest.TestCase):
                 return line
         self.fail(f"no line starts with {start!r} in:\n{text}")
 
-    def test_a_queue_shows_its_bar_time_stage_log_and_records(self):
+    def test_a_queue_shows_its_bar_grid_measured_times_and_running_unit(self):
         _register(self.root, "done-run", "completed")
-        self._live_run("live-run", 3, 20, log="setup done\n\x1b[36m[3/20] 4C_255N noise 0.1\x1b[0m\n")
+        self._live_run("live-run", _twenty_units(), log="setup done\n\x1b[36mseed 3 · Hedonic running\x1b[0m\n")
         entry = _queue(self.root, ["done-run", "live-run", "later-run"])
         text = self._show(entry, {"status": "running", "current": 1}, unicode_glyphs=True)
 
@@ -249,22 +299,80 @@ class TestProgressDisplay(unittest.TestCase):
         self.assertIn("completed", self._line(text, "1. done-run"))
         self.assertIn("running", self._line(text, "2. live-run"))
         self.assertIn("pending", self._line(text, "3. later-run"))
-        self.assertIn("█" * 4 + "░" * 26 + "  3/20 · 15%", text)  # the bar: 3 of 20 graphs
-        self.assertIn("elapsed 5:00", text)
-        self.assertNotIn("ETA ~", text)  # a disjoint run publishes no estimate
-        self.assertEqual(self._line(text, "now").strip(), "now      sweep")
+        # the bar: 3 of 20 units; the ETA is 6 x 50 s (measured) + 20 s left on the running unit + 10 x 60 s (planned)
+        self.assertIn("█" * 4 + "░" * 26 + "  3/20 · 15%", text)
+        self.assertIn("elapsed 5:00 · ETA ~15:20 (estimated)", text)
+        # the grid: one row per method, one glyph per unit
+        self.assertIn("Hedonic  " + "✓✓✓◉" + "·" * 6, text)
+        self.assertIn("CoDeSEG  " + "·" * 10, text)
+        self.assertIn("✓ done  ◉ running  · pending  ✗ failed  ■ stopped", text)
+        # the measured means of the finished units; a method with none yet says that its figure is an estimate
+        self.assertIn("3/10 finished · detection 40 s ± 10 s · unit 50 s", text)
+        self.assertIn("0/10 finished · none measured · estimated 60 s per unit", text)
+        # the running unit: place, network, seed, method, elapsed time, and its estimate from its own method
+        self.assertIn("◉ [4/20] DBLP · seed 3 · Hedonic  0:30 elapsed", text)
+        self.assertIn("estimate ~0:50", text)
+        self.assertNotIn("(estimated)", self._line(text, "estimate ~"))
         # the last line of the child's worker log (colour codes removed) and the record directory
-        self.assertIn("[3/20] 4C_255N noise 0.1", self._line(text, "log"))
+        self.assertIn("seed 3 · Hedonic running", self._line(text, "log"))
         self.assertEqual(self._line(text, "records").strip(), "records  ~/runs/live-run")
         for line in text.splitlines():
             self.assertLessEqual(tui.visible_len(line), 80, line)
 
     def test_without_a_utf8_terminal_the_glyphs_are_plain_ascii(self):
-        self._live_run("live-run", 3, 20)
+        self._live_run("live-run", _twenty_units())
         text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=False)
         self.assertIn("#" * 4 + "-" * 26 + "  3/20 · 15%", text)
+        self.assertIn("Hedonic  +++*......", text)
+        self.assertIn("CoDeSEG  ..........", text)
+        self.assertIn("+ done  * running  . pending  x failed  # stopped", text)
+        self.assertIn("3/10 finished · detection 40 s +/- 10 s · unit 50 s", text)
         for glyph in "✓◉■█░●✗±" + tui.SPINNER:
             self.assertNotIn(glyph, text)
+
+    def test_once_every_method_has_a_measured_unit_the_eta_is_not_an_estimate(self):
+        self._live_run("live-run", _twenty_units(codeseg_finished=True))
+        text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=True)
+        self.assertIn("4/20 · 20%", text)
+        # 6 pending Hedonic units x 50 s, 20 s left on the running unit, 9 pending CoDeSEG units x 90 s
+        self.assertIn("ETA ~18:50", text)
+        self.assertNotIn("estimated", text)
+        self.assertIn("1/10 finished · detection 80 s · unit 1:30", text)
+
+    def test_a_running_unit_past_its_estimate_says_by_how_much(self):
+        self._live_run("live-run", _twenty_units(running_elapsed=70.0))
+        text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=True)
+        self.assertIn("1:10 elapsed", text)
+        self.assertIn("0:20 beyond its estimate of ~0:50", text)
+        self.assertIn("ETA ~15:00 (estimated)", text)  # the running unit has no time left in its estimate
+
+    def test_a_unit_whose_detector_has_returned_says_its_audit_is_running_not_that_detection_is_late(self):
+        """BigCLAM on YouTube/top5000 detected in 16:33 and its cover's audit then ran for hours; the line used to say the
+        unit was hours "beyond its estimate" of the planning constant, which prices the detection alone."""
+        plan = _twenty_units()
+        plan[3] = _unit("hedonic", "Hedonic", 3, "pending", expected=100.0)
+        plan[10] = _unit("codeseg", "CoDeSEG", 0, "running", expected=60.0, started=NOW - 300.0, detection=20.0)
+        self._live_run("live-run", plan)
+        text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=True)
+        self.assertIn("detection took 0:20 · the exact audit of its cover has run 4:40", text)
+        self.assertNotIn("beyond its estimate", text)
+
+    def test_the_status_line_gives_the_vertices_the_audit_has_done(self):
+        plan = _twenty_units()
+        plan[3] = _unit("hedonic", "Hedonic", 3, "pending", expected=100.0)
+        plan[10] = {**_unit("codeseg", "CoDeSEG", 0, "running", expected=60.0, started=NOW - 300.0, detection=20.0),
+                    "audit": {"number": 1, "policies": 2, "done": 5000, "total": 39841, "eta_seconds": 4000.0}}
+        self._live_run("live-run", plan)
+        text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=True)
+        self.assertIn("exact audit: policy 1 of 2, 5,000 of 39,841 vertices · about 1:06:40 left", text)
+
+    def test_a_measured_estimate_includes_the_audit_so_an_audit_past_it_is_late(self):
+        plan = _twenty_units(running_elapsed=300.0)  # Hedonic units took 40-60 s in all, audit included
+        plan[3] = {**plan[3], "detection_seconds": 30.0}
+        self._live_run("live-run", plan)
+        text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=True)
+        self.assertIn("detection took 0:30 · the exact audit of its cover has run 4:30", text)
+        self.assertIn("beyond its estimate of ~0:50", text)
 
     def test_a_stopped_queue_names_the_item_the_reason_and_the_resume_command(self):
         _register(self.root, "done-run", "completed")

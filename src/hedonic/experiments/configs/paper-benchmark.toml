@@ -1,0 +1,56 @@
+# The overlap paper's benchmark: eight SNAP network/cover pairs (DBLP, Amazon and YouTube with both covers, Friendster
+# and LiveJournal with top5000), Hedonic and eight baselines,
+# seeds 0-9, on three axes (accuracy, time, robustness). The `benchmark` item of the paper queue starts it:
+#
+#   hedonic run exp --config paper-benchmark --tuned HEDONIC_TUNED.json,BASELINE_TUNED.json --name benchmark --yes
+#
+# One unit is a (pair, seed, method). The graph is the subgraph induced by the vertices the pair's cover contains
+# (`induce = "covered"`); every method runs on that graph and its answer is scored against the same cover (communities of
+# at least three vertices). A finished unit is never repeated: the scan at the start certifies every record on disk
+# (identity, final status, cover, SHA-256 seal, robustness audit) and runs only the rest.
+#
+# Replication. `seeds = "0-9"` is the seed list; how many of them a method runs follows its replication kind
+# (src/hedonic/experiments/overlapping/replication.py, the table the baseline calibration uses too). Hedonic, ANGEL and
+# Ego-Splitting take the seed (seeded): ten runs per pair each. CoDeSEG (at one thread), CliquePerc, FOX, BigCLAM, NcGame
+# and NEO-K-Means return the same cover for every seed (deterministic, checked by running them twice at these settings):
+# one run per pair, at seed 0. 288 units instead of 720. `replication = "all"`
+# (or --replication all) runs every method at every seed, to audit determinism; units keep their identity either way, so
+# the two share their records.
+#
+# `networks` lists the eight pairs in the order they run: the top5000 covers first, then the `all` covers. `order` nests
+# seed > pair > method (inside the paper queue the benchmark runs one pair at a time). `robustness = true` audits each
+# saved cover right after its run, on the same induced graph (ledger RUN/robustness/cover_audit.jsonl).
+#
+# Settings. The baselines use their screened settings unless --tuned names the baseline calibration. Hedonic takes the
+# (gamma, cap) of `hedonic run calibrate` through --tuned; the per-network tables below are only the fallback for a run
+# started without --tuned.
+
+[hedonic_run]
+config = "paper"                    # screened settings, 1-hour timeout
+networks = ["dblp:top5000", "amazon:top5000", "youtube:top5000", "friendster:top5000", "livejournal:top5000", "dblp:all", "amazon:all", "youtube:all"]
+induce = "covered"
+methods = ["hedonic", "codeseg", "fox", "clique_percolation", "angel", "bigclam", "ego_splitting", "ncgame", "neo_kmeans"]
+seeds = "0-9"
+order = ["seed", "network", "method"]
+save_covers = true
+robustness = true
+
+[hedonic_run.method_params.hedonic.dblp]
+max_memberships = 32
+absolute_resolution = 0.14285714285714285
+
+[hedonic_run.method_params.hedonic.amazon]
+max_memberships = 4
+absolute_resolution = 0.0013831258644536654
+
+[hedonic_run.method_params.hedonic.youtube]
+max_memberships = 32
+absolute_resolution = 0.14285714285714285
+
+[hedonic_run.method_params.hedonic.livejournal]
+max_memberships = 32
+absolute_resolution = 0.14285714285714285
+
+[hedonic_run.method_params.hedonic.friendster]
+max_memberships = 32
+absolute_resolution = 0.14285714285714285

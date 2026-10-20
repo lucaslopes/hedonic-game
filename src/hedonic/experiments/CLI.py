@@ -1,25 +1,24 @@
-"""Command-line front doors of the hedonic experiments (hedonic 1: the disjoint paper).
+"""Command-line front doors of the hedonic experiments.
 
 Two console scripts share this module:
 
 * ``hedonic`` (:func:`hedonic_main`) is the task-oriented front door: ``hedonic
-  run`` starts and manages durable runs (``hedonic run disjoint --preset
-  paper`` is the disjoint paper's SBM benchmark, ``hedonic run queue
-  disjoint`` its queue), and ``hedonic show``, ``guide``, ``config`` and
+  run`` starts and manages durable runs (``hedonic run queue overlap`` is the
+  overlap paper's experiment queue, ``hedonic run disjoint --preset paper`` the
+  disjoint paper's benchmark), ``hedonic setup`` downloads data and prepares the
+  external methods, and ``hedonic show``, ``guide``, ``config``, ``pickle`` and
   ``update`` inspect and configure;
 * ``hedonic-exp`` (:func:`main`) keeps every experiment module's own command
   line (``hedonic-exp list``). A command that a ``hedonic`` verb performs
   durably prints a one-line notice naming that verb.
 
-The overlapping-communities experiments (SNAP benchmark, calibrations,
-robustness spectrum, setup of external methods) are hedonic 2; their verbs
-fail here with a message that says so.
-
 Examples::
 
     hedonic --help
-    hedonic run disjoint --preset smoke --dry-run
-    hedonic run queue disjoint --dry-run
+    hedonic setup --dry-run --all
+    hedonic run queue overlap --dry-run
+    hedonic run disjoint --preset smoke --foreground
+    hedonic run exp --yes
     hedonic-exp list
     hedonic-exp smoke
 
@@ -46,7 +45,7 @@ class Command:
     module: str
     attr: str
     summary: str
-    needs_data: str | None = None  # "synthetic" | None
+    needs_data: str | None = None  # "snap-networks" | "synthetic" | None
     has_argparse_help: bool = True
 
 
@@ -59,7 +58,7 @@ COMMANDS: dict[str, Command] = {
         name="smoke",
         module="",  # handled specially
         attr="",
-        summary="Isolated local check (no data): a tiny disjoint SBM sweep",
+        summary="Isolated local check (no data): small overlapping graphs + a tiny SBM sweep",
         has_argparse_help=False,
     ),
     "disjoint": Command(
@@ -108,6 +107,157 @@ COMMANDS: dict[str, Command] = {
             "End-to-end disjoint reproduction: sweep -> store/CSV -> paper figures "
             "(presets: sbm, sbm-smoke, v1020, v1020-smoke)"
         ),
+    ),
+    "overlapping-small": Command(
+        name="overlapping-small",
+        module="hedonic.experiments.overlapping.small_graphs",
+        attr="main",
+        summary="Quick overlapping smoke tests on small graphs (no data)",
+        has_argparse_help=False,
+    ),
+    "overlapping-controlled": Command(
+        name="overlapping-controlled",
+        module="hedonic.experiments.overlapping.controlled_overlap_config",
+        attr="main",
+        summary=(
+            "LFR-derived controlled overlap: cap, initialization and resolution ablations "
+            "(not canonical overlapping LFR; durable form: hedonic run controlled)"
+        ),
+    ),
+    "start-quality": Command(
+        name="start-quality",
+        module="hedonic.experiments.overlapping.start_quality",
+        attr="main",
+        summary=(
+            "Start-quality curve: Hedonic local moving from the SNAP ground-truth cover corrupted towards a random "
+            "start (durable form: hedonic run startcurve)"
+        ),
+        needs_data="snap-networks",
+    ),
+    "overlapping-cover-audit": Command(
+        name="overlapping-cover-audit",
+        module="hedonic.experiments.overlapping.cover_audit",
+        attr="main",
+        summary=(
+            "Robustness audit of the covers a benchmark saved: exact stable-vertex fraction over resolution, "
+            "both action spaces (durable form: hedonic run audit)"
+        ),
+        needs_data="snap-networks",
+    ),
+    "overlapping-rescore": Command(
+        name="overlapping-rescore",
+        module="hedonic.experiments.overlapping.cover_rescore",
+        attr="main",
+        summary=(
+            "Score the covers a benchmark saved again (paper filter, Omega, singleton mode, matching weight, NF1), "
+            "or --check them against their records; no detector runs"
+        ),
+        needs_data="snap-networks",
+    ),
+    "overlapping-calibrate": Command(
+        name="overlapping-calibrate",
+        module="hedonic.experiments.overlapping.calibrate",
+        attr="main",
+        summary=(
+            "Calibrate Hedonic's resolution and membership cap per network:cover pair and write hedonic_tuned.json "
+            "for runs that take --tuned (durable form: hedonic run calibrate)"
+        ),
+        needs_data="snap-networks",
+    ),
+    "baseline-calibrate": Command(
+        name="baseline-calibrate",
+        module="hedonic.experiments.overlapping.baseline_calibration",
+        attr="main",
+        summary=(
+            "Label-free calibration of the baselines on G[S] only (ledger, budget, baseline_tuned.json; "
+            "durable multi-pair form: hedonic run calibrate-baselines)"
+        ),
+        needs_data="snap-networks",
+    ),
+    "overlapping-tradeoffs": Command(
+        name="overlapping-tradeoffs",
+        module="hedonic.experiments.plots.benchmark_tradeoffs",
+        attr="main",
+        summary=(
+            "Joint plots: accuracy vs detection time and accuracy vs cover robustness, from benchmark records and "
+            "cover-audit ledgers (--smoke needs no data)"
+        ),
+    ),
+    "participation-budget": Command(
+        name="participation-budget",
+        module="hedonic.experiments.plots.participation_budget",
+        attr="main",
+        summary="Model illustration: the unit-l2 participation 1/sqrt(k) of a vertex with k labels (no data)",
+    ),
+    "overlapping-codeseg": Command(
+        name="overlapping-codeseg",
+        module="hedonic.experiments.overlapping.codeseg_reproduction",
+        attr="main",
+        summary=(
+            "The benchmark runner: one SNAP network x method x seed, scored with the shared cover metrics and "
+            "LFK-ONMI (what hedonic run exp calls for every unit)"
+        ),
+        needs_data="snap-networks",
+    ),
+    "codeseg-setup": Command(
+        name="codeseg-setup",
+        module="hedonic.experiments.overlapping.codeseg_setup",
+        attr="setup_main",
+        summary="Download SNAP pairs and prepare the external method runtimes (= hedonic setup)",
+        needs_data="snap-networks",
+    ),
+    "codeseg-doctor": Command(
+        name="codeseg-doctor",
+        module="hedonic.experiments.overlapping.codeseg_setup",
+        attr="doctor_main",
+        summary="Read-only readiness audit of the SNAP data and the method runtimes",
+        needs_data="snap-networks",
+    ),
+    "snap-pickle": Command(
+        name="snap-pickle",
+        module="hedonic.experiments.overlapping.snap_pickle",
+        attr="main",
+        summary=(
+            "Write the hedonic.Game of a SNAP network:cover pair (covered-induced, reference cover attached) to a "
+            "pickle (front door: hedonic pickle)"
+        ),
+        needs_data="snap-networks",
+    ),
+    "overlapping-gt-spectrum": Command(
+        name="overlapping-gt-spectrum",
+        module="hedonic.experiments.overlapping.gt_spectrum",
+        attr="main",
+        summary=(
+            "SNAP ground-truth robustness spectrum: stable-vertex fraction vs resolution of every local cover, plus "
+            "local moving started from it (durable form: hedonic run spectrum)"
+        ),
+        needs_data="snap-networks",
+    ),
+    "overlapping-gt-posthoc": Command(
+        name="overlapping-gt-posthoc",
+        module="hedonic.experiments.overlapping.gt_posthoc",
+        attr="main",
+        summary=(
+            "Exact post-hoc stability of a SNAP ground-truth cover: per-vertex resolution intervals "
+            "(durable form: hedonic run posthoc)"
+        ),
+        needs_data="snap-networks",
+    ),
+    "info": Command(
+        name="info",
+        module="hedonic.experiments.overlapping.info",
+        attr="main",
+        summary=(
+            "Show the methods (ready / installable / missing tools), the SNAP networks and covers, and the "
+            "accuracy metrics (= hedonic show)"
+        ),
+    ),
+    "quickstart": Command(
+        name="quickstart",
+        module="hedonic.experiments.overlapping.quickstart",
+        attr="main",
+        summary="Overlapping benchmark front door: networks x methods x seeds, durable (= hedonic run exp)",
+        needs_data="snap-networks",
     ),
 }
 
@@ -175,20 +325,25 @@ def main(argv: list[str] | None = None) -> int:
 
 
 # ``hedonic run VERB``: the experiment each run verb starts (its hedonic-exp command).
-RUN_ALIASES: dict[str, str] = {"disjoint": "disjoint"}
+RUN_ALIASES: dict[str, str] = {"exp": "quickstart", "paper": "quickstart", "paper-hedonic": "quickstart",
+                               "spectrum": "overlapping-gt-spectrum", "spectrum-full": "overlapping-gt-spectrum",
+                               "posthoc": "overlapping-gt-posthoc",
+                               "controlled": "overlapping-controlled",
+                               "startcurve": "start-quality",
+                               "audit": "overlapping-cover-audit",
+                               "calibrate": "overlapping-calibrate",
+                               "calibrate-baselines": "baseline-calibrate",
+                               "disjoint": "disjoint"}
 # ``hedonic run VERB`` for the durable runs themselves (runmanager.VERBS).
+RENAMED_RUN_VERBS = {"paper-hoc": "paper-hedonic"}  # refused with the new name: the method is called hedonic
 RUN_VERBS = ("list", "status", "attach", "logs", "stop", "resume", "check", "queue")
-# hedonic-exp commands that a `hedonic` command performs durably; the deprecation notice names it. In hedonic 1
-# only the disjoint sweep has one, and it depends on the preset (``_run_equivalent``).
-RUN_EQUIVALENTS: dict[str, str] = {}
+# hedonic-exp commands that a `hedonic` command performs durably; the deprecation notice names it.
+RUN_EQUIVALENTS: dict[str, str] = {"quickstart": "hedonic run exp", "overlapping-gt-spectrum": "hedonic run spectrum",
+                                   "overlapping-gt-posthoc": "hedonic run posthoc",
+                                   "overlapping-controlled": "hedonic run controlled",
+                                   "codeseg-setup": "hedonic setup"}
 # Top-level `hedonic` commands.
-TOP_LEVEL = ("run", "detect", "show", "guide", "config", "update")
-# Verbs of the overlapping experiments, which hedonic 1 does not have: they fail with a pointer to hedonic 2.
-HEDONIC_2_RUN_VERBS = ("exp", "paper", "paper-hoc", "spectrum", "spectrum-full", "posthoc", "controlled",
-                       "startcurve", "audit", "calibrate", "calibrate-baselines")
-HEDONIC_2_COMMANDS = ("setup", "pickle")
-HEDONIC_2 = ("hedonic 1 reproduces the disjoint paper (the SBM benchmark) only; the overlapping-communities "
-             "experiments are hedonic 2. See `hedonic --help`.")
+TOP_LEVEL = ("run", "detect", "setup", "show", "guide", "config", "pickle", "update")
 
 
 def _preset_option(rest: list[str]) -> str | None:
@@ -211,36 +366,85 @@ def _run_equivalent(command: str, rest: list[str]) -> str | None:
     return None
 
 
-HEDONIC_HELP = """\
-usage: hedonic COMMAND [options]
+HELP_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("", (
+        ("hedonic", "in a terminal: the home screen (status, then a menu of what to do); elsewhere this help"),
+    )),
+    ("One network, one method (in this terminal)", (
+        ("hedonic detect [options]", "network (SBM, LFR, overlapping LFR, SNAP pair, famous, a file) x method x seed, "
+                                     "scored against its ground truth (a wizard without options; --list)"),
+    )),
+    ("Overlapping communities (SNAP networks)", (
+        ("hedonic run queue overlap", "the overlap paper's experiments, one after another (--dry-run plans, --root DIR)"),
+        ("hedonic run exp [options]", "a benchmark: networks x methods x seeds (a wizard without options)"),
+        ("hedonic run paper", "the whole-graph benchmark profile (= run exp --config paper)"),
+        ("hedonic run paper-hedonic", "only its Hedonic rows, at the tuned per-network settings"),
+        ("hedonic run calibrate", "calibrate Hedonic's resolution and cap per pair; writes hedonic_tuned.json for --tuned"),
+        ("hedonic run calibrate-baselines --networks LIST",
+         "calibrate the eight baselines on each pair without ground truth"),
+        ("hedonic run spectrum", "ground-truth robustness spectrum of the local covers"),
+        ("hedonic run spectrum-full", "the same on complete graphs (= run spectrum --config full)"),
+        ("hedonic run startcurve --config NAME", "start-quality curve from corrupted ground-truth starts"),
+        ("hedonic run controlled --config NAME", "LFR-derived controlled-overlap grid"),
+        ("hedonic run posthoc --config FILE", "exact post-hoc stability of a ground-truth cover"),
+        ("hedonic run audit --source DIR...", "robustness of the covers a benchmark saved"),
+    )),
+    ("Disjoint communities (planted-partition SBM)", (
+        ("hedonic run disjoint [options]", "the SBM benchmark: store, figures and paper statistics (a wizard without "
+                                           "options)"),
+        ("hedonic run disjoint --preset paper", "the paper's 100-seed grid (50,000 graphs)"),
+    )),
+    ("Every run (durable: survives Ctrl-C, closed terminals and, on macOS, idle sleep)", (
+        ("hedonic run list", "runs and their progress"),
+        ("hedonic run status [NAME]", "snapshot of a run (default: latest)"),
+        ("hedonic run attach [NAME]", "live view of a running run"),
+        ("hedonic run logs [NAME]", "raw output (tmux pane or log file)"),
+        ("hedonic run stop NAME", "stop a run (explicit; never automatic)"),
+        ("hedonic run resume [NAME]", "continue an interrupted run; finished work is reused"),
+        ("hedonic run check [NAME]", "morning check: replay a sample of the results and compare"),
+        ("hedonic run queue FILE|NAME", "run the experiments of a queue file one after another (overnight)"),
+        ("hedonic run", "your favourite config (hedonic config set run NAME), else the wizard"),
+    )),
+    ("Data, runtimes and settings", (
+        ("hedonic setup [--all]", "download SNAP pairs and build the external methods (--dry-run checks the tools)"),
+        ("hedonic show methods", "overlapping methods: ready / installable / missing tools"),
+        ("hedonic show networks", "SNAP networks: vertices, edges, on disk, --remote sizes"),
+        ("hedonic show covers", "graph/cover pairs found locally"),
+        ("hedonic show table", "local network/cover statistics as a CSV"),
+        ("hedonic show metrics", "what each accuracy metric measures"),
+        ("hedonic show disjoint", "disjoint presets, grids, methods and estimates"),
+        ("hedonic pickle PAIR... | --all", "write the Game of network:cover pairs to pickles (--dry-run plans)"),
+        ("hedonic guide [TOPIC]", "a short tour of the CLI and suggested next steps"),
+        ("hedonic config [set KEY VALUE]", "per-user settings (~/.config/hedonic/config.toml)"),
+        ("hedonic update [--yes]", "compare with the latest release on PyPI; upgrade only when asked"),
+    )),
+)
+HELP_FOOTER = ("`hedonic run exp --help`, `hedonic run disjoint --help` and `hedonic setup --help` list every option.\n"
+               "`hedonic-exp list` lists the experiment modules' own commands.")
 
-  hedonic                        in a terminal: the home screen (status, then a menu of what to do); elsewhere this help
-One network, one method (in this terminal)
-  hedonic detect [options]       network (SBM, LFR, famous, a file) x method x seed, scored against its ground truth
-                                 (a wizard without options; --list)
-Disjoint communities (planted-partition SBM: the disjoint paper)
-  hedonic run disjoint [options] the SBM benchmark: store, figures and paper statistics (wizard without options)
-  hedonic run disjoint --preset smoke   the whole pipeline in seconds
-  hedonic run disjoint --preset paper   the paper's 100-seed grid (50,000 graphs)
-  hedonic run queue disjoint     the disjoint paper's queue: the smoke check, then the paper grid (--dry-run plans)
-Every run (durable: survives Ctrl-C, closed terminals and, on macOS, idle sleep)
-  hedonic run list               runs and their progress
-  hedonic run status [NAME]      snapshot of a run (default: latest)
-  hedonic run attach [NAME]      live view of a running run
-  hedonic run logs [NAME]        raw output (tmux pane or log file)
-  hedonic run stop NAME          stop a run (explicit; never automatic)
-  hedonic run resume [NAME]      continue an interrupted run; finished work is reused
-  hedonic run check [NAME]       morning check: replay a sample of a disjoint run's rows from their seeds
-  hedonic run queue FILE|NAME    run the experiments of a queue file one after another (overnight)
-Settings and help
-  hedonic show disjoint          disjoint presets, grids, methods and estimates
-  hedonic guide [TOPIC]          a short tour of the CLI and suggested next steps
-  hedonic config [set KEY VALUE] per-user machine settings (~/.config/hedonic/config.toml)
-  hedonic update [--yes]         compare with the latest release on PyPI; upgrade only when asked
 
-`hedonic run disjoint --help` and `hedonic run queue --help` list every option.
-`hedonic-exp list` lists the experiment modules' own commands.
-The overlapping-communities experiments (SNAP networks) are hedonic 2."""
+def help_text(width: int = 80) -> str:
+    """The help of ``hedonic``: commands in one column, descriptions wrapped beside them, every line within ``width``;
+    a command too long for its column has its description on the next line."""
+    import textwrap
+
+    column = 33
+    lines = ["usage: hedonic COMMAND [options]"]
+    for title, rows in HELP_SECTIONS:
+        lines.append(title if title else "")
+        for command, description in rows:
+            wrapped = textwrap.wrap(description, width - column)
+            if len(command) + 2 >= column - 1:
+                lines.append(f"  {command}")
+                lines += [" " * column + line for line in wrapped]
+            else:
+                lines.append(f"  {command:<{column - 2}}{wrapped[0]}")
+                lines += [" " * column + line for line in wrapped[1:]]
+    lines += ["", *[textwrap.fill(line, width) for line in HELP_FOOTER.split("\n")]]
+    return "\n".join(lines)
+
+
+HEDONIC_HELP = help_text()
 
 
 def hedonic_main(argv: list[str] | None = None) -> int:
@@ -253,14 +457,17 @@ def hedonic_main(argv: list[str] | None = None) -> int:
         if home.wanted():  # a terminal; a pipe, a script or HEDONIC_PLAIN_VIEW=1 gets the help text
             return home.main()
     if not argv or argv[0] in ("-h", "--help", "help") or argv[:2] in (["run", "-h"], ["run", "--help"]):
-        print(HEDONIC_HELP)
+        import shutil
+
+        print(help_text(min(100, max(60, shutil.get_terminal_size((80, 24)).columns))))  # fits this terminal
         return 0
     if argv[0] in ("-V", "--version"):
         print(_package_version())
         return 0
-    if argv[0] in HEDONIC_2_COMMANDS:
-        print(f"hedonic {argv[0]}: {HEDONIC_2}", file=sys.stderr)
-        return 2
+    if argv[0] == "setup":  # data and external runtimes
+        from hedonic.experiments.overlapping import codeseg_setup
+
+        return _call_experiment(codeseg_setup.setup_main, argv[1:])
     if argv[0] == "detect":  # one network, one method, one seed, in this terminal
         from hedonic.experiments import detect
 
@@ -269,6 +476,10 @@ def hedonic_main(argv: list[str] | None = None) -> int:
         from hedonic.experiments.overlapping import guide
 
         return guide.main(argv[1:])
+    if argv[0] == "pickle":  # the Game of a network:cover pair as a pickle
+        from hedonic.experiments.overlapping import snap_pickle
+
+        return snap_pickle.main(argv[1:])
     if argv[0] == "update":
         from hedonic.experiments.overlapping import selfupdate
 
@@ -278,21 +489,27 @@ def hedonic_main(argv: list[str] | None = None) -> int:
 
         return userconfig.main(argv[1:])
     if argv == ["run"] or (argv[0] == "run" and len(argv) > 1 and argv[1].startswith("-")):
-        print("hedonic run: name what to run: hedonic run disjoint, hedonic run queue FILE|NAME, or a run verb "
-              f"({', '.join(v for v in RUN_VERBS if v != 'queue')}). See `hedonic --help`.", file=sys.stderr)
-        return 2
+        # bare `hedonic run`: the favourite config from ~/.config/hedonic/config.toml, else the wizard
+        from hedonic.experiments.overlapping import userconfig
+
+        favourite = userconfig.favourite()
+        extra = argv[1:]
+        if favourite:
+            return _dispatch("quickstart", ["--config", favourite, "--confirm", *extra])
+        return _dispatch("quickstart", extra)
     if argv[0] == "show":
         from hedonic.experiments.overlapping import info
 
         return info.main(argv[1:])
-    if argv[0] == "run" and argv[1] in HEDONIC_2_RUN_VERBS:
-        print(f"hedonic run {argv[1]}: {HEDONIC_2}", file=sys.stderr)
+    if argv[0] == "run" and len(argv) >= 2 and argv[1] in RENAMED_RUN_VERBS:
+        print(f"`hedonic run {argv[1]}` is now `hedonic run {RENAMED_RUN_VERBS[argv[1]]}`.", file=sys.stderr)
         return 2
-    if argv[0] != "run" or (argv[1] not in RUN_ALIASES and argv[1] not in RUN_VERBS):
+    if argv[0] != "run" or len(argv) < 2 or (argv[1] not in RUN_ALIASES and argv[1] not in RUN_VERBS):
         import difflib
 
-        if argv[0] == "run":
-            close = [f"run {c}" for c in difflib.get_close_matches(argv[1], [*RUN_ALIASES, *RUN_VERBS], n=1)]
+        if argv[0] == "run" and len(argv) >= 2:
+            close = difflib.get_close_matches(argv[1], [*RUN_ALIASES, *RUN_VERBS], n=1)
+            close = [f"run {c}" for c in close]
         else:
             close = difflib.get_close_matches(argv[0], [*TOP_LEVEL, "help"], n=1)
         hint = f" Did you mean `hedonic {close[0]}`?" if close else ""
@@ -302,10 +519,50 @@ def hedonic_main(argv: list[str] | None = None) -> int:
         from hedonic.experiments.overlapping import runmanager
 
         return runmanager.dispatch(argv[1:])
-    # argv[1] == "disjoint": the disjoint SBM benchmark through the durable front door
-    from hedonic.experiments.disjoint import front
+    command, rest = RUN_ALIASES[argv[1]], argv[2:]
+    shorthand = {"paper": "hedonic run exp --config paper", "paper-hedonic": "hedonic run exp --config paper-hedonic",
+                 "spectrum-full": "hedonic run spectrum --config full"}
+    if argv[1] in shorthand and ("-h" in rest or "--help" in rest):  # the usage below names the long form
+        print(f"`hedonic run {argv[1]}` is `{shorthand[argv[1]]}`; its options:\n")
+    if argv[1] == "disjoint":  # disjoint SBM benchmark through the durable front door
+        from hedonic.experiments.disjoint import front
 
-    return front.front_main(argv[2:])
+        return front.front_main(rest)
+    if argv[1] == "posthoc":  # exact post-hoc stability of a ground-truth cover, durable (`--config FILE`)
+        from hedonic.experiments.overlapping import gt_posthoc
+
+        return gt_posthoc.front_main(rest)
+    if argv[1] == "controlled":  # LFR-derived controlled-overlap study from a TOML table, durable (`--config NAME`)
+        from hedonic.experiments.overlapping import controlled_overlap_config
+
+        return controlled_overlap_config.front_main(rest)
+    if argv[1] == "startcurve":  # start-quality curve from a TOML table, durable (`--config NAME`)
+        from hedonic.experiments.overlapping import start_quality
+
+        return start_quality.front_main(rest)
+    if argv[1] == "calibrate":  # Hedonic calibration, durable
+        from hedonic.experiments.overlapping import calibrate
+
+        return calibrate.front_main(rest)
+    if argv[1] == "calibrate-baselines":  # label-free calibration of the baselines per network:cover pair, durable
+        from hedonic.experiments.overlapping import baseline_run
+
+        return baseline_run.front_main(rest)
+    if argv[1] == "audit":  # robustness audit of the covers a benchmark saved, durable (`--source RUN_DIR ...`)
+        from hedonic.experiments.overlapping import cover_audit
+
+        return cover_audit.front_main(rest)
+    if argv[1] in ("spectrum", "spectrum-full"):  # SNAP ground-truth robustness spectrum, durable
+        from hedonic.experiments.overlapping import gt_spectrum
+
+        if argv[1] != "spectrum":  # named config: `hedonic run spectrum --config full`
+            rest = ["--config", argv[1].removeprefix("spectrum-"), *rest]
+        return gt_spectrum.front_main(rest)
+    if argv[1] in ("paper", "paper-hedonic"):  # named configs: `hedonic run exp --config paper[-hedonic]`
+        rest = ["--config", argv[1], *rest]
+    if rest and rest[0] in ("-h", "--help"):
+        return _dispatch_help(command)
+    return _dispatch(command, rest)
 
 
 def _package_version() -> str:
@@ -321,8 +578,8 @@ def _print_root_help() -> None:
     parser = argparse.ArgumentParser(
         prog="hedonic-exp",
         description=(
-            "The hedonic experiment modules' own command lines: disjoint SBM sweeps, their result store, statistics "
-            "and figures, and an isolated smoke check. Durable runs and queues are under the `hedonic` command."
+            "The hedonic experiment modules' own command lines: disjoint SBM sweeps, overlapping SNAP studies and "
+            "isolated smoke checks. Durable runs, queues and setup are under the `hedonic` command."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_examples_epilog(),
@@ -351,14 +608,27 @@ def _print_root_help() -> None:
 def _examples_epilog() -> str:
     return """\
 examples:
-  # Isolated local check (no data)
+  # Isolated local checks (no data)
   hedonic-exp smoke
+  hedonic-exp overlapping-small
+  hedonic-exp overlapping-controlled --smoke --output ~/Databases/Hedonic/Overlap/controlled/smoke.json
+  hedonic-exp overlapping-tradeoffs --smoke --output-dir ~/Databases/Hedonic/Overlap/tradeoffs/smoke
+  hedonic-exp participation-budget --output ~/Databases/Hedonic/Overlap/participation_budget.pdf
 
   # Disjoint SBM benchmark (seeded graphs, Parquet store); durable form: hedonic run disjoint
   hedonic-exp reproduce-disjoint --preset sbm-smoke --output_root ~/Databases/Hedonic/Disjoint
   hedonic-exp disjoint-store ~/Databases/Hedonic/Disjoint/sbm-smoke --verify --all
   hedonic-exp disjoint-stats --data ~/Databases/Hedonic/Disjoint/sbm-smoke
-  hedonic-exp disjoint --preset sbm --output_root ~/Databases/Hedonic/Disjoint --preflight
+
+  # Overlapping SNAP studies (data: hedonic setup --pairs dblp:top5000,...)
+  hedonic-exp start-quality --config start-quality-hedonic --dry-run
+  hedonic-exp overlapping-calibrate --networks dblp:top5000 --dry-run
+  hedonic-exp baseline-calibrate --dry-run --methods all
+  hedonic-exp baseline-calibrate --smoke --methods clique_percolation,codeseg --max-evals 6
+  hedonic-exp overlapping-gt-spectrum --discover
+  hedonic-exp overlapping-codeseg --datasets dblp --max-nodes 5000 --methods hedonic_local \\
+      --output-dir ~/Databases/Hedonic/Overlap/codeseg/dblp-local
+  hedonic-exp codeseg-doctor --methods all
 """
 
 
@@ -376,8 +646,9 @@ def _print_command_list() -> None:
     print()
     print("Data paths (environment overrides; see also ~/.config/hedonic/config.toml):")
     print("  HEDONIC_DATA_DIR       data root (default ~/Databases/Hedonic)")
+    print("  HEDONIC_NETWORKS_DIR   SNAP networks (default <data root>/networks)")
     print("  HEDONIC_SYNTHETIC_DIR  disjoint synthetic results")
-    print("  HEDONIC_OUTPUT_DIR     hedonic-exp outputs (default <data root>/Overlap; disjoint under artifacts/disjoint)")
+    print("  HEDONIC_OUTPUT_DIR     run outputs (default <data root>/Overlap)")
     print("  HEDONIC_DISJOINT_OUTPUT_DIR  disjoint runs (default <data root>/Disjoint)")
     print("  HEDONIC_RUNS_DIR       registry of durable runs (default ~/.cache/hedonic/runs)")
 
@@ -396,7 +667,8 @@ def _dispatch_help(command: str) -> int:
         print(
             "usage: hedonic-exp smoke [--keep-output]\n\n"
             "Isolated local check that needs no data:\n"
-            "  disjoint --smoke into a temp directory\n\n"
+            "  1. overlapping-small (Petersen + tiny SBM metrics)\n"
+            "  2. disjoint --smoke into a temp directory\n\n"
             "Options:\n"
             "  --keep-output  Print and keep the temp output root "
             "(default: delete after run)\n"
@@ -461,6 +733,12 @@ def _run_smoke(rest: list[str]) -> int:
     print("=" * 55)
     print("  hedonic-exp smoke  (isolated, no data required)")
     print("=" * 55)
+
+    from hedonic.experiments.overlapping.small_graphs import main as small_main
+
+    code = _call_experiment(small_main, [])
+    if code != 0:
+        return code
 
     from hedonic.experiments.disjoint.sbm_sweep import main as sweep_main
 

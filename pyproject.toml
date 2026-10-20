@@ -1,7 +1,7 @@
 [project]
 name = "hedonic"
-version = "1.0.0"
-description = "Community detection with hedonic games: best-response local moving to a partition at equilibrium, in a purpose-built C core"
+version = "2.0.0"
+description = "Community detection with hedonic games: best-response local moving to an equilibrium, disjoint and overlapping, in a purpose-built C core"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
@@ -10,13 +10,13 @@ authors = [
 ]
 requires-python = ">=3.12"
 # `pip install hedonic` is the library alone (igraph and numpy), for use from other code. The experiment command
-# line (`hedonic`, `hedonic-exp`) and the experiments of the disjoint paper need the `cli` extra:
+# line (`hedonic`, `hedonic-exp`) and every experiment of the papers need the `cli` extra:
 # `pip install "hedonic[cli]"`. The command line needs macOS or Linux; Windows gets the library.
 dependencies = [
     "igraph>=1.0",
     "numpy",
 ]
-keywords = ["community detection", "hedonic games", "graphs", "networks"]
+keywords = ["community detection", "hedonic games", "graphs", "networks", "overlapping communities"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: C",
@@ -32,12 +32,12 @@ cli = [
     "scipy>=1.10",
     "pandas>=2.0; sys_platform != 'win32'",
     "matplotlib>=3.7; sys_platform != 'win32'",
+    "networkx>=3.0; sys_platform != 'win32'",
     "pyarrow>=14; sys_platform != 'win32'",
     "duckdb>=1.0; sys_platform != 'win32'",
     "tqdm>=4.60; sys_platform != 'win32'",
-    "networkx>=3.0; sys_platform != 'win32'",  # LFR graphs in `hedonic detect`
 ]
-# The igraph-fork releases' name of the same extra.
+# The 1.x name of the same extra.
 experiments = ["hedonic[cli]"]
 
 [project.scripts]
@@ -62,8 +62,10 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 hedonic = ["py.typed"]
-# Shipped run configs (`hedonic run queue disjoint`): hedonic.experiments.resources finds them.
-"hedonic.experiments" = ["configs/*.toml"]
+# Shipped run configs (`hedonic run queue overlap`, `--config NAME`) and the external-method workers, including the
+# locked CDlib project (slpa_env/pyproject.toml and uv.lock): hedonic.experiments.resources finds them.
+"hedonic.experiments" = ["configs/*.toml", "workers/*.py", "workers/*.md", "workers/slpa_env/*.py",
+                         "workers/slpa_env/pyproject.toml", "workers/slpa_env/uv.lock"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["__pycache__/*", "*.pyc", ".venv/*"]

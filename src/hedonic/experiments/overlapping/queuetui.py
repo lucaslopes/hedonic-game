@@ -1,8 +1,7 @@
 """The interactive view of a queue: a tree you open and close, scroll with the wheel, and read the numbers of.
 
 The queue is the root; its runs are the first level (the macro overview, each with its progress and ETA); a run opens
-into the loops that make its count, down to single units, when the run has a unit model (a disjoint run of hedonic 1
-is one row with its own counts and ETA).
+into its pairs, a pair into the loops that make its count (action policy, resolution, seed...), down to single units.
 Every row carries its own progress and ETA, and the pane under the tree explains the selected row: what its number
 counts, which loops multiply into it, in what order the runner executes them, and where its ETA comes from.
 
@@ -36,7 +35,8 @@ from hedonic.experiments.overlapping.tui import fit, style
 REFRESH_SECONDS = 1.5  # how often the tree is rebuilt from the files while the view is open
 TICK = 0.2  # keyboard poll and spinner step
 WHEEL_STEP = 3
-COLOUR = {"done": "green", "running": "cyan", "partial": "yellow", "pending": "dim", "failed": "red", "stopped": "yellow"}
+COLOUR = {"done": "green", "running": "cyan", "partial": "yellow", "pending": "dim", "failed": "red", "stopped": "yellow",
+          "awaiting": "dim"}
 BAR_WIDTH, PERCENT_WIDTH, UNIT_WIDTH, ETA_WIDTH = 8, 4, 14, 13  # the columns right of the labels
 MIN_COUNT_WIDTH = 11
 
@@ -60,7 +60,7 @@ class View:
 
 # --------------------------------------------------------------------------- the tree as rows
 def live_path(root: qm.Node) -> list[qm.Node]:
-    """The queue and, below it, the running run, its loops... down to the unit being worked on: the part of the tree
+    """The queue and, below it, the running run, pair, loops... down to the unit being worked on: the part of the tree
     worth opening at first sight."""
     path, node = [root], root
     while True:
@@ -132,7 +132,7 @@ def glyph_of(node: qm.Node, G: dict, frame: str) -> str:
     if node.log:  # a record, not a unit: a bullet says "this happened", never "this is finished"
         return "•" if G["full"] == "█" else "-"
     return {"done": G["done"], "running": frame, "partial": G.get("part", G["stopped"]), "pending": G["pending"],
-            "failed": G["failed"], "stopped": G["stopped"]}.get(node.status, G["pending"])
+            "failed": G["failed"], "stopped": G["stopped"], "awaiting": G["pending"]}.get(node.status, G["pending"])
 
 
 def mark(node: qm.Node, G: dict, frame: str) -> str:
@@ -175,9 +175,11 @@ def right_columns(node: qm.Node, width: int, G: dict, count_width: int = MIN_COU
         return f" {blank}{unit} {qm.took_text(node):>{ETA_WIDTH}}"
     inner = node.sub if node.sub and node.done < node.total and node.sub[1] > 0 else None
     shown, of = (inner[0], inner[1]) if inner else (node.done, node.total)  # a unit under way fills its bar by its own steps
+    if node.share is not None and not inner and node.total:  # a method or the queue: how far its runs are
+        shown, of = (1.0 if node.status == "done" else node.share), 1.0
     percent = f"{min(100, int(100 * shown / of)):>3}%" if of else "  -"
     count = f"{node.done:,}/{node.total:,}" if node.total else ""
-    text = f" {bar(shown if inner else node.done, of if inner else node.total, BAR_WIDTH, G)} {percent} {count:>{count_width}}"
+    text = f" {bar(shown, of, BAR_WIDTH, G)} {percent} {count:>{count_width}}"
     if width >= 84:
         unit = (f"{inner[0]:.1f}/{inner[1]:g} {inner[2]}".replace(".0/","/") if inner
                 else strip_text(node.strip, UNIT_WIDTH, G) if len(node.strip) > 1 else node.noun)
@@ -478,6 +480,23 @@ ALT_ON = "\033[?1049h\033[?25l"
 ALT_OFF = "\033[?25h\033[?1049l"
 MOUSE_ON = "\033[?1000h\033[?1006h"
 MOUSE_OFF = "\033[?1006l\033[?1000l"
+SYNC_ON, SYNC_OFF = "\033[?2026h", "\033[?2026l"  # synchronized update: the terminal shows the frame at once (others ignore it)
+
+
+def paint(previous: list[str] | None, lines: list[str]) -> str:
+    """What to write to turn a screen showing ``previous`` into ``lines``: only the rows that changed, each at its own
+    position, inside a synchronized update; "" when nothing changed (``previous`` None: every row).
+
+    Rewriting the whole screen five times a second sent ~30 kB/s to a terminal that showed nothing new, and over SSH a
+    client paints what has arrived, so frames showed half-drawn: the selected row's highlight flickered in and out."""
+    changed = [i for i, line in enumerate(lines) if previous is None or i >= len(previous) or previous[i] != line]
+    clear = previous is not None and len(previous) > len(lines)
+    if not changed and not clear:
+        return ""
+    parts = [SYNC_ON] + [f"\033[{i + 1};1H{lines[i]}\033[K" for i in changed]
+    if previous is None or clear:
+        parts.append(f"\033[{len(lines) + 1};1H\033[J")
+    return "".join(parts) + SYNC_OFF
 
 
 def header_line(root: qm.Node, status: str, elapsed: float | None, G: dict, now: float | None = None) -> str:
@@ -538,6 +557,8 @@ def run(build: Callable[[], qm.Node], status: Callable[[], tuple[str, float | No
     tui.tty.setcbreak(fd)
     out.write(ALT_ON + MOUSE_ON)
     mouse_on, spin, carry = True, 0, ""
+    shown: list[str] | None = None  # what the screen shows now (None: unknown, so the next frame draws every row)
+    shown_size = None
     try:
         while builder.root is None and not builder.error:
             time.sleep(0.05)
@@ -552,8 +573,14 @@ def run(build: Callable[[], qm.Node], status: Callable[[], tuple[str, float | No
                                frames[spin % len(frames)], notice=notice() if notice else None)
                 if builder.error:
                     lines[-1] = style(fit(f"  could not refresh: {builder.error}", columns), "red")
-                out.write("\033[H" + "\033[K\n".join(fit(line, columns) for line in lines) + "\033[K\033[J")
-                out.flush()
+                lines = [fit(line, columns) for line in lines]
+                if (size.columns, size.lines) != shown_size:  # a resized terminal: draw every row again
+                    shown, shown_size = None, (size.columns, size.lines)
+                text = paint(shown, lines)
+                if text:
+                    out.write(text)
+                    out.flush()
+                shown = lines
                 if view.mouse != mouse_on:
                     out.write(MOUSE_ON if view.mouse else MOUSE_OFF)
                     out.flush()

@@ -30,17 +30,20 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(code, 2)
 
     def test_registry_covers_expected_commands(self):
-        expected = {"smoke", "disjoint", "disjoint-load", "disjoint-store", "disjoint-stats", "plots", "reproduce-disjoint"}
+        expected = {
+            "smoke", "disjoint", "disjoint-load", "disjoint-store", "disjoint-stats", "plots", "reproduce-disjoint", "overlapping-rescore",
+            "overlapping-small", "overlapping-controlled", "start-quality", "overlapping-cover-audit",
+            "overlapping-calibrate", "baseline-calibrate", "overlapping-tradeoffs", "participation-budget",
+            "overlapping-codeseg", "codeseg-setup", "codeseg-doctor", "snap-pickle", "overlapping-gt-spectrum",
+            "overlapping-gt-posthoc", "info", "quickstart",
+        }
         self.assertEqual(set(CLI.COMMANDS), expected)
-        removed = {"overlapping-small", "overlapping-controlled", "start-quality", "overlapping-cover-audit",
-                   "overlapping-calibrate", "baseline-calibrate", "overlapping-tradeoffs", "participation-budget",
-                   "overlapping-codeseg", "codeseg-setup", "codeseg-doctor", "snap-pickle", "overlapping-gt-spectrum",
-                   "overlapping-gt-posthoc", "info", "quickstart"}
+        removed = {"overlapping-full", "overlapping-subgraph", "overlapping-scale", "overlapping-resolution",
+                   "reproduce-overlapping-paper", "overlapping-gt-robustness", "overlapping-dnn", "overlapping-audit"}
         self.assertFalse(removed & set(CLI.COMMANDS))
-        self.assertEqual(CLI.RUN_EQUIVALENTS, {})
         for name in removed:
             with patch("sys.stderr"):
-                self.assertEqual(CLI.main([name, "--help"]), 2)
+                self.assertNotEqual(CLI.main([name, "--help"]), 0)
 
     def test_every_registered_command_has_working_help(self):
         import io
@@ -54,55 +57,120 @@ class TestCLI(unittest.TestCase):
 
     def test_the_run_aliases_and_top_level_commands(self):
         self.assertEqual(set(CLI.RUN_VERBS), {"list", "status", "attach", "logs", "stop", "resume", "check", "queue"})
-        self.assertEqual(CLI.RUN_ALIASES, {"disjoint": "disjoint"})
-        self.assertEqual(set(CLI.TOP_LEVEL), {"run", "detect", "show", "guide", "config", "update"})
+        self.assertNotIn("youtube-hoc", CLI.RUN_ALIASES)
+        self.assertNotIn("spectrum-tuned", CLI.RUN_ALIASES)
+        for verb in ("exp", "paper", "spectrum", "spectrum-full", "calibrate", "calibrate-baselines", "startcurve",
+                     "controlled", "audit", "posthoc", "disjoint"):
+            self.assertIn(verb, CLI.RUN_ALIASES)
+        self.assertEqual(set(CLI.TOP_LEVEL), {"run", "detect", "setup", "show", "guide", "config", "pickle", "update"})
 
-    def test_the_overlap_verbs_fail_and_name_hedonic_2(self):
-        import io
-        from contextlib import redirect_stderr
-
-        for argv in (["setup", "--dry-run"], ["pickle", "--all"], *(["run", verb] for verb in CLI.HEDONIC_2_RUN_VERBS)):
-            err = io.StringIO()
-            with self.subTest(argv=argv), redirect_stderr(err):
-                self.assertEqual(CLI.hedonic_main(list(argv)), 2)
-            self.assertIn("hedonic 2", err.getvalue())
-        for verb in ("exp", "paper", "spectrum", "calibrate", "calibrate-baselines", "startcurve", "controlled",
-                     "audit", "posthoc"):
-            self.assertIn(verb, CLI.HEDONIC_2_RUN_VERBS)
-
-    def test_hedonic_front_door(self):
-        import io
-        from contextlib import redirect_stderr, redirect_stdout
-
-        out = io.StringIO()
-        with redirect_stdout(out):
-            self.assertEqual(CLI.hedonic_main(["--help"]), 0)
-            self.assertEqual(CLI.hedonic_main(["run", "--help"]), 0)
-        for line in ("hedonic run disjoint", "hedonic run queue", "hedonic show disjoint", "hedonic config"):
-            self.assertIn(line, out.getvalue())
-        self.assertNotIn("hedonic run exp", out.getvalue())
-        with redirect_stdout(io.StringIO()):
-            self.assertEqual(CLI.hedonic_main(["run", "disjoint", "--help"]), 0)
-        with redirect_stderr(io.StringIO()) as err:
-            self.assertEqual(CLI.hedonic_main(["run", "nope"]), 2)
-            self.assertEqual(CLI.hedonic_main(["run"]), 2)  # no favourite: say what can run
-            self.assertEqual(CLI.hedonic_main(["nope"]), 2)
-        self.assertIn("hedonic run disjoint", err.getvalue())
-
-    def test_hedonic_show(self):
+    def test_hedonic_setup_dry_run_is_wired(self):
         import io
         from contextlib import redirect_stdout
 
-        out = io.StringIO()
-        with redirect_stdout(out):
-            self.assertEqual(CLI.hedonic_main(["show", "disjoint", "--json"]), 0)
-        self.assertIn("paper", json.loads(out.getvalue()))
-        with redirect_stdout(io.StringIO()):
-            self.assertEqual(CLI.hedonic_main(["show"]), 0)  # the one topic is the default
-        for what in ("methods", "networks", "metrics", "covers", "table", "figure"):
-            with self.subTest(what=what), self.assertRaises(SystemExit) as caught:
-                CLI.hedonic_main(["show", what])
-            self.assertIn("hedonic 2", str(caught.exception))
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_CODESEG_CACHE": d + "/cache"}):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = CLI.hedonic_main(["setup", "--dry-run", "--json", "--network-root", d + "/nets"])
+            self.assertEqual(code, 0)
+            self.assertTrue(json.loads(out.getvalue().strip().splitlines()[-1])["dry_run"])
+            self.assertEqual(list(Path(d).iterdir()), [])
+
+    def test_hedonic_front_door(self):
+        self.assertEqual(CLI.hedonic_main(["--help"]), 0)
+        self.assertEqual(CLI.hedonic_main(["run", "exp", "--help"]), 0)
+        self.assertEqual(CLI.hedonic_main(["run", "nope"]), 2)
+        self.assertEqual(CLI.main(["quickstart", "--help"]), 0)
+
+    def test_quickstart_parsing_and_catalogue(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        self.assertEqual(qs.parse_seeds("0-2,7"), [0, 1, 2, 7])
+        self.assertEqual(len(qs.NETWORKS), 7)
+        self.assertEqual(len(qs.METHODS), 9)
+        self.assertEqual(qs.parse_choice("all", list(qs.BY_KEY), qs.ALIASES, "method"), list(qs.BY_KEY))
+        self.assertEqual(qs.parse_choice("hoc,lazyfox", list(qs.BY_KEY), qs.ALIASES, "method"), ["hedonic", "fox"])
+        with self.assertRaises(ValueError):
+            qs.parse_choice("nope", list(qs.NETWORKS), {}, "network")
+        cfg = qs.config_from_args(qs.build_parser().parse_args(["--networks", "dblp", "--nodes", "1000", "--threads", "4"]))
+        # community counts tuned on full DBLP are scaled to the subgraph; threads reach threaded methods
+        self.assertLess(qs.method_params(qs.BY_KEY["bigclam"], cfg, "dblp")["communities"], 25000)
+        self.assertEqual(qs.method_params(qs.BY_KEY["bigclam"], cfg, "dblp")["threads"], 4)
+        self.assertNotIn("threads", qs.method_params(qs.BY_KEY["codeseg"], cfg, "dblp"))  # one thread: deterministic
+        self.assertEqual(qs.method_params(qs.BY_KEY["hedonic"], cfg, "dblp")["max_memberships"], 64)
+        self.assertIn("--nodes 1000", cfg.command())
+
+    def test_quickstart_table_lists_every_accuracy_metric(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        cfg = qs.Config(methods=["hedonic", "codeseg"], seeds=[0, 1])
+        metrics = {key: 0.5 for key, _ in qs.COLUMNS}
+        records = [{"network": "dblp", "method_key": "hedonic", "seed": s, "status": "completed",
+                    "metrics": metrics, "detection_seconds": 1.0} for s in (0, 1)]
+        records.append({"network": "dblp", "method_key": "codeseg", "status": "unavailable",
+                        "reason": "no C++ compiler found"})
+        table = qs.render(qs.summarise(records, cfg), cfg)
+        for _, label in qs.COLUMNS:
+            self.assertIn(label, table)
+        self.assertIn("no C++ compiler found", table)
+        self.assertIn("mean ± sd over 2 seeds", table)
+
+    def test_paper_config_plan_order(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        cfg = qs.load_config("paper")
+        plan = qs.build_plan(cfg, {})
+        self.assertEqual(len(plan), 2 * (3 * 10 + 6))  # Hedonic, ANGEL, Ego-Splitting x 10; 6 deterministic x 1
+        # seed -> method -> network: seed 0, method 1 on DBLP then Amazon, then method 2 ...
+        self.assertEqual([(n, s, m.key) for n, s, m in plan[:3]],
+                         [("dblp", 0, "hedonic"), ("amazon", 0, "hedonic"), ("dblp", 0, "codeseg")])
+        self.assertEqual(plan[20][1], 1)
+        self.assertEqual(cfg.nodes, 0)
+        self.assertEqual(cfg.command(), "hedonic run exp --config paper")
+        # flags override a named config; a saved file round-trips
+        args = qs.build_parser().parse_args(["--config", "paper", "--seeds", "0-1"])
+        self.assertEqual(qs.config_from_args(args).seeds, [0, 1])
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "c.json")
+            self.assertEqual(qs.main(["--config", "paper", "--save-config", path]), 0)
+            self.assertEqual(len(qs.build_plan(qs.load_config(path), {})), 72)
+            toml_path = os.path.join(d, "c.toml")  # the extension decides the format, so it must load back
+            self.assertEqual(qs.main(["--config", "paper", "--seeds", "0-2", "--save-config", toml_path]), 0)
+            self.assertEqual(qs.load_config(toml_path).seeds, [0, 1, 2])
+            self.assertEqual(qs.load_config(toml_path).networks, ["dblp", "amazon"])
+        self.assertEqual(CLI.hedonic_main(["run", "paper", "--dry-run"]), 0)
+
+    def test_user_config_defaults_and_profiles(self):
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "config.toml")
+            with patch.dict(os.environ, {"HEDONIC_CONFIG": path}):
+                self.assertEqual(CLI.hedonic_main(["config", "set", "output_dir", d]), 0)
+                self.assertEqual(CLI.hedonic_main(["config", "set", "run", '"paper"']), 0)
+                self.assertEqual(CLI.hedonic_main(["config", "set", "profiles.mine.seeds", '"0-2"']), 0)
+                self.assertEqual(CLI.hedonic_main(["config", "set", "profiles.mine.config", '"paper"']), 0)
+                cfg = qs.config_from_args(qs.build_parser().parse_args(["--config", "paper"]))
+                self.assertEqual(cfg.output_dir, d)  # machine default applies to named configs
+                cfg = qs.config_from_args(qs.build_parser().parse_args(["--config", "mine"]))
+                self.assertEqual((cfg.seeds, cfg.networks), ([0, 1, 2], ["dblp", "amazon"]))
+                cfg = qs.config_from_args(qs.build_parser().parse_args(["--config", "paper", "--output-dir", "x"]))
+                self.assertEqual(cfg.output_dir, "x")  # flags win
+                self.assertEqual(CLI.hedonic_main(["run"]), 0)  # no TTY: shows the plan, does not start
+
+    def test_hedonic_show(self):
+        from hedonic.experiments.overlapping import info
+
+        with tempfile.TemporaryDirectory() as d:
+            rows = info.method_status(Path(d))
+            self.assertEqual(len(rows), 9)
+            self.assertEqual({r["key"]: r["status"] for r in rows}["hedonic"], "ready")
+            nets = info.network_status(Path(d), d, remote=False)
+            self.assertEqual(len(nets), 7)
+            self.assertTrue(all(n["status"] == "not downloaded" for n in nets))
+            for what in ("methods", "networks", "metrics"):
+                self.assertEqual(CLI.hedonic_main(["show", what, "--cache-dir", d, "--json"] +
+                                                  (["--network-root", d] if what == "networks" else [])), 0)
 
     def test_hedonic_run_verbs_without_runs(self):
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_RUNS_DIR": d}):
@@ -141,95 +209,83 @@ class TestCLI(unittest.TestCase):
                 rm.load_entry("missing")
 
     def test_worker_error_is_recorded_as_failed_and_resumable(self):
-        from hedonic.experiments.disjoint import front
+        from hedonic.experiments.overlapping import quickstart as qs
         from hedonic.experiments.overlapping import runmanager as rm
 
-        settings = front.resolve(front.build_parser().parse_args(["--preset", "smoke"]))
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_RUNS_DIR": d}):
-            entry = {"name": "bad", "kind": "disjoint", "settings": settings, "output_dir": d, "created": 0, "session": "",
+            cfg = qs.Config(methods=["hedonic"], output_dir=d, cache_dir=d)
+            cfg.methods = ["not-a-method"]  # fails inside the worker, after it has started
+            entry = {"name": "bad", "config": cfg.__dict__, "output_dir": d, "created": 0, "session": "",
                      "backend": "process", "log": os.path.join(d, "worker.log")}
             rm.write_json(rm.entry_path("bad"), entry)
-            with patch.object(front, "work", side_effect=RuntimeError("not-a-method")), \
-                    patch("sys.stderr"), patch("sys.stdout"):
-                self.assertEqual(rm.worker("bad"), 1)  # fails inside the worker, after it has started
+            with patch("sys.stderr"), patch("sys.stdout"):
+                self.assertEqual(rm.worker("bad"), 1)
             progress = rm.read_progress(entry)
             self.assertEqual(progress["status"], "failed")
             self.assertIn("not-a-method", progress["reason"])
             self.assertEqual(rm.effective_status(entry, progress), "failed")
             self.assertIn("hedonic run resume bad", rm.snapshot(entry))
 
-    def test_a_registered_run_of_a_removed_kind_is_refused_with_hedonic_2(self):
-        from hedonic.experiments.overlapping import runmanager as rm
-
-        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_RUNS_DIR": d}):
-            entry = {"name": "old", "kind": "spectrum", "output_dir": d, "created": 0, "session": "",
-                     "backend": "process", "log": os.path.join(d, "worker.log")}
-            rm.write_json(rm.entry_path("old"), entry)
-            with patch("sys.stderr"), patch("sys.stdout"):
-                self.assertEqual(rm.worker("old"), 1)
-            self.assertIn("hedonic 2", rm.read_progress(entry)["reason"])
-            self.assertIn("hedonic 2", rm.snapshot(entry))
-            with self.assertRaises(SystemExit) as caught:
-                rm.cmd_resume("old")
-            self.assertIn("hedonic 2", str(caught.exception))
-
     def test_run_launch_records_absolute_paths_and_resets_progress(self):
-        from hedonic.experiments.disjoint import front
+        from hedonic.experiments.overlapping import quickstart as qs
         from hedonic.experiments.overlapping import runmanager as rm
 
         class Proc:
             pid = 999_999_999
 
-        settings = front.resolve(front.build_parser().parse_args(["--preset", "smoke"]))
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_RUNS_DIR": d}):
             cwd = os.getcwd()
             os.chdir(d)
             try:
-                stale = Path(d) / "rel" / "progress.json"
+                stale = Path(d) / "rel" / "job" / "progress.json"
                 stale.parent.mkdir(parents=True)
                 stale.write_text('{"status": "completed"}')
                 with patch.object(rm.shutil, "which", return_value=None), \
                         patch.object(rm.subprocess, "Popen", return_value=Proc()):
-                    entry = rm.launch_disjoint(settings, "job", "rel")
+                    entry = rm.launch(qs.Config(output_dir="rel", cache_dir=os.path.join(d, "c")), "job")
                     self.assertTrue(os.path.isabs(entry["output_dir"]))  # `hedonic run list` works from any directory
-                    self.assertEqual((entry["kind"], entry["backend"]), ("disjoint", "process"))
                     self.assertFalse(stale.exists())  # a resumed run must not look finished
                     with self.assertRaises(ValueError):
-                        rm.launch_disjoint(settings, "bad name", "rel2")
+                        rm.launch(qs.Config(output_dir="rel"), "bad name")
             finally:
                 os.chdir(cwd)
 
     def test_run_option_validation_and_friendly_errors(self):
-        from hedonic.experiments.overlapping import common, userconfig
+        from hedonic.experiments.overlapping import quickstart as qs
+        from hedonic.experiments.overlapping import userconfig
 
-        self.assertEqual(common.parse_seeds("0-2,7"), [0, 1, 2, 7])
         for bad in ("3-1", "x", "-2", ""):
             with self.assertRaises(ValueError):
-                common.parse_seeds(bad)
-        self.assertEqual(common.parse_name("paper-1_a"), "paper-1_a")
+                qs.parse_seeds(bad)
+        self.assertEqual(qs.parse_name("paper-1_a"), "paper-1_a")
         for bad in ("a b", "a.b", "../x", ""):
             with self.assertRaises(ValueError):
-                common.parse_name(bad)
+                qs.parse_name(bad)
+        for flags in (["--threads", "0"], ["--timeout", "0"], ["--nodes", "-1"]):
+            with self.assertRaises(ValueError):
+                qs.config_from_args(qs.build_parser().parse_args(flags))
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_CONFIG": os.path.join(d, "c.toml")}):
-            for argv in (["set", "threads", "abc"], ["set", "threads", "0"], ["set", "disjoint_output_root", "true"],
-                         ["set", "profiles.q.seeds", "1"], ["set", "run", '"paper"'], ["set", "output_dir", d]):
+            for argv in (["set", "threads", "abc"], ["set", "threads", "0"], ["set", "output_dir", "true"],
+                         ["set", "profiles.q.bogus", "1"]):
                 with self.assertRaises(SystemExit):
                     userconfig.main(argv)
             self.assertFalse(os.path.exists(userconfig.path()))  # nothing invalid was written
             self.assertEqual(userconfig.main(["set", "threads", "4"]), 0)
-            self.assertEqual(userconfig.main(["set", "defaults.disjoint_output_root", d]), 0)
-            self.assertEqual(userconfig.defaults(), {"threads": 4, "disjoint_output_root": d})
-            self.assertEqual(userconfig.main(["unset", "threads"]), 0)
-            self.assertEqual(userconfig.defaults(), {"disjoint_output_root": d})
+            self.assertEqual(userconfig.defaults()["threads"], 4)
 
-    def test_the_environment_a_run_records_names_its_builds(self):
-        from hedonic.experiments.overlapping import common
+    def test_run_exp_list_uses_the_configured_cache_dir(self):
+        from hedonic.experiments.overlapping import quickstart as qs
 
-        env = common.environment()
-        self.assertEqual(list(env), ["hedonic", "hedonic_core_sha256", "python_igraph", "igraph_c",
-                                     "igraph_extension_sha256", "igraph_extension_path", "algorithm_identity",
-                                     "python", "platform", "machine", "executable"])
-        self.assertIn(env["python_igraph"], common.environment_line())
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HEDONIC_CONFIG": os.path.join(d, "c.toml")}):
+            os.environ.pop("HEDONIC_CODESEG_CACHE", None)  # restored by patch.dict
+            self.assertEqual(CLI.hedonic_main(["config", "set", "cache_dir", d]), 0)
+            with patch("hedonic.experiments.overlapping.info.method_status") as method_status, \
+                    patch("hedonic.experiments.overlapping.info.network_status", return_value=[]), \
+                    patch("hedonic.experiments.overlapping.info.render_networks", return_value=""), \
+                    patch("hedonic.experiments.overlapping.info.render_methods", return_value=""):
+                self.assertEqual(qs.main(["--list"]), 0)
+                # the `hedonic setup` folder under the configured cache_dir (not the literal path "None")
+                self.assertEqual(method_status.call_args.args[0], Path(d) / "codeseg")
 
     def test_tui_fallback_reasks_on_garbage_and_fit_truncates_by_visible_width(self):
         from hedonic.experiments.overlapping import tui
@@ -246,6 +302,10 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(tui.visible_len(fitted), 20)
         self.assertTrue(fitted.endswith("\033[0m"))
         self.assertEqual(tui.fit("short", 20), "short")
+
+    def test_overlapping_small_via_cli(self):
+        code = CLI.main(["overlapping-small"])
+        self.assertEqual(code, 0)
 
     def test_disjoint_help(self):
         code = CLI.main(["disjoint", "--help"])
@@ -340,32 +400,38 @@ class TestCLI(unittest.TestCase):
 
 
 class TestForeground(unittest.TestCase):
-    """``hedonic run disjoint --foreground`` runs the worker in this terminal, under its --name and --output-dir."""
+    """``hedonic run exp --foreground`` runs the worker in this terminal and registers the run under its --name."""
 
-    def test_a_foreground_run_works_in_this_process(self):
+    def test_a_foreground_run_is_registered_under_its_name(self):
         import io
+        import os
+        import tempfile
         from contextlib import redirect_stdout
+        from pathlib import Path
+        from unittest.mock import patch
 
-        from hedonic.experiments.disjoint import front
         from hedonic.experiments.overlapping import runmanager as rm
 
         seen = {}
 
-        def fake_work(name, entry, prog, progress_file=None):
-            seen.update(name=name, kind=entry["kind"], output=entry["output_dir"], progress=progress_file)
+        def fake_work(name, entry, prog):
+            seen.update(name=name, backend=entry["backend"], pid=entry["pid"], output=entry["output_dir"])
+            prog.update(status="completed", pid=os.getpid())
+            rm.write_json(rm.progress_path(entry), prog)
             return 0
 
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.dict(os.environ, {"HEDONIC_RUNS_DIR": str(Path(tmp) / "registry")}), \
-                patch.object(front, "work", fake_work), redirect_stdout(io.StringIO()):
-            code = CLI.hedonic_main(["run", "disjoint", "--preset", "smoke", "--foreground", "--yes",
-                                     "--name", "fg-test", "--output-dir", tmp + "/out"])
+                patch.object(rm, "_work", fake_work), redirect_stdout(io.StringIO()):
+            code = CLI.hedonic_main(["run", "exp", "--foreground", "--yes", "--name", "fg-test", "--networks", "dblp",
+                                     "--methods", "hedonic", "--nodes", "1000", "--output-dir", tmp + "/out"])
             self.assertEqual(code, 0)
-            self.assertEqual((seen["name"], seen["kind"]), ("fg-test", "disjoint"))
-            self.assertEqual(Path(seen["output"]), (Path(tmp) / "out").resolve())
-            self.assertEqual(Path(seen["progress"]), (Path(tmp) / "out").resolve() / "progress.json")
-            # Registered, so `hedonic run check|status NAME` find it; a resume relaunches it detached.
-            self.assertEqual([(e["name"], e["backend"]) for e in rm.all_entries()], [("fg-test", "foreground")])
+            self.assertEqual(seen["name"], "fg-test")
+            self.assertEqual(seen["backend"], "foreground")
+            self.assertEqual(seen["pid"], os.getpid())
+            self.assertTrue(seen["output"].endswith("fg-test"))
+            entry = rm.load_entry("fg-test")
+            self.assertEqual(rm.effective_status(entry, rm.read_progress(entry)), "completed")
 
 
 class TestTmuxEnvironment(unittest.TestCase):

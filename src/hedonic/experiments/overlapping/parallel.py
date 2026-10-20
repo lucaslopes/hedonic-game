@@ -10,15 +10,14 @@ threads is unsafe, and the metric code holds the GIL):
   ``workers == 1`` it calls ``fn`` in this process, so single-worker behaviour, tracebacks and memory are exactly those
   of a plain loop.
 * :class:`Slots` is a cross-process counting semaphore made of ``flock`` files. Several independent processes that
-  each fork their own children take a slot around every unit of work, so
+  each fork their own children (the four searches of the Hedonic calibration) take a slot around every unit of work, so
   together they never run more than ``size`` units at once. The kernel drops a lock when its process dies, so a killed
   run cannot leave a slot taken.
 
-Timing-sensitive code (detector runs whose time and peak memory are results) must not use this: a run measured next to
-seven others is not the run a paper reports. In hedonic 1 the durable-run worker uses only the free-memory reading
-(:func:`memory_floor`, :func:`free_memory_percent`) for its memory guard; the SBM sweep has its own workers.
+Timing-sensitive code (the benchmark's detector runs, whose time and peak memory are results) must not use this: a
+run measured next to seven others is not the run the paper reports.
 
-Memory. Workers share the loaded graph copy-on-write, but each also builds its own start, result and scores, so N workers
+Memory. Workers share the loaded graph copy-on-write, but each also builds its own start, cover and scores, so N workers
 need more than one. :func:`run_forked` therefore watches the machine's free memory (``kern.memorystatus_level`` on macOS,
 ``MemAvailable`` on Linux) while it waits, and when it falls below a floor (default 10%, ``HEDONIC_MEMORY_FLOOR``, ``0``
 turns it off) it kills its workers and raises :class:`MemoryLow`, instead of letting the machine swap or restart. The
