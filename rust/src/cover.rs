@@ -1092,16 +1092,16 @@ fn shared_labels(a: &[i64], b: &[i64]) -> i64 {
 fn quality(graph: &Graph, gamma: f64, cover: &Cover, count: i64, inv_sqrt: &[f64]) -> Result<f64> {
     let mut mass = filled(count as usize, 0.0f64)?;
     let (mut q, mut total) = (0.0f64, 0.0f64);
-    for e in 0..graph.edge_count {
-        let (a, b) = (graph.end(2 * e) as usize, graph.end(2 * e + 1) as usize);
-        let (ra, rb) = (cover.row(a), cover.row(b));
-        let w = graph.edge_weight(e);
+    let weights = graph.edge_weights;
+    graph.each_edge(|e, a, b| {
+        let (ra, rb) = (cover.row(a as usize), cover.row(b as usize));
+        let w = weights.map_or(1.0, |w| w[e]);
         let shared = shared_labels(ra, rb);
         total += w;
         if shared > 0 {
             q += 2.0 * w * shared as f64 * inv_sqrt[ra.len()] * inv_sqrt[rb.len()];
         }
-    }
+    });
     for v in 0..graph.vertex_count as usize {
         let row = cover.row(v);
         let term = graph.node_weight(v as i64) * inv_sqrt[row.len()];
