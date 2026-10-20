@@ -1,8 +1,8 @@
 """Detector orchestration for :class:`hedonic.Game`.
 
 Every call runs best-response local moving in this package's C core
-(:mod:`hedonic._native`) until no vertex has an improving move. hedonic 1
-detects partitions; overlapping covers are hedonic 2.
+(:mod:`hedonic._native`) until no vertex has an improving move, for partitions
+and covers alike.
 """
 
 from __future__ import annotations
@@ -121,10 +121,13 @@ def community_hedonic(
             "ties a vertex to no one else); remove them with "
             "g.simplify(multiple=False, loops=True)"
         )
-    if not _integer(max_memberships) or max_memberships != 1:
-        raise ValueError("hedonic 1 detects partitions only (max_memberships=1); "
-                         "overlapping covers are hedonic 2")
-    requested_max_memberships = max_memberships = 1
+    if not _integer(max_memberships) or (max_memberships < 1 and max_memberships != -1):
+        raise ValueError("max_memberships must be an integer >= 1, or -1")
+    requested_max_memberships = max_memberships = int(max_memberships)
+    if max_memberships == -1 or max_memberships > game.vcount():
+        # No vertex can hold more labels than there are vertices.
+        max_memberships = game.vcount()
+    overlapping = max_memberships > 1
     max_total_communities = _positive_or_none("max_total_communities", max_total_communities)
     n_communities = _positive_or_none("n_communities", n_communities)
     if max_communities is not None:
@@ -137,10 +140,21 @@ def community_hedonic(
         and n_communities > max_total_communities
     ):
         raise ValueError("n_communities must not exceed max_total_communities")
-    # A partition occupies at most n communities.
-    capacity = game.vcount()
+    # A state occupies at most n x max_memberships communities.
+    capacity = game.vcount() * max_memberships
     if n_communities is not None and n_communities > capacity:
-        raise ValueError(f"n_communities={n_communities} exceeds the vertex count ({capacity})")
+        if not overlapping:
+            bound = f"the vertex count ({capacity})"
+        else:
+            bound = (
+                f"the vertex count times max_memberships ({game.vcount()} x "
+                f"{max_memberships} = {capacity}), the most communities a cover "
+                "can occupy"
+                + ("" if requested_max_memberships == max_memberships else
+                   f" (max_memberships={requested_max_memberships} is capped at "
+                   "the vertex count)")
+            )
+        raise ValueError(f"n_communities={n_communities} exceeds {bound}")
     # A larger limit binds nothing; the core takes 64-bit counts.
     native_max_total = (
         None if max_total_communities is None else min(max_total_communities, capacity)
@@ -164,10 +178,10 @@ def community_hedonic(
             raise ValueError("resolution must be a finite real number")
 
     # Read the weights once, as float64 arrays (an iterator would be empty
-    # the second time).
+    # the second time); a cover takes non-negative edge weights only.
     if edge_weights is not None:
         edge_weights = weight_vector(
-            game, edge_weights, "edge_weights", per_vertex=False, nonnegative=False
+            game, edge_weights, "edge_weights", per_vertex=False, nonnegative=overlapping
         )
     if game.ecount() == 0:
         weight_total = 0.0
@@ -237,13 +251,16 @@ def community_hedonic(
                 game, rows, max_memberships, res, edge_weights, node_weight_values
             )
         check_start_counts(rows, source, max_total_communities, n_communities, projected)
-        membership_vector = [row[0] for row in rows]
+        membership_vector = rows if overlapping else [row[0] for row in rows]
         max_communities_effect = "none: a start state was supplied"
     elif count_constrained:
         # The native layer builds the deterministic feasible start
         # (vertex v in community v mod K) for count-constrained calls.
         membership_vector = None
         max_communities_effect = "none: count limits select the default start"
+    elif overlapping:
+        membership_vector = [[v] for v in range(game.vcount())]
+        max_communities_effect = "none: overlapping singleton start"
     elif max_communities is None:
         membership_vector = list(range(game.vcount()))
         max_communities_effect = "none: disjoint singleton start"
@@ -282,7 +299,7 @@ def community_hedonic(
     )
 
     # A partition carries its quality as an attribute (igraph copies the
-    # params of a VertexClustering).
+    # params of a VertexClustering); a cover keeps it in ``_params``.
     params = getattr(result, "_params", None)
     if isinstance(params, dict) and "quality" in params:
         setattr(result, "_hedonic_native_quality", params["quality"])
@@ -291,7 +308,15 @@ def community_hedonic(
         if getattr(result, "quality", None) is not None:
             setattr(result, "_hedonic_native_quality", result.quality)
         slack = getattr(result, "equilibrium_slack", None)
-    returned_rows = [[label] for label in result.membership]
+    # The native cover carries its per-vertex rows; taking them saves
+    # rebuilding them from the clusters (result.membership).
+    native_rows = result.__dict__.pop("_hedonic_rows", None)
+    if not overlapping:
+        returned_rows = [[label] for label in result.membership]
+    elif native_rows is not None:
+        returned_rows = native_rows
+    else:
+        returned_rows = [[int(label) for label in labels] for labels in result.membership]
 
     occupied = len({label for row in returned_rows for label in row})
     setattr(
@@ -341,6 +366,7 @@ def community_hedonic(
             # exact, and NaN when W = 0).
             "equilibrium_notion": (
                 "count_constrained" if count_constrained
+                else "cap_constrained" if overlapping
                 else "unconstrained_partition"
             ),
             "equilibrium_slack": slack,
