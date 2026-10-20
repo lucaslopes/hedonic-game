@@ -191,6 +191,35 @@ def test_audit_agrees():
         same(f"audit case {case}", run)
 
 
+def test_audit_windowed_agrees():
+    """Larger audits, where the windowed search excludes, certifies and
+    finds a certified core (vertices with 128 candidates or more)."""
+    rnd = random.Random(12)
+    for case in range(max(4, CASES // 25)):
+        n = rnd.randint(60, 240)
+        g = igraph.Graph(n=n, edges=random_graph(rnd, n))
+        if g.ecount() == 0:
+            g.add_edge(0, 1)
+        k = rnd.randint(n // 2, n)
+        rows = rows_start(rnd, n, 3, k)
+        used = sorted({x for r in rows for x in r})
+        relabel = {x: i for i, x in enumerate(used)}
+        rows = [[relabel[x] for x in r] for r in rows]
+        offsets = np.cumsum([0] + [len(r) for r in rows]).astype(np.int64)
+        labels = np.array([x for r in rows for x in r], dtype=np.int64)
+        ew = None if rnd.random() < 0.5 else np.array([float(rnd.randint(1, 3)) for _ in range(g.ecount())])
+        vertices = np.arange(n, dtype=np.int64)
+        cap = rnd.choice([0, 4, 64])
+        iso, prune = rnd.random() < 0.5, rnd.random() < 0.3
+        atol, rtol = rnd.choice([(1e-10, 1e-9), (0.0, 0.0), (1e-3, 1e-2), (0.05, 0.0)])
+
+        def run(module):
+            state, err = outcome(module._audit_prepare, g, offsets, labels, ew)
+            return err or outcome(module._audit_intervals, state, vertices, cap, iso, atol, rtol, prune)
+
+        same(f"windowed audit case {case}", run)
+
+
 def test_errors_agree():
     """The same exception type and message for bad arguments."""
     edges = array("q", [0, 1, 1, 2])

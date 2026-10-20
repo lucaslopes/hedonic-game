@@ -2,10 +2,11 @@ import os as _os
 
 if _os.environ.get("HEDONIC_CORE") == "rust":
     # The Rust port of the core (rust/, built with maturin) in place of the C
-    # extension: the same functions, bit for bit.
+    # extension: the same functions, bit for bit. The compiled module itself,
+    # not maturin's package around it, so _core.__file__ is the binary.
     import sys as _sys
 
-    import hedonic_core_rs as _core
+    from hedonic_core_rs import hedonic_core_rs as _core
 
     _sys.modules[__name__ + "._core"] = _core
 

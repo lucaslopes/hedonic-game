@@ -1,13 +1,14 @@
 name: Rust core
 
-# The Rust port of the core (rust/): its own tests, and the extension against
-# the C core, bit for bit, on every platform the wheels cover. Nothing is
-# published.
+# The Rust port of the core (rust/): its own tests, the extension against the
+# C core, bit for bit, and hedonic built with the Rust core alone (native/ and
+# setup.py deleted) through its whole test suite, on every platform the wheels
+# cover. Nothing is published.
 on:
   push:
     branches: ['rust/**']
   pull_request:
-    paths: ['rust/**', 'native/**', '.github/workflows/rust.yml']
+    paths: ['rust/**', 'native/**', 'tools/rust_pyproject.py', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -71,3 +72,56 @@ jobs:
         run: HIG_DIFF_CASES=400 python -m pytest -x -q rust/tests/test_differential.py
       - name: The pinned Python tests on the Rust core
         run: HEDONIC_CORE=rust python tools/native_tests.py
+      # The argument of native/tests/check_libm.py: no libm call, so no C
+      # library's rounding, in the compiled extension.
+      - name: No libm call in the Rust core
+        if: runner.os != 'Windows'
+        run: python native/tests/check_libm.py "$(python -c 'from hedonic_core_rs import hedonic_core_rs as m; print(m.__file__)')"
+
+  # hedonic as it would ship without the C: tools/rust_pyproject.py swaps the
+  # setuptools build of native/ for maturin's of rust/ into hedonic._core, in a
+  # checkout without native/ and setup.py. Its pinned tests and its whole
+  # test suite must pass as they do on the C core.
+  rust_only:
+    name: hedonic on the Rust core alone (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+          - name: macos
+            os: macos-latest
+          - name: windows-amd64
+            os: windows-2022
+          - name: windows-arm64
+            os: windows-11-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Delete the C core
+        run: |
+          python tools/rust_pyproject.py > pyproject.rust.toml
+          mv pyproject.rust.toml pyproject.toml
+          rm -rf native setup.py
+      - name: Build and install hedonic (the cli extra, with its platform markers)
+        run: |
+          python -m pip install -U pip
+          python -m pip install ".[cli]" pytest
+          cd "$RUNNER_TEMP"
+          python -c "import hedonic._core as c; assert c.backend == 'rust' and 'site-packages' in c.__file__, c.__file__; print(c.__file__, c.fma_path())"
+      - name: Pinned tests (no skips)
+        run: python tools/native_tests.py
+      - name: The whole test suite
+        env:
+          HIG_PINNED: "1"
+        run: python -m pytest -q -p no:cacheprovider
