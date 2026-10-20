@@ -15,6 +15,7 @@ pub mod fma;
 pub mod graph;
 pub mod heap;
 pub mod partition;
+pub mod prefetch;
 pub mod queue;
 pub mod rng;
 pub mod trace;
