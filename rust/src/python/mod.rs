@@ -534,7 +534,8 @@ fn verify_cover<'py>(
 // ---- The fixed-cover stability audit ----------------------------------------------
 
 /// The prepared state of a fixed cover (immutable; shared by the queries).
-#[pyclass(frozen, name = "AuditState", module = "hedonic_core_rs")]
+#[cfg_attr(not(feature = "core-module"), pyclass(frozen, name = "AuditState", module = "hedonic_core_rs"))]
+#[cfg_attr(feature = "core-module", pyclass(frozen, name = "AuditState", module = "hedonic._core"))]
 struct AuditState {
     core: CoreAudit,
 }
@@ -609,8 +610,11 @@ fn audit_intervals<'py>(
         .intervals(&o, Selection::List(&list), Some(&mut check))
         .map_err(|e| to_py(py, e, None))?;
     let out = PyList::empty(py);
-    for row in intervals {
+    for (v, row) in intervals.into_iter().enumerate() {
         out.append(PyList::new(py, row)?)?;
+        if v & 4095 == 0 {
+            py.check_signals()?;
+        }
     }
     Ok(out)
 }
@@ -667,8 +671,21 @@ fn fma_path() -> &'static str {
 }
 
 /// The Rust core of hedonic: best-response local moving for the CPM hedonic game.
+#[cfg(not(feature = "core-module"))]
 #[pymodule]
 fn hedonic_core_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    module(m)
+}
+
+/// The same module as hedonic's own extension, hedonic._core (the package
+/// built with the Rust core alone: tools/rust_pyproject.py).
+#[cfg(feature = "core-module")]
+#[pymodule]
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    module(m)
+}
+
+fn module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("core_version", crate::CORE_VERSION)?;
     m.add("source_sha256", crate::SOURCE_SHA256)?;
     m.add("backend", "rust")?;

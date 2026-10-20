@@ -3,6 +3,7 @@ platform or the next dev release keeps every finished record valid while the cor
 
 from __future__ import annotations
 
+import hashlib
 import runpy
 import unittest
 from pathlib import Path
@@ -14,8 +15,28 @@ from hedonic.experiments import runtime
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def rust_source_digest(crate: Path) -> str:
+    """rust/build.rs's digest of the Rust core: src/**/*.rs, build.rs and Cargo.toml, relative to the crate, in the
+    format of setup.py's source_digest."""
+    paths = sorted([str(p.relative_to(crate)).replace("\\", "/") for p in (crate / "src").rglob("*.rs")]
+                   + ["build.rs", "Cargo.toml"])
+    digest = hashlib.sha256()
+    for rel in paths:
+        data = (crate / rel).read_bytes().replace(b"\r\n", b"\n")
+        digest.update(rel.encode() + b"\0" + str(len(data)).encode() + b"\0" + data)
+    return digest.hexdigest()
+
+
 class TestBuildIdentity(unittest.TestCase):
     def test_the_core_carries_the_digest_of_the_sources_it_was_built_from(self):
+        if getattr(_core, "backend", "c") == "rust":
+            crate = ROOT / "rust"
+            if not (crate / "build.rs").is_file():
+                self.skipTest("no source tree (an installed wheel)")
+            digest = rust_source_digest(crate)
+            self.assertEqual(_core.source_sha256, digest, "rebuild the extension: the Rust sources changed since")
+            self.assertEqual(runtime.core_built_source_sha256(), digest)
+            return
         setup = ROOT / "setup.py"
         if not setup.is_file():
             self.skipTest("no source tree (an installed wheel)")

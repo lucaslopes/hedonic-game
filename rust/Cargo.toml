@@ -15,6 +15,9 @@ crate-type = ["cdylib", "rlib"]
 default = []
 # The CPython module (maturin turns it on, see pyproject.toml).
 python = ["dep:pyo3"]
+# The module as hedonic._core instead of hedonic_core_rs (the hedonic package
+# built with the Rust core alone, see tools/rust_pyproject.py).
+core-module = ["python"]
 # The soft fma everywhere (tests): the counterpart of HIG_FORCE_SOFT_FMA.
 force-soft-fma = []
 

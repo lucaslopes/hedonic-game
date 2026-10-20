@@ -13,12 +13,33 @@ rustc never contracts `a * b + c`, and every sum runs in the C core's order.
 | `partition.rs` | `partition/` |
 | `cover.rs` | `cover/` |
 | `audit.rs`, `verify.rs`, `trace.rs` | `check/` |
-| `python/` (module `hedonic_core_rs`) | `binding/` (module `hedonic._core`) |
+| `python/` (module `hedonic_core_rs`, or `hedonic._core`) | `binding/` (module `hedonic._core`) |
 
 The module has the functions of `hedonic._core` with the same arguments,
 results, exceptions and messages. `HEDONIC_CORE=rust` makes the package load
 it in place of the C extension; `source_sha256` is the digest of this crate's
 sources (setup.py's format), so records name the Rust core apart.
+
+The stability audit is rc11's: the windowed search (exclusion by Newton
+steps, certified ranges and a certified core, the reference's own cells
+near the ends of each stable set) is `AuditState::intervals`, and the
+exhaustive search it must equal bit for bit is `intervals_exhaustive`
+(tests only). Its re-sorts read unchecked (the order is a permutation,
+debug-asserted), and the full sort runs on packed integer keys (the
+score's bits in descending order, then the index), not an index
+comparator. On the manuscript's SNAP pairs (Hedonic covers at cap 3 and
+uncapped, pruned and not) both cores audit every vertex to the same
+intervals, Rust 1.07 to 1.47 times as fast as C (the smallest, Amazon's
+top5000 pruned, ties at 12 ms; YouTube uncapped and unpruned, the longest,
+254 s against 294 s).
+
+**Without the C.** The cargo feature `core-module` names the module
+`hedonic._core`, and `tools/rust_pyproject.py` writes the repository's
+`pyproject.toml` with maturin building `rust/` into it in place of
+setuptools building `native/` (the `[project]` table is kept, so it is the
+same distribution). CI (`.github/workflows/rust.yml`, job `rust_only`)
+deletes `native/` and `setup.py`, builds and installs that package, and runs
+the pinned tests and the whole test suite on every wheel platform.
 
 What is safer: the engines are safe Rust except the hot paths (the visits
 of both engines: their scans, scoring, slot resets and requeueing; the
@@ -71,12 +92,20 @@ under a heavy load, where the mid-size partitions gain 1.15 to 1.6).
 
 ```bash
 cd rust
-cargo test --release                              # the C core's bit pins, soft fma vs the instruction
+cargo test --release                              # the C core's bit pins and tests (test_core.c, test_audit.c), soft fma vs the instruction
 cargo test --release --features force-soft-fma    # the same with the soft fma everywhere
 maturin develop --release                         # into the active venv
 cd ..
 HEDONIC_CORE=rust python tools/native_tests.py    # the pinned Python tests on the Rust core
 python -m pytest -x -q rust/tests/test_differential.py   # C against Rust, bit for bit
+```
+
+hedonic with the Rust core alone, in a copy of the checkout:
+
+```bash
+python tools/rust_pyproject.py > pyproject.rust.toml && mv pyproject.rust.toml pyproject.toml
+rm -rf native setup.py
+pip install ".[cli]" pytest && python tools/native_tests.py && python -m pytest -q
 ```
 
 `cargo run --release --example profile_cover -- EDGES GAMMA CAP REPS [w]` is a
