@@ -20,10 +20,11 @@ results, exceptions and messages. `HEDONIC_CORE=rust` makes the package load
 it in place of the C extension; `source_sha256` is the digest of this crate's
 sources (setup.py's format), so records name the Rust core apart.
 
-What is safer: the engines are safe Rust except the hot paths (the
-neighbour scans of both engines; the partition's visit, scoring, slot reset
-and requeueing; the queue's next vertex; the adjacency's fill), whose
-indexing invariants are stated and debug-asserted, and the prefetch hints
+What is safer: the engines are safe Rust except the hot paths (the visits
+of both engines: their scans, scoring, slot resets and requeueing; the
+queue's next vertex; the adjacency's fill), whose indexing invariants are
+stated and debug-asserted (the cover's in one place, on its `State`, and
+checked whole before and after each run in debug builds), and the prefetch hints
 (`prefetch.rs`), which read nothing. `Adjacency::build` checks every edge
 end against the vertex range itself before its unchecked fill, so no
 caller's check is relied upon; the visits rely on the shape it builds
@@ -49,20 +50,22 @@ What is faster (the same visits, moves and bits as C, in less time):
 - **Less per visit.** The queue's next vertex is inlined, its refill and
   interruption check are out of line (it was a call returning through
   memory on every visit); the partition scores candidates with selects, not
-  branches (as C does), and its visit header and requeueing are unchecked.
+  branches (as C does), and the visits of both engines read unchecked.
   The cover's best-prefix selection sorts in a persistent buffer (C's is
   the same; the first port copied a 512-byte array per visit); rows are
   packed in one buffer at the start; short rows are insertion-sorted; the
   slack's sort is unstable over a total order. Per call, the partition now
   retires fewer instructions than C: 59.6M against 60.4M (weighted SBM
-  20k), 65.8M against 67.4M (SBM 20k), 127M against 129M (BA 50k).
+  20k), 65.8M against 67.4M (SBM 20k), 127M against 129M (BA 50k); the
+  cover 561M against 566M (BA 50k, cap 3; it was 683M).
 
 `python rust/bench/bench.py [--quick] [--reps N]` times `detect` of both
 cores, interleaved, on the same calls (and checks the results are equal);
-on an M1 Max under load, the geometric mean of C time / Rust time is 1.35;
-every partition case is faster (1.15 to 2.0, the weighted SBM 20k 1.20),
-and the in-cache mid-size covers (BA 50k, SBM 20k weighted) are at parity
-(0.97 to 1.04).
+on an M1 Max (load average 8), every case is at least as fast in Rust:
+the mid-size games (BA 50k, SBM 20k, ER 100k) 1.01 to 1.08, the small
+graphs 1.5 to 2.5 (the generator in place), the large games 1.3 to 1.4
+(prefetching); the geometric mean of C time / Rust time is 1.23 (1.35
+under a heavy load, where the mid-size partitions gain 1.15 to 1.6).
 
 ## Build and test
 
