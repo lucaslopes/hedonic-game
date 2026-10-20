@@ -18,6 +18,22 @@ from hedonic.experiments.overlapping.snap import load_snap_dataset
 from hedonic.experiments.overlapping import snap as snap_module
 
 
+class TestBenchmarkRuntimes(unittest.TestCase):
+    def test_a_runtime_the_benchmark_prepares_is_written_where_it_reads_it(self):
+        from hedonic.experiments.overlapping import quickstart
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HEDONIC_CODESEG_CACHE", None)
+            os.environ.pop("HEDONIC_CODESEG_MANIFEST", None)
+            cache = Path(tmp) / "codeseg"  # the runtime folder itself, as config.codeseg_cache_dir() gives it
+            missing = quickstart.ensure_runtimes(["clique_percolation"], cache, lambda *a: None)
+            self.assertEqual(missing, {})  # it went to cache/codeseg/setup_manifest.json and was reported unavailable
+            self.assertFalse((cache / "codeseg").exists())
+            self.assertEqual(json.loads((cache / "setup_manifest.json").read_text())["methods"]["clique_percolation"]
+                             ["status"], "ready")
+            self.assertNotIn("HEDONIC_CODESEG_CACHE", os.environ)
+
+
 class TestCoDeSEGSetup(unittest.TestCase):
     def test_default_setup_scope_is_full_snap_dblp_only(self):
         self.assertEqual(codeseg_setup.DEFAULT_DATASETS, ("dblp",))

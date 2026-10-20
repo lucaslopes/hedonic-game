@@ -787,7 +787,7 @@ def ensure_runtimes(methods: list[str], cache: Path, say) -> dict[str, str]:
     """Prepare external runtimes through `hedonic setup`; return {method: reason} for unavailable ones."""
     from hedonic.experiments.overlapping import codeseg_setup
 
-    manifest_path = cache / "setup_manifest.json"
+    manifest_path = codeseg_setup._manifest_default_path(cache)  # where setup writes it (HEDONIC_CODESEG_MANIFEST, else here)
 
     def statuses() -> dict:
         try:
@@ -799,12 +799,21 @@ def ensure_runtimes(methods: list[str], cache: Path, say) -> dict[str, str]:
     todo = [s for s in needed if (statuses().get(s) or {}).get("status") != "ready"]
     if todo:
         say(f"preparing runtimes: {', '.join(todo)} (first use only; this can take a few minutes)")
+        # ``cache`` is the runtime folder itself; setup's ``--cache-dir DIR`` would mean DIR/codeseg, so it is named
+        # through the environment, which setup takes as the folder (the manifest went to cache/codeseg/ before)
+        saved = os.environ.get("HEDONIC_CODESEG_CACHE")
+        os.environ["HEDONIC_CODESEG_CACHE"] = str(cache)
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             try:
                 codeseg_setup.setup_main(["--datasets", "dblp", "--methods", ",".join(todo), "--build-native",
-                                          "--skip-data", "--cache-dir", str(cache)])
+                                          "--skip-data"])
             except SystemExit:
                 pass
+            finally:
+                if saved is None:
+                    os.environ.pop("HEDONIC_CODESEG_CACHE", None)
+                else:
+                    os.environ["HEDONIC_CODESEG_CACHE"] = saved
     status = statuses()
     missing = {}
     for m in methods:

@@ -104,6 +104,12 @@
     method's own `--method-budget`, not the run's `--max-evals`, and prices
     what is left within the method's minutes per pair: the view showed ANGEL
     at 0/8 settings (its budget was 3) and an ETA of six hours.
+  - A benchmark that prepares a runtime on first use (`hedonic run exp`)
+    writes its setup manifest where it reads it: it passed the runtime
+    folder as `--cache-dir`, which setup takes as the folder above it, so
+    the manifest went to `codeseg/codeseg/` and the method was reported
+    unavailable (the overlap queue's clique percolation benchmark recorded
+    no run).
   - ANGEL's calibration walks its pre-registered grid (phi 0.2 to 0.8) from
     the largest phi down, and a setting stopped at the evaluation timeout
     ends the walk; ties still go to the smaller phi. A smaller phi merges
