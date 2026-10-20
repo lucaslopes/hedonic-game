@@ -30,7 +30,20 @@ class TestBuildIdentity(unittest.TestCase):
                     if p.suffix in (".c", ".h") and "tests" not in p.relative_to(ROOT / "native").parts}
         self.assertEqual(set(build["source_paths"](str(ROOT))), compiled, "every C source of the core is in its digest")
         self.assertEqual(_core.source_sha256, digest, "rebuild the extension: the C sources changed since it was built")
-        self.assertEqual(runtime.core_source_sha256(), digest)
+        self.assertEqual(runtime.core_built_source_sha256(), digest)
+
+    def test_an_equivalent_core_takes_the_earlier_identity(self):
+        built = runtime.core_built_source_sha256()
+        expected = runtime.EQUIVALENT_CORES.get(built, built)
+        self.assertEqual(runtime.core_source_sha256(), expected)
+        self.assertEqual(runtime.build_identity()["hedonic_core_source_sha256"], expected)
+        self.assertIn(expected[:16], runtime.algorithm_identity())
+        versions = runtime.runtime_versions()
+        self.assertEqual((versions["hedonic_core_source_sha256"], versions["hedonic_core_built_source_sha256"]),
+                         (expected, built), "the record names the identity and keeps the built source as provenance")
+        for later, earlier in runtime.EQUIVALENT_CORES.items():
+            self.assertNotIn(earlier, runtime.EQUIVALENT_CORES, "an alias names a core that is not itself an alias")
+            self.assertNotEqual(later, earlier)
 
     def test_the_series_drops_dev_rc_and_patch(self):
         for version, series in (("2.0.0.dev9", "2.0"), ("2.0.0rc1", "2.0"), ("2.0.3", "2.0"), ("2.1.0", "2.1")):

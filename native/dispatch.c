@@ -45,6 +45,7 @@
     hig_error_t p##audit_prepare(const hig_graph_t *, const hig_cover_t *, const hig_interrupt_t *, hig_audit_state_t **); \
     void p##audit_free(hig_audit_state_t *); \
     hig_error_t p##audit_intervals(const hig_audit_state_t *, const hig_audit_options_t *, hig_audit_selection_t, hig_audit_intervals_t *); \
+    hig_error_t p##audit_intervals_exhaustive(const hig_audit_state_t *, const hig_audit_options_t *, hig_audit_selection_t, hig_audit_intervals_t *); \
     void p##audit_intervals_free(hig_audit_intervals_t *); \
     hig_error_t p##audit_regrets(const hig_audit_state_t *, const hig_audit_options_t *, hig_audit_selection_t, const double *, hig_int, double *, double *); \
     void p##pcg32_seed(hig_pcg32_t *pcg, uint64_t seed, uint64_t stream);                    \
@@ -216,6 +217,10 @@ void hig_audit_free(hig_audit_state_t *s) {
 hig_error_t hig_audit_intervals(const hig_audit_state_t *s, const hig_audit_options_t *o,
                                 hig_audit_selection_t v, hig_audit_intervals_t *r) {
     return HIG_DISPATCH_CALL(audit_intervals, s, o, v, r);
+}
+hig_error_t hig_audit_intervals_exhaustive(const hig_audit_state_t *s, const hig_audit_options_t *o,
+                                           hig_audit_selection_t v, hig_audit_intervals_t *r) {
+    return HIG_DISPATCH_CALL(audit_intervals_exhaustive, s, o, v, r);
 }
 void hig_audit_intervals_free(hig_audit_intervals_t *r) {
     HIG_DISPATCH_CALL(audit_intervals_free, r);

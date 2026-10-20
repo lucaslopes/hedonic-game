@@ -40,16 +40,35 @@ def core_sha256() -> str:
     return digest.hexdigest()
 
 
-@functools.cache
-def core_source_sha256() -> str:
-    """SHA-256 of the C sources the loaded core was compiled from (``hedonic._core.source_sha256``, set by setup.py).
+# Source digests of cores that compute everything a record holds exactly as an earlier core does: records name the
+# earlier digest, so their work stays valid. An entry needs that evidence, not just an unchanged detector.
+EQUIVALENT_CORES: dict[str, str] = {
+    # 2.0.0rc10: only the stability audit's search changed. hig_audit_intervals now evaluates only the cells convexity
+    # cannot settle and returns the exhaustive search's intervals bit for bit (native/README.md; `make -C native test`
+    # compares them, and every audit of the overlap queue's ledger recomputed identically). Detector sources unchanged.
+    "c86846640631141ecf334b1b34050110e8b93c1b1e9447596f31a49499f5dc3e":
+        "ead786fe4cede5140154d802b12e5d8efbf39278280b29f5a3d93a4e7a67b2a4",
+}
 
-    The core's rounding is fixed by its source, so two builds of one source (another platform, compiler, wheel or
-    devN) compute the same results: records name this digest, not the compiled bytes. A core built without it falls
-    back to the SHA-256 of its bytes."""
+
+@functools.cache
+def core_built_source_sha256() -> str:
+    """SHA-256 of the C sources the loaded core was compiled from (``hedonic._core.source_sha256``, set by setup.py).
+    A core built without it falls back to the SHA-256 of its bytes."""
     from hedonic import _core
 
     return getattr(_core, "source_sha256", None) or core_sha256()
+
+
+@functools.cache
+def core_source_sha256() -> str:
+    """The source digest records name: the loaded core's (``core_built_source_sha256``), or the earlier one it is
+    equivalent to (``EQUIVALENT_CORES``).
+
+    The core's rounding is fixed by its source, so two builds of one source (another platform, compiler, wheel or
+    devN) compute the same results: records name this digest, not the compiled bytes."""
+    built = core_built_source_sha256()
+    return EQUIVALENT_CORES.get(built, built)
 
 
 def release_series() -> str:
@@ -90,6 +109,7 @@ def runtime_versions() -> dict[str, str | None]:
         "hedonic_core_path": str(Path(_core.__file__).resolve()),
         "hedonic_core_sha256": core_sha256(),
         "hedonic_core_source_sha256": core_source_sha256(),
+        "hedonic_core_built_source_sha256": core_built_source_sha256(),
         "python_igraph": getattr(igraph, "__version__", None),
         "igraph_c": getattr(native, "__igraph_version__", None),
         "python_igraph_path": getattr(igraph, "__file__", None),

@@ -22,6 +22,18 @@
 - When the queue of vertices to visit runs dry, the vertices not yet settled
   are visited again in a fresh random order. A fixed order made complete
   YouTube at its density take 11 to 18 minutes; it now takes under 5 s.
+- The fixed-cover stability audit (`Game.stable_intervals`, the
+  experiments' robustness audits) no longer visits every cell between
+  pairwise score crossings. The best response is convex in the resolution,
+  so best-set lines bound each vertex's stable window, a convexity test
+  certifies whole ranges of cells as stable, and only the cells near the
+  ends of the stable set are evaluated. The intervals are the same, bit for
+  bit (the exhaustive search remains as a test oracle). On complete YouTube
+  with an uncapped Hedonic cover the exact stage takes 17 to 32 s instead of
+  48 to 63 minutes.
+  Records keep naming the previous core (`runtime.EQUIVALENT_CORES`), so
+  finished runs are reused; `hedonic_core_built_source_sha256` records the
+  core's own source digest.
 - The library needs only the standard `igraph>=1.0` package and NumPy.
   Importing `hedonic` does not check igraph's version, so it installs next to
   any igraph 1.x. The package also depends on SciPy, pandas, Matplotlib,

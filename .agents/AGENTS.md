@@ -173,7 +173,11 @@ Invariants:
 `Game.stable_intervals` and `Game.regrets` audit a fixed cover over
 resolution [0, 1] (`native/core/check/audit.c`, `native/README.md`); the
 tolerance is the paper's `1e-10 + 1e-9 * max(1, |utility|)`, not the
-detector's certified slack. Every experiment that audits a cover (cover
+detector's certified slack. Its intervals are those of the exhaustive search
+over every cell between pairwise score crossings, but `hig_audit_intervals`
+evaluates only the cells convexity cannot settle (a best-set window, certified
+whole-cell ranges); `hig_audit_intervals_exhaustive` (tests only) is the
+oracle, and `make -C native test` checks the two agree bit for bit. Every experiment that audits a cover (cover
 audits and the benchmark's `--robustness` stage, the post-hoc analysis, the
 ground-truth spectrum, the calibration's label-free audit) goes through
 `hedonic.experiments.overlapping.stability`: `prepare()` builds the C state
@@ -272,7 +276,11 @@ hedonic-exp list                       # analysis and utility commands
   the release series (`major.minor`, so `2.0.0.devN`, `rcN` and patch
   releases share it) and `hedonic._core.source_sha256`, the digest of the C
   sources that `setup.py` embeds at build time (rounding is fixed by the
-  source, so every wheel of one source computes the same results). The full
+  source, so every wheel of one source computes the same results). A source
+  change proven to leave every recorded result unchanged (the audit's
+  windowed search, bit for bit the exhaustive one) maps its digest to the
+  earlier one in `runtime.EQUIVALENT_CORES`, so finished records stay valid;
+  `hedonic_core_built_source_sha256` keeps the real digest. The full
   version and the compiled bytes' SHA-256 stay in `runtime_versions()` as
   provenance only. A change of the Python layer that changes results bumps
   the minor version. Every study checks it before reusing work: a

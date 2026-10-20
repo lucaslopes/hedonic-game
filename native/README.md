@@ -501,23 +501,67 @@ with that reference. A Python 3.11 execution of the paper code can therefore
 produce different endpoint bits. Grid regrets still sum evaluated scores
 sequentially, as the reference's grid kernel does.
 
-Intervals enumerate all pairwise score crossings and current-utility
-crossings of +1 and -1, sort the cuts, and visit every nonempty cell. Score
-ties use ascending candidate index. Each prefix supplies the reference's
-linear inequality, with its original operation order; surviving pieces are
-merged with the absolute gap `1e-15`. Grid regrets evaluate scores first,
-then take the best prefix, and clamp differences at most `1e-15` to zero.
-The two paths may disagree within rounding of an interval endpoint.
+The intervals are defined by the reference's exhaustive search: the cuts
+are all pairwise score crossings and the current-utility crossings of +1 and
+-1, sorted with 0 and 1, and every nonempty cell between consecutive cuts is
+visited. Score ties use ascending candidate index. In the cell's midpoint
+order each prefix supplies the reference's linear inequality, with its
+original operation order; surviving pieces are merged with the absolute gap
+`1e-15`. Grid regrets evaluate scores first, then take the best prefix, and
+clamp differences at most `1e-15` to zero. The two paths may disagree within
+rounding of an interval endpoint.
+
+`hig_audit_intervals` returns that search's intervals, bit for bit, without
+visiting most of its cells. It rests on convexity. Every candidate set S of
+size k has an affine utility `U_S(x) = (a_S - x b_S) / sqrt(k)`, and the
+current utility `u(x)` is affine, so the best response `best(x) = max_S
+U_S(x)`, and `best_k(x)` over sets of size k, are convex; the stable set of
+the disjoint game is likewise an interval bounded by Familiarity Indices.
+
+- *Window.* For any S, `best(x) - u(x)` is at least the line `U_S(x) -
+  u(x)`. The tolerance never exceeds `T = atol + rtol * max(1, |u(0)|,
+  |u(1)|)`, and a point of a stable piece has `best - u <= T` up to the
+  rounding of its cell's sums and midpoint order. `M` is at least four times
+  every such bound, so a point where a line exceeds `T + M` lies in no piece.
+  Newton steps along the best set's line at either end shrink [0, 1] to a
+  window; a vertex that is never stable usually ends here, with no cut at
+  all.
+- *Certified core.* On a range [A, B] whose cells share one tolerance line
+  (the reference picks it from `u` at the cell midpoint; `atol` alone is
+  below every choice), `best_k - u - tol` is convex for each k. If it is at
+  most `-margin_k` at A and at B for every k, where `margin_k` is four times
+  the rounding of a prefix-k inequality, every prefix inequality of every
+  cell inside holds with room for its rounding, whatever the cell's midpoint
+  order: no inequality moves `lo` or `hi` off the cell, each cell's piece is
+  the whole cell, and the pieces merge into one. A certified range is
+  emitted in one step. For vertices with many candidates, a core found by
+  bisection from a certified midpoint is never enumerated: only its first
+  and last cut are kept.
+- *Cells.* The rest, the cells near the ends of the stable set, run the
+  exhaustive search's cell code on its own cut values: every cut in the
+  window, the nearest one on either side of it, recursive halving of the
+  cell range with the two tests above, and single cells below eight.
+
+The cells visited are cells of the exhaustive search, in its order, and the
+ones skipped emit nothing or a whole-cell piece, so the merged output is the
+same. The exhaustive search stays in the core as
+`hig_audit_intervals_exhaustive` (tests only, `core/check/hedonic_check.h`);
+`make test` compares the two bit for bit on random covers with every option
+and several tolerances.
 
 With n vertices, m edges, I membership incidences and K occupied labels,
 preparation uses O(n + m + I) storage. Query scratch uses O(K + B_max), where
 B_max is the largest visited vertex's breakpoint count (at most quadratic in
 its candidate count), plus the returned output. Accumulators are cleared only
 at touched labels. Support work for vertex v is the sum of its neighbors' row
-lengths. For L candidates and B cuts, generating cuts costs O(L²), sorting
-costs O(B log B), and cells scan L scores and at most cap prefix constraints;
-carried insertion order additionally costs the number of score-order
-inversions. The usual cell cost is cubic in L. Counts and offsets are 64-bit,
+lengths. For L candidates the exhaustive search costs O(L²) cuts times O(L) per
+cell, cubic in L. The windowed search scans the O(L²) pairs once, with no
+division for most, and evaluates O(L log L) probes: a few Newton steps, a
+bisection, and the halving near the ends of the stable set; it stores and
+sorts only the cuts near those ends. On complete YouTube with an uncapped
+Hedonic cover (hubs with over 10,000 candidates), with 8 workers, the exact
+stage of one cover's audit went from 48 and 63 minutes (the cover and
+labelled profiles) to 17 and 32 seconds. Counts and offsets are 64-bit,
 allocation products are checked, and out-of-range input or arithmetic that
 could overflow returns a core error. Signal callbacks run throughout queries,
 including breakpoint generation and sorting; the binding uses the detector's

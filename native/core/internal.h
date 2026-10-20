@@ -53,6 +53,7 @@
 #define hig_audit_prepare HIG_VARIANT(audit_prepare)
 #define hig_audit_free HIG_VARIANT(audit_free)
 #define hig_audit_intervals HIG_VARIANT(audit_intervals)
+#define hig_audit_intervals_exhaustive HIG_VARIANT(audit_intervals_exhaustive)
 #define hig_audit_intervals_free HIG_VARIANT(audit_intervals_free)
 #define hig_audit_regrets HIG_VARIANT(audit_regrets)
 #endif

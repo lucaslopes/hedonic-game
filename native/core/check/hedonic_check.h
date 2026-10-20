@@ -76,6 +76,14 @@ hig_error_t hig_verify_partition(const hig_graph_t *graph, const hig_options_t *
 hig_error_t hig_verify_cover(const hig_graph_t *graph, const hig_options_t *options,
                              const hig_cover_t *cover, hig_verify_t *report);
 
+/* hig_audit_intervals by the exhaustive search: every cell of every pairwise
+ * crossing. The default search skips cells it proves irrelevant and must
+ * return the same intervals, bit for bit (audit.c). */
+hig_error_t hig_audit_intervals_exhaustive(const hig_audit_state_t *state,
+                                           const hig_audit_options_t *options,
+                                           hig_audit_selection_t vertices,
+                                           hig_audit_intervals_t *result);
+
 /* The fused multiply-add the core runs (internal.h, hig_fma): "instruction"
  * or "soft" for a build of one kind, and on an x86_64 dispatch target
  * (dispatch.h) "dispatch: instruction" or "dispatch: soft", the build the
