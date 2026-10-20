@@ -21,7 +21,7 @@ from hedonic.experiments.overlapping import robustness as rb
 from hedonic.experiments.overlapping import start_quality as sq
 from hedonic.experiments.resources import config_path
 
-SHIPPED = "start-quality-hoc-local"  # the shipped config, resolved by name through resources.config_path
+SHIPPED = "start-quality-hedonic"  # the shipped config, resolved by name through resources.config_path
 # Two overlapping cliques: A = {0,1,2,3} and B = {3,4,5,6,7}; vertex 3 is in both.
 GT = [[0, 1, 2, 3], [3, 4, 5, 6, 7]]
 N = 8
@@ -304,7 +304,9 @@ class TestPlanAndConfig(unittest.TestCase):
     def test_the_shipped_config_resolves_by_name_path_or_prefixed_path(self):
         shipped = config_path(SHIPPED)
         self.assertTrue(shipped.is_file())
-        for spelling in (SHIPPED, f"configs/{SHIPPED}.toml", str(shipped)):
+        # The name it had before the method's rename (a queue or a registered run may still give it) is the same file.
+        for spelling in (SHIPPED, f"configs/{SHIPPED}.toml", str(shipped), "start-quality-hoc-local",
+                         "configs/start-quality-hoc-local.toml"):
             plan = sq.resolve(["--config", spelling])
             self.assertEqual(plan["config"], str(shipped.resolve()))
             self.assertEqual(len(plan["levels"]), 9)
@@ -390,7 +392,7 @@ class TestPhase(unittest.TestCase):
     def test_phase_defaults_to_local_with_the_hedonic_settings(self):
         plan = sq.resolve(["--networks", "dblp", "--seeds", "0"])
         self.assertEqual(plan["phase"], "local")
-        self.assertEqual(plan["settings"]["dblp"]["cap"], qs.HOC_TUNED["hedonic"]["dblp"]["max_memberships"])
+        self.assertEqual(plan["settings"]["dblp"]["cap"], qs.HEDONIC_TUNED["hedonic"]["dblp"]["max_memberships"])
         self.assertFalse(hasattr(sq, "MULTILEVEL_TUNED"))  # the 1.x multilevel settings are gone with the phase
 
     def test_local_takes_the_hedonic_settings_from_the_config_or_the_flag(self):
@@ -401,7 +403,7 @@ class TestPhase(unittest.TestCase):
                                             "livejournal:top5000", "dblp", "amazon", "youtube"])
         self.assertEqual(plan["seeds"], list(range(10)))
         self.assertEqual(len(sq.conditions(plan)), 720)
-        local = qs.HOC_TUNED["hedonic"]
+        local = qs.HEDONIC_TUNED["hedonic"]
         self.assertEqual(plan["settings"]["dblp"]["cap"], local["dblp"]["max_memberships"])
         self.assertAlmostEqual(plan["settings"]["dblp"]["gamma"], local["dblp"]["absolute_resolution"])
         self.assertEqual(plan["settings"]["amazon"]["cap"], local["amazon"]["max_memberships"])

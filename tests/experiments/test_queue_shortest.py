@@ -43,7 +43,7 @@ class TestDependencies(unittest.TestCase):
         queue = {"root": "/r", "items": [
             {"name": "calib", "run": ["calibrate", "--output-dir", "/r/calib"]},
             {"name": "other", "run": ["spectrum"]},
-            {"name": "bench", "run": ["exp", "--tuned", "/r/calib/hoc_tuned.json,/x/y.json"]},
+            {"name": "bench", "run": ["exp", "--tuned", "/r/calib/hedonic_tuned.json,/x/y.json"]},
             {"name": "late", "run": ["exp"], "after": ["other"]},
         ]}
         deps = runqueue.dependencies(queue)

@@ -5,7 +5,7 @@ module runs them for **every method on every network/cover pair** of a list, the
 Hedonic, so a queue can have it as a step before the benchmark:
 
     hedonic run calibrate-baselines --networks dblp:top5k,amazon:all --name baseline-calibration
-    hedonic run exp --config CONFIG --tuned hoc_tuned.json,baseline-calibration/baseline_tuned.json
+    hedonic run exp --config CONFIG --tuned hedonic_tuned.json,baseline-calibration/baseline_tuned.json
 
 For each pair the graph ``G[S]`` (the subgraph induced by the vertices the cover contains) is loaded once, and each method is
 calibrated on it by its own function (searched parameters: CliquePerc ``k``, ANGEL ``phi``, BigCLAM and NEO-K-Means ``K``;

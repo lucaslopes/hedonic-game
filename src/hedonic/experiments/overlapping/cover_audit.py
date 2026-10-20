@@ -12,13 +12,13 @@ Two profiles are audited, and every record names the one it used:
 ``cover``     the saved scoring cover: unique communities, one label each, which every method has. A vertex that
               no community contains is completed with a private singleton label (it plays alone), and the count is
               recorded. This is the profile to compare methods on.
-``labelled``  the exact labelled memberships a HOC detector returned (``detector.final_memberships``, or the file
+``labelled``  the exact labelled memberships the Hedonic detector returned (``detector.final_memberships``, or the file
               ``detector.final_memberships_path`` names: ``cover_store``). The saved
               cover merges labels with identical members, which changes the vertices' intensities, so the cover of
-              a HOC run is not the profile the detector reached. The labelled profile is a Nash equilibrium at the
+              a Hedonic run is not the profile the detector reached. The labelled profile is a Nash equilibrium at the
               run's own resolution and cap, which makes it the correctness check of this audit.
 
-The membership cap of the game is the cap the detector played under when the record has one (HOC), and the cover's
+The membership cap of the game is the cap the detector played under when the record has one (Hedonic), and the cover's
 own largest multiplicity otherwise (``--cap`` overrides). The resolution grid is the locked grid of the ground-truth
 spectrum plus the run's own resolution and the graph density.
 
@@ -70,7 +70,7 @@ PROGRESS_POLL_SECONDS = 2.0  # how often the worker reads that file while it wai
 ETA_MIN_SHARE = 0.05  # of a policy's vertices that must be in before the audit predicts its end
 
 POLICIES = ph.POLICIES  # (("fixed_labels", False), ("open_labels", True))
-PRIMARY_POLICY = "open_labels"  # the benchmark's HOC adapters allow isolation
+PRIMARY_POLICY = "open_labels"  # the benchmark's Hedonic adapter allows isolation
 PROFILES = ("cover", "labelled")
 LABELLED_METHODS = ("hedonic",)  # the methods whose records keep their exact labels
 LOG_FLOOR = 1e-4  # the log measure averages over log10(gamma) from here to 1, as the spectrum's log grid does
@@ -115,7 +115,7 @@ def build_parser(prog: str) -> argparse.ArgumentParser:
                         help="auto (default): expect a deterministic method's cover at the lowest seed only, as `hedonic "
                              "run exp` plans it; all: at every seed (a benchmark run with --replication all)")
     parser.add_argument("--profiles", default=",".join(PROFILES),
-                        help="cover (every method), labelled (HOC only, exact labels) or both (default)")
+                        help="cover (every method), labelled (Hedonic only, exact labels) or both (default)")
     parser.add_argument("--cap", default=DEFAULT_CAP,
                         help="membership cap of the audited game: record (the detector's cap, else the cover's own), "
                              "own, or an integer (default record)")
@@ -242,7 +242,7 @@ def conditions(plan: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def unit_keys(network: str, seed: int, method: str, profiles: tuple[str, ...] = PROFILES) -> list[str]:
-    """The ledger keys of one detector run: its cover audit, and its labelled audit for a HOC method."""
+    """The ledger keys of one detector run: its cover audit, and its labelled audit for Hedonic."""
     return [key_of(network, seed, method, profile) for profile in profiles
             if profile != "labelled" or method in LABELLED_METHODS]
 
@@ -361,7 +361,7 @@ def effective_cap(mode: str | int, record_cap: int | None, own: int) -> int:
 
 
 def own_resolution(detector: dict[str, Any]) -> tuple[float | None, str | None]:
-    """The resolution a HOC detector played at, and a note when the record names two different ones.
+    """The resolution the Hedonic detector played at, and a note when the record names two different ones.
 
     The run's own ``parameters.absolute_resolution`` is the value passed to the game; ``effective_resolution`` is what
     the adapter reports. They agree on current records. An earlier benchmark recorded the density there while playing

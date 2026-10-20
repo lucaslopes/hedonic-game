@@ -34,6 +34,13 @@
   Records keep naming the previous core (`runtime.EQUIVALENT_CORES`), so
   finished runs are reused; `hedonic_core_built_source_sha256` records the
   core's own source digest.
+- The method is called `hedonic` everywhere in the command line: the
+  calibration writes `hedonic_tuned.json`, the start-quality config is
+  `start-quality-hedonic` and the Hedonic-only profile is `paper-hedonic`
+  (`hedonic run paper-hedonic`). Files and names of earlier releases are
+  still read: a folder's `hoc_tuned.json` stands in for its
+  `hedonic_tuned.json`, `start-quality-hoc-local` resolves to the renamed
+  config, and `paper-hoc` is refused with its new name.
 - The library needs only the standard `igraph>=1.0` package and NumPy.
   Importing `hedonic` does not check igraph's version, so it installs next to
   any igraph 1.x. The package also depends on SciPy, pandas, Matplotlib,

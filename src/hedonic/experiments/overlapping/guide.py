@@ -92,7 +92,7 @@ TOPICS: dict[str, tuple[str, str]] = {
         that the data and methods are prepared and prints the `hedonic setup` command when they are not.
 
         The runs can also be started one by one:
-        hedonic run calibrate --networks dblp:top5000 --mode auto   re-tune Hedonic's (gamma, cap); writes hoc_tuned.json
+        hedonic run calibrate --networks dblp:top5000 --mode auto   re-tune Hedonic's (gamma, cap); writes hedonic_tuned.json
         hedonic run calibrate --networks dblp:top5000 --cap unlimited   the resolution only, no cap (the paper's)
         hedonic run calibrate-baselines --networks PAIRS --methods all   label-free baseline calibration
             (--method-budget angel=5:240, --transfer PAIRS, --adopt-from DIR: the queue's budget, unsearched pairs

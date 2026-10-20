@@ -20,7 +20,7 @@ from hedonic.experiments.overlapping import limits
 from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.overlapping import threadio
 
-BENCHMARK_VERBS = ("exp", "paper", "paper-hoc")
+BENCHMARK_VERBS = ("exp", "paper", "paper-hedonic")
 SPECTRUM_VERBS = ("spectrum", "spectrum-full")
 LIMITED_VERBS = (*BENCHMARK_VERBS, "calibrate", "calibrate-baselines", "startcurve")  # take --limit-seconds
 SKIPPABLE_VERBS = (*BENCHMARK_VERBS, "calibrate-baselines", "startcurve", *SPECTRUM_VERBS)  # max_eta drops their pairs

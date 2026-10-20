@@ -433,11 +433,13 @@ hedonic-exp list                       # analysis and utility commands
   are the manuscript's (Table 1's "in paper" marks): DBLP, Amazon and YouTube
   with both covers in phase 1, LiveJournal and Friendster `top5000` in phase 2.
 - **Calibrated resolutions.** The benchmark, the start curve and the spectrum
-  read `hoc_tuned.json` through `--tuned`. The spectrum takes only each
-  pair's gamma and adds it to that pair's detector and audit grids
-  (`gt_spectrum.detector_resolutions` / `audit_resolutions`; the cap stays the
-  cover's multiplicity); a pair the file does not name is an error, and the
-  key `tuned_resolutions` enters the scientific grid only when a file is
+  read `hedonic_tuned.json` through `--tuned` (a folder calibrated before
+  the method's rename holds `hoc_tuned.json`, which is read in its place:
+  `quickstart.tuned_file`). The spectrum takes only each pair's gamma and
+  adds it to that pair's detector and audit grids
+  (`gt_spectrum.detector_resolutions` / `audit_resolutions`; the cap stays
+  the cover's multiplicity); a pair the file does not name is an error, and
+  the key `tuned_resolutions` enters the scientific grid only when a file is
   read, so studies without one keep their hash. A queue item whose file is
   missing or unfinished is `awaiting`.
 - **Friendster.** Its edge file (9.4 GB compressed) is never built whole:

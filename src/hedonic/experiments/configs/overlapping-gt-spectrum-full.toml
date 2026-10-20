@@ -18,7 +18,7 @@ isolation_policies = ["fixed_labels", "open_labels"]
 
 seeds = "0-4"
 # The bounded study's grids. Each pair's calibrated resolution joins both when the study reads a calibration file
-# (--tuned hoc_tuned.json, or a `tuned` key here; the paper queue passes it).
+# (--tuned hedonic_tuned.json, or a `tuned` key here; the paper queue passes it).
 detector_resolutions = "0+geom:1e-4:1:9"
 audit_resolutions = "0:1:101+geom:1e-4:1:33"
 

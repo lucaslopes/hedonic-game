@@ -147,7 +147,7 @@ class Config:
     profile: str | None = None              # named config this run came from (informational)
     # Per-network method settings over the preset: {method key: {network: {param: value}}}.
     method_params: dict = field(default_factory=dict)
-    tuned: str = ""                         # calibration file (hoc_tuned.json) laid over the HOC rows of method_params
+    tuned: str = ""                         # calibration file (hedonic_tuned.json) laid over the Hedonic rows of method_params
     robustness: bool = False                # audit every saved cover (robustness/cover_audit.jsonl): needs covers, full graphs
     induce: str = "full"                    # "covered": every method sees only the subgraph induced by the cover's vertices
     replication: str = "auto"               # "auto": a deterministic method runs once (lowest seed); "all": every seed
@@ -228,21 +228,36 @@ PROFILES["paper"] = Config(networks=["dblp", "amazon"],
                            nodes=0, seeds=list(range(10)), preset="screened", timeout=3600.0,
                            order="seed,method,network", output_dir=str(RUNS_ROOT / "paper"), profile="paper",
                            save_covers=True, robustness=True)
-# "paper-hoc" reruns only the Hedonic rows of the whole-graph profile: DBLP and Amazon full graphs, seeds 0-9, at the
-# whole-graph settings the first calibration's bisection search selected per network (HOC_TUNED, frozen data; a run
+# "paper-hedonic" reruns only the Hedonic rows of the whole-graph profile: DBLP and Amazon full graphs, seeds 0-9, at
+# the whole-graph settings the first calibration's bisection search selected per network (HEDONIC_TUNED, frozen data; a run
 # with --tuned takes a newer calibration instead). Covers are kept so `hedonic run check` can rerun a sample and
 # compare them exactly.
-HOC_TUNED = {
+HEDONIC_TUNED = {
     "hedonic": {"dblp": {"max_memberships": 32, "absolute_resolution": 1 / 7},
                   "amazon": {"max_memberships": 4, "absolute_resolution": 1 / 723}},
 }
-PROFILES["paper-hoc"] = Config(networks=["dblp", "amazon"], methods=["hedonic"],
-                               nodes=0, seeds=list(range(10)), preset="screened", timeout=3600.0,
-                               order="seed,method,network", output_dir=str(RUNS_ROOT / "paper-hoc"), profile="paper-hoc",
-                               save_covers=True, robustness=True, method_params=HOC_TUNED)
+PROFILES["paper-hedonic"] = Config(networks=["dblp", "amazon"], methods=["hedonic"],
+                                   nodes=0, seeds=list(range(10)), preset="screened", timeout=3600.0,
+                                   order="seed,method,network", output_dir=str(RUNS_ROOT / "paper-hedonic"),
+                                   profile="paper-hedonic", save_covers=True, robustness=True,
+                                   method_params=HEDONIC_TUNED)
+RENAMED_PROFILES = {"paper-hoc": "paper-hedonic"}  # refused with the new name: the method is called hedonic
 
 
-HOC_METHODS = ("hedonic",)
+HEDONIC_METHODS = ("hedonic",)
+TUNED_NAME = "hedonic_tuned.json"  # the calibration file of `hedonic run calibrate`
+LEGACY_TUNED_NAMES = ("hoc_tuned.json",)  # what releases before the rename wrote; read (and kept) where it exists
+
+
+def tuned_file(path: str | Path) -> Path:
+    """The calibration file a ``--tuned`` path names: the path itself, or, when a ``hedonic_tuned.json`` is absent, the
+    file an earlier release wrote in its place (``hoc_tuned.json``), so a folder calibrated before the rename is read."""
+    file = expand_path(path)
+    if file.name == TUNED_NAME and not file.exists():
+        for name in LEGACY_TUNED_NAMES:
+            if (file.parent / name).is_file():
+                return file.parent / name
+    return file
 
 
 class TunedMissing(ValueError):
@@ -252,12 +267,12 @@ class TunedMissing(ValueError):
 def load_tuned_file(path: str | Path) -> dict:
     """The calibrated settings of ``hedonic run calibrate`` or ``calibrate-baselines``: {method: {network: params}}.
 
-    A HOC row is {max_memberships, absolute_resolution}; a baseline's row is the ``method_params`` the runner reads for it
+    A Hedonic row is {max_memberships, absolute_resolution}; a baseline's row is the ``method_params`` the runner reads for it
     (``baseline_tuned.json`` writes exactly those). Only a finished calibration is accepted, so a run never starts on half
     of a calibration. A missing or unfinished file raises :class:`TunedMissing`, which a queue treats as "not calibrated
     yet" rather than as an error.
     """
-    file = expand_path(path)
+    file = tuned_file(path)
     if not file.is_file():
         raise TunedMissing(f"no calibration file {file}; run `hedonic run calibrate` or `calibrate-baselines` first")
     try:
@@ -274,7 +289,7 @@ def load_tuned_file(path: str | Path) -> dict:
         if method not in BY_KEY:
             raise ValueError(f"{file}: unknown method {method!r}")
         for network, values in networks.items():
-            if method in HOC_METHODS:
+            if method in HEDONIC_METHODS:
                 out.setdefault(method, {})[network] = {"max_memberships": int(values["max_memberships"]),
                                                        "absolute_resolution": float(values["absolute_resolution"])}
             elif values:  # a baseline: the parameters the runner reads, as the calibration wrote them
@@ -301,7 +316,7 @@ def apply_tuned(cfg: "Config", path: str | Path | Sequence[str | Path]) -> None:
                 for network, values in nets.items():
                     merged.setdefault(method, {}).setdefault(network, {}).update(values)
     cfg.method_params = merged
-    cfg.tuned = ",".join(str(expand_path(file).resolve()) for file in files)
+    cfg.tuned = ",".join(str(tuned_file(file).resolve()) for file in files)
 
 
 # "paper-oracle": the supervised disjoint control of Chapter 6 on the paper's networks. The oracle is deterministic,
@@ -313,7 +328,7 @@ PROFILES["paper-oracle"] = Config(networks=["dblp", "amazon"], methods=["disjoin
 PROFILE_HELP = {"default": "DBLP, 5,000-vertex subgraph, seed 0, Hedonic + CoDeSEG (a minute)",
                 "paper": "paper reproduction: DBLP, Amazon (full graphs) x all 9 methods x seeds 0-9, "
                          "order seed -> method -> network (many hours)",
-                "paper-hoc": "the paper's Hedonic rows at their tuned per-network settings, DBLP and Amazon "
+                "paper-hedonic": "the paper's Hedonic rows at their tuned per-network settings, DBLP and Amazon "
                              "(full graphs), seeds 0-9, covers kept",
                 "paper-oracle": "supervised control: the best disjoint answer built from the ground truth, DBLP and "
                                 "Amazon (full graphs), deterministic (seed 0), cover kept and audited"}
@@ -472,8 +487,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="audit every saved cover for robustness (exact stable-vertex fraction over resolution) right "
                         "after its detector run, into OUTPUT_DIR/NAME/robustness; implies --save-covers, full graphs only")
     p.add_argument("--tuned", action="append", default=None, metavar="FILE[,FILE]",
-                   help="calibrated settings laid over the config's method_params: hoc_tuned.json of `hedonic run calibrate` "
-                        "(HOC rows) and baseline_tuned.json of `hedonic run calibrate-baselines` (the baselines); "
+                   help="calibrated settings laid over the config's method_params: hedonic_tuned.json of `hedonic run calibrate` "
+                        "(Hedonic rows) and baseline_tuned.json of `hedonic run calibrate-baselines` (the baselines); "
                         "repeat the flag or give a comma list, a later file overrides an earlier one")
     p.add_argument("--dry-run", action="store_true", help="print the run plan and estimated time, then exit")
     p.add_argument("--scan", action="store_true",
@@ -493,6 +508,8 @@ def load_config(name_or_path: str | None) -> Config:
     """A named profile, or a .json/.toml file holding Config fields (seeds may be '0-9')."""
     if not name_or_path:
         return Config(**{**PROFILES["default"].__dict__})
+    if name_or_path in RENAMED_PROFILES:
+        raise ValueError(f"config {name_or_path!r} is now called {RENAMED_PROFILES[name_or_path]!r}")
     if name_or_path in PROFILES:
         return Config(**{**PROFILES[name_or_path].__dict__, "networks": list(PROFILES[name_or_path].networks),
                          "methods": list(PROFILES[name_or_path].methods), "seeds": list(PROFILES[name_or_path].seeds),
@@ -840,7 +857,7 @@ def method_params(m: Method, cfg: Config, network: str) -> dict:
 
 # Detection times measured on full Amazon/YouTube in saved records (M1 Max; overnight queue and
 # snap-v4 baselines, 2026-09-26/27). They override the linear-in-edges extrapolation from full
-# DBLP, which underestimates super-linear methods (HOC-local: 1,484 s measured on YouTube vs
+# DBLP, which underestimates super-linear methods (Hedonic: 1,484 s measured on YouTube vs
 # ~115 s extrapolated). ANGEL on full YouTube ran for over an hour without finishing.
 MEASURED_FULL = {("hedonic", "amazon"): 355, ("disjoint_oracle", "amazon"): 40, ("hedonic", "youtube"): 1484,
                  ("codeseg", "amazon"): 4, ("codeseg", "youtube"): 8,
@@ -1118,7 +1135,7 @@ def _run_runner_quietly(argv: list[str]) -> None:
 # A record's config digest covers the runner's default parameters for every method, not only the method that ran.
 # The 1.0.0.6 runs were stamped with ego_splitting's default {"resolution": 1.0}, which the runner no longer
 # carries (ego_splitting is an opt-in extra method). It is passed again so the digests of those records still
-# reproduce; no HOC method reads it, so the detector and its results are unchanged.
+# reproduce; Hedonic does not read it, so the detector and its results are unchanged.
 DIGEST_DEFAULTS = {"ego_splitting": {"resolution": 1.0}}
 
 

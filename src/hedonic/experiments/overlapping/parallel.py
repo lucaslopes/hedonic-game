@@ -10,7 +10,7 @@ threads is unsafe, and the metric code holds the GIL):
   ``workers == 1`` it calls ``fn`` in this process, so single-worker behaviour, tracebacks and memory are exactly those
   of a plain loop.
 * :class:`Slots` is a cross-process counting semaphore made of ``flock`` files. Several independent processes that
-  each fork their own children (the four searches of the HOC calibration) take a slot around every unit of work, so
+  each fork their own children (the four searches of the Hedonic calibration) take a slot around every unit of work, so
   together they never run more than ``size`` units at once. The kernel drops a lock when its process dies, so a killed
   run cannot leave a slot taken.
 

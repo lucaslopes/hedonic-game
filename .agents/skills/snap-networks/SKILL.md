@@ -83,7 +83,7 @@ part = g.community_hedonic(seed=0)                                          # ma
   `TypeError`. Old notes that pass them are stale.
 - The default resolution is the graph's density. A density multiple does not
   transfer between a whole graph and its denser covered subgraph: use an
-  absolute `resolution`, ideally the calibrated one (`hoc_tuned.json` of the
+  absolute `resolution`, ideally the calibrated one (`hedonic_tuned.json` of the
   `calibration-hedonic` run, `settings.hedonic["dblp:top5000"]`).
 - `max_memberships` is the per-vertex cap (`-1`: no practical cap). A cap taken
   from the reference cover's multiplicity is supervised: label it so.
@@ -118,9 +118,9 @@ records, seals and metrics of the paper.
 ```bash
 hedonic run exp --networks dblp:top5000 --methods hedonic,codeseg --induce covered --full --seeds 0-4 --save-covers --dry-run
 hedonic run exp --networks dblp:top5000,amazon:top5000 --methods all --induce covered --full --seeds 0-9 \
-  --robustness --tuned PATH/hoc_tuned.json,PATH/baseline_tuned.json --name my-bench
+  --robustness --tuned PATH/hedonic_tuned.json,PATH/baseline_tuned.json --name my-bench
 hedonic run attach my-bench          # Ctrl-C closes the view only
-hedonic pickle run dblp:top5000 --tuned PATH/hoc_tuned.json   # HOC-local per pickle: time, memory, F1, ONMI
+hedonic pickle run dblp:top5000 --tuned PATH/hedonic_tuned.json   # Hedonic per pickle: time, memory, F1, ONMI
 ```
 
 `hedonic show methods` lists the nine methods (hedonic, codeseg, fox,

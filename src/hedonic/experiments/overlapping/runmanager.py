@@ -19,7 +19,7 @@ record, so ``hedonic run resume NAME`` continues where an interrupted run
     hedonic run queue FILE|NAME      run a list of experiments one after another (see runqueue.py)
 
 Nine kinds of run share this machinery: benchmark runs (``hedonic run exp`` /
-``paper`` / ``paper-hoc``), the ground-truth spectrum (``hedonic run spectrum``),
+``paper`` / ``paper-hedonic``), the ground-truth spectrum (``hedonic run spectrum``),
 the disjoint SBM benchmark (``hedonic run disjoint``), the exact post-hoc
 stability of a ground-truth cover (``hedonic run posthoc``), the controlled-overlap
 study from a TOML table (``hedonic run controlled``), the start-quality curve
@@ -431,7 +431,7 @@ def launch_audit(argv: list[str], name: str, output_dir: str, *, backend: str = 
 
 
 def launch_calibrate(argv: list[str], name: str, output_dir: str, *, backend: str = "auto") -> dict:
-    """Start the HOC calibration (``hedonic run calibrate``) durably.
+    """Start the Hedonic calibration (``hedonic run calibrate``) durably.
 
     The folder's results and ledger are kept: the worker skips the searches already recorded.
     """
@@ -1484,7 +1484,7 @@ def wait_and_print_json(entry: dict) -> int:
     summary = Path(entry["output_dir"]) / {"spectrum": "coverage_report.json",
                                            "disjoint": "stats/paper_stats.json",
                                            "posthoc": "summary.json",
-                                           "calibrate": "hoc_tuned.json",
+                                           "calibrate": "hedonic_tuned.json",
                                            "baseline_calibrate": "baseline_tuned.json"}.get(entry.get("kind"), "summary.json")
     if not summary.is_file():
         print(f"  run {status}: {prog.get('reason', 'no summary was written')}; see `hedonic run logs {entry['name']}`",
@@ -1707,7 +1707,7 @@ def cmd_check(name: str | None, sample: int | None, rows: int) -> int:
               "its ledger/ holds every evaluation. It has no sampled replay")
         return 0
     if entry.get("kind") == "calibrate":
-        print("  the calibration records every search's settings, scores and the build in hoc_tuned.json; "
+        print("  the calibration records every search's settings, scores and the build in hedonic_tuned.json; "
               "its ledger/ holds every probe. It has no sampled replay")
         return 0
     if entry.get("kind") == "audit":

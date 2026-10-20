@@ -60,7 +60,7 @@ def _register_benchmark(root: Path, name: str, plan: list[dict]) -> None:
 
 def _plan_in_progress() -> list[dict]:
     """Ten DBLP units: four finished, the fifth (seed 3, CoDeSEG) running for 30 s, five still pending."""
-    finished = [("HOC-local", "hedonic", 0), ("CoDeSEG", "codeseg", 0), ("CoDeSEG", "codeseg", 1),
+    finished = [("Hedonic", "hedonic", 0), ("CoDeSEG", "codeseg", 0), ("CoDeSEG", "codeseg", 1),
                 ("CoDeSEG", "codeseg", 2)]
     plan = [{"network": "dblp", "seed": seed, "method": method, "label": label, "expected": 60.0,
              "status": "completed", "seconds": 50.0} for label, method, seed in finished]
@@ -235,13 +235,13 @@ def _unit(method: str, label: str, seed: int, status: str, *, expected: float, s
 
 
 def _twenty_units(running_elapsed: float = 30.0, codeseg_finished: bool = False) -> list[dict]:
-    """Twenty DBLP units in two methods. HOC-local (planning constant 100 s): seeds 0-2 finished (wall 40, 50 and 60 s,
+    """Twenty DBLP units in two methods. Hedonic (planning constant 100 s): seeds 0-2 finished (wall 40, 50 and 60 s,
     detection 30, 40 and 50 s), seed 3 running, seeds 4-9 pending. CoDeSEG (planning constant 60 s): nothing finished
     yet, unless ``codeseg_finished`` gives seed 0 a measured unit (wall 90 s, detection 80 s)."""
-    hoc = [_unit("hedonic", "HOC-local", seed, "completed", expected=100.0, seconds=wall, detection=detection)
+    hoc = [_unit("hedonic", "Hedonic", seed, "completed", expected=100.0, seconds=wall, detection=detection)
            for seed, wall, detection in ((0, 40.0, 30.0), (1, 50.0, 40.0), (2, 60.0, 50.0))]
-    hoc.append(_unit("hedonic", "HOC-local", 3, "running", expected=100.0, started=NOW - running_elapsed))
-    hoc += [_unit("hedonic", "HOC-local", seed, "pending", expected=100.0) for seed in range(4, 10)]
+    hoc.append(_unit("hedonic", "Hedonic", 3, "running", expected=100.0, started=NOW - running_elapsed))
+    hoc += [_unit("hedonic", "Hedonic", seed, "pending", expected=100.0) for seed in range(4, 10)]
     codeseg = [_unit("codeseg", "CoDeSEG", seed, "pending", expected=60.0) for seed in range(10)]
     if codeseg_finished:
         codeseg[0] = _unit("codeseg", "CoDeSEG", 0, "completed", expected=60.0, seconds=90.0, detection=80.0)
@@ -291,7 +291,7 @@ class TestProgressDisplay(unittest.TestCase):
 
     def test_a_queue_shows_its_bar_grid_measured_times_and_running_unit(self):
         _register(self.root, "done-run", "completed")
-        self._live_run("live-run", _twenty_units(), log="setup done\n\x1b[36mseed 3 · HOC-local running\x1b[0m\n")
+        self._live_run("live-run", _twenty_units(), log="setup done\n\x1b[36mseed 3 · Hedonic running\x1b[0m\n")
         entry = _queue(self.root, ["done-run", "live-run", "later-run"])
         text = self._show(entry, {"status": "running", "current": 1}, unicode_glyphs=True)
 
@@ -303,18 +303,18 @@ class TestProgressDisplay(unittest.TestCase):
         self.assertIn("█" * 4 + "░" * 26 + "  3/20 · 15%", text)
         self.assertIn("elapsed 5:00 · ETA ~15:20 (estimated)", text)
         # the grid: one row per method, one glyph per unit
-        self.assertIn("HOC-local  " + "✓✓✓◉" + "·" * 6, text)
-        self.assertIn("CoDeSEG    " + "·" * 10, text)
+        self.assertIn("Hedonic  " + "✓✓✓◉" + "·" * 6, text)
+        self.assertIn("CoDeSEG  " + "·" * 10, text)
         self.assertIn("✓ done  ◉ running  · pending  ✗ failed  ■ stopped", text)
         # the measured means of the finished units; a method with none yet says that its figure is an estimate
         self.assertIn("3/10 finished · detection 40 s ± 10 s · unit 50 s", text)
         self.assertIn("0/10 finished · none measured · estimated 60 s per unit", text)
         # the running unit: place, network, seed, method, elapsed time, and its estimate from its own method
-        self.assertIn("◉ [4/20] DBLP · seed 3 · HOC-local  0:30 elapsed", text)
+        self.assertIn("◉ [4/20] DBLP · seed 3 · Hedonic  0:30 elapsed", text)
         self.assertIn("estimate ~0:50", text)
         self.assertNotIn("(estimated)", self._line(text, "estimate ~"))
         # the last line of the child's worker log (colour codes removed) and the record directory
-        self.assertIn("seed 3 · HOC-local running", self._line(text, "log"))
+        self.assertIn("seed 3 · Hedonic running", self._line(text, "log"))
         self.assertEqual(self._line(text, "records").strip(), "records  ~/runs/live-run")
         for line in text.splitlines():
             self.assertLessEqual(tui.visible_len(line), 80, line)
@@ -323,8 +323,8 @@ class TestProgressDisplay(unittest.TestCase):
         self._live_run("live-run", _twenty_units())
         text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=False)
         self.assertIn("#" * 4 + "-" * 26 + "  3/20 · 15%", text)
-        self.assertIn("HOC-local  +++*......", text)
-        self.assertIn("CoDeSEG    ..........", text)
+        self.assertIn("Hedonic  +++*......", text)
+        self.assertIn("CoDeSEG  ..........", text)
         self.assertIn("+ done  * running  . pending  x failed  # stopped", text)
         self.assertIn("3/10 finished · detection 40 s +/- 10 s · unit 50 s", text)
         for glyph in "✓◉■█░●✗±" + tui.SPINNER:
@@ -334,7 +334,7 @@ class TestProgressDisplay(unittest.TestCase):
         self._live_run("live-run", _twenty_units(codeseg_finished=True))
         text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=True)
         self.assertIn("4/20 · 20%", text)
-        # 6 pending HOC-local units x 50 s, 20 s left on the running unit, 9 pending CoDeSEG units x 90 s
+        # 6 pending Hedonic units x 50 s, 20 s left on the running unit, 9 pending CoDeSEG units x 90 s
         self.assertIn("ETA ~18:50", text)
         self.assertNotIn("estimated", text)
         self.assertIn("1/10 finished · detection 80 s · unit 1:30", text)
@@ -350,7 +350,7 @@ class TestProgressDisplay(unittest.TestCase):
         """BigCLAM on YouTube/top5000 detected in 16:33 and its cover's audit then ran for hours; the line used to say the
         unit was hours "beyond its estimate" of the planning constant, which prices the detection alone."""
         plan = _twenty_units()
-        plan[3] = _unit("hedonic", "HOC-local", 3, "pending", expected=100.0)
+        plan[3] = _unit("hedonic", "Hedonic", 3, "pending", expected=100.0)
         plan[10] = _unit("codeseg", "CoDeSEG", 0, "running", expected=60.0, started=NOW - 300.0, detection=20.0)
         self._live_run("live-run", plan)
         text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=True)
@@ -359,7 +359,7 @@ class TestProgressDisplay(unittest.TestCase):
 
     def test_the_status_line_gives_the_vertices_the_audit_has_done(self):
         plan = _twenty_units()
-        plan[3] = _unit("hedonic", "HOC-local", 3, "pending", expected=100.0)
+        plan[3] = _unit("hedonic", "Hedonic", 3, "pending", expected=100.0)
         plan[10] = {**_unit("codeseg", "CoDeSEG", 0, "running", expected=60.0, started=NOW - 300.0, detection=20.0),
                     "audit": {"number": 1, "policies": 2, "done": 5000, "total": 39841, "eta_seconds": 4000.0}}
         self._live_run("live-run", plan)
@@ -367,7 +367,7 @@ class TestProgressDisplay(unittest.TestCase):
         self.assertIn("exact audit: policy 1 of 2, 5,000 of 39,841 vertices · about 1:06:40 left", text)
 
     def test_a_measured_estimate_includes_the_audit_so_an_audit_past_it_is_late(self):
-        plan = _twenty_units(running_elapsed=300.0)  # HOC-local units took 40-60 s in all, audit included
+        plan = _twenty_units(running_elapsed=300.0)  # Hedonic units took 40-60 s in all, audit included
         plan[3] = {**plan[3], "detection_seconds": 30.0}
         self._live_run("live-run", plan)
         text = self._show(_queue(self.root, ["live-run"]), {"status": "running", "current": 0}, unicode_glyphs=True)

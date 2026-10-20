@@ -1,7 +1,7 @@
 """Files shipped inside the package: run configs and external-method workers.
 
 A pip-installed ``hedonic`` has no repository next to it, so every config a
-queue item names (``configs/start-quality-hoc-local.toml``) and every worker
+queue item names (``configs/start-quality-hedonic.toml``) and every worker
 script an external method runs in its own environment is package data under
 ``hedonic/experiments/configs`` and ``hedonic/experiments/workers``. A path
 that exists as given (relative to the working directory, or absolute) always
@@ -15,6 +15,8 @@ from pathlib import Path
 PACKAGE_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = PACKAGE_DIR / "configs"
 WORKER_DIR = PACKAGE_DIR / "workers"
+# Shipped configs renamed with the method (hoc -> hedonic): a queue or a run registered before the rename names them so.
+RENAMED_CONFIGS = {"start-quality-hoc-local": "start-quality-hedonic"}
 
 
 def config_path(name: str | Path) -> Path:
@@ -22,8 +24,9 @@ def config_path(name: str | Path) -> Path:
 
     ``name`` is tried as given (``~`` expanded), then inside the shipped
     configs: as a relative path with a leading ``configs/`` removed, then as a
-    bare name with ``.toml`` added. The first that exists is returned; when
-    none does, the path as given is returned so the caller's error names it.
+    bare name with ``.toml`` added; a renamed config (``RENAMED_CONFIGS``) is
+    found under its new name. The first that exists is returned; when none
+    does, the path as given is returned so the caller's error names it.
     """
     raw = Path(str(name)).expanduser()
     if raw.exists():
@@ -36,6 +39,8 @@ def config_path(name: str | Path) -> Path:
         candidates.append(CONFIG_DIR.joinpath(*parts))
     if raw.suffix == "" and not raw.is_absolute():
         candidates.append(CONFIG_DIR / f"{raw.name}.toml")
+    if not raw.is_absolute() and raw.stem in RENAMED_CONFIGS:
+        candidates.append(CONFIG_DIR.joinpath(*parts[:-1], f"{RENAMED_CONFIGS[raw.stem]}{raw.suffix or '.toml'}"))
     for candidate in candidates:
         if candidate.exists():
             return candidate

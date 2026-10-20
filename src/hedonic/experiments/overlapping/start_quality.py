@@ -6,8 +6,8 @@ completed and cap-projected exactly as in the ground-truth spectrum (``gt_spectr
 detector is the spectrum's worker (``ground_truth_robustness._detector_worker``): Hedonic local moving, the only phase
 hedonic 2.0 has (``phase = "local"``; asking for the 1.x ``multilevel`` phase is an error). A pair missing locally is
 downloaded first (``snap.ensure_pair``). The settings (gamma, cap) come from the calibration files given with
-``--tuned`` (``hoc_tuned.json``, method key ``hedonic``; several files: a later one overrides an earlier one), else from
-the frozen ``quickstart.HOC_TUNED``; a pair with neither takes the DBLP settings (the held-out transfer).
+``--tuned`` (``hedonic_tuned.json``, method key ``hedonic``; several files: a later one overrides an earlier one), else from
+the frozen ``quickstart.HEDONIC_TUNED``; a pair with neither takes the DBLP settings (the held-out transfer).
 
 Levels. A *swap* level with incidence distance d starts from the projected reference and applies degree-preserving
 incidence switches (``perturb_cover_incidence`` below: the output of ``robustness.perturb_cover_incidence``, computed
@@ -69,7 +69,7 @@ LEGACY_PHASE = "multilevel"  # a 1.x record without a phase field ran this phase
 REMOVED_PHASES = ("multilevel", "multi-phase", "multiphase", "hoc_multilevel", "hoc-multilevel")
 PHASE_TOKEN = "|phase="  # every resume key has it; a key without it was written before the phase option (1.x)
 CODE_TOKEN = "|code="  # the code that ran the condition (hedonic version and core SHA-256)
-METHOD = "hedonic"  # the quickstart.HOC_TUNED row and the method key of a calibration file
+METHOD = "hedonic"  # the quickstart.HEDONIC_TUNED row and the method key of a calibration file
 PHASE_NAME = {"local": "Hedonic local moving"}
 PHASE_DESCRIPTION = {"local": "local moves to an equilibrium"}
 DEFAULT_NETWORKS = ("dblp", "amazon", "youtube")
@@ -133,18 +133,18 @@ def load_tuned(files: str | list[str] | None) -> tuple[dict | None, list[str]]:
 def tuned_setting(target: str, phase: str, calibrated: dict | None = None) -> dict[str, Any]:
     """The tuned (cap, gamma) of a network or of a ``network:cover`` target.
 
-    A calibration file (``--tuned``) comes first and quickstart.HOC_TUNED second; in each the pair's own entry
+    A calibration file (``--tuned``) comes first and quickstart.HEDONIC_TUNED second; in each the pair's own entry
     (``dblp:top5k``; a plain network is its ``all`` cover) beats its network's. A network with neither (YouTube,
     LiveJournal before they are calibrated) takes the DBLP settings, the held-out transfer the paper has always used.
 
     ``calibrated`` is the result of :func:`load_tuned` ({"hedonic": {target: params}}).
     """
     parse_phase(phase)
-    frozen = qs.HOC_TUNED[METHOD]
+    frozen = qs.HEDONIC_TUNED[METHOD]
     base, cover = qs.split_target(target)
     keys = [f"{base}:{cover or COVER}", target, base]
     for rows, source in (((calibrated or {}).get(METHOD) or {}, "calibration file"),
-                         (frozen, "quickstart.HOC_TUNED")):
+                         (frozen, "quickstart.HEDONIC_TUNED")):
         for key in keys:
             if key in rows:
                 values = rows[key]
@@ -219,7 +219,7 @@ def token_of(level: float | str) -> str:
 def config_defaults(path: str) -> dict[str, str]:
     """The ``[start_quality]`` table as command-line defaults (lists joined into comma lists).
 
-    ``path`` is a file, or the name of a shipped config (``start-quality-hoc-local``; ``resources.config_path``)."""
+    ``path`` is a file, or the name of a shipped config (``start-quality-hedonic``; ``resources.config_path``)."""
     file = resolve_config(path)
     if not file.is_file():
         raise ValueError(f"no such config: {file}")
@@ -243,7 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
                      "condition)"),
     )
     parser.add_argument("--config", help="TOML file with a [start_quality] table, or the name of a shipped config "
-                                         "(start-quality-hoc-local); explicit flags override it")
+                                         "(start-quality-hedonic); explicit flags override it")
     parser.add_argument("--networks", help="comma list of dblp, amazon, youtube, livejournal (default: dblp, amazon, "
                                            "youtube); network:cover (dblp:top5k) names the cover to analyse")
     parser.add_argument("--covers", help="ground-truth covers to cross with every network, e.g. all,top5k: each pair is "
@@ -257,8 +257,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="output folder for start_quality.jsonl and the summary CSV "
                              f"(default: the config's output, else {DEFAULT_OUTPUT})")
     parser.add_argument("--tuned", action="append", metavar="FILE[,FILE]",
-                        help="calibrated settings (hoc_tuned.json of `hedonic run calibrate`, method key hedonic) "
-                             "instead of quickstart.HOC_TUNED; a comma list or repeated flags, a later file overriding "
+                        help="calibrated settings (hedonic_tuned.json of `hedonic run calibrate`, method key hedonic) "
+                             "instead of quickstart.HEDONIC_TUNED; a comma list or repeated flags, a later file overriding "
                              "an earlier one")
     parser.add_argument("--cap", choices=CAP_SOURCES,
                         help="membership cap: tuned (the calibrated cap, default) or reference (each pair's largest "
@@ -610,7 +610,7 @@ def run_condition(job: Any, setting: dict[str, Any], level: float | str, seed: i
 # --------------------------------------------------------------------------- records
 def read_records(path: Path, limit: float | None = None) -> dict[str, dict[str, Any]]:
     """Valid records by resume key (a torn or corrupt line is skipped; the first record of a key wins). A record without
-    a phase field was written before the phase option (1.x), so it is HOC-multilevel.
+    a phase field was written before the phase option (1.x), so it is the 1.x multilevel phase.
 
     A condition a time limit stopped counts only under a ``limit`` no larger than that one (``limits.stands``); the
     latest record of a key wins over a stopped one, so a rerun under a larger limit replaces it."""
@@ -815,12 +815,12 @@ def _front_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", required=True,
                         help="TOML file with a [start_quality] table, or the name of a shipped config "
-                             "(start-quality-hoc-local)")
+                             "(start-quality-hedonic)")
     parser.add_argument("--networks", help="override the config's networks (comma list)")
     parser.add_argument("--covers", help="override the config's covers (comma list, e.g. all,top5k)")
     parser.add_argument("--tuned", action="append", metavar="FILE[,FILE]",
-                        help="calibrated settings (hoc_tuned.json of `hedonic run calibrate`, method key hedonic) "
-                             "instead of quickstart.HOC_TUNED; a comma list or repeated flags")
+                        help="calibrated settings (hedonic_tuned.json of `hedonic run calibrate`, method key hedonic) "
+                             "instead of quickstart.HEDONIC_TUNED; a comma list or repeated flags")
     parser.add_argument("--cap", choices=CAP_SOURCES,
                         help="membership cap: tuned (the calibrated cap, default) or reference (each pair's largest "
                              "number of reference communities on one vertex: the experiment leverages the ground truth)")

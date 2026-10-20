@@ -1,4 +1,4 @@
-"""``hedonic pickle run``: HOC-local on the pickled ``Game`` of each network:cover pair, one run per pair, with the
+"""``hedonic pickle run``: Hedonic on the pickled ``Game`` of each network:cover pair, one run per pair, with the
 time and memory each run costs.
 
 Each pair runs in a worker process of its own (so its peak memory is its own and a hung run can be killed at
@@ -8,13 +8,13 @@ calibrated (gamma, cap) exactly as the calibration's evaluations call it (local 
 and LFK-ONMI of the shared metric code). A row records the load time, the detection wall-clock and CPU time, the scoring
 time, the peak resident memory after the load and at the end, and the cover's shape.
 
-Settings come from ``--tuned FILE`` (``hoc_tuned.json`` of ``hedonic run calibrate``; repeat the option to lay several
+Settings come from ``--tuned FILE`` (``hedonic_tuned.json`` of ``hedonic run calibrate``; repeat the option to lay several
 files over one another, the last wins). A pair is **calibrated** when a file has the ``hedonic`` entry for its own
 ``network:cover`` key. Any other pair borrows the setting of the calibrated pair of nearest graph density
 (2m / n(n-1), compared on a log scale) among the pairs of the same invocation, and the row says so (``setting_source``).
 
-    hedonic pickle run --all --tuned hoc_tuned.json --tuned friendster-tuned.json
-    hedonic pickle run dblp:top5k wikipedia:all --tuned hoc_tuned.json --dry-run
+    hedonic pickle run --all --tuned hedonic_tuned.json --tuned friendster-tuned.json
+    hedonic pickle run dblp:top5k wikipedia:all --tuned hedonic_tuned.json --dry-run
 """
 
 from __future__ import annotations
@@ -166,9 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("pairs", nargs="*", type=sp.parse_pair, metavar="NETWORK:COVER")
     parser.add_argument("--all", action="store_true", help="every pair of Table 1 that has a pickle")
     parser.add_argument("--tuned", action="append", type=Path, default=[], metavar="FILE",
-                        help="calibrated settings (hoc_tuned.json); repeat to lay several files, the last wins")
+                        help="calibrated settings (hedonic_tuned.json); repeat to lay several files, the last wins")
     parser.add_argument("--out-dir", type=Path, help="folder of the pickles (as `hedonic pickle`)")
-    parser.add_argument("--output-dir", type=Path, help="where results.json/results.jsonl go (default <out-dir>/hoc-runs)")
+    parser.add_argument("--output-dir", type=Path, help="where results.json/results.jsonl go (default <out-dir>/hedonic-runs)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--timeout", type=float, default=3600.0, help="seconds per pair (default 3600; 0 = none)")
     parser.add_argument("--dry-run", action="store_true", help="print the settings each pair would use; run nothing")
@@ -199,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     if not pairs:
         parser.error("name at least one NETWORK:COVER, or use --all")
     if not args.tuned:
-        parser.error("give the calibration with --tuned FILE (hoc_tuned.json of `hedonic run calibrate`)")
+        parser.error("give the calibration with --tuned FILE (hedonic_tuned.json of `hedonic run calibrate`)")
     tuned = load_tuned(args.tuned)
     present = [p for p in pairs if sp.pickle_path(out_dir, *p).is_file()]
     for p in pairs:
@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     if others and not calibrated:
         parser.error("none of the pairs has its own calibration to borrow from; add calibrated pairs or --tuned files")
     timeout = args.timeout or None
-    output_dir = (args.output_dir or out_dir / "hoc-runs").expanduser()
+    output_dir = (args.output_dir or out_dir / "hedonic-runs").expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     sizes = {pair: _measure(sp.pickle_path(out_dir, *pair)) for pair in calibrated + others}

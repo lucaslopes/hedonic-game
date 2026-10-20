@@ -72,7 +72,7 @@ COLOUR = {"awaiting": "dim", "running": "cyan", "setup": "magenta", "starting": 
           "completed_with_failures": "yellow", "interrupted": "red", "stopped": "yellow", "failed": "red"}
 
 
-BENCHMARK_VERBS = ("exp", "paper", "paper-hoc")  # their run name is generated unless --name is given
+BENCHMARK_VERBS = ("exp", "paper", "paper-hedonic")  # their run name is generated unless --name is given
 
 
 def _check_arguments(run: list[str]) -> None:
@@ -119,7 +119,7 @@ def _check_verb_arguments(verb: str, args: list[str], run: list[str]) -> None:
 
 def _absolute_config(run: list[str]) -> list[str]:
     """A ``--config`` that names a file (relative to the directory the queue starts in, or a config shipped with the
-    package: ``configs/start-quality-hoc-local.toml``, ``overlap-heatmap``) is stored as its absolute path, so a resume
+    package: ``configs/start-quality-hedonic.toml``, ``overlap-heatmap``) is stored as its absolute path, so a resume
     from another directory still finds it. A name that is no file (``--config full`` of a spectrum, a profile such as
     ``paper``) is left to its front door."""
     from hedonic.experiments import resources
@@ -229,7 +229,7 @@ SCHEDULES = ("file", "shortest")
 
 def dependencies(queue: dict) -> dict[str, set[str]]:
     """Item name -> the earlier items it must wait for: those named in its ``after``, and those whose output folder one
-    of its arguments names (``--tuned {root}/calibration-hedonic/hoc_tuned.json`` waits for ``calibration-hedonic``)."""
+    of its arguments names (``--tuned {root}/calibration-hedonic/hedonic_tuned.json`` waits for ``calibration-hedonic``)."""
     root = queue.get("root") or ""
     deps: dict[str, set[str]] = {}
     earlier: list[tuple[str, list[str]]] = []
@@ -517,11 +517,11 @@ def _state(name: str) -> tuple[str, dict | None]:
 
 # --------------------------------------------------------------------------- what is already on disk
 # A run is finished when its own files say so, by the rule its runner uses to reuse work:
-#   benchmark (exp, paper, paper-hoc): every unit has a record stamped with this item's arguments
+#   benchmark (exp, paper, paper-hedonic): every unit has a record stamped with this item's arguments
 #   spectrum (spectrum, spectrum-full): its coverage report accounts for every condition
 #   startcurve: every condition has a record in its records file
 #   controlled: its study JSON exists (the study writes it once, at the end, and restarts otherwise)
-#   calibrate: hoc_tuned.json holds every search of its plan and says complete
+#   calibrate: hedonic_tuned.json holds every search of its plan and says complete
 #   calibrate-baselines: baseline_tuned.json holds every (method, pair) calibration of its plan and says complete
 #   audit: every cover of its plan has a record in its records file (name --methods, so the plan does not depend on disk)
 # Other kinds (disjoint, posthoc) have no such rule; their registry entry decides.
@@ -1076,7 +1076,7 @@ def _audit_state(args: list[str]) -> tuple[str, str]:
 
 
 def _calibrate_state(args: list[str]) -> tuple[str, str]:
-    """A HOC calibration: its folder, and whether hoc_tuned.json holds every search of its plan."""
+    """A Hedonic calibration: its folder, and whether hedonic_tuned.json holds every search of its plan."""
     from hedonic.experiments.overlapping import calibrate as cal
 
     plan = cal.front_study(args)
@@ -1303,7 +1303,7 @@ def _preview(run: list[str]) -> str:
     files, used = [], []
     for file in qs.tuned_files(value):
         path = str(qs.expand_path(file))
-        if Path(path).is_file():
+        if qs.tuned_file(file).is_file():
             files.append(file)
         elif path in _TUNED_PREVIEW:
             files += _TUNED_PREVIEW[path]

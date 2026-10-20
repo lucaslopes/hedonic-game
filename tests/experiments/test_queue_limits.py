@@ -159,7 +159,7 @@ class TestQueueFile(unittest.TestCase):
              '"--output-dir", "{root}/calib"]\nlimits = { timeout = "30m" }\n'
              '[[items]]\nname = "base"\nrun = ["calibrate-baselines", "--networks", "dblp:top5000", "--methods", "codeseg", '
              '"--name", "base", "--output-dir", "{root}/base", "--limit-seconds", "60"]\n'
-             '[[items]]\nname = "curve"\nrun = ["startcurve", "--config", "start-quality-hoc-local", "--name", "curve", '
+             '[[items]]\nname = "curve"\nrun = ["startcurve", "--config", "start-quality-hedonic", "--name", "curve", '
              '"--output-dir", "{root}/curve"]\nlimits = { timeout = "none" }\n'
              '[[items]]\nname = "spec"\nrun = ["spectrum", "--name", "spec", "--output-dir", "{root}/spec"]\n')
 

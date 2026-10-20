@@ -209,7 +209,7 @@ def record_target(record: dict) -> str:
 
 
 def startcurve(plan: dict, records: dict[str, dict], keys: list[dict]) -> qm.RunModel:
-    """The start-quality curve: HOC from the ground-truth cover corrupted by a share of incidence switches, per pair."""
+    """The start-quality curve: Hedonic from the ground-truth cover corrupted by a share of incidence switches, per pair."""
     workers = int(plan.get("workers") or 1)
     settings = plan.get("settings") or {}
     pair_dim = qm.Dim("pair", "pairs", about="a network with one of its covers; the start is that cover, the graph its covered subgraph")
@@ -257,14 +257,14 @@ def startcurve(plan: dict, records: dict[str, dict], keys: list[dict]) -> qm.Run
 
     family = qm.Family(
         "conditions", "conditions",
-        "one HOC run (local moving) from the ground-truth cover corrupted by one level, scored against the reference",
+        "one Hedonic run (local moving) from the ground-truth cover corrupted by one level, scored against the reference",
         [pair_dim, level_dim, seed_dim], units, "pair > corruption level > seed", cost,
         [f"{workers} conditions run side by side; a condition's cost is its recorded seconds divided by that"],
         parallel=workers)
     notes = []
     for network, setting in settings.items():
         if isinstance(setting, dict) and setting.get("cap") is not None:
-            notes.append(f"{pair_label(network)}: HOC at cap {setting['cap']} and gamma {setting['gamma']:.4g}"
+            notes.append(f"{pair_label(network)}: Hedonic at cap {setting['cap']} and gamma {setting['gamma']:.4g}"
                          + (f" ({setting['source']})" if setting.get("source") else ""))
     return qm.RunModel([family], notes)
 
@@ -297,7 +297,7 @@ def benchmark(cfg, units: list[tuple[str, int, object]], finished: list[bool], p
     robust = bool(getattr(cfg, "robustness", False))
     pair_dim = qm.Dim("pair", "pairs", about="a network with one ground-truth cover; the detectors see the covered subgraph "
                       "and are scored against that cover")
-    method_dim = qm.Dim("method", "methods", about="the community-detection method (Hedonic is HOC-local at its calibrated settings)")
+    method_dim = qm.Dim("method", "methods", about="the community-detection method (Hedonic local moving at its calibrated settings)")
     seed_dim = qm.Dim("seed", "seeds", "seed {}", about="the method's random seed; a deterministic method runs once per pair, "
                       "at the lowest seed (the run's replication, see `hedonic run exp --help`)")
     measured: dict[tuple[str, str], list[float]] = {}
@@ -743,7 +743,7 @@ def controlled(plan: dict, done: int, grid: dict[str, list[str]]) -> qm.RunModel
                 units.append(qm.Unit((seed, mu, fraction), index < done))
                 index += 1
     family = qm.Family(
-        "instances", "instances", "one generated LFR-derived graph with planted overlap and one HOC run on it",
+        "instances", "instances", "one generated LFR-derived graph with planted overlap and one Hedonic run on it",
         [seed_dim, mu_dim, frac_dim], units, "graph seed > mixing mu > overlap fraction",
         notes=[f"{plan.get('groups')} independent (graph seed, mu) groups run {plan.get('workers')} side by side; "
                "the study keeps only a count while it runs, so which instances are done is shown in this order"],

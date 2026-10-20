@@ -17,7 +17,7 @@ free memory and stops itself below the floor (``HEDONIC_MEMORY_FLOOR``, default 
 
     hedonic pickle dblp:top5000 amazon:all --out-dir <data root>/Pickles
     hedonic pickle --all --dry-run
-    hedonic pickle run --all --tuned hoc_tuned.json     # HOC-local on each pickle: time and memory (see pickle_run)
+    hedonic pickle run --all --tuned hedonic_tuned.json # Hedonic on each pickle: time and memory (see pickle_run)
 """
 
 from __future__ import annotations
@@ -268,7 +268,7 @@ def format_rows(rows: list[dict[str, Any]]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == ["run"]:  # `hedonic pickle run`: HOC-local on the pickles, time and memory per pair
+    if argv[:1] == ["run"]:  # `hedonic pickle run`: Hedonic on the pickles, time and memory per pair
         from hedonic.experiments.overlapping import pickle_run
 
         return pickle_run.main(argv[1:])

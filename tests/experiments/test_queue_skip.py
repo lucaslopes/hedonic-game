@@ -522,7 +522,7 @@ class TestQueueFile(_Base):
         for reader, calibration in [(r, "calibration-hedonic") for r in hedonic] + [(r, "calibration-hedonic-large")
                                                                                     for r in large]:
             tuned = runqueue._option(next(i for i in queue["items"] if i["name"] == reader)["run"], "--tuned")
-            self.assertIn([calibration, "hoc_tuned.json"], [t.split("/")[-2:] for t in tuned.split(",")])
+            self.assertIn([calibration, "hedonic_tuned.json"], [t.split("/")[-2:] for t in tuned.split(",")])
             self.assertIn(calibration, deps[reader])
         for m in BASELINE_ORDER:  # each baseline benchmark reads its own calibration, written just before it
             for sfx in ("", "-large"):

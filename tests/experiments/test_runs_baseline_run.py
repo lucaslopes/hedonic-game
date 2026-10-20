@@ -430,7 +430,7 @@ class TestReplicas(unittest.TestCase):
 
 class TestTuned(unittest.TestCase):
     def files(self, tmp: str) -> tuple[Path, Path]:
-        hoc = Path(tmp) / "hoc_tuned.json"
+        hoc = Path(tmp) / "hedonic_tuned.json"
         hoc.write_text(json.dumps({"complete": True, "settings": {"hedonic": {"dblp:top5000": {
             "max_memberships": 9, "absolute_resolution": 0.5}}}}))
         base = Path(tmp) / "baseline_tuned.json"

@@ -1,9 +1,9 @@
 """Calibration of Hedonic's settings as a durable run (``hedonic run calibrate``).
 
 The Hedonic method has two settings that depend on the network: the resolution gamma and the membership cap M.
-``quickstart.HOC_TUNED`` holds the optimum the theory-guided search found on the whole DBLP and Amazon graphs (on the
+``quickstart.HEDONIC_TUNED`` holds the optimum the theory-guided search found on the whole DBLP and Amazon graphs (on the
 1.x build). This run repeats that search (``calibration_search``) on the build that is loaded now and writes
-``hoc_tuned.json``, which the other runs read through ``--tuned`` (``hedonic run exp --tuned``, ``hedonic run startcurve
+``hedonic_tuned.json``, which the other runs read through ``--tuned`` (``hedonic run exp --tuned``, ``hedonic run startcurve
 --tuned``), so every Hedonic row uses the calibration of the build it runs on.
 
 A network may be given as a *target* ``network:cover`` (``--networks dblp,amazon --covers all,top5k`` crosses them): the
@@ -24,13 +24,14 @@ a good start), full otherwise. All end with the same confirmation on seeds 0-4. 
 build.
 
     hedonic run calibrate --networks dblp:top5000,amazon:top5000 --mode auto --name calibration-hedonic
-    hedonic run exp --config paper-benchmark --tuned ~/.../calibration-hedonic/hoc_tuned.json
+    hedonic run exp --config paper-benchmark --tuned ~/.../calibration-hedonic/hedonic_tuned.json
 
 The search is the packaged ``hedonic.experiments.overlapping.calibration_search``, run as ``python -m``; ``--script FILE``
 runs a search script with the same command line instead (the 1.x ``bisect_tuning.py``).
 
-The run folder holds ``hoc_tuned.json`` (settings, the recorded values they replace, scores, cost, the build; ``complete``
-is true once every search has finished), ``ledger/``, ``progress.json`` and ``worker.log``.
+The run folder holds ``hedonic_tuned.json`` (settings, the recorded values they replace, scores, cost, the build; ``complete``
+is true once every search has finished), ``ledger/``, ``progress.json`` and ``worker.log``. A folder calibrated before
+the method's rename holds ``hoc_tuned.json`` instead: it is read and continued under that name (``tuned_path``).
 
 A **lazy** calibration (``--budget N``, ``--cap-minutes M``) runs the same search and stops it before it asks for a new
 selection evaluation once N have been asked for or the probes already run cost M single-core minutes
@@ -68,7 +69,7 @@ from hedonic.experiments.overlapping import quickstart as qs
 from hedonic.experiments.runtime import ALGORITHM_IDENTITY, runtime_versions
 
 PROTOCOL = "hedonic-calibration-v2"
-TUNED_NAME = "hoc_tuned.json"
+TUNED_NAME = qs.TUNED_NAME  # hedonic_tuned.json; quickstart.LEGACY_TUNED_NAMES are read too
 PHASE_OF = {"hedonic": "local"}
 OLD_METHOD_NAMES = {"hoc_local": "hedonic"}  # files written before the rename call the method hoc_local
 DROPPED_METHODS = ("hoc_multilevel",)  # its rows in an older file are ignored: the multilevel phase is gone
@@ -95,7 +96,7 @@ def build_parser(prog: str = "hedonic run calibrate") -> argparse.ArgumentParser
     parser = argparse.ArgumentParser(
         prog=prog,
         description=("Calibrate Hedonic's resolution and cap on the loaded build (warm start from the recorded optimum "
-                     "by default) and write hoc_tuned.json for the runs that take --tuned."))
+                     "by default) and write hedonic_tuned.json for the runs that take --tuned."))
     parser.add_argument("--script", metavar="FILE",
                         help="run this search script instead of the packaged search (a script with the command line of "
                              f"{SEARCH_MODULE}, such as the 1.x bisect_tuning.py)")
@@ -138,7 +139,7 @@ def build_parser(prog: str = "hedonic run calibrate") -> argparse.ArgumentParser
     parser.add_argument("--no-download", action="store_true",
                         help="refuse a pair that is not on disk instead of downloading it from SNAP")
     parser.add_argument("--python", help="interpreter that runs the searches (default: this one)")
-    parser.add_argument("--name", help="run name (default hoc-calibration)")
+    parser.add_argument("--name", help="run name (default hedonic-calibration)")
     parser.add_argument("--output-dir", help="run folder (default: the user config's output folder / NAME)")
     parser.add_argument("--overwrite", action="store_true", help="delete this calibration's results and ledger first")
     parser.add_argument("--dry-run", action="store_true", help="print the plan and the commands; run nothing")
@@ -165,7 +166,7 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate") -> dict[str, A
         for method in methods:
             if start_for(method, network) is None:
                 raise ValueError(f"no setting to start from for {method} on {network!r}; "
-                                 f"choose from {', '.join(qs.HOC_TUNED[method])} (or a cover of one of them)")
+                                 f"choose from {', '.join(qs.HEDONIC_TUNED[method])} (or a cover of one of them)")
     if not networks or not methods:
         raise ValueError("nothing to calibrate")
     if not args.factor > 1.0:
@@ -179,7 +180,7 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate") -> dict[str, A
     script = expand_path(args.script).resolve() if args.script else None
     if script is not None and not script.is_file():
         raise ValueError(f"--script {args.script}: no such file (leave --script out to use the packaged search)")
-    name = qs.parse_name(args.name or "hoc-calibration")
+    name = qs.parse_name(args.name or "hedonic-calibration")
     root = Path(userconfig.defaults().get("output_dir") or RUNS_ROOT)
     output = expand_path(args.output_dir).resolve() if args.output_dir else expand_path(root / name).resolve()
     for flag, value in (("--timeout", args.timeout), ("--limit-seconds", args.limit_seconds)):
@@ -201,7 +202,7 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate") -> dict[str, A
 def start_for(method: str, network: str) -> dict[str, Any] | None:
     """The setting a search of ``network`` (a network or a ``network:cover`` target) starts from: its own recorded
     optimum, else its network's whole-graph one, else DBLP's (the transfer YouTube and LiveJournal have used)."""
-    known = qs.HOC_TUNED[method]
+    known = qs.HEDONIC_TUNED[method]
     base = qs.split_target(network)[0]
     for key in (network, base, "dblp"):
         if key in known:
@@ -221,7 +222,7 @@ def search_mode(plan: dict[str, Any], network: str, method: str) -> str:
 
 
 def searches(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    """The searches in run order: HOC-local first (the start-quality curve and most of the paper rest on it)."""
+    """The searches in run order, method by method (Hedonic is the only method calibrated here)."""
     out = []
     for method in plan["methods"]:
         for network in plan["networks"]:
@@ -303,7 +304,7 @@ def provision(plan: dict[str, Any], emit: Callable[[str], Any]) -> None:
         base, cover = qs.split_target(network)
         try:
             snap.ensure_pair(base, cover or "all", plan.get("network_root"), download=plan.get("download", True),
-                             say=lambda line: emit(f"hoc calibration: {line}"))
+                             say=lambda line: emit(f"hedonic calibration: {line}"))
         except snap.SnapLoadError as exc:
             raise RuntimeError(f"the data of {network} is not available: {exc}") from exc
 
@@ -314,7 +315,7 @@ def describe(plan: dict[str, Any]) -> str:
     count = len(searches(plan))
     start = ("resolution only, no cap (-1), wide log scan" if plan.get("cap") == "unlimited"
              else f"{plan['mode']} start{lazy}")
-    return (f"HOC calibration ({start}) · {count} search{'' if count == 1 else 'es'}: "
+    return (f"Hedonic calibration ({start}) · {count} search{'' if count == 1 else 'es'}: "
             + ", ".join(s["key"] for s in searches(plan)) + f" · {plan['workers']} worker{'s' if plan['workers'] != 1 else ''}")
 
 
@@ -325,7 +326,7 @@ def plan_lines(plan: dict[str, Any]) -> list[str]:
              (f"  script   {script}" + ("" if script.is_file() else "   (NOT FOUND)")) if script
              else f"  search   {SEARCH_MODULE} (packaged)",
              f"  build    {qs.environment_line()}",
-             f"  folder   {plan['output']} (hoc_tuned.json, ledger/, progress.json, worker.log)",
+             f"  folder   {plan['output']} ({tuned_path(plan['output']).name}, ledger/, progress.json, worker.log)",
              (f"  budget   {plan['budget']} selection evaluations"
               + (f" or {plan['cap_minutes']:g} single-core probe minutes" if plan.get("cap_minutes") else "")
               + ", best-observed F1 setting, no confirmation (lazy)" if plan.get("budget") is not None
@@ -355,10 +356,17 @@ def plan_lines(plan: dict[str, Any]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- results
+def tuned_path(folder: Path) -> Path:
+    """The calibration file of a run folder: ``hedonic_tuned.json``, or the ``hoc_tuned.json`` a release before the
+    method's rename wrote there (then read and continued under that name, so a folder never holds two of them)."""
+    return qs.tuned_file(Path(folder) / TUNED_NAME)
+
+
 def read_tuned(plan: dict[str, Any]) -> dict[str, Any]:
-    """hoc_tuned.json of this run ({} when absent). A file written before the method's rename names it ``hoc_local``:
-    its rows and searches are read as ``hedonic``'s, and the rows of the dropped ``hoc_multilevel`` are left out."""
-    path = plan["output"] / TUNED_NAME
+    """The calibration file of this run ({} when absent; ``tuned_path``). A file written before the method's rename names
+    it ``hoc_local``: its rows and searches are read as ``hedonic``'s, and the rows of the dropped ``hoc_multilevel`` are
+    left out."""
+    path = tuned_path(plan["output"])
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
@@ -398,7 +406,7 @@ def current_build() -> dict[str, str]:
 
 
 def recorded(plan: dict[str, Any]) -> set[str]:
-    """The searches of hoc_tuned.json made on this build. A search of another build (or of 1.x, which recorded none)
+    """The searches of the calibration file made on this build. A search of another build (or of 1.x, which recorded none)
     is not recorded: a run searches it again and replaces its entry, and the queue does not count it."""
     mine = current_build()
     return {key for key, entry in (read_tuned(plan).get("searches") or {}).items()
@@ -413,7 +421,7 @@ def same_cap_mode(plan: dict[str, Any], entry: dict[str, Any]) -> bool:
 
 
 def other_build(plan: dict[str, Any]) -> set[str]:
-    """The searches of hoc_tuned.json that another build made (kept until this build replaces them)."""
+    """The searches of the calibration file that another build made (kept until this build replaces them)."""
     return set(read_tuned(plan).get("searches") or {}) - recorded(plan)
 
 
@@ -460,7 +468,7 @@ def chosen_gamma(summary: dict[str, Any], start: float | None = None) -> float:
 
 
 def record_search(plan: dict[str, Any], search: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
-    """Add one finished search to hoc_tuned.json (atomically) and return the file's content."""
+    """Add one finished search to the calibration file (atomically; ``tuned_path``) and return the file's content."""
     start = start_for(search["method"], search["network"])
     final = summary["final"]
     gamma, cap = chosen_gamma(summary, start["absolute_resolution"]), int(final["M"])
@@ -492,7 +500,7 @@ def record_search(plan: dict[str, Any], search: dict[str, Any], summary: dict[st
     data["complete"] = {s["key"] for s in searches(plan)} <= {
         key for key, value in data["searches"].items()
         if isinstance(value, dict) and value.get("build") == mine and same_cap_mode(plan, value)}
-    path = plan["output"] / TUNED_NAME
+    path = tuned_path(plan["output"])
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, default=str))
@@ -525,7 +533,8 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
     out = plan["output"]
     out.mkdir(parents=True, exist_ok=True)
     if plan["overwrite"]:
-        (out / TUNED_NAME).unlink(missing_ok=True)
+        for name in (TUNED_NAME, *qs.LEGACY_TUNED_NAMES):
+            (out / name).unlink(missing_ok=True)
         ledger = out / "ledger"
         for path in ledger.glob("*") if ledger.is_dir() else []:
             path.unlink()
@@ -536,7 +545,7 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
     done = recorded(plan)
     wanted = {s["key"] for s in todo}
     pending = [s for s in todo if s["key"] not in done]
-    emit(f"hoc calibration: {len(todo)} searches ({plan['mode']} start); {len(done & wanted)} already recorded; "
+    emit(f"hedonic calibration: {len(todo)} searches ({plan['mode']} start); {len(done & wanted)} already recorded; "
          f"{plan['workers']} worker{'s' if plan['workers'] != 1 else ''}")
     if pending and not script:  # the packaged search: every pair on disk first (a script loads its own data)
         provision({**plan, "networks": [s["network"] for s in pending]}, emit)
@@ -553,7 +562,7 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
 
     def stage_text() -> str:
         """Which searches are running and how many probes each has made (finished ones are counted, not listed)."""
-        running = ", ".join(f"{key.replace('hoc_', '')} probe {probes.get(key, 0)}" for key in sorted(active))
+        running = ", ".join(f"{key} probe {probes.get(key, 0)}" for key in sorted(active))
         return f"running {len(active)} of {len(todo)}: {running or 'none'} · finished {len(todo) - len(active)}"
 
     def event(item: dict[str, Any]) -> None:
@@ -569,12 +578,12 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
         try:
             run_search(plan, search, event, say, prefix)
             summary = final_of(out / "ledger", search)
-            with lock:  # hoc_tuned.json is read-modify-written: one search at a time
+            with lock:  # the calibration file is read-modify-written: one search at a time
                 data = record_search(plan, search, summary)
                 finished[0] += 1
                 entry = data["searches"][search["key"]]
                 was = entry.get("start") or {}
-                emit(f"hoc calibration: {search['key']} → gamma {entry['absolute_resolution']:.6g}, cap {entry['max_memberships']} "
+                emit(f"hedonic calibration: {search['key']} → gamma {entry['absolute_resolution']:.6g}, cap {entry['max_memberships']} "
                      f"(started at {was.get('absolute_resolution', float('nan')):.6g}, cap {was.get('max_memberships')}); "
                      f"F1 {entry['f1_median']}")
                 active.discard(search["key"])
@@ -585,7 +594,7 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
             with lock:
                 failures.append(search["key"])
                 active.discard(search["key"])
-                emit(f"hoc calibration: {search['key']} FAILED: {exc}")
+                emit(f"hedonic calibration: {search['key']} FAILED: {exc}")
 
     if together:
         threads = [threading.Thread(target=one, args=(search,), name=search["key"]) for search in pending]
@@ -601,7 +610,7 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
     if failures:
         raise RuntimeError("the search for " + ", ".join(failures) + " failed; the finished searches are kept, resume to retry")
     final = read_tuned(plan)
-    emit(f"hoc calibration: {'complete' if final.get('complete') else 'NOT complete'}; wrote {out / TUNED_NAME}")
+    emit(f"hedonic calibration: {'complete' if final.get('complete') else 'NOT complete'}; wrote {tuned_path(out)}")
     return 0 if final.get("complete") else 1
 
 
@@ -689,7 +698,8 @@ def front_main(argv: list[str] | None = None) -> int:
         except SystemExit as exc:
             print(f"hedonic run calibrate: {exc.code}", file=sys.stderr)
             return 2
-        (plan["output"] / TUNED_NAME).unlink(missing_ok=True)
+        for name in (TUNED_NAME, *qs.LEGACY_TUNED_NAMES):
+            (plan["output"] / name).unlink(missing_ok=True)
         ledger = plan["output"] / "ledger"
         for path in ledger.glob("*") if ledger.is_dir() else []:
             path.unlink()
@@ -718,7 +728,7 @@ def work(name: str, entry: dict[str, Any], prog: dict[str, Any]) -> int:
     prog.update({"name": name, "kind": "calibrate", "status": "setup", "pid": os.getpid(), "started": time.time(),
                  "updated": time.time(), "describe": describe(plan), "command": entry["command"],
                  "environment": qs.environment(), "done": already, "total": len(todo), "resumed_from": already,
-                 "eta_seconds": None, "stage": "starting the calibration", "output": str(plan["output"] / TUNED_NAME),
+                 "eta_seconds": None, "stage": "starting the calibration", "output": str(tuned_path(plan["output"])),
                  "setup": [], "plan": []})
     rm.write_json(ppath, prog)
     print(style(f"hedonic run {name}", "bold") + " · " + describe(plan))
@@ -743,7 +753,7 @@ def work(name: str, entry: dict[str, Any], prog: dict[str, Any]) -> int:
         raise RuntimeError("the calibration did not complete")
     prog.update(status="completed", done=len(todo), eta_seconds=0, stage=None, finished=time.time(), updated=time.time())
     rm.write_json(ppath, prog)
-    print(style(f"  wrote {plan['output'] / TUNED_NAME}", "green"), flush=True)
+    print(style(f"  wrote {tuned_path(plan['output'])}", "green"), flush=True)
     return 0
 
 
@@ -759,7 +769,7 @@ def snapshot(entry: dict[str, Any], prog: dict[str, Any], frame: str) -> str:
     end = prog.get("finished") or (time.time() if status in ("running", "setup", "starting") else prog.get("updated", time.time()))
     lines = [style(f"  hedonic · {entry['name']}", "bold") + "  " + style(f"● {status}", colour, "bold")
              + style(f"   ({entry['backend']}{': ' + entry['session'] if entry.get('session') else ''})", "dim"),
-             style("  " + prog.get("describe", "HOC calibration"), "dim")]
+             style("  " + prog.get("describe", "Hedonic calibration"), "dim")]
     env = prog.get("environment") or {}
     if env:
         core = env.get("hedonic_core_sha256")

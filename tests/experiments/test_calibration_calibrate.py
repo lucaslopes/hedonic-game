@@ -171,9 +171,9 @@ class TestCoverTargets(unittest.TestCase):
 
     def test_a_pair_starts_from_its_networks_setting_and_a_network_without_one_from_dblps(self):
         self.assertEqual(cal.start_for("hedonic", "amazon:top5000")["max_memberships"],
-                         qs.HOC_TUNED["hedonic"]["amazon"]["max_memberships"])
+                         qs.HEDONIC_TUNED["hedonic"]["amazon"]["max_memberships"])
         youtube = cal.start_for("hedonic", "youtube:all")
-        self.assertEqual(youtube["max_memberships"], qs.HOC_TUNED["hedonic"]["dblp"]["max_memberships"])
+        self.assertEqual(youtube["max_memberships"], qs.HEDONIC_TUNED["hedonic"]["dblp"]["max_memberships"])
         self.assertIn("transfer", youtube["source"])
         self.assertEqual(cal.start_for("hedonic", "dblp")["source"], "dblp")
 
@@ -209,11 +209,11 @@ class TestPlan(unittest.TestCase):
             self.assertEqual([s["key"] for s in cal.searches(plan)], ["hedonic/dblp", "hedonic/amazon"])
             argv = cal.search_argv(plan, cal.searches(plan)[1])
             value = lambda flag: argv[argv.index(flag) + 1]  # noqa: E731
-            gamma = qs.HOC_TUNED["hedonic"]["amazon"]["absolute_resolution"]
+            gamma = qs.HEDONIC_TUNED["hedonic"]["amazon"]["absolute_resolution"]
             lo, hi = map(float, value("--bracket").split(","))
             self.assertAlmostEqual(lo, gamma / 1.5, places=8)
             self.assertAlmostEqual(hi, gamma * 1.5, places=8)
-            self.assertEqual(value("--M-start"), str(qs.HOC_TUNED["hedonic"]["amazon"]["max_memberships"]))
+            self.assertEqual(value("--M-start"), str(qs.HEDONIC_TUNED["hedonic"]["amazon"]["max_memberships"]))
             self.assertIn("--no-extremal", argv)
             self.assertEqual(value("--out"), str(plan["output"] / "ledger"))  # this run's own ledger
             self.assertEqual(value("--phase"), "local")
@@ -310,7 +310,7 @@ class TestProvision(unittest.TestCase):
             lines: list[str] = []
             cal.provision(plan, lines.append)
             self.assertEqual(calls, [("dblp", "top5000", Path(tmp).resolve(), False), ("amazon", "all", Path(tmp).resolve(), False)])
-            self.assertTrue(all(line.startswith("hoc calibration: ") for line in lines))
+            self.assertTrue(all(line.startswith("hedonic calibration: ") for line in lines))
 
             def refuse(*_a, **_k):
                 raise snap.SnapLoadError("not on disk")
@@ -348,7 +348,7 @@ class TestResults(unittest.TestCase):
             self.assertEqual(data["settings"]["hedonic"]["dblp"], {"max_memberships": 6, "absolute_resolution": 0.125})
             entry = data["searches"]["hedonic/dblp"]
             self.assertTrue(entry["changed"])
-            self.assertEqual(entry["start"]["max_memberships"], qs.HOC_TUNED["hedonic"]["dblp"]["max_memberships"])
+            self.assertEqual(entry["start"]["max_memberships"], qs.HEDONIC_TUNED["hedonic"]["dblp"]["max_memberships"])
             self.assertEqual(cal.state_of(plan), "complete")
             self.assertEqual([e["done"] for e in events if e["type"] == "unit"], [1, 2])
             self.assertTrue(any(e["type"] == "stage" and "probe 2" in e["text"] for e in events))
@@ -413,13 +413,42 @@ class TestResults(unittest.TestCase):
                 self.assertTrue(data["complete"])
                 self.assertEqual(cal.recorded(plan), {"hedonic/dblp", "hedonic/amazon"})
 
+    def test_a_folder_calibrated_before_the_rename_keeps_its_hoc_tuned_json(self):
+        # A release before the rename wrote hoc_tuned.json: the run reads it, continues it under that name (one file
+        # per folder) and a --tuned path to the folder's hedonic_tuned.json reads it too.
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = plan_for(tmp, "--networks", "dblp")
+            plan["output"].mkdir(parents=True)
+            legacy = plan["output"] / "hoc_tuned.json"
+            legacy.write_text(json.dumps({"complete": True, "settings": {"hedonic": {"dblp": {
+                "max_memberships": 9, "absolute_resolution": 0.1}}}, "searches": {"hedonic/dblp": {
+                "max_memberships": 9, "absolute_resolution": 0.1, "build": cal.current_build()}}}))
+            self.assertEqual(cal.TUNED_NAME, "hedonic_tuned.json")
+            self.assertEqual(cal.tuned_path(plan["output"]), legacy)
+            self.assertEqual(cal.recorded(plan), {"hedonic/dblp"})
+            self.assertEqual(cal.state_of(plan), "complete")
+            named = plan["output"] / cal.TUNED_NAME
+            self.assertEqual(qs.tuned_file(named), legacy)
+            self.assertEqual(qs.load_tuned_file(named), {"hedonic": {"dblp": {"max_memberships": 9,
+                                                                              "absolute_resolution": 0.1}}})
+            cal.record_search(plan, cal.searches(plan)[0], {"final": {"gamma": 0.2, "M": 4, "f1_median": 0.5,
+                                                                      "onmi_median": 0.5, "f1_sd": 0.0,
+                                                                      "confirm_seeds": [0]}})
+            self.assertFalse(named.exists())
+            self.assertEqual(json.loads(legacy.read_text())["settings"]["hedonic"]["dblp"]["absolute_resolution"], 0.2)
+            named.write_text(json.dumps({"complete": True, "settings": {}}))  # the new name wins when both exist
+            self.assertEqual(cal.tuned_path(plan["output"]), named)
+            self.assertEqual(qs.load_tuned_file(named), {})
+            with self.assertRaises(qs.TunedMissing):  # any other missing path stays missing
+                qs.load_tuned_file(plan["output"] / "other" / cal.TUNED_NAME)
+
     def test_an_unchanged_optimum_keeps_the_exact_start_value_and_an_unkept_fraction_is_not_reported(self):
         # A search that comes back to its start reports the probes' 6-digit value (0.142857 for 1/7); that is the same
         # configuration, so the setting must stay exactly the start (records made at it keep their identity).
         with tempfile.TemporaryDirectory() as tmp:
             plan = plan_for(tmp, "--networks", "dblp")
             search = cal.searches(plan)[0]
-            start = qs.HOC_TUNED["hedonic"]["dblp"]
+            start = qs.HEDONIC_TUNED["hedonic"]["dblp"]
             summary = {"snap": {"fraction": "1/5", "kept": False},
                        "final": {"gamma": float(f"{start['absolute_resolution']:.6g}"), "M": int(start["max_memberships"]),
                                  "f1_median": 0.42, "onmi_median": 0.5, "f1_sd": 0.0, "confirm_seeds": [0]},

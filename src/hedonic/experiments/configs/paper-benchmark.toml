@@ -2,7 +2,7 @@
 # and LiveJournal with top5000), Hedonic and eight baselines,
 # seeds 0-9, on three axes (accuracy, time, robustness). The `benchmark` item of the paper queue starts it:
 #
-#   hedonic run exp --config paper-benchmark --tuned HOC_TUNED.json,BASELINE_TUNED.json --name benchmark --yes
+#   hedonic run exp --config paper-benchmark --tuned HEDONIC_TUNED.json,BASELINE_TUNED.json --name benchmark --yes
 #
 # One unit is a (pair, seed, method). The graph is the subgraph induced by the vertices the pair's cover contains
 # (`induce = "covered"`); every method runs on that graph and its answer is scored against the same cover (communities of

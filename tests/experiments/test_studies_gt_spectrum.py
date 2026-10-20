@@ -467,7 +467,7 @@ class TestTunedSettings(_FixedBudget):
             settings = ",\n".join(
                 f'  {{ pair = "{net}/all", label = "{method}", phase = "local", gamma = {float(p["absolute_resolution"])!r}, '
                 f'cap = {int(p["max_memberships"])} }}'
-                for method, nets in quickstart.HOC_TUNED.items() for net, p in nets.items())
+                for method, nets in quickstart.HEDONIC_TUNED.items() for net, p in nets.items())
             config = Path(tmp) / "tuned.toml"
             config.write_text('[overlapping_gt_spectrum]\nname = "gt-tuned"\nworkers = 8\n'
                               'pairs = ["dblp/all", "amazon/all"]\nmax_nodes = 0\n'
@@ -481,7 +481,7 @@ class TestTunedSettings(_FixedBudget):
         self.assertEqual(options["detector_seeds"], list(range(10)))
         phases = {"hedonic": "local"}
         expected = {(f"{net}/all", method, phases[method], float(p["absolute_resolution"]), int(p["max_memberships"]))
-                    for method, nets in quickstart.HOC_TUNED.items() for net, p in nets.items()}
+                    for method, nets in quickstart.HEDONIC_TUNED.items() for net, p in nets.items()}
         got = {(s["pair"], s["label"], s["phase"], s["gamma"], s["cap"]) for s in options["detector_settings"]}
         self.assertEqual(got, expected)
         grid = gs.scientific_grid(options, [("dblp", "all"), ("amazon", "all")])
@@ -536,11 +536,11 @@ def _calibration(path: Path, settings: dict, complete: bool = True) -> Path:
 
 
 class TestCalibratedResolutions(_FixedBudget):
-    """``--tuned hoc_tuned.json``: each pair's calibrated resolution joins that pair's detector and audit grids."""
+    """``--tuned hedonic_tuned.json``: each pair's calibrated resolution joins that pair's detector and audit grids."""
 
     def test_a_pair_gets_its_own_calibrated_resolution_and_nothing_else_changes(self):
         with tempfile.TemporaryDirectory() as d:
-            tuned = _calibration(Path(d) / "hoc_tuned.json", {
+            tuned = _calibration(Path(d) / "hedonic_tuned.json", {
                 "amazon:top5000": {"max_memberships": 3, "absolute_resolution": 0.35},
                 "dblp": {"max_memberships": 9, "absolute_resolution": 0.2}})  # a plain name is the `all` cover
             options = _options(os.path.join(d, "out"), "--tuned", str(tuned))
@@ -571,7 +571,7 @@ class TestCalibratedResolutions(_FixedBudget):
 
     def test_smoke_study_runs_the_calibrated_resolution_audits_it_and_resumes(self):
         with tempfile.TemporaryDirectory() as d:
-            tuned = _calibration(Path(d) / "hoc_tuned.json",
+            tuned = _calibration(Path(d) / "hedonic_tuned.json",
                                  {"amazon:top5000": {"max_memberships": 3, "absolute_resolution": 0.35}})
             out = os.path.join(d, "out")
             args = ("--pairs", "amazon/top5000", "--tuned", str(tuned))
@@ -597,7 +597,7 @@ class TestCalibratedResolutions(_FixedBudget):
         from hedonic.experiments.overlapping import runqueue
 
         with tempfile.TemporaryDirectory() as d:
-            run = ["spectrum", "--config", "full", "--tuned", str(Path(d) / "absent" / "hoc_tuned.json"),
+            run = ["spectrum", "--config", "full", "--tuned", str(Path(d) / "absent" / "hedonic_tuned.json"),
                    "--name", "gt-robustness", "--output-dir", str(Path(d) / "gt")]
             self.assertEqual(runqueue.data_state(run, fresh=True)[0], "awaiting")
             options = runqueue._spectrum_options("spectrum", run[1:])

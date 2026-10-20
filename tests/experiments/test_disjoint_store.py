@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import json
 import random
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -528,11 +530,11 @@ class TestDisjointFrontDoor(unittest.TestCase):
                 self.assertNotIn("disjoint_output_root", userconfig.MACHINE_KEYS)
 
 
-class TestPaperHocProfile(unittest.TestCase):
+class TestPaperHedonicProfile(unittest.TestCase):
     def test_per_network_tuned_settings_and_command(self):
         from hedonic.experiments.overlapping import quickstart as qs
 
-        cfg = qs.load_config("paper-hoc")
+        cfg = qs.load_config("paper-hedonic")
         self.assertEqual(cfg.methods, ["hedonic"])
         self.assertEqual((cfg.nodes, cfg.seeds, cfg.save_covers), (0, list(range(10)), True))
         local = qs.BY_KEY["hedonic"]
@@ -541,11 +543,22 @@ class TestPaperHocProfile(unittest.TestCase):
                          {"max_memberships": 4, "absolute_resolution": 1 / 723})
         # Other configs keep the screened settings.
         self.assertEqual(qs.method_params(local, qs.load_config("paper"), "amazon"), dict(local.screened))
-        self.assertIn("--config paper-hoc", cfg.command())
+        self.assertIn("--config paper-hedonic", cfg.command())
         self.assertEqual(len(qs.build_plan(cfg, {})), 20)
         env = qs.environment()
         self.assertIn("igraph_c", env)
         self.assertIn("igraph_extension_sha256", env)
+
+    def test_paper_hoc_is_refused_with_its_new_name(self):
+        from hedonic.experiments import CLI
+        from hedonic.experiments.overlapping import quickstart as qs
+
+        with self.assertRaisesRegex(ValueError, "'paper-hoc' is now called 'paper-hedonic'"):
+            qs.load_config("paper-hoc")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(CLI.hedonic_main(["run", "paper-hoc", "--dry-run"]), 2)
+        self.assertIn("`hedonic run paper-hoc` is now `hedonic run paper-hedonic`", err.getvalue())
 
     def test_youtube_hoc_is_gone(self):
         from hedonic.experiments import CLI

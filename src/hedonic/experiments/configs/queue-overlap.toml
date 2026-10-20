@@ -59,7 +59,7 @@ run = ["controlled", "--config", "overlap-heatmap-gamma", "--name", "synthetic-h
 name = "calibration-hedonic"
 short = "calibrate"
 title = "Hedonic: calibration (DBLP, Amazon and YouTube)"
-about = "Searches Hedonic's resolution on each pair's covered subgraph with no membership cap (-1), scored against that pair's cover. Writes hoc_tuned.json, which the Hedonic experiments read."
+about = "Searches Hedonic's resolution on each pair's covered subgraph with no membership cap (-1), scored against that pair's cover. Writes hedonic_tuned.json, which the Hedonic experiments read."
 run = ["calibrate", "--cap", "unlimited", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--name", "calibration-hedonic", "--output-dir", "{root}/calibration-hedonic"]
 
 [[items]]
@@ -68,7 +68,7 @@ by_pair = true
 short = "gt-robust"
 title = "Hedonic: ground-truth robustness (DBLP, Amazon and YouTube)"
 about = "Exact stability of every supplied ground-truth cover over resolution (fixed and open labels), then local moving from the exact cover at each resolution and seed, on the subgraph the cover induces. Each pair's calibrated resolution joins its grids."
-run = ["spectrum", "--config", "full", "--pairs", "dblp/top5000,dblp/all,amazon/top5000,amazon/all,youtube/top5000,youtube/all", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json", "--name", "gt-robustness", "--output-dir", "{root}/gt-robustness"]
+run = ["spectrum", "--config", "full", "--pairs", "dblp/top5000,dblp/all,amazon/top5000,amazon/all,youtube/top5000,youtube/all", "--tuned", "{root}/calibration-hedonic/hedonic_tuned.json", "--name", "gt-robustness", "--output-dir", "{root}/gt-robustness"]
 
 [[items]]
 name = "leveraging-gt"
@@ -76,7 +76,7 @@ by_pair = true
 short = "leverage"
 title = "Hedonic: leveraging the ground truth (DBLP, Amazon and YouTube)"
 about = "Hedonic local moving started from the ground-truth cover corrupted by degree-preserving incidence switches: 9 corruption levels x 10 seeds per pair, at the calibrated gamma, with the cap set to the reference's largest number of communities on one vertex."
-run = ["startcurve", "--config", "start-quality-hoc-local", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--cap", "reference", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json", "--name", "leveraging-gt", "--output-dir", "{root}/leveraging-gt"]
+run = ["startcurve", "--config", "start-quality-hedonic", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--cap", "reference", "--tuned", "{root}/calibration-hedonic/hedonic_tuned.json", "--name", "leveraging-gt", "--output-dir", "{root}/leveraging-gt"]
 
 [[items]]
 name = "benchmark-hedonic"
@@ -84,7 +84,7 @@ by_pair = true
 short = "bench-hed"
 title = "Hedonic: benchmark (DBLP, Amazon and YouTube)"
 about = "Hedonic at its calibrated gamma and no cap, seeds 0-9, on the subgraph each cover induces; its cover is saved for the robustness audit (the audit item)."
-run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json", "--name", "benchmark-hedonic", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "dblp:top5000,dblp:all,amazon:top5000,amazon:all,youtube:top5000,youtube:all", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic/hedonic_tuned.json", "--name", "benchmark-hedonic", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-codeseg"
@@ -209,7 +209,7 @@ run = ["audit", "--source", "{root}/benchmark", "--networks", "dblp:top5000,dblp
 name = "calibration-hedonic-large"
 short = "calibrate-L"
 title = "Hedonic: calibration (LiveJournal/top5k and Friendster/top5k)"
-about = "Searches Hedonic's resolution on each pair's covered subgraph with no membership cap (-1), scored against that pair's cover. Writes hoc_tuned.json, which the Hedonic experiments read."
+about = "Searches Hedonic's resolution on each pair's covered subgraph with no membership cap (-1), scored against that pair's cover. Writes hedonic_tuned.json, which the Hedonic experiments read."
 run = ["calibrate", "--cap", "unlimited", "--networks", "livejournal:top5000,friendster:top5000", "--name", "calibration-hedonic-large", "--output-dir", "{root}/calibration-hedonic-large"]
 
 [[items]]
@@ -217,21 +217,21 @@ name = "gt-robustness-large"
 short = "gt-robust-L"
 title = "Hedonic: ground-truth robustness (LiveJournal/top5k and Friendster/top5k)"
 about = "Exact stability of every supplied ground-truth cover over resolution (fixed and open labels), then local moving from the exact cover at each resolution and seed, on the subgraph the cover induces. Each pair's calibrated resolution joins its grids. The earlier pairs are listed so the coverage report describes all of them; their records are reused."
-run = ["spectrum", "--config", "full", "--pairs", "dblp/top5000,dblp/all,amazon/top5000,amazon/all,youtube/top5000,youtube/all,livejournal/top5000,friendster/top5000", "--tuned", "{root}/calibration-hedonic/hoc_tuned.json,{root}/calibration-hedonic-large/hoc_tuned.json", "--name", "gt-robustness-large", "--output-dir", "{root}/gt-robustness"]
+run = ["spectrum", "--config", "full", "--pairs", "dblp/top5000,dblp/all,amazon/top5000,amazon/all,youtube/top5000,youtube/all,livejournal/top5000,friendster/top5000", "--tuned", "{root}/calibration-hedonic/hedonic_tuned.json,{root}/calibration-hedonic-large/hedonic_tuned.json", "--name", "gt-robustness-large", "--output-dir", "{root}/gt-robustness"]
 
 [[items]]
 name = "leveraging-gt-large"
 short = "leverage-L"
 title = "Hedonic: leveraging the ground truth (LiveJournal/top5k and Friendster/top5k)"
 about = "Hedonic local moving started from the ground-truth cover corrupted by degree-preserving incidence switches: 9 corruption levels x 10 seeds per pair, at the calibrated gamma, with the cap set to the reference's largest number of communities on one vertex."
-run = ["startcurve", "--config", "start-quality-hoc-local", "--networks", "livejournal:top5000,friendster:top5000", "--cap", "reference", "--tuned", "{root}/calibration-hedonic-large/hoc_tuned.json", "--name", "leveraging-gt-large", "--output-dir", "{root}/leveraging-gt-large"]
+run = ["startcurve", "--config", "start-quality-hedonic", "--networks", "livejournal:top5000,friendster:top5000", "--cap", "reference", "--tuned", "{root}/calibration-hedonic-large/hedonic_tuned.json", "--name", "leveraging-gt-large", "--output-dir", "{root}/leveraging-gt-large"]
 
 [[items]]
 name = "benchmark-hedonic-large"
 short = "bench-hed-L"
 title = "Hedonic: benchmark (LiveJournal/top5k and Friendster/top5k)"
 about = "Hedonic at its calibrated gamma and no cap, seeds 0-9, on the subgraph each cover induces; its cover is saved for the robustness audit (the audit item)."
-run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic-large/hoc_tuned.json", "--name", "benchmark-hedonic-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "hedonic", "--tuned", "{root}/calibration-hedonic-large/hedonic_tuned.json", "--name", "benchmark-hedonic-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-codeseg-large"

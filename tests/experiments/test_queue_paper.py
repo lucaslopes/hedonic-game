@@ -96,7 +96,7 @@ class TestShippedQueue(_Isolated):
         queue = runqueue.load_queue("overlap", root=str(self.root / "q"))
         for item in queue["items"]:
             self.assertNotIn("multilevel", " ".join(item["run"]))
-        self.assertNotIn("multilevel", (CONFIG_DIR / "start-quality-hoc-local.toml").read_text().split("#")[0])
+        self.assertNotIn("multilevel", (CONFIG_DIR / "start-quality-hedonic.toml").read_text().split("#")[0])
 
 
 class TestSetupCheck(_Isolated):

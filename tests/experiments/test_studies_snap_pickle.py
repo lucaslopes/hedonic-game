@@ -145,7 +145,7 @@ class TestPickleRun(unittest.TestCase):
             self.assertGreater(row["rss_peak_bytes"], 0)
             self.assertGreaterEqual(row["detection_seconds"], 0)
             self.assertTrue(0 <= row["f1"] <= 1 and 0 <= row["onmi"] <= 1)
-            self.assertTrue((out / "hoc-runs" / "results.json").is_file())
+            self.assertTrue((out / "hedonic-runs" / "results.json").is_file())
             self.assertIn("hedonic_core_sha256", row["runtime"])
             self.assertNotIn("lucas_igraph", json.dumps(row))
 

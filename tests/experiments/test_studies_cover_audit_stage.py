@@ -14,7 +14,7 @@ from tests.experiments.test_studies_cover_audit import CLIQUES, two_cliques, wri
 
 
 def build_run(folder: Path, methods=("hedonic", "clique_percolation")) -> None:
-    """A benchmark run folder with one finished unit per method on the two-cliques graph (a HOC unit keeps its labels)."""
+    """A benchmark run folder with one finished unit per method on the two-cliques graph (a Hedonic unit keeps its labels)."""
     graph = two_cliques()
     labelled = [[0], [0], [0], [0], [1], [1], [1], [1], [2]]
     for method in methods:

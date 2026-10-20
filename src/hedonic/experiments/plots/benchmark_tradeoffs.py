@@ -4,7 +4,7 @@ One row per network, two panels per row, one marker per method. Every seed is a 
 mean over seeds with a 95% Student-t interval on both axes. A deterministic method runs once per network (its lowest seed;
 ``replication``), so it is one point with no interval: records of its other seeds that an older run left are not read
 unless ``--replication all``. Accuracy and time come from the benchmark records
-(``hedonic run paper`` / ``paper-hoc``); robustness comes from the audit of the same covers, which those runs write
+(``hedonic run paper`` / ``paper-hedonic``); robustness comes from the audit of the same covers, which those runs write
 to ``RUN_DIR/robustness`` (``--robustness``; ``hedonic run audit`` writes the same ledger for a run that lacks it, and
 ``--audit`` names such a folder): the share of the resolution range [1e-4, 1], on a log axis, at which a vertex's memberships are
 a best response, averaged over vertices, in the ``cover`` profile that every method has.
