@@ -1,9 +1,9 @@
 """The Rust core against the C core, bit for bit, on small random games.
 
-Both extensions run in one process: the C one as hedonic._core (built in
-place), the Rust one as hedonic_core_rs (maturin develop). Every result, trace,
-verifier report, audit answer, error (type and message) and the caller's
-generator state after the call must be the same. Fast and fail-fast:
+Both extensions run in one process: the Rust one as hedonic._core, the C one
+as hedonic._core_c built beside it (without it, the test is skipped). Every
+result, trace, verifier report, audit answer, error (type and message) and the
+caller's generator state after the call must be the same. Fast and fail-fast:
 
     python -m pytest -x -q native/rust/tests/test_differential.py
 """
@@ -15,13 +15,17 @@ from array import array
 
 import pytest
 
-if os.environ.get("HEDONIC_CORE") == "rust":
-    pytest.skip("needs the C core as hedonic._core (unset HEDONIC_CORE)", allow_module_level=True)
+if os.environ.get("HEDONIC_CORE"):
+    pytest.skip("compares hedonic._core with hedonic._core_c: unset HEDONIC_CORE", allow_module_level=True)
 
 igraph = pytest.importorskip("igraph")
 np = pytest.importorskip("numpy")
-rs = pytest.importorskip("hedonic_core_rs")
-from hedonic import _core as c  # noqa: E402
+from hedonic import _core as rs  # noqa: E402
+
+try:
+    import hedonic._core_c as c
+except ModuleNotFoundError:
+    pytest.skip("the C core is not installed: no hedonic._core_c beside hedonic._core", allow_module_level=True)
 
 CASES = int(os.environ.get("HIG_DIFF_CASES", "150"))
 

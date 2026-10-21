@@ -2,12 +2,14 @@
 
 Each case runs detect() through both extensions in alternation, keeps the
 fastest of --reps runs of each, and checks that the results are identical.
-Ratio = C time / Rust time (above 1: Rust is faster).
+Ratio = C time / Rust time (above 1: Rust is faster). The Rust core is
+hedonic._core, the C core hedonic._core_c built beside it (HEDONIC_CORE unset).
 
     python native/rust/bench/bench.py [--reps 7] [--filter NAME] [--quick]
 """
 
 import argparse
+import os
 import random
 import statistics
 import time
@@ -15,8 +17,14 @@ from array import array
 
 import igraph
 
-import hedonic_core_rs as rs
-from hedonic import _core as c
+if os.environ.get("HEDONIC_CORE"):
+    raise SystemExit("bench.py times hedonic._core against hedonic._core_c: unset HEDONIC_CORE")
+from hedonic import _core as rs
+
+try:
+    import hedonic._core_c as c
+except ModuleNotFoundError:
+    raise SystemExit("bench.py needs the C core as hedonic._core_c, built beside hedonic._core") from None
 
 
 def sbm(n, blocks, p_in, p_out, seed):

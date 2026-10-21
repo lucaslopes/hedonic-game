@@ -67,10 +67,14 @@ class TestBackendRouting(unittest.TestCase):
         self.assertEqual(set(versions), {"hedonic", "hedonic_core", "python_igraph"})
         self.assertEqual(versions["hedonic_core"], _core.core_version)
         self.assertEqual(versions["python_igraph"], ig.__version__)
-        # The C core names the release it belongs to (a .devN or rcN tag only adds a suffix).
+        # The core names the release it belongs to (a .devN or rcN tag only adds a suffix); another core selected
+        # with HEDONIC_CORE names the release it was written for.
         import re
         from importlib.metadata import version
 
+        if _core.__name__ != "hedonic._core":
+            self.assertRegex(_core.core_version, r"^\d+\.\d+\.\d+$")
+            return
         self.assertEqual(_core.core_version, re.match(r"\d+\.\d+\.\d+", version("hedonic")).group())
 
 

@@ -1,14 +1,35 @@
 import os as _os
 
-if _os.environ.get("HEDONIC_CORE") == "rust":
-    # The Rust port of the core (native/rust/, built with maturin) in place of the C
-    # extension: the same functions, bit for bit. The compiled module itself,
-    # not maturin's package around it, so _core.__file__ is the binary.
-    import sys as _sys
 
-    from hedonic_core_rs import hedonic_core_rs as _core
+def _select_core():
+    """HEDONIC_CORE=<name> runs another core in place of hedonic._core: the module hedonic._core_<name>, installed
+    beside it, with the same functions (a build of the core in another language, to compare the two). The name of
+    the core hedonic._core already is (its ``backend``, e.g. ``rust``) selects it; unset or empty, hedonic._core."""
+    name = _os.environ.get("HEDONIC_CORE", "")
+    if not name:
+        return
+    import importlib
+    import sys
 
-    _sys.modules[__name__ + "._core"] = _core
+    if not name.isidentifier():
+        raise ImportError(f"HEDONIC_CORE={name!r} is not a core's name (hedonic._core_<name>); unset HEDONIC_CORE to "
+                          "use hedonic._core")
+    module = f"{__name__}._core_{name}"
+    try:
+        core = importlib.import_module(module)
+    except ModuleNotFoundError as error:
+        if error.name != module:
+            raise
+        default = importlib.import_module(f"{__name__}._core")
+        if getattr(default, "backend", None) == name:
+            return
+        raise ImportError(f"HEDONIC_CORE={name!r}: no module {module} is installed beside hedonic._core (whose backend "
+                          f"is {getattr(default, 'backend', 'unknown')!r}); build it, or unset HEDONIC_CORE") from None
+    sys.modules[f"{__name__}._core"] = core
+    globals()["_core"] = core
+
+
+_select_core()
 
 from .Game import Game
 
