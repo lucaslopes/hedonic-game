@@ -101,7 +101,9 @@ def _csr_edges(n: int, indptr, indices, data):
         )
     if len(indices) and (indices.min() < 0 or indices.max() >= n):
         raise ValueError(f"indices must be columns 0 .. {n - 1} of the {n} x {n} adjacency")
-    rows = np.repeat(np.arange(n, dtype=np.int64), np.diff(indptr).astype(np.int64))
+    # np.repeat and np.bincount take counts and labels as the platform's index type
+    # (int32 on 32-bit builds: Pyodide, win32), never int64 cast unsafely.
+    rows = np.repeat(np.arange(n, dtype=np.int64), np.diff(indptr).astype(np.intp))
     columns = indices.astype(np.int64)
     if data is not None:
         data = real_vector(data, len(indices), "data", per_vertex=False)
@@ -299,9 +301,9 @@ class Result:
         """The vertices of each community, by label, in vertex order (the
         clusters of the ``VertexClustering`` or ``VertexCover`` Game returns)."""
         n = len(self.offsets) - 1
-        vertex = np.repeat(np.arange(n, dtype=np.int64), np.diff(self.offsets))
+        vertex = np.repeat(np.arange(n, dtype=np.int64), np.diff(self.offsets).astype(np.intp))
         order = np.argsort(self.labels, kind="stable")
-        sizes = np.bincount(self.labels, minlength=self.community_count)
+        sizes = np.bincount(self.labels.astype(np.intp), minlength=self.community_count)
         return np.split(vertex[order], np.cumsum(sizes)[:-1])
 
     def __repr__(self) -> str:
