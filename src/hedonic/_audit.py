@@ -1,7 +1,8 @@
 """Argument buffers for the core's fixed-cover audit (no Python scoring).
 
-:func:`state` and :func:`vertex_indices` take a vertex count and any graph the
-core reads (an ``igraph.Graph``, or the edge view of :mod:`hedonic.arrays`), so
+:func:`state` and :func:`vertex_indices` take a vertex count and the core's
+prepare call of the graph (``_core._audit_prepare`` of an ``igraph.Graph``, or
+``_core._audit_prepare_arrays`` of :mod:`hedonic.arrays`' endpoint arrays), so
 ``Game`` and the array path share them.
 """
 from itertools import chain
@@ -15,10 +16,11 @@ from ._native import _edge_weight_buffer
 from .stability import RegretResult
 
 
-def state(graph, n, memberships, max_memberships, read_weights):
-    """The core's audit state of ``memberships`` on ``graph`` (``n`` vertices),
-    and the deviation cap; ``read_weights()`` gives the edge weights (or None),
-    read after the cover is checked."""
+def state(prepare, n, memberships, max_memberships, read_weights):
+    """The core's audit state of ``memberships`` on a graph of ``n`` vertices,
+    ``prepare(offsets, labels, edge_weights)``, and the deviation cap;
+    ``read_weights()`` gives the edge weights (or None), read after the cover
+    is checked."""
     if n == 0 and len(memberships) == 0:
         rows = []
         if max_memberships is not None and (
@@ -37,7 +39,7 @@ def state(graph, n, memberships, max_memberships, read_weights):
     np.cumsum([len(row) for row in rows], out=offsets[1:])
     labels = np.fromiter(chain.from_iterable(rows), dtype=np.int64, count=int(offsets[-1]))
     weights = read_weights()
-    return _core._audit_prepare(graph, offsets, labels, weights), cap
+    return prepare(offsets, labels, weights), cap
 
 
 def _prepare(game, memberships=None, max_memberships=None, edge_weights=None):
@@ -47,7 +49,10 @@ def _prepare(game, memberships=None, max_memberships=None, edge_weights=None):
         memberships = game.memberships
     if memberships is None:
         raise ValueError("Game has no memberships; supply a cover or run community_hedonic first")
-    return state(game, game.vcount(), memberships, max_memberships,
+    def prepare(offsets, labels, weights):
+        return _core._audit_prepare(game, offsets, labels, weights)
+
+    return state(prepare, game.vcount(), memberships, max_memberships,
                  lambda: _edge_weight_buffer(game, edge_weights, nonnegative=True))
 
 

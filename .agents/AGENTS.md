@@ -136,9 +136,11 @@ as `initial_membership`.
 `hedonic.arrays.detect(n, edges, ...)` is the same call on a vertex count and
 an `(m, 2)` edge array or a symmetric CSR adjacency: the same options,
 defaults and checks (`_game.detection.plan`, which both run) and the same core
-call, `hedonic._core.detect`, on an edge view whose `__graph_as_capsule`
-hands the binding the endpoint arrays in the layout of igraph's `igraph_t`
-head (checked by the binding; `get_edgelist` is the fallback). It returns a
+run: `hedonic._core.detect_arrays` takes the vertex count, the two endpoint
+arrays, the weights and the start as CSR rows as buffers, with `detect`'s
+checks and run (`run_detect` in the binding), and `_audit_prepare_arrays`
+the same for the audit (a second core without them is given an edge list
+read through `get_edgelist`). It returns a
 `Result` of NumPy arrays and must equal `Game(igraph.Graph(n, edges))` bit for
 bit (`tests/test_arrays.py`, in `tools/native_tests.py`); the audit likewise
 (`arrays.stable_intervals`, `arrays.regrets`). `from_networkx` and

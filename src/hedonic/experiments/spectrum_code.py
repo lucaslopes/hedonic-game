@@ -106,6 +106,18 @@ ALIASES: dict[str, dict] = {
                "compares Game's and the array path's results bit for bit, and the core class (fingerprints) is "
                "unchanged, so the runtime part of the digest is too.",
     },
+    # 2.1: hedonic.arrays calls the binding's buffer entry points (detect_arrays, _audit_prepare_arrays) instead of
+    # handing _core.detect a ctypes-built igraph capsule; _audit.state takes the core's prepare call instead of a graph.
+    "54d522f23d0c052734a1f0e5b9d88c76f296fecefdc1c2badc662c8a16a0faa9": {
+        "earlier": "26062019eed2a9b65501db573dc08af3d6bd6f67130d68fe34376f66fbcd99a5",
+        "files": {
+            "hedonic/_audit.py": ["8bff73bc42d3cbe0219d7003c26a7359fd80ed8acbdfa55b7b99a42f909eee86", "3e04f78e601a27c36fedde960ceec913d0c4eccfbd06b95ae1bcecd4557b1ca6"],
+            "hedonic/arrays.py": ["9cd43a29450b941e5679f839f8dc08a3c5b05e5ae09f582d66a33f1ca8ca302f", "f4122ed9f9f1bc6947166e6f0b78a88a2ac6faab1ef5ae07ca5264fbb6301661"],
+        },
+        "why": "plumbing only: Game's audit passes _core._audit_prepare on the graph as before (now through a "
+               "prepare function), and arrays.py, which the study does not run, hands the core the same edges, "
+               "weights and start as buffers; the core's run is the same (tests/test_arrays.py, bit for bit).",
+    },
 }
 
 

@@ -1,7 +1,8 @@
 //! The arguments of the module's calls, read as native/binding reads them:
 //! typed buffers (arguments.c), the caller's random generator (random.c), the
 //! edges of an igraph.Graph (graph_edges.c) and the start rows of detect()
-//! (start_rows.c). Every message is the C binding's.
+//! (start_rows.c), also as the CSR buffers of detect_arrays(). Every message
+//! is the C binding's.
 
 use std::borrow::Cow;
 use std::ffi::CStr;
@@ -907,6 +908,60 @@ fn read_label(obj: &Bound<'_, PyAny>, integral: &Bound<'_, PyAny>) -> PyResult<i
     Ok(if overflow > 0 { LABEL_TOO_LARGE } else { value })
 }
 
+/// Keeps the distinct labels of a non-empty start row at its front, in order of
+/// first appearance (sorted for rows above 16 labels); returns how many and the
+/// largest.
+fn distinct_row(row: &mut [i64]) -> (usize, i64) {
+    let count = row.len();
+    let mut largest = row[0];
+    let kept = if count <= 16 {
+        let mut kept = 0;
+        for i in 0..count {
+            if !row[..kept].contains(&row[i]) {
+                row[kept] = row[i];
+                largest = largest.max(row[i]);
+                kept += 1;
+            }
+        }
+        kept
+    } else {
+        row.sort_unstable();
+        let mut kept = 1;
+        for i in 1..count {
+            if row[i] != row[kept - 1] {
+                row[kept] = row[i];
+                kept += 1;
+            }
+        }
+        largest = row[kept - 1];
+        kept
+    };
+    (kept, largest)
+}
+
+fn exceeds(kept: usize, max_memberships: i64) -> PyErr {
+    PyValueError::new_err(format!("a vertex exceeds max_memberships ({kept} > {max_memberships})"))
+}
+
+/// Contiguous from 0: every label below the largest, `max_label`, is used.
+fn contiguous(labels: &[i64], max_label: i64) -> PyResult<()> {
+    if max_label >= labels.len() as i64 {
+        return Err(PyValueError::new_err("membership labels must be contiguous from 0"));
+    }
+    let mut present = vec![false; max_label as usize + 1];
+    let mut distinct = 0i64;
+    for &l in labels {
+        if !present[l as usize] {
+            present[l as usize] = true;
+            distinct += 1;
+        }
+    }
+    if distinct != max_label + 1 {
+        return Err(PyValueError::new_err("membership labels must be contiguous from 0"));
+    }
+    Ok(())
+}
+
 /// `read_start_rows`: the checks of hedonic._native._start_rows in the same
 /// order with the same messages. Rows of distinct labels (in order of first
 /// appearance, or sorted for rows above 16 labels) as (offset, labels), or
@@ -941,56 +996,58 @@ pub fn read_start_rows(obj: &Bound<'_, PyAny>, n: i64, max_memberships: i64) -> 
         } else {
             labels.push(read_label(entry, integral)?);
         }
-        // Distinct labels in order of first appearance (sorted above 16).
-        let row = &mut labels[start..];
-        let count = row.len();
-        let mut largest = row[0];
-        let kept = if count <= 16 {
-            let mut kept = 0;
-            for i in 0..count {
-                if !row[..kept].contains(&row[i]) {
-                    row[kept] = row[i];
-                    largest = largest.max(row[i]);
-                    kept += 1;
-                }
-            }
-            kept
-        } else {
-            row.sort_unstable();
-            let mut kept = 1;
-            for i in 1..count {
-                if row[i] != row[kept - 1] {
-                    row[kept] = row[i];
-                    kept += 1;
-                }
-            }
-            largest = row[kept - 1];
-            kept
-        };
+        let (kept, largest) = distinct_row(&mut labels[start..]);
         if kept as i64 > max_memberships {
-            return Err(PyValueError::new_err(format!(
-                "a vertex exceeds max_memberships ({kept} > {max_memberships})"
-            )));
+            return Err(exceeds(kept, max_memberships));
         }
         labels.truncate(start + kept);
         max_label = max_label.max(largest);
         offset.push(labels.len() as i64);
         Ok(())
     })?;
-    // Contiguous from 0: every label below the largest is used.
-    if max_label >= labels.len() as i64 {
-        return Err(PyValueError::new_err("membership labels must be contiguous from 0"));
-    }
-    let mut present = vec![false; max_label as usize + 1];
-    let mut distinct = 0i64;
-    for &l in &labels {
-        if !present[l as usize] {
-            present[l as usize] = true;
-            distinct += 1;
-        }
-    }
-    if distinct != max_label + 1 {
-        return Err(PyValueError::new_err("membership labels must be contiguous from 0"));
-    }
+    contiguous(&labels, max_label)?;
     Ok(Some((offset, labels)))
+}
+
+/// The start rows of detect_arrays(): `read_start_rows` over the CSR rows
+/// `labels[offset[v]..offset[v + 1]]` (`offset` has n + 1 entries, checked by
+/// the caller's buffer): the same checks, in vertex order, with the same
+/// messages, and the same rows.
+pub fn start_rows_from_csr(offset: &[i64], labels: &[i64], max_memberships: i64) -> PyResult<Option<(Vec<i64>, Vec<i64>)>> {
+    let n = offset.len().saturating_sub(1);
+    if n == 0 {
+        return Ok(None);
+    }
+    let bounds = offset[0] == 0
+        && offset[n] as u64 == labels.len() as u64
+        && offset.windows(2).all(|w| w[0] <= w[1]);
+    if !bounds {
+        return Err(PyValueError::new_err(
+            "start_offsets must start at 0, never decrease and end at len(start_labels)",
+        ));
+    }
+    let mut kept_labels: Vec<i64> = Vec::with_capacity(labels.len());
+    let mut kept_offset: Vec<i64> = Vec::with_capacity(n + 1);
+    let mut max_label: i64 = -1;
+    kept_offset.push(0);
+    for v in 0..n {
+        let row = &labels[offset[v] as usize..offset[v + 1] as usize];
+        if row.is_empty() {
+            return Err(PyValueError::new_err("each membership row must be non-empty"));
+        }
+        if row.iter().any(|&l| l < 0) {
+            return Err(PyValueError::new_err("membership labels must be non-negative"));
+        }
+        let start = kept_labels.len();
+        kept_labels.extend_from_slice(row);
+        let (kept, largest) = distinct_row(&mut kept_labels[start..]);
+        if kept as i64 > max_memberships {
+            return Err(exceeds(kept, max_memberships));
+        }
+        kept_labels.truncate(start + kept);
+        max_label = max_label.max(largest);
+        kept_offset.push(kept_labels.len() as i64);
+    }
+    contiguous(&kept_labels, max_label)?;
+    Ok(Some((kept_offset, kept_labels)))
 }

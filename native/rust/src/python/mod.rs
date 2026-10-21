@@ -94,6 +94,49 @@ impl<'a> Slices<'a> {
     }
 }
 
+/// The edges of a detect() or audit call: an igraph.Graph's (borrowed from
+/// its igraph_t or copied, `GraphEdges`), or the two endpoint buffers of
+/// detect_arrays() and _audit_prepare_arrays(), held for the whole call (an
+/// exporter keeps an exported buffer in place).
+enum CallEdges<'a, 'py> {
+    Graph(&'a Any<'py>, GraphEdges),
+    Arrays(Buffer, Buffer),
+}
+
+/// The slices of a `CallEdges`, formed (as `Slices`) in `prepare` and in
+/// `finish`, never across the visits.
+enum EdgeView<'a> {
+    Graph(Edges<'a>),
+    Arrays(Cow<'a, [i64]>, Cow<'a, [i64]>),
+}
+
+impl EdgeView<'_> {
+    fn edges(&self) -> Edges<'_> {
+        match self {
+            EdgeView::Graph(edges) => *edges,
+            EdgeView::Arrays(first, second) => Edges::Split(first, second),
+        }
+    }
+}
+
+impl<'a, 'py> CallEdges<'a, 'py> {
+    fn view(&self) -> EdgeView<'_> {
+        match self {
+            CallEdges::Graph(_, edges) => EdgeView::Graph(edges.edges()),
+            CallEdges::Arrays(first, second) => EdgeView::Arrays(first.ints(), second.ints()),
+        }
+    }
+
+    /// The edges for `finish`, after Python code may have run: a graph's read
+    /// afresh (`GraphEdges::again`), buffers kept.
+    fn again(self) -> PyResult<CallEdges<'a, 'py>> {
+        match self {
+            CallEdges::Graph(graph, edges) => Ok(CallEdges::Graph(graph, edges.again(graph)?)),
+            arrays => Ok(arrays),
+        }
+    }
+}
+
 /// Runs the visits of a prepared call with the core's callbacks over the
 /// caller's generator: without the GIL for an exact random.Random (its state
 /// was copied out, so the draws need no Python), attached for any other (each
@@ -459,16 +502,7 @@ fn detect<'py>(
 ) -> PyResult<Py<PyAny>> {
     // As C parses them: in parameter order, before anything else.
     let (resolution, max_memberships, allow_isolation) = (resolution.get()?, max_memberships.get()?, allow_isolation.get()?);
-    if max_memberships < 1 {
-        return Err(PyValueError::new_err("max_memberships must be an integer >= 1, or -1"));
-    }
-    let options = Options {
-        resolution,
-        max_memberships,
-        max_total_communities: optional_limit(max_total_communities, "max_total_communities")?,
-        n_communities: optional_limit(n_communities, "n_communities")?,
-        allow_isolation,
-    };
+    let options = detect_options(resolution, max_memberships, allow_isolation, max_total_communities, n_communities)?;
     // The counts first; the edges last, once every argument that can run
     // Python code is read (see GraphEdges).
     let counts = graph_counts(graph)?;
@@ -479,18 +513,36 @@ fn detect<'py>(
         Some(s) if !s.is_none() => read_start_rows(s, n, max_memberships)?,
         _ => None,
     };
-    let mut rng = PyRng::new(rng)?;
+    let rng = PyRng::new(rng)?;
     let edges = match graph_edges(graph, Some(counts)) {
         Ok(edges) => edges,
         Err(e) => return rng.release(Err(e)),
     };
-    if max_memberships == 1 {
+    run_detect(py, &options, n, &ew, &nw, start, rng, CallEdges::Graph(graph, edges))
+}
+
+/// The run of detect() and detect_arrays() once every argument is read: the
+/// visits on what the call owns, between `prepare` and `finish`, which borrow
+/// the edges and weights with the GIL held.
+#[allow(clippy::too_many_arguments)]
+fn run_detect<'py>(
+    py: Python<'py>,
+    options: &Options,
+    n: i64,
+    ew: &Option<Buffer>,
+    nw: &Option<Buffer>,
+    start: Option<(Vec<i64>, Vec<i64>)>,
+    mut rng: PyRng<'py>,
+    edges: CallEdges<'_, 'py>,
+) -> PyResult<Py<PyAny>> {
+    if options.max_memberships == 1 {
         let membership: Option<Vec<i64>> =
             start.map(|(offset, labels)| offset[..n as usize].iter().map(|&o| labels[o as usize]).collect());
         let prepared = {
-            let slices = Slices::weights(&ew, &nw);
-            let g = slices.graph(py, n, edges.edges())?;
-            PartitionCall::prepare(&g, &options, membership.as_deref(), None)
+            let view = edges.view();
+            let slices = Slices::weights(ew, nw);
+            let g = slices.graph(py, n, view.edges())?;
+            PartitionCall::prepare(&g, options, membership.as_deref(), None)
         };
         let mut call = match prepared {
             Ok(call) => call,
@@ -498,10 +550,11 @@ fn detect<'py>(
         };
         let ran = run_visits(py, &mut rng, |cb| call.run(cb));
         rng.release(ran)?;
-        let edges = edges.again(graph)?;
+        let edges = edges.again()?;
         let result = {
-            let slices = Slices::weights(&ew, &nw);
-            let g = slices.graph(py, n, edges.edges())?;
+            let view = edges.view();
+            let slices = Slices::weights(ew, nw);
+            let g = slices.graph(py, n, view.edges())?;
             call.finish(&g).map_err(|e| to_py(py, e, None))?
         };
         let list = PyList::new(py, &result.membership)?;
@@ -509,9 +562,10 @@ fn detect<'py>(
     } else {
         let start = start.map(|(offset, labels)| Cover { offset, labels });
         let prepared = {
-            let slices = Slices::weights(&ew, &nw);
-            let g = slices.graph(py, n, edges.edges())?;
-            CoverCall::prepare(&g, &options, start.as_ref(), None)
+            let view = edges.view();
+            let slices = Slices::weights(ew, nw);
+            let g = slices.graph(py, n, view.edges())?;
+            CoverCall::prepare(&g, options, start.as_ref(), None)
         };
         let mut call = match prepared {
             Ok(call) => call,
@@ -519,15 +573,95 @@ fn detect<'py>(
         };
         let ran = run_visits(py, &mut rng, |cb| call.run(cb));
         rng.release(ran)?;
-        let edges = edges.again(graph)?;
+        let edges = edges.again()?;
         let result = {
-            let slices = Slices::weights(&ew, &nw);
-            let g = slices.graph(py, n, edges.edges())?;
+            let view = edges.view();
+            let slices = Slices::weights(ew, nw);
+            let g = slices.graph(py, n, view.edges())?;
             call.finish(&g).map_err(|e| to_py(py, e, None))?
         };
         let (rows, clusters) = cover_lists(py, &result.cover, result.count)?;
         Ok((rows, clusters, result.count, result.quality, result.slack).into_pyobject(py)?.into_any().unbind())
     }
+}
+
+/// The checks of detect() on `max_memberships` and the limits, as C parses them.
+fn detect_options(
+    resolution: f64,
+    max_memberships: i64,
+    allow_isolation: bool,
+    max_total_communities: Option<&Any<'_>>,
+    n_communities: Option<&Any<'_>>,
+) -> PyResult<Options> {
+    if max_memberships < 1 {
+        return Err(PyValueError::new_err("max_memberships must be an integer >= 1, or -1"));
+    }
+    Ok(Options {
+        resolution,
+        max_memberships,
+        max_total_communities: optional_limit(max_total_communities, "max_total_communities")?,
+        n_communities: optional_limit(n_communities, "n_communities")?,
+        allow_isolation,
+    })
+}
+
+/// The endpoint buffers of detect_arrays() and _audit_prepare_arrays(): edge e
+/// joins first[e] and second[e] (the core checks every end and self-loop).
+fn endpoint_buffers(n: isize, first: &Any, second: &Any) -> PyResult<(i64, Buffer, Buffer)> {
+    if n < 0 {
+        return Err(PyValueError::new_err("n must be non-negative"));
+    }
+    let first = Buffer::get(first, Kind8::Int, None, "first")?;
+    let second = Buffer::get(second, Kind8::Int, Some(first.len()), "second")?;
+    Ok((n as i64, first, second))
+}
+
+/// detect_arrays(n, first, second, rng, resolution, *, max_memberships=1, start_offsets=None, start_labels=None, allow_isolation=False, edge_weights=None, node_weights=None, max_total_communities=None, n_communities=None)
+///
+/// detect() on a graph of n vertices given as two buffers of 64-bit integers,
+/// edge e joining first[e] and second[e] (igraph's order: the smaller end
+/// first), with the same options, checks, run and results. The start is CSR
+/// rows, vertex v's labels start_labels[start_offsets[v]:start_offsets[v + 1]]
+/// (start_offsets has n + 1 entries), checked as detect() checks its rows;
+/// weights are buffers of doubles or None. Nothing is read through Python
+/// objects but the generator, and the visits run without the GIL for an exact
+/// random.Random. hedonic.arrays' entry point.
+#[pyfunction]
+#[pyo3(signature = (n, first, second, rng, resolution, *, max_memberships=CArg::ok(1), start_offsets=None, start_labels=None, allow_isolation=CArg::ok(false), edge_weights=None, node_weights=None, max_total_communities=None, n_communities=None))]
+#[allow(clippy::too_many_arguments)]
+fn detect_arrays<'py>(
+    py: Python<'py>,
+    n: CArg<isize>,
+    first: &Any<'py>,
+    second: &Any<'py>,
+    rng: &Any<'py>,
+    resolution: CArg<f64>,
+    max_memberships: CArg<i64>,
+    start_offsets: Option<&Any<'py>>,
+    start_labels: Option<&Any<'py>>,
+    allow_isolation: CArg<bool>,
+    edge_weights: Option<&Any<'py>>,
+    node_weights: Option<&Any<'py>>,
+    max_total_communities: Option<&Any<'py>>,
+    n_communities: Option<&Any<'py>>,
+) -> PyResult<Py<PyAny>> {
+    let (n, resolution) = (n.get()?, resolution.get()?);
+    let (max_memberships, allow_isolation) = (max_memberships.get()?, allow_isolation.get()?);
+    let options = detect_options(resolution, max_memberships, allow_isolation, max_total_communities, n_communities)?;
+    let (n, first, second) = endpoint_buffers(n, first, second)?;
+    let ew = optional_doubles(edge_weights, first.len(), "edge_weights")?;
+    let nw = optional_doubles(node_weights, n as usize, "node_weights")?;
+    let start = match (start_offsets.filter(|o| !o.is_none()), start_labels.filter(|o| !o.is_none())) {
+        (None, None) => None,
+        (Some(offsets), Some(labels)) => {
+            let offsets = Buffer::get(offsets, Kind8::Int, Some(n as usize + 1), "start_offsets")?;
+            let labels = Buffer::get(labels, Kind8::Int, None, "start_labels")?;
+            start_rows_from_csr(&offsets.ints(), &labels.ints(), max_memberships)?
+        }
+        _ => return Err(PyValueError::new_err("pass start_offsets and start_labels together, or neither")),
+    };
+    let rng = PyRng::new(rng)?;
+    run_detect(py, &options, n, &ew, &nw, start, rng, CallEdges::Arrays(first, second))
 }
 
 /// Whether detect() would borrow `graph`'s edges from python-igraph's
@@ -656,19 +790,19 @@ fn audit_buffer(obj: &Any, kind: Kind8, name: &str) -> PyResult<Buffer> {
     Buffer::get(obj, kind, None, name)
 }
 
-/// Fixed-cover audit prepare (private binding).
-#[pyfunction]
-#[pyo3(name = "_audit_prepare", signature = (graph, offsets, labels, edge_weights=None, node_weights=None))]
-fn audit_prepare<'py>(
+/// The audit state of the CSR cover `offsets`/`labels` on a graph of `n`
+/// vertices and `m` edges; `edges()` gives the edges, read last.
+#[allow(clippy::too_many_arguments)]
+fn audit_state<'a, 'py: 'a>(
     py: Python<'py>,
-    graph: &Any<'py>,
+    n: i64,
+    m: i64,
     offsets: &Any<'py>,
     labels: &Any<'py>,
     edge_weights: Option<&Any<'py>>,
     node_weights: Option<&Any<'py>>,
+    edges: impl FnOnce() -> PyResult<CallEdges<'a, 'py>>,
 ) -> PyResult<AuditState> {
-    let counts = graph_counts(graph)?;
-    let (n, m) = counts;
     if n == isize::MAX as i64 {
         return Err(PyOverflowError::new_err("Too many audit vertices"));
     }
@@ -685,15 +819,54 @@ fn audit_prepare<'py>(
     // Prepared with the GIL held: it reads the graph's borrowed edges, and
     // its interruption checks may run Python code, so the edges are read
     // last. (The queries, the long part, run without the GIL.)
-    let edges = graph_edges(graph, Some(counts))?;
+    let edges = edges()?;
+    let view = edges.view();
     let slices = Slices::weights(&ew, &nw);
-    let g = slices.graph(py, n, edges.edges())?;
+    let g = slices.graph(py, n, view.edges())?;
     let (offset, label) = (offsets.ints(), labels.ints());
     let mut signals = Signals::new(py)?;
     let mut check = || signals.attached(py);
     let core = CoreAudit::prepare(&g, &offset, &label, Some(&mut check));
     let core = core.map_err(|e| to_py(py, e, signals.take()))?;
     Ok(AuditState { core })
+}
+
+/// Fixed-cover audit prepare (private binding).
+#[pyfunction]
+#[pyo3(name = "_audit_prepare", signature = (graph, offsets, labels, edge_weights=None, node_weights=None))]
+fn audit_prepare<'py>(
+    py: Python<'py>,
+    graph: &Any<'py>,
+    offsets: &Any<'py>,
+    labels: &Any<'py>,
+    edge_weights: Option<&Any<'py>>,
+    node_weights: Option<&Any<'py>>,
+) -> PyResult<AuditState> {
+    let counts = graph_counts(graph)?;
+    let (n, m) = counts;
+    audit_state(py, n, m, offsets, labels, edge_weights, node_weights, || {
+        Ok(CallEdges::Graph(graph, graph_edges(graph, Some(counts))?))
+    })
+}
+
+/// Fixed-cover audit prepare on a graph of n vertices given as the endpoint
+/// buffers of detect_arrays() (private binding: hedonic.arrays).
+#[pyfunction]
+#[pyo3(name = "_audit_prepare_arrays", signature = (n, first, second, offsets, labels, edge_weights=None, node_weights=None))]
+#[allow(clippy::too_many_arguments)]
+fn audit_prepare_arrays<'py>(
+    py: Python<'py>,
+    n: CArg<isize>,
+    first: &Any<'py>,
+    second: &Any<'py>,
+    offsets: &Any<'py>,
+    labels: &Any<'py>,
+    edge_weights: Option<&Any<'py>>,
+    node_weights: Option<&Any<'py>>,
+) -> PyResult<AuditState> {
+    let (n, first, second) = endpoint_buffers(n.get()?, first, second)?;
+    let m = first.len() as i64;
+    audit_state(py, n, m, offsets, labels, edge_weights, node_weights, || Ok(CallEdges::Arrays(first, second)))
 }
 
 fn audit_options(cap: CArg<i64>, allow_isolation: CArg<bool>, atol: CArg<f64>, rtol: CArg<f64>, prune: CArg<bool>) -> PyResult<AuditOptions> {
@@ -823,6 +996,7 @@ fn module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("backend", "rust")?;
     m.add_class::<AuditState>()?;
     m.add_function(wrap_pyfunction!(detect, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_arrays, m)?)?;
     m.add_function(wrap_pyfunction!(partition, m)?)?;
     m.add_function(wrap_pyfunction!(cover, m)?)?;
     m.add_function(wrap_pyfunction!(trace_partition, m)?)?;
@@ -830,6 +1004,7 @@ fn module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(verify_partition, m)?)?;
     m.add_function(wrap_pyfunction!(verify_cover, m)?)?;
     m.add_function(wrap_pyfunction!(audit_prepare, m)?)?;
+    m.add_function(wrap_pyfunction!(audit_prepare_arrays, m)?)?;
     m.add_function(wrap_pyfunction!(audit_intervals, m)?)?;
     m.add_function(wrap_pyfunction!(audit_regrets, m)?)?;
     m.add_function(wrap_pyfunction!(fma_path, m)?)?;

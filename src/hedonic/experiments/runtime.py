@@ -80,6 +80,12 @@ CORE_CLASSES: dict[tuple[str, str, str], dict] = {
                             "test_audit.c's pins, test_differential.py compares every result, trace, verifier report "
                             "and audit with the C core bit for bit, and the overlap queue's dry run reads the same; "
                             "the same three fingerprints"},
+            "c2014342699829a3046c5c512d5d566835584f18eaa3c4ccfbe230b38cc4d1e7": {
+                "tag": "v2.1.0.dev2", "releases": "2.1.0 (buffer entry points for hedonic.arrays)",
+                "evidence": "the binding gains detect_arrays and _audit_prepare_arrays (the same run as detect and "
+                            "_audit_prepare over two endpoint buffers); the engines are unchanged: the crate's pins, "
+                            "tools/core_pins.py, the pinned Python tests and tests/test_arrays.py (against Game, bit "
+                            "for bit) pass unchanged; the same three fingerprints"},
         },
     },
 }
@@ -94,6 +100,9 @@ EQUIVALENT_CORES: dict[str, str] = {
         "ead786fe4cede5140154d802b12e5d8efbf39278280b29f5a3d93a4e7a67b2a4",
     # 2.1.0: the Rust core (see CORE_CLASSES).
     "19bc0c978909e803503bc40fa25de1f83ecc27784cb7c04c46ad77093ed33325":
+        "ead786fe4cede5140154d802b12e5d8efbf39278280b29f5a3d93a4e7a67b2a4",
+    # 2.1.0: the binding's buffer entry points for hedonic.arrays (see CORE_CLASSES).
+    "c2014342699829a3046c5c512d5d566835584f18eaa3c4ccfbe230b38cc4d1e7":
         "ead786fe4cede5140154d802b12e5d8efbf39278280b29f5a3d93a4e7a67b2a4",
 }
 
