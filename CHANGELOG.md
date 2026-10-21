@@ -34,6 +34,27 @@
   Records keep naming the previous core (`runtime.EQUIVALENT_CORES`), so
   finished runs are reused; `hedonic_core_built_source_sha256` records the
   core's own source digest.
+- Records name the core by what it computes, not by its bytes (2.0.0rc12),
+  so a finished run stays valid on any core that computes the same results:
+  a later C core, or the Rust core of 2.1. Three fingerprints hash fixed
+  grids of partitions (`partitions-v1`), covers (`covers-v1`) and stability
+  audits (`audit-v1`) bit for bit; they are computed once per compiled core
+  (about 5 s) and cached. `runtime.CORE_CLASSES` maps a core's three
+  fingerprints to the source digest its class's records name; the rc5 to
+  rc11 cores are one class, and every identity (the benchmark's units, the
+  calibrations, the start-quality keys, the spectrum, the controlled study,
+  the disjoint store) is the same, byte for byte, as under rc11. A core with
+  other fingerprints names its own digest, so its records start afresh. The
+  Python layer is named by its results series (`2.0`), not the package
+  version, so `2.0.x` and a 2.1 that computes the same results keep every
+  record. The ground-truth spectrum, which also hashes its own source files,
+  reads an equivalence table of code digests kept outside those files
+  (`hedonic.experiments.spectrum_code`): an edit that touches only identity
+  or plumbing is entered there and its records stay current.
+  - `hedonic run check --replay N [NAME | --root DIR]` replays a run's N
+    cheapest Hedonic units and N cover audits (on a vertex sample) with the
+    loaded core and records a clean pass in the run's `adopted.json`;
+    `--dry-run` lists what it would replay and which cores wrote the units.
 - The method is called `hedonic` everywhere in the command line: the
   calibration writes `hedonic_tuned.json`, the start-quality config is
   `start-quality-hedonic` and the Hedonic-only profile is `paper-hedonic`

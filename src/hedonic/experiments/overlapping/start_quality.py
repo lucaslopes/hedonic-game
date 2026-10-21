@@ -108,9 +108,10 @@ def parse_phase(value: str) -> str:
 
 @lru_cache(maxsize=1)
 def code_identity() -> str:
-    """The code a condition ran on, as it enters the record key: ``hedonic-<version>+core-<first 16 hex of its SHA-256>``."""
+    """The code a condition ran on, as it enters the record key: ``hedonic-<results series>+core-<first 16 hex of the
+    core's identity>`` (``runtime.build_identity``: the full version and the compiled bytes are provenance)."""
     sha = runtime.core_source_sha256() or "unknown"
-    return f"hedonic-{runtime.release_series()}+core-{sha[:16]}"
+    return f"hedonic-{runtime.RESULTS_SERIES}+core-{sha[:16]}"
 
 
 def load_tuned(files: str | list[str] | None) -> tuple[dict | None, list[str]]:
