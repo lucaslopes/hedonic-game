@@ -1,0 +1,48 @@
+# Fuzz targets of the Rust core (cargo-fuzz, nightly):
+#     cargo +nightly fuzz run inputs -- -max_total_time=60
+#     cargo +nightly fuzz run runs -- -max_total_time=60
+# The checks themselves are in src/lib.rs; `cargo test` (stable) runs them on
+# pseudo-random inputs without libFuzzer. See ../README.md, "Fuzzing".
+[package]
+name = "hedonic-core-rs-fuzz"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.78"
+publish = false
+license = "GPL-3.0-or-later"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+hedonic-core-rs = { path = ".." }
+libfuzzer-sys = { version = "0.4.10", optional = true }
+
+[features]
+default = ["libfuzzer"]
+libfuzzer = ["dep:libfuzzer-sys"]
+
+[[bin]]
+name = "inputs"
+path = "fuzz_targets/inputs.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runs"
+path = "fuzz_targets/runs.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+# Its own workspace: the core's crate does not build the fuzz targets.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+debug-assertions = true
+overflow-checks = true
