@@ -153,6 +153,19 @@ struct Row<'a> {
     begin: usize,
 }
 
+/// The `top` largest values first, in descending total order (the rest
+/// after them in no order): the same `top` bits, in the same order, as a
+/// full descending sort, since equal values under total_cmp are equal bits.
+fn largest_first(values: &mut [f64], top: usize) {
+    if top == 0 {
+        return;
+    }
+    if top < values.len() {
+        values.select_nth_unstable_by(top - 1, |x, y| y.total_cmp(x));
+    }
+    values[..top].sort_unstable_by(|x, y| y.total_cmp(x));
+}
+
 /// Add [lo, hi] to a vertex's row, merged into the last interval when it
 /// starts within 1e-15 of its end (never into another vertex's: `begin`).
 fn emit(row: &mut Row, lo: f64, hi: f64) -> Result<()> {
@@ -845,7 +858,7 @@ impl AuditState {
             w.values.push(entry.a);
             all_a += entry.a;
         }
-        w.values.sort_unstable_by(|x, y| y.total_cmp(x));
+        largest_first(&mut w.values, win.top);
         for k in 1..=win.top {
             top_a += w.values[k - 1];
             w.margin[k] = top_a;
@@ -855,7 +868,7 @@ impl AuditState {
             w.values.push(entry.b);
             all_b += entry.b;
         }
-        w.values.sort_unstable_by(|x, y| y.total_cmp(x));
+        largest_first(&mut w.values, win.top);
         for k in 1..=win.top {
             top_b += w.values[k - 1];
             w.margin[k] = 8.0 * (k + 8) as f64 * f64::EPSILON * ((w.margin[k] + top_b) / w.roots[k] + fixed);
@@ -975,8 +988,9 @@ impl AuditState {
             }
         }
         poll(interrupt)?;
-        // Values in [0, 1], no NaN and no -0: any sort gives the same array.
-        w.kept.sort_unstable_by(f64::total_cmp);
+        // Values in [0, 1], no NaN and no -0: any sort gives the same array,
+        // and their bits ascend with them (an integer sort).
+        w.kept.sort_unstable_by_key(|cut| cut.to_bits());
         poll(interrupt)?;
         w.cuts.clear();
         w.cuts.try_reserve(w.kept.len() + 4).map_err(|_| Error::nomem())?;
