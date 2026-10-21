@@ -124,3 +124,56 @@ profiling loop over an edge-list file (`a b` lines, or `a b w` with `w`);
 `ab_prefetch` times prefetching off and on in one process and checks the
 results agree; `phases` times the input check, the adjacency build and the
 partition apart.
+
+## The Rust API
+
+Without its `python` feature (the default: maturin turns it on) the crate is
+a plain Rust library with no dependency, and `cargo build --no-default-features`
+builds it. The engines take slices and return owned results:
+
+| Item | What |
+|---|---|
+| `graph::Graph::new(n, Edges::Flat(&[u0, v0, u1, v1, ..]) or Edges::Split(&us, &vs), edge_weights, node_weights)` | the graph, borrowed; checked against its counts |
+| `graph::Options { resolution, max_memberships, max_total_communities, n_communities, allow_isolation }` | `Options::default()`: gamma 1, a partition, no limits, isolation allowed |
+| `partition::partition(&graph, &options, start, &mut callbacks, None)` | `PartitionResult { membership, count, quality, raw_slack, slack }` |
+| `cover::cover(&graph, &options, start, &mut callbacks, None)` | `CoverResult { cover: Cover { offset, labels }, count, quality, raw_slack, slack }` |
+| `audit::AuditState::prepare(&graph, &offset, &labels, interrupt)` | the fixed-cover audit; `.intervals(&AuditOptions, Selection, interrupt)` and `.regrets(..)` |
+| `queue::Callbacks::new(&mut rng)` | the random source (`rng::Rng`: 32-bit words) and an optional interruption check |
+| `rng::Mt19937::python_seed(seed)`, `rng::Pcg32::new(seed, stream)` | Python's `random.Random(seed)` (for a seed >= 0), and PCG32 |
+| `error::Error { kind, message }` | `Kind::Inval`, `NoMem`, `Overflow`, `Interrupted`, `Callback` (the random source failed) |
+
+The last argument of the engines is a `trace::Trace` (tests). The Python
+defaults are not the crate's: `hedonic` passes `allow_isolation = false` and,
+for `resolution=None`, the weighted density. `examples/karate.rs` runs a
+partition, a cover and their audit on Zachary's karate club and prints the
+bits `hedonic.arrays.detect(34, edges, resolution=0.1, seed=0)` returns:
+
+```bash
+cargo run --release --no-default-features --example karate
+```
+
+**What a crates.io release would need** (nothing here is published:
+`publish = false`):
+
+- **Its own name and a narrow surface.** Every module is `pub` today, the
+  engines' internals included (`arith`, `fma`, `heap`, `queue::Queue`,
+  `prefetch`, `verify`): a release would re-export `Graph`, `Edges`,
+  `Options`, `partition`, `cover`, `Cover`, the audit, `Rng` and `Error` at the
+  root and make the rest `pub(crate)` or `#[doc(hidden)]`, so its semver
+  covers only those. `Id` is `i32`: graphs have fewer than 2^31 vertices.
+- **One crate per artifact.** `crate-type = ["cdylib", "rlib"]` builds a
+  shared library for every dependent; a release splits it into the core
+  (`rlib`, no PyO3) and the CPython module (`cdylib`, depending on it), which
+  maturin builds.
+- **Metadata**: `repository`, `readme`, `documentation`, `keywords`,
+  `categories`, `rust-version` (edition 2021), an `include` list without
+  `bench/`, `tests/test_differential.py` and `pyproject.toml`, and crate-level
+  docs with a doctest (the karate example).
+- **The source digest.** `build.rs` hashes `src/`, `build.rs` and
+  `Cargo.toml` into `SOURCE_SHA256`, and `cargo package` rewrites
+  `Cargo.toml`, so a packaged crate names other sources than this checkout:
+  records that name the core by that digest would need the package's digest
+  (or an alias) as well.
+- **Each of these edits changes the source digest** (any byte of `src/`,
+  `build.rs` or `Cargo.toml`), so it belongs in a release that changes the
+  digest anyway, or comes with an entry in `runtime.EQUIVALENT_CORES`.

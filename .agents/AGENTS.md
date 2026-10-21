@@ -80,11 +80,14 @@ native/                  # the core (no igraph dependency), built into hedonic._
 pyproject.toml           # the package, and its build: maturin compiles native/rust into hedonic._core
 tools/native_tests.py    # the pinned Python tests with HIG_PINNED=1 (what the wheel builds run)
 src/hedonic/
-├── __init__.py          # public API: Game; HEDONIC_CORE=<name> loads hedonic._core_<name> instead
+├── __init__.py          # public API: Game (imported on first use, with igraph), arrays;
+│                        #   HEDONIC_CORE=<name> loads hedonic._core_<name> instead
 ├── Game.py              # Game(igraph.Graph) + community_hedonic
+├── arrays.py            # the same detector and audit over NumPy arrays, no igraph; adapters
 ├── _native.py           # argument buffers + VertexClustering/VertexCover around hedonic._core
-├── _game/               # detection, membership state, evaluation bridge, helpers
-├── _audit.py            # argument buffers of the core's audit
+├── _game/               # detection (plan(): the checks Game and arrays share), membership
+│                        #   state, evaluation bridge, helpers (no igraph import at import time)
+├── _audit.py            # argument buffers of the core's audit (shared with arrays)
 ├── stability.py         # aggregates of stable intervals (stable fraction, measures, Nash window)
 ├── metrics.py           # scores against a reference cover
 ├── utils.py             # seeded sampling for the random disjoint start
@@ -98,7 +101,8 @@ src/hedonic/
     ├── disjoint/        # SBM sweep, Parquet result store, `hedonic run disjoint`
     ├── plots/           # figures
     └── overlapping/     # SNAP loading, methods, studies, durable runs and queues
-tests/                   # library tests; tests/experiments/ for the command line
+tests/                   # library tests (test_arrays*.py: arrays against Game, bit for bit);
+                         #   tests/experiments/ for the command line
 web/                     # educational site (React + Vite), see below
 ```
 
@@ -127,9 +131,22 @@ or multilevel phase; do not add them. Results carry `_hedonic_provenance` and
 but never read back by itself: a call continues from it only when it is passed
 as `initial_membership`.
 
+`hedonic.arrays.detect(n, edges, ...)` is the same call on a vertex count and
+an `(m, 2)` edge array or a symmetric CSR adjacency: the same options,
+defaults and checks (`_game.detection.plan`, which both run) and the same core
+call, `hedonic._core.detect`, on an edge view whose `__graph_as_capsule`
+hands the binding the endpoint arrays in the layout of igraph's `igraph_t`
+head (checked by the binding; `get_edgelist` is the fallback). It returns a
+`Result` of NumPy arrays and must equal `Game(igraph.Graph(n, edges))` bit for
+bit (`tests/test_arrays.py`, in `tools/native_tests.py`); the audit likewise
+(`arrays.stable_intervals`, `arrays.regrets`). `from_networkx` and
+`from_scipy` import their library when called.
+
 Invariants:
 
-1. One public detector API, `Game.community_hedonic`, for both modes.
+1. One detector, `Game.community_hedonic`, for both modes, with one array
+   form, `hedonic.arrays.detect`, that shares its checks and core call and
+   returns the same bits; no other entry point.
 2. The detector is this package's purpose-built core, in Rust
    (`native/rust`); no pure-Python port and no other backend in the package.
    (A second build of the same core, such as hedonic 2.0's C core, can be put
@@ -137,8 +154,13 @@ Invariants:
    to compare the two; the package names no such module.) The core never
    reads an igraph graph; the binding passes it the edge list.
 3. The library's modules import only igraph (`>=1.0`) and NumPy, and SciPy
-   inside `hedonic.metrics` for one-to-one matching. Those two are the only
-   dependencies of `pip install hedonic`; SciPy is the `metrics` extra, and
+   inside `hedonic.metrics` for one-to-one matching. `import hedonic` and
+   `hedonic.arrays` (import and every call) never import igraph: `Game` loads
+   it on first use, and the modules both share (`_game/`, `_audit`,
+   `_native`) import it only inside Game's own functions or look it up in
+   `sys.modules`; a test runs the array path with igraph blocked. igraph stays a dependency in 2.1 (`Game` is an
+   `igraph.Graph`); making it an extra is a 3.0 decision. igraph and NumPy
+   are the only dependencies of `pip install hedonic`; SciPy is the `metrics` extra, and
    the command line's (SciPy, pandas, Matplotlib, NetworkX, PyArrow, DuckDB,
    tqdm) are the `cli` extra (`experiments` is its 1.x name). The CLI's entry
    points refuse to start without it and name the extra (`CLI.CLI_MODULES`

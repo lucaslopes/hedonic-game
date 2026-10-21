@@ -438,6 +438,56 @@ pass `edge_weights="weight"` to audit with an edge attribute. The native impleme
 supports on demand, avoiding a global vertex-by-label support table.
 See [the core arithmetic contract](native/README.md#fixed-cover-stability-audit).
 
+## Without igraph
+
+The core never reads an igraph graph: it takes a vertex count, an edge list
+and weights. `hedonic.arrays` calls it on NumPy arrays, imports nothing but
+NumPy and never loads igraph (importing `hedonic` no longer loads it either;
+`hedonic.Game` does, on first use).
+
+```python
+import numpy as np
+from hedonic import arrays
+
+edges = np.array([(0, 1), (1, 2), (2, 0), (2, 3), (3, 4), (4, 5), (5, 3)])
+partition = arrays.detect(6, edges, seed=0)
+partition.membership            # array([0, 0, 0, 1, 1, 1])
+partition.quality, partition.equilibrium_slack, partition.provenance
+
+cover = arrays.detect(6, edges, max_memberships=2, resolution=0.2, seed=0,
+                      initial_membership=partition)   # a result is a start
+cover.offsets, cover.labels     # vertex v is in labels[offsets[v]:offsets[v + 1]]
+cover.rows(), cover.communities()
+
+intervals = arrays.stable_intervals(6, edges, cover)
+regret, tolerance = arrays.regrets(6, edges, [0.1, 0.5], cover)
+```
+
+`detect` takes the options of `Game.community_hedonic`, with the same
+defaults and checks; weights are arrays (one per edge or vertex), not
+attribute names. `edges` is an `(m, 2)` integer array or a symmetric CSR
+adjacency `(indptr, indices[, data])` (its entries with `i <= j`, in
+row-major order, are the edges and `data` their weights). Parallel edges add
+up; self-loops are refused. For the same edges in the same order, weights,
+options and seed, `arrays.detect(n, edges, ...)` returns the bits of
+`Game(ig.Graph(n, edges)).community_hedonic(...)`: membership or rows,
+quality, slack and provenance (the tests compare them on hundreds of random
+cases, on both cores). The binding reads the edge arrays in place, without
+building a Python object per edge.
+
+Adapters, imported only when called, give an `ArrayGraph` (`n`, `edges`,
+weights and the original `nodes`, vertex `i` being `nodes[i]`):
+
+```python
+graph = arrays.from_networkx(G, weight="weight")  # nodes in G.nodes order, edges in G.edges order
+graph = arrays.from_scipy(A)                      # a symmetric sparse adjacency; values are weights
+result = graph.detect(max_memberships=3, seed=0)
+```
+
+igraph stays a dependency of `pip install hedonic` in 2.1 (`Game` is an
+`igraph.Graph`); making it optional is for 3.0. The core itself is also a
+Rust crate without Python: see [native/rust/README.md](native/rust/README.md#the-rust-api).
+
 ## Development
 
 ```bash

@@ -1,14 +1,23 @@
-"""Argument checks and runtime information for :class:`hedonic.Game`."""
+"""Argument checks and runtime information for :class:`hedonic.Game` and
+:mod:`hedonic.arrays`.
+
+igraph is not imported with this module: a value can only be an igraph object
+when igraph is already loaded, so the checks look it up in ``sys.modules``, and
+the array path runs without it (only :func:`runtime_versions`, Game's, imports
+it).
+"""
 
 from __future__ import annotations
 
 import functools
 import sys
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
-import igraph
 import numpy as np
-from igraph import Graph
+
+if TYPE_CHECKING:
+    from igraph import Graph
 
 
 # Every sum of payoff terms must stay below this (HIG_ARITHMETIC_BOUND in
@@ -25,6 +34,11 @@ def _entry_error(where: str, index: int, value, problem: str) -> ValueError:
     if len(shown) > 40:
         shown = shown[:37] + "..."
     return ValueError(f"{where.format(index)} = {shown} {problem}")
+
+
+def _loaded_igraph():
+    """The igraph module if it is loaded, else None (nothing is imported)."""
+    return sys.modules.get("igraph")
 
 
 def _as_floats(values: list, where: str) -> np.ndarray:
@@ -44,9 +58,11 @@ def _as_floats(values: list, where: str) -> np.ndarray:
         except OverflowError:
             raise _entry_error(where, index, value, "is beyond the double range") from None
         except (TypeError, ValueError):
+            igraph = _loaded_igraph()
             hint = (
                 "; to use an attribute, pass its name"
-                if isinstance(value, (igraph.Edge, igraph.Vertex)) else ""
+                if igraph is not None and isinstance(value, (igraph.Edge, igraph.Vertex))
+                else ""
             )
             raise _entry_error(
                 where, index, value, f"is not a real number ({type(value).__name__}){hint}"
@@ -77,12 +93,27 @@ def weight_vector(
             )
         where = f"{name}: the {what} attribute {values!r} at {what} " + "{}"
         values = sequence[values]
+    return real_vector(values, count, name, per_vertex=per_vertex,
+                       nonnegative=nonnegative, where=where)
+
+
+def real_vector(
+    values, count: int, name: str, *, per_vertex: bool, nonnegative: bool = False,
+    where: str | None = None,
+) -> np.ndarray:
+    """``values`` (a sequence, never an attribute name) as a contiguous float64
+    array of ``count`` finite reals: the checks of :func:`weight_vector`, with
+    its messages, for callers without an igraph graph."""
+    what = "vertex" if per_vertex else "edge"
+    if where is None:
+        where = name + "[{}]"
     if isinstance(values, Mapping):
         raise ValueError(
             f"{name} must be a sequence with one number per {what}, in {what} "
             "order, not a dict (a dict would be read as its keys)"
         )
-    if isinstance(values, (igraph.EdgeSeq, igraph.VertexSeq)):
+    igraph = _loaded_igraph()
+    if igraph is not None and isinstance(values, (igraph.EdgeSeq, igraph.VertexSeq)):
         raise ValueError(
             f"{name} must be numbers, one per {what}, not an igraph "
             f"{type(values).__name__}; to use an attribute, pass its name"
@@ -204,7 +235,7 @@ def check_start_counts(
 
 
 @functools.cache
-def _versions() -> tuple[tuple[str, str | None], ...]:
+def _core_versions() -> tuple[tuple[str, str | None], ...]:
     try:
         from importlib.metadata import version
 
@@ -216,8 +247,14 @@ def _versions() -> tuple[tuple[str, str | None], ...]:
     return (
         ("hedonic", hedonic_version),
         ("hedonic_core", _core.core_version),
-        ("python_igraph", getattr(igraph, "__version__", None)),
     )
+
+
+@functools.cache
+def _versions() -> tuple[tuple[str, str | None], ...]:
+    import igraph
+
+    return _core_versions() + (("python_igraph", getattr(igraph, "__version__", None)),)
 
 
 def runtime_versions() -> dict[str, str | None]:
@@ -227,3 +264,8 @@ def runtime_versions() -> dict[str, str | None]:
     a small detector call) and returned as a fresh dict each time.
     """
     return dict(_versions())
+
+
+def core_versions() -> dict[str, str | None]:
+    """:func:`runtime_versions` without igraph: what ran an array call."""
+    return dict(_core_versions())
