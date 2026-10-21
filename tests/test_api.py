@@ -68,7 +68,7 @@ class TestRemovedKeywords(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(game_module, name))
                 self.assertFalse(hasattr(hedonic, name))
-        self.assertEqual(hedonic.__all__, ["Game", "metrics", "stability"])
+        self.assertEqual(hedonic.__all__, ["Game", "arrays", "metrics", "stability"])
 
     def test_results_carry_no_removed_attributes(self):
         for max_memberships in (1, 3):
