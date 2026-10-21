@@ -34,9 +34,12 @@ and the analysed graph transform, not of latent truth or global optima.
 
 Identity. A stored record is reused only when it was written by the same code:
 the SHA-256 of the package source files the study runs (located through their
-modules, keyed by their path inside the package), the hedonic version and the
-SHA-256 of the compiled core (:func:`tracked_digest`). Packaged configs run
-unlocked: hedonic 2.0 has no protocol lock file, and the manifest says so.
+modules, keyed by their path inside the package) and the runtime identity
+(results series and core class, ``runtime.build_identity``), as
+:func:`tracked_digest`. Code proven to compute what earlier code computed names
+the earlier digest (``hedonic.experiments.spectrum_code``, a table outside the
+tracked files). Packaged configs run unlocked: hedonic 2.0 has no protocol
+lock file, and the manifest says so.
 """
 
 from __future__ import annotations
@@ -55,7 +58,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import hedonic
-from hedonic.experiments import runtime
+from hedonic.experiments import runtime, spectrum_code
 from hedonic.experiments.config import (
     DEFAULT_NETWORKS_DIR,
     OVERLAPPING_ARTIFACTS_DIR,
@@ -186,17 +189,17 @@ def _parse_grid(value: str | Iterable[float]) -> list[float]:
 
 
 def _runtime_identity() -> dict[str, Any]:
-    """The runtime part of a record's identity: the hedonic version and the compiled core (no paths)."""
+    """The runtime part of a record's identity: the results series and the core's results class (no paths)."""
     return {
         **runtime.build_identity(),
-        "algorithm_identity": runtime.ALGORITHM_IDENTITY,
+        "algorithm_identity": runtime.algorithm_identity(),
     }
 
 
 def canonical_digest(digest: str | None) -> str | None:
-    """The digest a code version's records are filed under. hedonic 2.0 keeps no equivalence file, so it is the digest
-    itself (the name stays for the queue, which compares stored digests through it)."""
-    return digest
+    """The digest a code version's records are filed under: the earliest code it is proven to compute the same as
+    (``spectrum_code.ALIASES``), else the digest itself. The queue compares stored digests through it."""
+    return spectrum_code.canonical(digest)
 
 
 def _package_root() -> Path:
@@ -231,10 +234,18 @@ def _implementation_digest(tracked: dict[str, str | None], runtime_identity: dic
     return _json_hash({"files": tracked, **runtime_identity})
 
 
+def _tracked(runtime_identity: dict[str, Any]) -> tuple[dict[str, str | None], str]:
+    """The per-file hashes and the digest records are filed under: the loaded code's, or those of the earliest code it
+    is proven equivalent to (``spectrum_code``)."""
+    return spectrum_code.earlier_files(tracked_file_hashes(),
+                                       lambda files: _implementation_digest(files, runtime_identity))
+
+
 def tracked_digest() -> str:
-    """The code identity a stored record is compared with: the package source digest, the hedonic version and the core
-    SHA-256 (the queue view uses it to tell finished work from work whose code has changed since)."""
-    return _implementation_digest(tracked_file_hashes(), _runtime_identity())
+    """The code identity a stored record is compared with: the package source digest and the runtime identity, or the
+    digest of earlier code proven equivalent (the queue view uses it to tell finished work from work whose code has
+    changed since)."""
+    return _tracked(_runtime_identity())[1]
 
 
 # --------------------------------------------------------------------------- discovery
@@ -731,22 +742,36 @@ def _json_hash(value: Any) -> str:
 def implementation_identity(options: dict[str, Any]) -> dict[str, Any]:
     """What must be identical for a stored record to be reused (excludes the grid, so seeds can be extended).
 
-    ``tracked_files_sha256`` is :func:`tracked_digest` (source files, hedonic version, core SHA-256); ``runtime`` is
-    the path-free runtime identity; ``runtime_versions`` (with paths) is provenance only and never compared.
+    ``tracked_files_sha256`` is :func:`tracked_digest` (source files and runtime identity, or the equivalent earlier
+    code's) and ``tracked_files`` its per-file hashes; ``runtime`` is the path-free runtime identity. The loaded files'
+    own hashes (``tracked_files_built``, ``tracked_files_sha256_built``) and ``runtime_versions`` (with paths) are
+    provenance only and never compared.
     """
-    tracked = tracked_file_hashes()
     runtime_identity = _runtime_identity()
+    tracked, digest = _tracked(runtime_identity)
+    built = tracked_file_hashes()
     return {
         "schema_version": SCHEMA_VERSION,
         "protocol_name": PROTOCOL_NAME,
         "tracked_files": tracked,
-        "tracked_files_sha256": _implementation_digest(tracked, runtime_identity),
+        "tracked_files_sha256": digest,
+        "tracked_files_built": built,
+        "tracked_files_sha256_built": _implementation_digest(built, runtime_identity),
         "runtime": runtime_identity,
         "runtime_versions": runtime.runtime_versions(),
         "config_sha256": options.get("config_sha256"),
         "locked": False,
         "lock": LOCK_NOTE,
     }
+
+
+def implementation_drift(identity: dict[str, Any]) -> list[str]:
+    """The tracked files whose bytes changed since ``identity`` was taken; none when the records are still filed under
+    the same digest (no edit, or one proven equivalent: ``spectrum_code``)."""
+    if _tracked(identity["runtime"])[1] == identity["tracked_files_sha256"]:
+        return []
+    before, now = identity.get("tracked_files_built") or identity["tracked_files"], tracked_file_hashes()
+    return sorted(k for k in set(now) | set(before) if before.get(k) != now.get(k))
 
 
 def _compact_identity(identity: dict[str, Any]) -> dict[str, Any]:
@@ -1864,7 +1889,7 @@ def _finalise(options, cohort, jobs, job_provenance, audit_rows, result_rows, ma
     if load_failures:
         coverage_report["complete"] = False
     # A source file edited while the study ran would leave records from two implementations in one ledger.
-    drift = sorted(k for k, v in tracked_file_hashes().items() if manifest["identity"]["tracked_files"].get(k) != v)
+    drift = implementation_drift(manifest["identity"])
     coverage_report["implementation_drift_during_run"] = drift
     if drift:
         coverage_report["complete"] = False
