@@ -95,7 +95,10 @@ struct RowRef {
     capacity: Id,
 }
 
+/// A positive gain of a visit. Aligned as a u128: the long selection sorts
+/// integer keys in the same buffer (`top_positive`).
 #[derive(Clone, Copy, Debug)]
+#[repr(C, align(16))]
 struct Scored {
     gain: f64,
     label: Id,
@@ -424,11 +427,18 @@ impl<'t> State<'t> {
 
     // ---- A visit -----------------------------------------------------------
 
+    #[inline(always)]
     fn reserve_candidates(&mut self, needed: usize) -> Result<()> {
-        let capacity = self.candidate.len();
-        if needed <= capacity {
+        if needed <= self.candidate.len() {
             return Ok(());
         }
+        self.grow_candidates(needed)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_candidates(&mut self, needed: usize) -> Result<()> {
+        let capacity = self.candidate.len();
         let grown = if capacity < 8 { 16 } else { 2 * capacity }.max(needed);
         self.candidate.try_reserve_exact(grown - capacity).map_err(|_| Error::nomem())?;
         self.value.try_reserve_exact(grown - capacity).map_err(|_| Error::nomem())?;
@@ -487,27 +497,46 @@ impl<'t> State<'t> {
             }
             Ok(kept)
         } else {
+            // Sorted as integer keys in `scored_before`'s order, in top's
+            // own buffer: the gain's bits inverted (for a gain > 0 they
+            // ascend with its value), then the label, then the index. Labels
+            // are distinct, so (gain desc, label asc) is a total order and the
+            // index never decides; an integer sort is the comparator's sort.
             self.top.clear();
             if self.top.capacity() < count {
                 self.top.try_reserve(count).map_err(|_| Error::nomem())?;
             }
+            let base = self.top.as_mut_ptr() as *mut u128;
+            let mut positive = 0usize;
             for (i, (&gain, &label)) in values.iter().zip(labels).enumerate() {
                 if gain > 0.0 {
-                    self.top.push(Scored { gain, label, index: i as Id });
+                    let key = (!gain.to_bits() as u128) << 64 | (label as u32 as u128) << 32 | i as u32 as u128;
+                    // SAFETY: positive < count <= capacity; Scored is 16 bytes
+                    // aligned to 16 (repr(C, align(16))), as a u128 is.
+                    unsafe { base.add(positive).write(key) };
+                    positive += 1;
                 }
             }
-            // Labels are distinct, so (gain desc, label asc) is a total order.
-            self.top.sort_unstable_by(|x, y| {
-                if scored_before(x.gain, x.label, y.gain, y.label) {
-                    std::cmp::Ordering::Less
-                } else if scored_before(y.gain, y.label, x.gain, x.label) {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Equal
+            // SAFETY: the first `positive` slots hold initialized u128s; no
+            // other reference to top's buffer lives while `keys` does.
+            let keys = unsafe { std::slice::from_raw_parts_mut(base, positive) };
+            keys.sort_unstable();
+            let kept = positive.min(limit as usize);
+            for j in 0..kept {
+                // SAFETY: j < positive; each slot is read as a key before the
+                // Scored it decodes to is written over it. Every bit pattern
+                // is a valid Scored (an f64 and two i32s).
+                unsafe {
+                    let key = base.add(j).read();
+                    let gain = f64::from_bits(!((key >> 64) as u64));
+                    let (label, index) = ((key >> 32) as u32 as Id, key as u32 as Id);
+                    (base.add(j) as *mut Scored).write(Scored { gain, label, index });
                 }
-            });
-            self.top.truncate(limit as usize);
-            Ok(self.top.len())
+            }
+            // SAFETY: kept <= positive <= capacity, and the first kept slots
+            // are Scored values now.
+            unsafe { self.top.set_len(kept) };
+            Ok(kept)
         }
     }
 
@@ -1025,9 +1054,11 @@ impl<'t> State<'t> {
 
     /// Prefetches, in stages, what the visits of the next queued vertices
     /// will read: adjacency offsets and rows 8 visits ahead, adjacency blocks
-    /// and own labels 4 ahead, the neighbours' rows 2 ahead, their labels 1
-    /// ahead and those labels' records for the next visit. Only cache hints:
-    /// no value depends on them.
+    /// and own labels 4 ahead, the neighbours' rows 2 ahead and their labels
+    /// 1 ahead. Only cache hints: no value depends on them. (A stage for the
+    /// labels' records, one hint per label of up to 16 neighbours before
+    /// each visit, cost more than it saved: DBLP top5000 M=3 and BA 300k M=3
+    /// ran 6% and 4.5% faster without it.)
     #[inline(always)]
     fn prefetch_ahead(&self) {
         let (g, q) = (&self.graph, &self.queue);
@@ -1051,14 +1082,6 @@ impl<'t> State<'t> {
         if let Some(u) = q.peek(PREFETCH_ONE) {
             for &w in neighbours(u) {
                 prefetch(&self.pool, self.row[w as usize].start);
-            }
-        }
-        if let Some(u) = q.peek(0) {
-            for &w in neighbours(u) {
-                let r = self.row[w as usize];
-                for &c in &self.pool[r.start..r.start + r.size as usize] {
-                    prefetch(&self.group, c as usize);
-                }
             }
         }
     }
@@ -1094,10 +1117,14 @@ impl<'t> State<'t> {
                 slack = s.bound;
             }
         }
+        // Counted first and reserved once, as C does (no growth by doubling
+        // with the whole state alive).
+        let count = self.queue.settled.iter().filter(|s| -s.bound > slack).count();
         let mut open: Vec<(f64, Id)> = Vec::new();
+        open.try_reserve_exact(count).map_err(|_| Error::nomem())?;
         for (v, s) in self.queue.settled.iter().enumerate() {
             if -s.bound > slack {
-                push(&mut open, (-s.bound, v as Id))?;
+                open.push((-s.bound, v as Id));
             }
         }
         // Descending; ties (equal coarse bounds) in vertex order, a total
@@ -1116,32 +1143,34 @@ impl<'t> State<'t> {
         self.slack = slack;
         Ok(())
     }
+}
 
-    /// The rows with labels 0, 1, ... in order of first appearance, sorted.
-    fn result(&self) -> Result<(Cover, i64)> {
-        let n = self.graph.n as usize;
-        let total: usize = self.row.iter().map(|r| r.size as usize).sum();
-        let mut offset = filled(n + 1, 0i64)?;
-        let mut labels = filled(total, 0i64)?;
-        let mut relabel = filled(self.label_count as usize, -1i64)?;
-        let mut next = 0i64;
-        for v in 0..n {
-            let r = self.row[v];
-            let base = offset[v] as usize;
-            let out = &mut labels[base..base + r.size as usize];
-            for (i, o) in out.iter_mut().enumerate() {
-                let c = self.pool[r.start + i] as usize;
-                if relabel[c] < 0 {
-                    relabel[c] = next;
-                    next += 1;
-                }
-                *o = relabel[c];
+/// The cover a run ended in: labels 0, 1, ... in order of first
+/// appearance, each row sorted. Takes the rows and the pool alone, so the
+/// rest of the run state can be released first.
+fn result(row: &[RowRef], pool: &[Id], label_count: Id) -> Result<(Cover, i64)> {
+    let n = row.len();
+    let total: usize = row.iter().map(|r| r.size as usize).sum();
+    let mut offset = filled(n + 1, 0i64)?;
+    let mut labels = filled(total, 0i64)?;
+    let mut relabel = filled(label_count as usize, -1 as Id)?;
+    let mut next: Id = 0;
+    for v in 0..n {
+        let r = row[v];
+        let base = offset[v] as usize;
+        let out = &mut labels[base..base + r.size as usize];
+        for (i, o) in out.iter_mut().enumerate() {
+            let c = pool[r.start + i] as usize;
+            if relabel[c] < 0 {
+                relabel[c] = next;
+                next += 1;
             }
-            sort_ids(out);
-            offset[v + 1] = offset[v] + r.size as i64;
+            *o = relabel[c] as i64;
         }
-        Ok((Cover { offset, labels }, next))
+        sort_ids(out);
+        offset[v + 1] = offset[v] + r.size as i64;
     }
+    Ok((Cover { offset, labels }, next as i64))
 }
 
 /// Sorts labels ascending: insertion for the short rows of a cover (as
@@ -1327,9 +1356,14 @@ pub fn cover(
 /// slack) reads only what the call owns; `finish` reads the graph again for
 /// the quality, and refuses one of another size.
 pub struct CoverCall<'t> {
-    state: State<'t>,
+    /// The run state, until `run` has built the result (then it goes: only
+    /// the rows, the 1/sqrt(k) table and the slack stay).
+    state: Option<State<'t>>,
+    n: Id,
     options: Options,
     edge_count: i64,
+    inv_sqrt: Vec<f64>,
+    raw_slack: f64,
     result: Option<(Cover, i64)>,
 }
 
@@ -1456,31 +1490,49 @@ impl<'t> CoverCall<'t> {
             }
         }
         s.trace = trace;
-        Ok(CoverCall { state: s, options, edge_count: graph.edge_count, result: None })
+        let n = s.graph.n;
+        Ok(CoverCall {
+            state: Some(s),
+            n,
+            options,
+            edge_count: graph.edge_count,
+            inv_sqrt: Vec::new(),
+            raw_slack: 0.0,
+            result: None,
+        })
     }
 
     /// The visiting order, the visits until every vertex is settled, then
     /// the slack and the relabelled rows.
     pub fn run(&mut self, cb: &mut Callbacks) -> Result<()> {
-        let s = &mut self.state;
+        let Some(s) = self.state.as_mut() else {
+            return Err(Error::inval("The call has already run."));
+        };
         s.queue = Queue::new(s.graph.n, cb)?;
         s.run(cb)?;
         s.compute_slack()?;
-        self.result = Some(s.result()?);
+        // The run state goes before the result is built: only the rows, the
+        // pool and the 1/sqrt(k) table stay.
+        let Some(mut s) = self.state.take() else { unreachable!() };
+        self.raw_slack = s.slack;
+        let (row, pool) = (std::mem::take(&mut s.row), std::mem::take(&mut s.pool));
+        self.inv_sqrt = std::mem::take(&mut s.inv_sqrt);
+        let label_count = s.label_count;
+        drop(s);
+        self.result = Some(result(&row, &pool, label_count)?);
         Ok(())
     }
 
     /// The rows, the quality in `graph`'s edge order and the slack.
     pub fn finish(self, graph: &Graph) -> Result<CoverResult> {
-        let s = self.state;
         let Some((cover, count)) = self.result else {
             return Err(Error::inval("The call has not run."));
         };
-        if graph.vertex_count != s.graph.n as i64 || graph.edge_count != self.edge_count || !graph.ends_in_range() {
+        if graph.vertex_count != self.n as i64 || graph.edge_count != self.edge_count || !graph.ends_in_range() {
             return Err(Error::inval("The graph changed during the call."));
         }
-        let q = quality(graph, self.options.resolution, &cover, count, &s.inv_sqrt)?;
-        let raw_slack = s.slack;
+        let q = quality(graph, self.options.resolution, &cover, count, &self.inv_sqrt)?;
+        let raw_slack = self.raw_slack;
         Ok(CoverResult {
             cover,
             count,

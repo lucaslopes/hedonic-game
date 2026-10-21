@@ -161,6 +161,25 @@ def test_detect_agrees_on_igraph_graphs():
         same(f"detect case {case}", run)
 
 
+def test_uncapped_covers_agree():
+    """Rows past the short selection (more than 32 positive gains): the long best-set sort."""
+    rnd = random.Random(11)
+    for case in range(max(4, CASES // 15)):
+        n = rnd.randint(80, 220)
+        g = igraph.Graph.Erdos_Renyi(n=n, p=rnd.choice([0.3, 0.5, 0.8]))
+        ew = weights(rnd, g.ecount(), rnd.randint(0, 2))
+        gamma = rnd.choice([1e-4, 1e-3, 0.01, 0.05])
+        cap = rnd.choice([n, 40, 33])
+        seed = rnd.randrange(2**32)
+
+        def run(module):
+            r = random.Random(seed)
+            res, err = outcome(module.detect, g, r, gamma, max_memberships=cap, edge_weights=ew)
+            return res, err, r.getstate()
+
+        same(f"uncapped case {case}", run)
+
+
 def test_audit_agrees():
     rnd = random.Random(11)
     for case in range(CASES // 3):

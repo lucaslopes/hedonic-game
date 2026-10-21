@@ -133,7 +133,7 @@ fn main() {
                 let found = state.intervals(&ao, Selection::Range(0, n.min(5000)), None).unwrap();
                 audited = audited.min(t.elapsed().as_secs_f64());
                 if round < 2 {
-                    found.iter().flatten().for_each(|&(a, b)| {
+                    found.rows().flatten().for_each(|&(a, b)| {
                         hash(&mut h, a.to_bits());
                         hash(&mut h, b.to_bits());
                     });

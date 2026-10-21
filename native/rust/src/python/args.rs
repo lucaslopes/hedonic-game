@@ -269,6 +269,59 @@ pub fn fast<'py>(obj: &Bound<'py, PyAny>, message: &str) -> PyResult<Vec<Bound<'
     iter.collect()
 }
 
+/// The items of a list or tuple, read in place (each a new reference, so
+/// Python code run by a check cannot leave one dangling), else of list(obj).
+pub enum Items<'py> {
+    List(Bound<'py, PyList>),
+    Tuple(Bound<'py, PyTuple>),
+    Other(Vec<Bound<'py, PyAny>>),
+}
+
+impl<'py> Items<'py> {
+    /// As `fast`: TypeError(message) for an object that is not iterable.
+    pub fn new(obj: &Bound<'py, PyAny>, message: &str) -> PyResult<Items<'py>> {
+        if let Ok(list) = obj.cast::<PyList>() {
+            return Ok(Items::List(list.clone()));
+        }
+        if let Ok(tuple) = obj.cast::<PyTuple>() {
+            return Ok(Items::Tuple(tuple.clone()));
+        }
+        Ok(Items::Other(fast(obj, message)?))
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Items::List(list) => list.len(),
+            Items::Tuple(tuple) => tuple.len(),
+            Items::Other(items) => items.len(),
+        }
+    }
+
+    pub fn first(&self) -> PyResult<Bound<'py, PyAny>> {
+        match self {
+            Items::List(list) => list.get_item(0),
+            Items::Tuple(tuple) => tuple.get_item(0),
+            Items::Other(items) => Ok(items[0].clone()),
+        }
+    }
+
+    pub fn for_each(&self, mut f: impl FnMut(&Bound<'py, PyAny>) -> PyResult<()>) -> PyResult<()> {
+        match self {
+            Items::List(list) => list.iter().try_for_each(|item| f(&item)),
+            Items::Tuple(tuple) => tuple.iter().try_for_each(|item| f(&item)),
+            Items::Other(items) => items.iter().try_for_each(f),
+        }
+    }
+
+    /// `for_each` over a start row, which must not be empty.
+    fn for_each_row(&self, f: impl FnMut(&Bound<'py, PyAny>) -> PyResult<()>) -> PyResult<()> {
+        if self.len() == 0 {
+            return Err(PyValueError::new_err("each membership row must be non-empty"));
+        }
+        self.for_each(f)
+    }
+}
+
 // ---- Errors --------------------------------------------------------------------
 
 /// `raise_error` of _core.c: an exception a callback already set (the
@@ -835,14 +888,14 @@ fn read_label(obj: &Bound<'_, PyAny>, integral: &Bound<'_, PyAny>) -> PyResult<i
         return Err(PyValueError::new_err("membership labels must be integers"));
     }
     let index = if is_int {
-        obj.clone()
+        None
     } else {
         // SAFETY: obj is live; the result is a new reference or NULL with an error.
-        unsafe { Bound::from_owned_ptr_or_err(py, ffi::PyNumber_Index(obj.as_ptr()))? }
+        Some(unsafe { Bound::from_owned_ptr_or_err(py, ffi::PyNumber_Index(obj.as_ptr()))? })
     };
     let mut overflow: std::os::raw::c_int = 0;
-    // SAFETY: index is an int; overflow is a valid out pointer.
-    let value = unsafe { ffi::PyLong_AsLongLongAndOverflow(index.as_ptr(), &mut overflow) };
+    // SAFETY: obj or index is a live int; overflow is a valid out pointer.
+    let value = unsafe { ffi::PyLong_AsLongLongAndOverflow(index.as_ref().unwrap_or(obj).as_ptr(), &mut overflow) };
     if value == -1 {
         if let Some(e) = PyErr::take(py) {
             return Err(e);
@@ -860,48 +913,44 @@ fn read_label(obj: &Bound<'_, PyAny>, integral: &Bound<'_, PyAny>) -> PyResult<i
 /// None for an empty start.
 pub fn read_start_rows(obj: &Bound<'_, PyAny>, n: i64, max_memberships: i64) -> PyResult<Option<(Vec<i64>, Vec<i64>)>> {
     let py = obj.py();
-    let seq = fast(obj, "initial_membership must be a sequence")?;
+    let seq = Items::new(obj, "initial_membership must be a sequence")?;
     if seq.len() as i64 != n {
         return Err(PyValueError::new_err(format!("memberships must contain one row per vertex ({n})")));
     }
-    if seq.is_empty() {
+    if seq.len() == 0 {
         return Ok(None);
     }
     static INTEGRAL: PyOnceLock<Py<PyType>> = PyOnceLock::new();
     let integral = INTEGRAL.import(py, "numbers", "Integral")?;
     let is_row = |o: &Bound<'_, PyAny>| o.is_instance_of::<PyList>() || o.is_instance_of::<PyTuple>();
-    let nested = is_row(&seq[0]);
+    let nested = is_row(&seq.first()?);
     let mut labels: Vec<i64> = Vec::with_capacity(seq.len());
     let mut offset: Vec<i64> = Vec::with_capacity(seq.len() + 1);
     let mut max_label: i64 = -1;
     offset.push(0);
-    for entry in &seq {
+    seq.for_each(|entry| {
         if is_row(entry) != nested {
             return Err(PyValueError::new_err("membership cannot mix flat and nested rows"));
         }
         let start = labels.len();
         if nested {
-            let items: Vec<Bound<'_, PyAny>> = match entry.cast::<PyList>() {
-                Ok(list) => list.iter().collect(),
-                Err(_) => entry.cast::<PyTuple>().unwrap().iter().collect(),
-            };
-            if items.is_empty() {
-                return Err(PyValueError::new_err("each membership row must be non-empty"));
-            }
-            for item in &items {
+            Items::new(entry, "")?.for_each_row(|item| {
                 labels.push(read_label(item, integral)?);
-            }
+                Ok(())
+            })?;
         } else {
             labels.push(read_label(entry, integral)?);
         }
         // Distinct labels in order of first appearance (sorted above 16).
         let row = &mut labels[start..];
         let count = row.len();
+        let mut largest = row[0];
         let kept = if count <= 16 {
             let mut kept = 0;
             for i in 0..count {
                 if !row[..kept].contains(&row[i]) {
                     row[kept] = row[i];
+                    largest = largest.max(row[i]);
                     kept += 1;
                 }
             }
@@ -915,6 +964,7 @@ pub fn read_start_rows(obj: &Bound<'_, PyAny>, n: i64, max_memberships: i64) -> 
                     kept += 1;
                 }
             }
+            largest = row[kept - 1];
             kept
         };
         if kept as i64 > max_memberships {
@@ -923,9 +973,10 @@ pub fn read_start_rows(obj: &Bound<'_, PyAny>, n: i64, max_memberships: i64) -> 
             )));
         }
         labels.truncate(start + kept);
-        max_label = max_label.max(*labels[start..].iter().max().unwrap());
+        max_label = max_label.max(largest);
         offset.push(labels.len() as i64);
-    }
+        Ok(())
+    })?;
     // Contiguous from 0: every label below the largest is used.
     if max_label >= labels.len() as i64 {
         return Err(PyValueError::new_err("membership labels must be contiguous from 0"));

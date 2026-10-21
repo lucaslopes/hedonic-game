@@ -1,0 +1,42 @@
+YouTube_top5000_cover_M-1.rust.sample.txt: top 40 functions by samples at the top of the stack (macOS sample, 1 ms interval; 14693 samples listed)
+
+        _RNvMs_NtCs8sn0bjGjbB4_15hedonic_core_rs5coverNtB4_5State3run  (in hedonic_core_rs.cpython-312-darwin.so)        6632
+        _RINvNtNtNtNtCsedRpiqSkYaQ_4core5slice4sort8unstable9quicksort9quicksortNtNtCs8sn0bjGjbB4_15hedonic_core_rs5cover6ScoredNCINvMB8_SB17_16sort_unstable_byNCNvMs_B19_NtB19_5State12top_positives0_0E0EB1b_  (in hedonic_core_rs.cpython-312-darwin.so)        4921
+        _RINvNtNtNtNtCsedRpiqSkYaQ_4core5slice4sort6shared9smallsort12sort4_stableNtNtCs8sn0bjGjbB4_15hedonic_core_rs5cover6ScoredNCINvMB8_SB19_16sort_unstable_byNCNvMs_B1b_NtB1b_5State12top_positives0_0E0EB1d_  (in hedonic_core_rs.cpython-312-darwin.so)        749
+        _RINvNtNtNtNtCsedRpiqSkYaQ_4core5slice4sort6shared9smallsort12sort8_stableNtNtCs8sn0bjGjbB4_15hedonic_core_rs5cover6ScoredNCINvMB8_SB19_16sort_unstable_byNCNvMs_B1b_NtB1b_5State12top_positives0_0E0EB1d_  (in hedonic_core_rs.cpython-312-darwin.so)        537
+        _RINvNtNtNtNtCsedRpiqSkYaQ_4core5slice4sort8unstable9quicksort9quicksortlNvYlNtNtBa_3cmp10PartialOrd2ltECs8sn0bjGjbB4_15hedonic_core_rs  (in hedonic_core_rs.cpython-312-darwin.so)        308
+        _RNvMs_NtCs8sn0bjGjbB4_15hedonic_core_rs5coverNtB4_5State12top_positive  (in hedonic_core_rs.cpython-312-darwin.so)        265
+        _RINvNtNtNtNtCsedRpiqSkYaQ_4core5slice4sort6shared5pivot11median3_recNtNtCs8sn0bjGjbB4_15hedonic_core_rs5cover6ScoredNCINvMB8_SB14_16sort_unstable_byNCNvMs_B16_NtB16_5State12top_positives0_0E0EB18_  (in hedonic_core_rs.cpython-312-darwin.so)        223
+        _RNCNvNtCs8sn0bjGjbB4_15hedonic_core_rs5cover7quality0B5_  (in hedonic_core_rs.cpython-312-darwin.so)        201
+        _RNvMs_NtCs8sn0bjGjbB4_15hedonic_core_rs5coverNtB4_5State7rescale  (in hedonic_core_rs.cpython-312-darwin.so)        183
+        list_traverse  (in libpython3.12.dylib)        103
+        _PyEval_EvalFrameDefault  (in libpython3.12.dylib)        77
+        _RNvMs_NtCs8sn0bjGjbB4_15hedonic_core_rs5coverNtB4_5State4join  (in hedonic_core_rs.cpython-312-darwin.so)        69
+        _RNvNtCs8sn0bjGjbB4_15hedonic_core_rs6python11cover_lists  (in hedonic_core_rs.cpython-312-darwin.so)        60
+        visit_reachable  (in libpython3.12.dylib)        34
+        min_max  (in libpython3.12.dylib)        33
+        _RINvNtNtNtNtCsedRpiqSkYaQ_4core5slice4sort8unstable9quicksort9quicksortxNvYxNtNtBa_3cmp10PartialOrd2ltECs8sn0bjGjbB4_15hedonic_core_rs  (in hedonic_core_rs.cpython-312-darwin.so)        32
+        list_dealloc  (in libpython3.12.dylib)        30
+        long_richcompare  (in libpython3.12.dylib)        30
+        visit_decref  (in libpython3.12.dylib)        23
+        _platform_memset  (in libsystem_platform.dylib)        20
+        _RNvMs_NtCs8sn0bjGjbB4_15hedonic_core_rs5coverNtB4_5State5leave  (in hedonic_core_rs.cpython-312-darwin.so)        19
+        _platform_memmove  (in libsystem_platform.dylib)        19
+        _RNvMs_NtCs8sn0bjGjbB4_15hedonic_core_rs5coverNtB4_5State6result  (in hedonic_core_rs.cpython-312-darwin.so)        16
+        _RINvNtNtNtNtCsedRpiqSkYaQ_4core5slice4sort6shared9smallsort25insertion_sort_shift_leftNtNtCs8sn0bjGjbB4_15hedonic_core_rs5cover6ScoredNCINvMB8_SB1m_16sort_unstable_byNCNvMs_B1o_NtB1o_5State12top_positives0_0E0EB1q_  (in hedonic_core_rs.cpython-312-darwin.so)        14
+        _RINvNtNtNtNtCsedRpiqSkYaQ_4core5slice4sort6shared5pivot11median3_reclNvYlNtNtBa_3cmp10PartialOrd2ltECs8sn0bjGjbB4_15hedonic_core_rs  (in hedonic_core_rs.cpython-312-darwin.so)        12
+        _tlv_get_addr  (in libdyld.dylib)        11
+        list_extend.llvm.15600038148701866435  (in libpython3.12.dylib)        11
+        gc_collect_main.llvm.949403569146434147  (in libpython3.12.dylib)        10
+        deduce_unreachable  (in libpython3.12.dylib)        9
+        _RINvNtNtNtCsedRpiqSkYaQ_4core5slice4sort8unstable7ipnsortNtNtCs8sn0bjGjbB4_15hedonic_core_rs5cover6ScoredNCINvMB6_SBT_16sort_unstable_byNCNvMs_BV_NtBV_5State12top_positives0_0E0EBX_  (in hedonic_core_rs.cpython-312-darwin.so)        8
+        _PyObject_Malloc  (in libpython3.12.dylib)        6
+        _RINvNtNtNtCsedRpiqSkYaQ_4core5slice4sort8unstable7ipnsortlNvYlNtNtB8_3cmp10PartialOrd2ltECs8sn0bjGjbB4_15hedonic_core_rs  (in hedonic_core_rs.cpython-312-darwin.so)        6
+        _RNvNtCs8sn0bjGjbB4_15hedonic_core_rs5cover7quality  (in hedonic_core_rs.cpython-312-darwin.so)        6
+        listiter_next  (in libpython3.12.dylib)        6
+        _RNvMs_NtCs8sn0bjGjbB4_15hedonic_core_rs5coverNtB4_5State9write_row  (in hedonic_core_rs.cpython-312-darwin.so)        5
+        _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib)        5
+Binary Images:
+       0x104fc0000 -        0x104fc165f +python3.12 (???) <4C4C4430-5555-3144-A1E2-274F3F858120> /Users/*/python3.12
+       0x105200000 -        0x105201487 +libXau.6.dylib (0) <244B2979-9D73-3CD5-AD6D-A6C9A01A4320> /Users/*/libXau.6.dylib
+       0x105214000 -        0x10522bff3 +_umath_linalg.cpython-312-darwin.so (0) <80D60FEF-66B0-35B3-A0B5-22E43D5F84C3> /Users/*/_umath_linalg.cpython-312-darwin.so

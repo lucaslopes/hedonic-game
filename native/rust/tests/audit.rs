@@ -2,7 +2,7 @@
 //! validation, interruption, and the windowed search against the exhaustive
 //! one, bit for bit, on random covers.
 
-use hedonic_core_rs::audit::{AuditOptions, AuditState, Selection};
+use hedonic_core_rs::audit::{AuditOptions, AuditState, Intervals, Selection};
 use hedonic_core_rs::error::Kind;
 use hedonic_core_rs::graph::{Edges, Graph};
 
@@ -26,8 +26,8 @@ fn hand_cases_validation_and_interruption() {
     let all = Selection::Range(0, 2);
     let rows = s.intervals(&o, all, None).unwrap();
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0], vec![(0.5 - (o.atol + o.rtol), 1.0)]);
-    assert_eq!(rows[1].len(), 1);
+    assert_eq!(rows.row(0), [(0.5 - (o.atol + o.rtol), 1.0)]);
+    assert_eq!(rows.row(1).len(), 1);
     let (mut regret, mut tolerance) = ([0.0; 6], [0.0; 6]);
     s.regrets(&o, all, &[0.0, 0.5, 1.0], &mut regret, &mut tolerance, None)
         .unwrap();
@@ -107,7 +107,7 @@ fn hand_cases_validation_and_interruption() {
     let s = prepare(2, &[], None, None, &offsets, &labels).unwrap();
     o.allow_isolation = true;
     let rows = s.intervals(&o, all, None).unwrap();
-    assert_eq!(rows, vec![vec![(0.0, 1.0)], vec![(0.0, 1.0)]]);
+    assert_eq!(rows.rows().collect::<Vec<_>>(), [[(0.0, 1.0)], [(0.0, 1.0)]]);
 }
 
 struct Fuzz(u64);
@@ -124,8 +124,8 @@ impl Fuzz {
     }
 }
 
-fn bits(rows: &[Vec<(f64, f64)>]) -> Vec<Vec<(u64, u64)>> {
-    rows.iter()
+fn bits(rows: &Intervals) -> Vec<Vec<(u64, u64)>> {
+    rows.rows()
         .map(|row| {
             row.iter()
                 .map(|&(lo, hi)| (lo.to_bits(), hi.to_bits()))
@@ -222,7 +222,7 @@ fn windowed_matches_exhaustive() {
                 .unwrap();
             assert_eq!(bits(&fast), bits(&full), "game {game}, options {o:?}");
             compared += n;
-            intervals += full.iter().map(Vec::len).sum::<usize>();
+            intervals += full.pairs.len();
         }
     }
     eprintln!("windowed audit: {compared} vertex audits, {intervals} intervals, identical to the exhaustive search");
