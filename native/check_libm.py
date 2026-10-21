@@ -16,8 +16,8 @@ to it gives the same bits everywhere. The fused multiply-add is also
 correctly rounded by IEEE 754, but the core does not rely on a C library for
 it: it uses the instruction where the target has one and otherwise its own
 soft fma in integer arithmetic (``native/README.md``), so fma must not appear
-here either; in Rust that rules out ``f64::mul_add``, which falls back to
-libm's fma where the target has no instruction. With the core's other
+here either (in Rust, ``f64::mul_add`` is used only on aarch64, where it is
+the instruction; elsewhere it can be a call to libm's fma). With the core's other
 guarantees (no FP contraction, double everywhere, fixed summation orders, no
 threads) every operation then gives the same bits on every conforming
 platform. Functions such as exp, log or pow carry no such requirement and

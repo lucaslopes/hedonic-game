@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.1.0
+
+- The core is now written in Rust (`native/rust/`, compiled by maturin into
+  `hedonic._core`); hedonic 2.0's C core leaves the package. Nothing it
+  computes changes: every call returns the same memberships, quality bits and
+  `equilibrium_slack` as 2.0, on every platform, and the stability audit the
+  same intervals and regrets. The bit pins of 2.0's C tests hold unchanged in
+  the crate's tests (`cargo test`) and in the pinned Python tests. Rounding is
+  still fixed by the source: every fused multiply-add is the instruction or
+  the core's own correctly rounded soft fma (x86_64 picks one at run time),
+  and the core calls no libm function but `sqrt` and `fabs`.
+- It is faster: about 1.2 times as fast as the C core on the benchmark's
+  geometric mean, 1.5 to 2.5 times on small graphs (the random generator's
+  state is read in place) and 1.3 to 1.6 on large ones (prefetching ahead of
+  the queue); see `native/rust/README.md`.
+- To compare the two releases, install `hedonic==2.0.*` and `hedonic==2.1.*`
+  in two environments and run the same calls (README, "Comparing hedonic 2.0
+  (C) and 2.1 (Rust)"). `hedonic._core.backend` is `"rust"`. A second build of
+  the core installed beside it as `hedonic._core_<name>` is used in its place
+  with `HEDONIC_CORE=<name>`, so the same program runs on either.
+- Building from source needs a Rust toolchain instead of a C compiler.
+- Records name the Rust core by the digest of its sources
+  (`hedonic_core_source_sha256`, embedded by `native/rust/build.rs`) and the
+  release series `2.1`.
+
 ## 2.0.0
 
 - `hedonic` computes communities with its own purpose-built C core

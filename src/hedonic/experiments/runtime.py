@@ -43,7 +43,7 @@ def core_sha256() -> str:
 # Source digests of cores that compute everything a record holds exactly as an earlier core does: records name the
 # earlier digest, so their work stays valid. An entry needs that evidence, not just an unchanged detector.
 EQUIVALENT_CORES: dict[str, str] = {
-    # 2.0.0rc10 (the C core): only the stability audit's search changed. hig_audit_intervals now evaluates only the cells convexity
+    # 2.0.0rc10: only the stability audit's search changed. hig_audit_intervals now evaluates only the cells convexity
     # cannot settle and returns the exhaustive search's intervals bit for bit (native/README.md; `make -C native test`
     # compares them, and every audit of the overlap queue's ledger recomputed identically). Detector sources unchanged.
     "c86846640631141ecf334b1b34050110e8b93c1b1e9447596f31a49499f5dc3e":

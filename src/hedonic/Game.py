@@ -385,7 +385,7 @@ class Game(Graph):
         is an equilibrium reached from the start, not the best partition or
         cover: from singletons at resolution 0, for instance, a connected
         graph need not end as one community. The computation runs in this
-        package's C core (``hedonic._core``). Every argument after
+        package's own core (``hedonic._core``). Every argument after
         ``initial_membership`` is keyword-only.
 
         The graph must be undirected and free of self-loops (a loop ties a

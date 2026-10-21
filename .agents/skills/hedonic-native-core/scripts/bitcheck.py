@@ -16,7 +16,10 @@ option sets (none, edge weights, node weights, at most 5 communities, exactly
 hash is recorded in SKILL.md. Add a new grid instead.
 
 --covers (hedonic 2 only) runs the same graphs at max_memberships 2 and 4.
-Runs in seconds; it tests the installed hedonic (check the path it prints).
+Runs in seconds; it tests the installed hedonic and the core it loads: the
+package's hedonic._core, or with HEDONIC_CORE=<name> hedonic._core_<name>
+(check the module, backend, path and source digest it prints). hedonic 2.0's
+C core and 2.1's Rust core print the same lines.
 """
 
 import argparse
@@ -85,7 +88,8 @@ def main(argv=None):
     parser.add_argument("--records", help="write one JSON line per call to this file")
     args = parser.parse_args(argv)
     from hedonic import _core
-    print(f"# hedonic {hedonic.__version__} from {_core.__file__}", file=sys.stderr)
+    print(f"# hedonic {hedonic.__version__}, core {_core.__name__} (backend {getattr(_core, 'backend', 'c')}) "
+          f"from {_core.__file__}", file=sys.stderr)
     print(f"# core source sha256 {getattr(_core, 'source_sha256', '?')}", file=sys.stderr)
     records = open(args.records, "w") if args.records else None
     try:

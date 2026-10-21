@@ -5,7 +5,7 @@
   resolution bracket is read from the second (``[rho_in / 32, rho_in]``, ``rho_in`` its median), and every probe is
   also reported in units of both.
 * :class:`CoverAudit` is the regret audit of a labelled cover under the unit-l2 CPM payoff (every vertex of ``k``
-  labels takes intensity ``1/sqrt(k)`` in each), computed by the C audit (``stability.prepare``, the code behind
+  labels takes intensity ``1/sqrt(k)`` in each), computed by the core's audit (``stability.prepare``, the code behind
   ``Game.regrets``). Exact for ``gamma`` in [0, 1], unit vertex weights, isolation enabled (a fresh label of gain 0
   is always available) and any cap ``M`` (``None`` = uncapped). Every label gain is affine in ``gamma``,
   ``g_vc = L_vc - gamma R_vc``, so each vertex regret is a convex function of ``gamma``; two endpoint audits

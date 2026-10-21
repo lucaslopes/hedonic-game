@@ -1,24 +1,31 @@
 # hedonic-core-rs
 
-A Rust port of `native/` (the C core and its CPython binding), built with
-[PyO3](https://pyo3.rs) and [maturin](https://www.maturin.rs). It computes
-the same results as the C core bit for bit: every fused multiply-add is an
-explicit `fma::fma` (the instruction, or the soft fma ported from musl),
-rustc never contracts `a * b + c`, and every sum runs in the C core's order.
+The core of hedonic 2.1, in Rust: best-response local moving for the CPM
+hedonic game and the fixed-cover stability audit, built with
+[PyO3](https://pyo3.rs) and [maturin](https://www.maturin.rs) into the
+extension `hedonic._core`. `native/README.md` is its design. It is a port of
+hedonic 2.0's C core and computes the same results bit for bit: every fused
+multiply-add is an explicit `fma::fma` (the instruction, or the soft fma
+ported from musl), rustc never contracts `a * b + c`, and every sum runs in
+the C core's order. Its doc comments name the C file each module ports
+(paths in hedonic 2.0's `native/`):
 
-| Rust | C |
+| Rust | C (hedonic 2.0) |
 |---|---|
 | `fma.rs`, `arith.rs` | `softfma.h`, `dispatch.h`, `internal.h` |
 | `graph.rs`, `rng.rs`, `queue.rs`, `heap.rs` | `shared/` |
 | `partition.rs` | `partition/` |
 | `cover.rs` | `cover/` |
 | `audit.rs`, `verify.rs`, `trace.rs` | `check/` |
-| `python/` (module `hedonic_core_rs`, or `hedonic._core`) | `binding/` (module `hedonic._core`) |
+| `python/` (module `hedonic._core`) | `binding/` (module `hedonic._core`) |
+| `tests/pins.rs`, `tests/core.rs`, `tests/audit.rs` | `tests/test_core.c`, `tests/test_audit.c` |
 
-The module has the functions of `hedonic._core` with the same arguments,
-results, exceptions and messages. `HEDONIC_CORE=rust` makes the package load
-it in place of the C extension; `source_sha256` is the digest of this crate's
-sources (setup.py's format), so records name the Rust core apart.
+The module has the functions of hedonic 2.0's extension with the same
+arguments, results, exceptions and messages, plus `backend` (`"rust"`) and
+`fma_path()`. `source_sha256` is the digest of this crate's sources
+(`build.rs`: every `src/**/*.rs`, `build.rs` and `Cargo.toml`, each as path,
+length and bytes, in path order, CRLF as LF), so records name the build of the
+core by its source.
 
 The stability audit is rc11's: the windowed search (exclusion by Newton
 steps, certified ranges and a certified core, the reference's own cells
@@ -33,13 +40,23 @@ intervals, Rust 1.07 to 1.47 times as fast as C (the smallest, Amazon's
 top5000 pruned, ties at 12 ms; YouTube uncapped and unpruned, the longest,
 254 s against 294 s).
 
-**Without the C.** The cargo feature `core-module` names the module
-`hedonic._core`, and `tools/rust_pyproject.py` writes the repository's
-`pyproject.toml` with maturin building `native/rust/` into it in place of
-setuptools building `native/` (the `[project]` table is kept, so it is the
-same distribution). CI (`.github/workflows/rust.yml`, job `rust_only`)
-deletes the C core and `setup.py`, builds and installs that package, and runs
-the pinned tests and the whole test suite on every wheel platform.
+**The package build.** The repository's `pyproject.toml` has maturin build
+this crate into `hedonic._core` with the cargo feature `core-module` (the
+module's name). The feature `python` alone builds the same module as
+`hedonic_core_rs`, which no build of the package uses. CI
+(`.github/workflows/rust.yml`) runs the cargo tests (release, soft fma,
+debug, and x86_64 under Rosetta on macOS), then builds the package and runs
+the pinned tests, the libm check and the whole test suite on every wheel
+platform.
+
+**A second core beside it.** `HEDONIC_CORE=<name>` makes the package load
+`hedonic._core_<name>`, if it is installed beside `hedonic._core`, in its
+place (`src/hedonic/__init__.py`), so every test runs on it unchanged. Built
+as `hedonic._core_c`, hedonic 2.0's C core is compared with this one by
+`tests/test_differential.py` (every result, trace, verifier report, audit
+answer, error and the caller's generator state, bit for bit) and timed
+against it by `bench/bench.py`; both skip (or stop) with the reason when it
+is absent.
 
 What is safer: the engines are safe Rust except the hot paths (the visits
 of both engines: their scans, scoring, slot resets and requeueing; the
@@ -81,8 +98,9 @@ What is faster (the same visits, moves and bits as C, in less time):
   cover 561M against 566M (BA 50k, cap 3; it was 683M).
 
 `python native/rust/bench/bench.py [--quick] [--reps N]` times `detect` of both
-cores, interleaved, on the same calls (and checks the results are equal);
-on an M1 Max (load average 8), every case is at least as fast in Rust:
+cores (`hedonic._core` and `hedonic._core_c`), interleaved, on the same calls
+(and checks the results are equal); on an M1 Max (load average 8), every
+case is at least as fast in Rust:
 the mid-size games (BA 50k, SBM 20k, ER 100k) 1.01 to 1.08, the small
 graphs 1.5 to 2.5 (the generator in place), the large games 1.3 to 1.4
 (prefetching); the geometric mean of C time / Rust time is 1.23 (1.35
@@ -92,20 +110,13 @@ under a heavy load, where the mid-size partitions gain 1.15 to 1.6).
 
 ```bash
 cd native/rust
-cargo test --release                              # the C core's bit pins and tests (test_core.c, test_audit.c), soft fma vs the instruction
+cargo test --release                              # the bit pins and the C core's tests (test_core.c, test_audit.c), soft fma vs the instruction
 cargo test --release --features force-soft-fma    # the same with the soft fma everywhere
-maturin develop --release                         # into the active venv
 cd ../..
-HEDONIC_CORE=rust python tools/native_tests.py    # the pinned Python tests on the Rust core
-python -m pytest -x -q native/rust/tests/test_differential.py   # C against Rust, bit for bit
-```
-
-hedonic with the Rust core alone, in a copy of the checkout:
-
-```bash
-python tools/rust_pyproject.py > pyproject.rust.toml && mv pyproject.rust.toml pyproject.toml
-rm -rf native/core native/include native/binding native/tests native/*.c native/Makefile setup.py
-pip install ".[cli]" pytest && python tools/native_tests.py && python -m pytest -q
+pip install -e ".[cli]" pytest                    # maturin builds the crate into hedonic._core (or: maturin develop --release)
+python tools/native_tests.py                      # the pinned Python tests (HIG_PINNED=1, no skips)
+python native/check_libm.py "$(python -c 'import hedonic._core as c; print(c.__file__)')"
+python -m pytest -q                               # the whole suite
 ```
 
 `cargo run --release --example profile_cover -- EDGES GAMMA CAP REPS [w]` is a

@@ -3,7 +3,7 @@
 Chapter 6 of the overlapping-communities paper asks how robust each method's cover is, with the definition of the
 ground-truth chapter: for every vertex, the exact set of resolutions in [0, 1] where its memberships are a best
 response, under both action spaces (fixed and open labels). This module applies that analysis to the covers saved by
-``hedonic run exp ... --save-covers``, one record per cover. The computation is the library's C audit (the code
+``hedonic run exp ... --save-covers``, one record per cover. The computation is the library's audit (the code
 behind ``Game.stable_intervals`` and ``Game.regrets``) through ``overlapping.stability``; ``--workers`` forked
 processes split the vertices and share its read-only prepared state.
 

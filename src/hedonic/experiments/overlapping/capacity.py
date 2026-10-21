@@ -13,8 +13,8 @@ not even one fits.
   bytes each worker adds.
 * ``plan_workers`` returns the largest worker count whose ``Need`` fits the budget, or raises ``CapacityError``.
 
-The exact stability audit needs no plan of its own: the C audit's prepared cover is O(n + m + incidences) and forked
-audit workers share it, so the per-worker state that once had to be priced here no longer exists.
+The exact stability audit needs no plan of its own: the core's prepared audit state is O(n + m + incidences) and
+forked audit workers share it, so the per-worker state that once had to be priced here no longer exists.
 """
 
 from __future__ import annotations

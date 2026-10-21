@@ -2,8 +2,8 @@
 
 Guidance for humans and coding agents editing this repository. `hedonic` is a
 small library (one public class, `Game`, one detector,
-`Game.community_hedonic`, and a fixed-cover stability audit, all in a C core
-compiled into `hedonic._core`) plus the experiment command line that ships
+`Game.community_hedonic`, and a fixed-cover stability audit, all in a Rust
+core compiled into `hedonic._core`) plus the experiment command line that ships
 with it (`hedonic`, `hedonic-exp`).
 
 ## Public `main` and private `paper`
@@ -23,15 +23,15 @@ Everything for coding agents lives in `.agents/`: this file
 read `AGENTS.md` from the repository root) and the repository's skills in
 `.agents/skills/<name>/SKILL.md`.
 
-- **`hedonic-native-core`** is the path for any change to the C core
-  (`native/`, `setup.py`, `hedonic._native`, the wheel and release workflow):
-  the arm64 venv and in-place rebuild, `scripts/fresh.py` (the loaded
-  extension is built from this checkout), the C and pinned Python tests,
-  `scripts/bitcheck.py` (the detector's bit-level fingerprint), keeping the
-  partition engines byte-identical between hedonic 1 (`release/1.x`) and
-  hedonic 2, what a source change does to run records, timing and memory
-  under `scripts/guard.sh`, and the tag-driven TestPyPI/PyPI release. Local
-  only: it never pushes, tags or publishes.
+- **`hedonic-native-core`** is the path for any change to the core
+  (`native/`, the maturin build in `pyproject.toml`, `hedonic._native`, the
+  wheel and release workflow): the arm64 venv and `maturin develop
+  --release`, `scripts/fresh.py` (the loaded extension is built from this
+  checkout), the cargo and pinned Python tests, `scripts/bitcheck.py` (the
+  detector's bit-level fingerprint, the same as hedonic 2.0's C core), a
+  second core beside it (`HEDONIC_CORE`), what a source change does to run
+  records, timing and memory under `scripts/guard.sh`, and the tag-driven
+  TestPyPI/PyPI release. Local only: it never pushes, tags or publishes.
 - **`snap-networks`** is the path for the SNAP ground-truth networks
   (`~/Databases/Hedonic/Networks`, read-only): `network:cover` pairs, the
   loader's ID alignment, the covered-induced subgraph, detection with
@@ -45,52 +45,46 @@ read `AGENTS.md` from the repository root) and the repository's skills in
 ## Layout
 
 ```
-native/                  # the C core (no igraph dependency), built into hedonic._core
+native/                  # the core (no igraph dependency), built into hedonic._core
 ├── README.md            # the design: game, visits, certified moves, termination, slack,
 │                        #   prefix lemma, verifier, queue, determinism and platforms
-├── include/hedonic_core.h  # C API: hig_partition, hig_cover, options, errors
-├── core/
-│   ├── internal.h       # what the engines share, certified (upward-rounded) arithmetic, hig_fma
-│   ├── softfma.h        # correctly rounded fma in integer arithmetic (from musl, MIT licence)
-│   ├── dispatch.h       # x86_64 without baseline FMA: two builds, chosen from CPUID
-│   ├── shared/          # what both engines share (declared in internal.h)
-│   │   ├── inputs.c     # errors, memory, input checks, adjacency, start labels
-│   │   ├── random.c     # random numbers; which fma the build runs
-│   │   ├── queue.c      # random visiting order + queue
-│   │   └── heap.c       # communities by mass
-│   ├── partition/       # the disjoint engine (hig_partition)
-│   │   ├── partition.h  # its state, functions its files share
-│   │   ├── visit.c      # masses, payoff bounds, a visit, the run
-│   │   └── partition.c  # start, quality, entry points
-│   ├── cover/           # the overlapping engine (hig_cover)
-│   │   ├── cover.h      # its state, functions its files share
-│   │   ├── rows.c       # labels and rows
-│   │   ├── visit.c      # candidates, bounds, best set; the run, the slack
-│   │   ├── start.c      # start and setup
-│   │   └── cover.c      # result, quality, entry points
-│   └── check/
-│       ├── audit.c      # the fixed-cover stability audit (Game.stable_intervals, Game.regrets)
-│       ├── check.c      # the independent verifier (tests only)
-│       └── hedonic_check.h  # traced runs and the verifier (not the API)
-├── unity.c              # the core as one translation unit (how the extension builds it;
-│                        #   HIG_SHARED is static there, `make test` compiles each file alone)
-├── unity_fma.c, dispatch.c  # x86_64: the core again with the FMA instruction, and the entry
-│                        #   points that pick a build from CPUID (empty on other targets)
-├── binding/             # CPython binding: detect() for Game, partition()/cover() over plain
-│                        #   buffers, an exact random.Random bridge
-├── tests/test_core.c    # `make -C native test` (ASan/UBSan + libm check), `test-release` (-O3),
-│                        #   `test-soft-fma`, `test-x86_64` (Rosetta); C bit pins from
-│                        #   random.Random's order; soft fma against the instruction
-├── tests/check_libm.py  # `make -C native check-libm`: the core calls no libm but sqrt, fabs
-└── Makefile
-setup.py                 # the one Extension (hedonic._core); everything else is pyproject.toml
+├── check_libm.py        # the compiled core calls no libm function but sqrt, fabs
+└── rust/                # the core in Rust (crate hedonic-core-rs; its README maps it to 2.0's C)
+    ├── Cargo.toml, Cargo.lock
+    ├── build.rs         # embeds the digest of the crate's sources (hedonic._core.source_sha256)
+    ├── src/
+    │   ├── lib.rs       # the modules, CORE_VERSION, SOURCE_SHA256
+    │   ├── fma.rs       # the fused multiply-add: the instruction, or a correctly rounded soft
+    │   │                #   fma in integer arithmetic (from musl, MIT licence); x86_64 picks at run time
+    │   ├── arith.rs     # certified (upward-rounded) arithmetic
+    │   ├── error.rs     # errors; allocation failures as errors
+    │   ├── graph.rs     # input checks, adjacency, start labels
+    │   ├── rng.rs       # random words: random.Random's MT19937, PCG32, unbiased bounded draws
+    │   ├── queue.rs     # random visiting order + queue + settlement record
+    │   ├── heap.rs      # communities by mass
+    │   ├── prefetch.rs  # cache hints ahead of the queue (no effect on results)
+    │   ├── partition.rs # the disjoint engine: masses, payoff bounds, a visit, the run
+    │   ├── cover.rs     # the overlapping engine: rows, candidates, best set, the run, the slack
+    │   ├── audit.rs     # the fixed-cover stability audit (Game.stable_intervals, Game.regrets)
+    │   ├── verify.rs    # the independent verifier (tests only)
+    │   ├── trace.rs     # traced runs (tests only)
+    │   └── python/      # the CPython module (PyO3): detect() for Game, partition()/cover()
+    │                    #   over plain buffers, an exact random.Random bridge
+    ├── tests/           # `cargo test --release` (+ `--features force-soft-fma`): pins.rs (bit pins
+    │                    #   from random.Random's order, soft fma vs the instruction), core.rs
+    │                    #   (random games against the verifier, errors, the soft fma's hash),
+    │                    #   audit.rs (windowed vs exhaustive); test_differential.py (against a
+    │                    #   second core, hedonic._core_c, when one is installed)
+    ├── bench/bench.py   # timing against a second core
+    └── examples/        # profiling loops (cargo run --release --example ...)
+pyproject.toml           # the package, and its build: maturin compiles native/rust into hedonic._core
 tools/native_tests.py    # the pinned Python tests with HIG_PINNED=1 (what the wheel builds run)
 src/hedonic/
-├── __init__.py          # public API: Game
+├── __init__.py          # public API: Game; HEDONIC_CORE=<name> loads hedonic._core_<name> instead
 ├── Game.py              # Game(igraph.Graph) + community_hedonic
 ├── _native.py           # argument buffers + VertexClustering/VertexCover around hedonic._core
 ├── _game/               # detection, membership state, evaluation bridge, helpers
-├── _audit.py            # argument buffers of the C audit
+├── _audit.py            # argument buffers of the core's audit
 ├── stability.py         # aggregates of stable intervals (stable fraction, measures, Nash window)
 ├── metrics.py           # scores against a reference cover
 ├── utils.py             # seeded sampling for the random disjoint start
@@ -136,9 +130,12 @@ as `initial_membership`.
 Invariants:
 
 1. One public detector API, `Game.community_hedonic`, for both modes.
-2. The detector is this package's purpose-built C core; no pure-Python port
-   and no other backend. The core never reads an igraph graph; the binding
-   passes it the edge list.
+2. The detector is this package's purpose-built core, in Rust
+   (`native/rust`); no pure-Python port and no other backend in the package.
+   (A second build of the same core, such as hedonic 2.0's C core, can be put
+   beside it as `hedonic._core_<name>` and selected with `HEDONIC_CORE=<name>`
+   to compare the two; the package names no such module.) The core never
+   reads an igraph graph; the binding passes it the edge list.
 3. The library's modules import only igraph (`>=1.0`) and NumPy, and SciPy
    inside `hedonic.metrics` for one-to-one matching. Those two are the only
    dependencies of `pip install hedonic`; SciPy is the `metrics` extra, and
@@ -147,45 +144,53 @@ Invariants:
    points refuse to start without it and name the extra (`CLI.CLI_MODULES`
    must list the `cli` extra; a test checks). Nothing checks igraph's version
    at import.
-4. Results are bit-identical across platforms: rounding is fixed by the
-   source (`-ffp-contract=off`, `/fp:strict`, every fused multiply-add an
-   explicit `hig_fma`: the instruction or the core's soft fma, never libm's;
-   no libm call but `sqrt`: `make -C native check-libm`), the x86_64 FMA and
-   soft builds must agree bit for bit, and the pins in
-   `native/tests/test_core.c`, `tests/test_native_core.py` and
-   `tests/test_native_backend.py` (the same results) must pass unchanged. If
-   a change alters a pinned result, it changes the algorithm: say so and
-   re-pin deliberately, in C and Python together.
+4. Results are bit-identical across platforms, and with hedonic 2.0's C
+   core: rounding is fixed by the source (rustc never contracts `a * b + c`;
+   every fused multiply-add is an explicit `fma::fma`, the instruction or the
+   core's soft fma, never libm's, and `f64::mul_add` appears nowhere else; no
+   `f64` function but `sqrt`, `abs`, `min`, `max` and comparisons, so no
+   libm call but `sqrt` and `fabs`: `native/check_libm.py`; no float
+   `sum()`, every sum in its written order), the instruction and the soft
+   fma must agree bit for bit (`cargo test --release --features
+   force-soft-fma`), and the pins in `native/rust/tests/pins.rs`,
+   `tests/test_native_core.py` and `tests/test_native_backend.py` (the same
+   results, hedonic 2.0's) must pass unchanged. If a change alters a pinned
+   result, it changes the algorithm: say so and re-pin deliberately, in Rust
+   and Python together.
 5. Every call returns a certified equilibrium. `tests/test_equilibrium.py`
    replays traced runs in exact arithmetic (every accepted move raises the
    exact potential; no deviation beats the reported slack; the slack is 0 in
-   exact arithmetic) and runs the C verifier; keep it passing, and keep the
-   bounds, the termination argument and the prefix lemma of
-   `native/README.md` true when touching the move rule. C code stays plain
-   C11: no VLAs, `long double`, `_Atomic`, `complex.h` or `stdatomic.h`, and
-   GNU builtins only behind compiler checks with an MSVC or portable
-   equivalent (the FMA instruction, clz, CPUID, the dispatcher's atomics).
-   MSVC builds it with `/fp:strict`.
+   exact arithmetic) and runs the core's verifier; keep it passing, and keep
+   the bounds, the termination argument and the prefix lemma of
+   `native/README.md` true when touching the move rule. The crate is stable
+   Rust with one dependency (PyO3, for the module only): no fast-math, no
+   `-C target-cpu=native` or target features in the build (x86_64 picks the
+   FMA instruction at run time in `fma.rs`), and `unsafe` only where
+   `native/rust/README.md` says (the hot paths, the generator's state, the FMA
+   instruction), each with its invariant stated and, where it can be,
+   debug-asserted. It is hand-formatted at about 120 columns: never run
+   `cargo fmt` on it.
 6. Scoring logic lives in `hedonic.metrics` only.
 
 ## The stability audit
 
 `Game.stable_intervals` and `Game.regrets` audit a fixed cover over
-resolution [0, 1] (`native/core/check/audit.c`, `native/README.md`); the
+resolution [0, 1] (`native/rust/src/audit.rs`, `native/README.md`); the
 tolerance is the paper's `1e-10 + 1e-9 * max(1, |utility|)`, not the
 detector's certified slack. Its intervals are those of the exhaustive search
-over every cell between pairwise score crossings, but `hig_audit_intervals`
+over every cell between pairwise score crossings, but `AuditState::intervals`
 evaluates only the cells convexity cannot settle (a best-set window, certified
-whole-cell ranges); `hig_audit_intervals_exhaustive` (tests only) is the
-oracle, and `make -C native test` checks the two agree bit for bit. Every experiment that audits a cover (cover
+whole-cell ranges); `AuditState::intervals_exhaustive` (tests only) is the
+oracle, and `cargo test` (`native/rust/tests/audit.rs`) checks the two agree
+bit for bit. Every experiment that audits a cover (cover
 audits and the benchmark's `--robustness` stage, the post-hoc analysis, the
 ground-truth spectrum, the calibration's label-free audit) goes through
-`hedonic.experiments.overlapping.stability`: `prepare()` builds the C state
-(engine `"c"`, the default) or the pure-Python reference (`"python"`,
+`hedonic.experiments.overlapping.stability`: `prepare()` builds the core's
+state (engine `"c"`, the default; the name predates the Rust core) or the pure-Python reference (`"python"`,
 `robustness.FractionalState`, for tests); both return the same floats, bit
 for bit, and `tests/experiments/test_studies_audit_engines.py` checks every
 consumer on both. `--workers` forks processes that split vertex ranges over
-the read-only C state. The reference spells out CPython 3.12's compensated
+the read-only state. The reference spells out CPython 3.12's compensated
 `sum` for the two current-utility coefficients, so it does not depend on the
 interpreter. Do not add a second audit implementation.
 
@@ -273,10 +278,11 @@ hedonic-exp list                       # analysis and utility commands
   NAME`. CoDeSEG has no licence file and is never vendored; CDlib runs only
   in its locked environment, never in the hedonic process.
 - **Identity.** A record's identity names Hedonic by `runtime.build_identity()`:
-  the release series (`major.minor`, so `2.0.0.devN`, `rcN` and patch
-  releases share it) and `hedonic._core.source_sha256`, the digest of the C
-  sources that `setup.py` embeds at build time (rounding is fixed by the
-  source, so every wheel of one source computes the same results). A source
+  the release series (`major.minor`, so `2.1.0.devN`, `rcN` and patch
+  releases share it) and `hedonic._core.source_sha256`, the digest of the
+  core's sources that `native/rust/build.rs` embeds at build time (every
+  `src/**/*.rs`, `build.rs` and `Cargo.toml` of the crate; rounding is fixed
+  by the source, so every wheel of one source computes the same results). A source
   change proven to leave every recorded result unchanged (the audit's
   windowed search, bit for bit the exhaustive one) maps its digest to the
   earlier one in `runtime.EQUIVALENT_CORES`, so finished records stay valid;
@@ -298,8 +304,8 @@ hedonic-exp list                       # analysis and utility commands
   `HEDONIC_FINGERPRINT_CACHE`) and hashes memberships, quality and slack bits;
   `store.runtime_identity()` carries it as `hedonic_partition_fingerprint` next
   to `hedonic_core_source_sha256`, and `METHOD_RUNTIME_FIELDS["Hedonic"]` keys on
-  it, so hedonic 1 and hedonic 2 (other sources, the same partitions) share a
-  store. Each shard records the `source` that wrote a method's rows
+  it, so hedonic 1, hedonic 2.0 (C) and hedonic 2.1 (Rust), other sources with
+  the same partitions, share a store. Each shard records the `source` that wrote a method's rows
   (`SOURCE_FIELDS`); `disjoint-store` lists the graphs per source. Before a run
   keeps rows of a source other than the loaded one, `store.check_adoption`
   replays a sample of them with this build (5 shards x 10 rows per source) and
@@ -483,22 +489,27 @@ hedonic-exp list                       # analysis and utility commands
 ## Checks
 
 ```bash
-python -m pip install -e ".[cli]" pytest       # or: uv pip install -e ".[cli]" pytest
-python setup.py build_ext --inplace            # after editing native/
-make -C native test test-release test-soft-fma test-x86_64   # C tests, libm check, x86_64 (Rosetta)
+python -m pip install -e ".[cli]" pytest       # maturin builds native/rust into hedonic._core
+maturin develop --release                      # after editing native/rust (or reinstall as above)
+(cd native/rust && cargo test --release && cargo test --release --features force-soft-fma)
 python tools/native_tests.py                   # pinned Python tests (fails on any skip)
+python native/check_libm.py "$(python -c 'import hedonic._core as c; print(c.__file__)')"
 python -m pytest                               # library and tests/experiments
 ```
 
-`.github/workflows/wheels.yml` runs the C tests (GCC, Clang, MSVC) and builds
-and tests the wheels on Linux, macOS and Windows; every wheel job also runs
-the C tests and `tools/native_tests.py` (HIG_PINNED=1, no skips), and
-publishing needs every job. Branch pushes only build and test; a tag publishes,
-and sets the version (`tools/release_version.py`; `pyproject.toml` holds the
-release): `v2.0.0.devN` goes to TestPyPI, `v2.0.0rcN` (a pre-release) and
-`v2.0.0` to PyPI, all by trusted publishing (environments `testpypi`, `pypi`).
-After each upload the `verify` jobs install that version from its index on
-every platform and run the pinned tests and the test suite. Try a release as
+`.github/workflows/rust.yml` runs the cargo tests (release, soft fma, debug,
+and x86_64 under Rosetta on macOS) on Linux, macOS and Windows, then builds
+the package and runs the pinned tests, the libm check and the whole suite.
+`.github/workflows/wheels.yml` builds and tests the wheels on Linux, macOS
+and Windows; every wheel job runs `tools/native_tests.py` (HIG_PINNED=1, no
+skips) on its wheels, and publishing needs every job. Branch pushes only
+build and test; a tag publishes, and sets the version
+(`tools/release_version.py` writes it into `pyproject.toml`'s `[project]`,
+where maturin reads it; `pyproject.toml` holds the release):
+`v2.1.0.devN` goes to TestPyPI, `v2.1.0rcN` (a pre-release) and `v2.1.0` to
+PyPI, all by trusted publishing (environments `testpypi`, `pypi`). After
+each upload the `verify` jobs install that version from its index on every
+platform and run the pinned tests and the test suite. Try a release as
 `.devN`, then `rcN`, and tag the release on the commit of the last good
 candidate.
 
@@ -521,6 +532,10 @@ Validation, canonicalisation, scoring, audits and saving come after it.
   worker's peak includes its interpreter and CDlib baseline (about 200 MB).
 - A new adapter times its detector through `timing.active()` and spawns nothing with `subprocess.run`
   (`tests/experiments/test_timing_fairness.py` checks both). `unit_seconds` is the whole unit, for bookkeeping.
+- Hedonic's detector time is a property of its core: records name it (the
+  source digest, and `runtime_versions()`'s path and bytes of `hedonic._core`).
+  Times of hedonic 2.0 (C) and 2.1 (Rust), or of a core selected with
+  `HEDONIC_CORE`, compare cores, not only the game.
 - The disjoint store's `duration` is the detector call only (`store.TIMING_SCOPE = "detector-call-v1"`, part of the
   spec, so a store timed another way is refused). Hedonic-only studies and calibration probes keep their own
   wall-clock for budget accounting; they are not method comparisons.

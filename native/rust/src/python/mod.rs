@@ -1,7 +1,6 @@
-//! The CPython module `hedonic_core_rs`: the functions of hedonic._core
-//! (native/binding/) with the same arguments, results, errors and messages,
-//! over the Rust engines. `HEDONIC_CORE=rust` makes the package load it as
-//! hedonic._core.
+//! The CPython module hedonic._core (feature `core-module`; `hedonic_core_rs`
+//! without it): the functions of hedonic 2.0's C extension (its binding/) with
+//! the same arguments, results, errors and messages, over the Rust engines.
 //!
 //! The GIL is held throughout, as in the C binding: interruption checks and,
 //! for a generator that is not an exact random.Random, every random number
@@ -677,8 +676,8 @@ fn hedonic_core_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     module(m)
 }
 
-/// The same module as hedonic's own extension, hedonic._core (the package
-/// built with the Rust core alone: tools/rust_pyproject.py).
+/// The same module as hedonic's own extension, hedonic._core (the package's
+/// build: the repository's pyproject.toml).
 #[cfg(feature = "core-module")]
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {

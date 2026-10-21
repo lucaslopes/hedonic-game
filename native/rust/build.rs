@@ -1,5 +1,5 @@
 //! Embeds the digest of the crate's sources as HIG_RUST_SOURCE_SHA256, in the
-//! format of setup.py's source_digest (path, length and bytes of each file, in
+//! format of hedonic 2.0's setup.py source_digest (path, length and bytes of each file, in
 //! path order, CRLF as LF). No dependency: SHA-256 is written out below.
 
 use std::fs;

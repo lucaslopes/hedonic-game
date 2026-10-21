@@ -1,4 +1,4 @@
-"""Argument buffers for the fixed-cover C audit (no Python scoring)."""
+"""Argument buffers for the core's fixed-cover audit (no Python scoring)."""
 from itertools import chain
 from numbers import Integral
 

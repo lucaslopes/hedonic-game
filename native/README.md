@@ -1,41 +1,43 @@
-# The C core
+# The core
 
 `native/` is the detector of `hedonic`: best-response local moving for the
-CPM hedonic game, disjoint and overlapping, written for this package. It has
-no dependency beyond the C library and is compiled into `hedonic._core`.
+CPM hedonic game, disjoint and overlapping, written for this package, and the
+fixed-cover stability audit. It is compiled into the extension
+`hedonic._core`. This document is its design: the game, a visit, certified
+moves, termination, the slack, the prefix lemma, the verifier, the data
+structures, determinism and the audit. They hold for every implementation of
+the core; the names below are those of the Rust crate, `native/rust/`, which
+is the core of hedonic 2.1. hedonic 2.0 shipped the same core in C, and the
+Rust core computes its results bit for bit (`native/rust/README.md` maps each
+module to the C file it ports).
 
 ```
-include/hedonic_core.h   the API: hig_partition, hig_cover, options, errors
-core/internal.h          what the engines share, certified arithmetic, hig_fma
-core/softfma.h           a correctly rounded fma in integer arithmetic (from musl;
-                         MIT licence)
-core/dispatch.h          which builds a target compiles (x86_64: two)
-core/shared/             what both engines share (declared in internal.h):
-  inputs.c               errors and memory, input checks, adjacency, start labels
-  random.c               random numbers; which fma the build runs
-  queue.c                the random visiting order and the queue
-  heap.c                 the heap of communities by mass
-core/partition/          the disjoint engine
-  partition.h            its state and what its files share
-  visit.c                masses, payoff bounds, a visit, the run
-  partition.c            the start, the quality, the entry points
-core/cover/              the overlapping engine (unit-l2 memberships)
-  cover.h                its state and what its files share
-  rows.c                 labels and rows
-  visit.c                candidates, bounds, the best set; the run, the slack
-  start.c                the start and the setup
-  cover.c                the result, the quality, the entry points
-core/check/              fixed-cover audit and independent test verifier
-  check.c                the independent verifier
-  hedonic_check.h        traced runs and the verifier (not the API)
-unity.c                  the core as one translation unit (the extension's build)
-unity_fma.c, dispatch.c  x86_64 only: the core again with the FMA instruction, and
-                         the entry points that choose a build from CPUID (empty
-                         on other targets)
-binding/                 the CPython module hedonic._core
-tests/test_core.c        make test (ASan/UBSan), make test-release (-O3),
-                         make test-soft-fma, make test-x86_64 (Rosetta)
-tests/check_libm.py      make check-libm: no libm call but sqrt, fabs
+README.md                this design
+check_libm.py            no libm call but sqrt and fabs, in any build of the core
+rust/                    the core in Rust (the crate hedonic-core-rs)
+  Cargo.toml, build.rs   the crate; build.rs embeds the digest of its sources
+                         (hedonic._core.source_sha256)
+  src/fma.rs             the fused multiply-add: the instruction, or a correctly
+                         rounded soft fma in integer arithmetic (from musl; MIT)
+  src/arith.rs           certified (upward-rounded) arithmetic
+  src/error.rs           errors; allocation failures as errors, not aborts
+  src/graph.rs           inputs: checks, adjacency, start labels
+  src/rng.rs             random words: random.Random's MT19937, PCG32, unbiased
+                         bounded draws
+  src/queue.rs           the random visiting order, the queue, the settlement record
+  src/heap.rs            the heap of communities by mass
+  src/prefetch.rs        cache hints ahead of the queue (no effect on any result)
+  src/partition.rs       the disjoint engine: masses, payoff bounds, a visit, the run
+  src/cover.rs           the overlapping engine (unit-l2 memberships): rows,
+                         candidates, the best set, the run, the slack
+  src/audit.rs           the fixed-cover stability audit
+  src/verify.rs          the independent verifier (tests only)
+  src/trace.rs           traced runs (tests only)
+  src/python/            the CPython module hedonic._core (PyO3)
+  tests/pins.rs          cargo test: the bit pins, the soft fma against the instruction
+  tests/core.rs          random games against the verifier, errors, limits, callbacks,
+                         the soft fma's hash
+  tests/audit.rs         the audit, and its windowed search against the exhaustive one
 ```
 
 ## The game
@@ -100,10 +102,10 @@ bound of its rounding error, and a vertex moves only when
 **The bounds.** They use the standard model of IEEE 754 binary64 with
 rounding to nearest (`u = 2^-53`, `eta` the smallest subnormal): a sum is off
 by at most `u` times its rounded value, a product or `fma` by at most that
-plus `eta / 2` (`fma` here and below is the core's `hig_fma`: see
+plus `eta / 2` (`fma` here and below is the core's own `fma::fma`: see
 "Determinism and platforms"). Every bound is itself computed with operations
-rounded upward (`core/internal.h`: `hig_up(x) = fma(x, 4u, x) >= x (1 + u)^2`,
-`hig_add_up`, `hig_mul_up`), so it is never below the quantity it bounds,
+rounded upward (`arith.rs`: `up(x) = fma(x, 4u, x) >= x (1 + u)^2`,
+`add_up`, `mul_up`), so it is never below the quantity it bounds,
 and it is exactly 0 when every input to it is 0. The ingredients:
 
 * *Edge weights to a community* (`w(v, C)` of a partition, a label's
@@ -118,7 +120,7 @@ and it is exactly 0 when every input to it is 0. The ingredients:
   accumulate any). `theta` is a running maximum of `(err + |lo|) / hi` over
   all masses. When a mass's error exceeds `16 u` of it (which only
   cancellation does: a heavy member leaves and light ones remain), every mass
-  is summed afresh from the members (`hig_*_rebuild`, O(n + incidences)),
+  is summed afresh from the members (`rebuild_masses`, O(n + incidences)),
   and `theta` restarts. A cover's terms `n_u f_u` are themselves
   approximations of `n_u / sqrt(|sigma_u|)` (relative error at most
   `kappa = 5u`); when a term or a support term can underflow, `n eta` and
@@ -169,7 +171,8 @@ finitely many covers with at most `M` of `n M` labels per vertex) the run
 stops. Rebuilding masses changes no state. There is no cap on rounds or
 visits, no tolerance parameter and no divergence error. Inputs are bounded
 so that nothing overflows: `sum |w| <= DBL_MAX / 4096` and
-`|gamma| max(N, 1)^2 M <= DBL_MAX / 4096` (otherwise `HIG_EOVERFLOW`).
+`|gamma| max(N, 1)^2 M <= DBL_MAX / 4096` (otherwise an overflow error,
+`Kind::Overflow`, Python's `OverflowError`).
 
 ## The equilibrium certificate and its slack
 
@@ -238,7 +241,7 @@ equilibrium. Other weights carry nonzero bounds even when they are integers
 when every vertex's best deviation is certainly worse (`d + e <= 0`), which
 is common with integer weights. A cover's intensities `1/sqrt(k)` are
 rounded, so a cover's slack is never 0 (normalized, about `1e-15` on
-Zachary's karate club and smaller on larger graphs). `hig_partition` and `hig_cover`
+Zachary's karate club and smaller on larger graphs). `partition` and `cover`
 return it divided by `|W|` (normalized like the quality, rounded up, plus
 `eta`; NaN if `W = 0`), and the Python layer reports it as
 `equilibrium_slack` in `_hedonic_provenance`. On complete DBLP and Amazon
@@ -278,14 +281,14 @@ random rationals.
 
 ## Verifying a result
 
-`core/check/check.c` (`hig_verify_partition`, `hig_verify_cover`; tests only,
-declared in `core/check/hedonic_check.h`) checks a result independently of the
+`verify.rs` (`verify_partition`, `verify_cover`; tests only) checks a result
+independently of the
 engines: no queue, no record of past visits, masses summed afresh, and every
 feasible deviation of every vertex scored with its own bound (every
 neighbour community or label, an empty community or fresh label, and the
 proxies of the rest as above), giving the largest certified lower bound and
-the largest upper bound of a deviation's gain. `make test` runs it on every
-random game of `tests/test_core.c` and requires its certified gain to stay
+the largest upper bound of a deviation's gain. `cargo test` runs it on every
+random game of `tests/core.rs` and requires its certified gain to stay
 at or below the slack the engine reported. The Python tests reach it as
 `hedonic._core._verify_partition` / `_verify_cover`, next to the traced runs
 `_trace_partition` / `_trace_cover` (start state, every accepted move with
@@ -303,7 +306,8 @@ alternative, queueing every neighbour, was measured on complete DBLP and
 Amazon and on two synthetic graphs (an SBM with 10,000 vertices and 93,892
 edges, an Erdos-Renyi graph with 100,000 vertices and 509,965 edges): the C
 core alone, seeds 0-2 summed, the best of three interleaved rounds, Apple M1
-Max under background load:
+Max under background load (measured on the C core of hedonic 2.0, whose visits
+the Rust core repeats move for move):
 
 | Graph, resolution | neighbours outside `C` (kept) | every neighbour |
 |-------------------|------------------------------:|----------------:|
@@ -346,105 +350,98 @@ retain the original sparse accumulation, including signed-zero behavior.
 
 ## Determinism and platforms
 
-No threads, fixed summation orders, `-ffp-contract=off` (`/fp:strict` on
-MSVC), double everywhere (no `long double`), and only operations that IEEE
-754 requires to be correctly rounded: `+ - * /`, `sqrt` and the fused
-multiply-add. Given the inputs and the random words, results are therefore
-identical on every platform the wheels are built for; the one exception
-would be x87 double rounding on 32-bit x86, which is not a wheel target.
-Assumed, as for any floating-point code: the default environment (rounding
-to nearest, subnormals not flushed to zero).
+No threads, fixed summation orders, no contraction of `a * b + c` into a
+fused multiply-add (rustc never contracts, and there is no fast-math), `f64`
+everywhere, and only operations that IEEE 754 requires to be correctly
+rounded: `+ - * /`, `sqrt` and the fused multiply-add (`abs`, `min`, `max`
+and comparisons are exact). Given the inputs and the random words, results
+are therefore identical on every platform the wheels are built for; the one
+exception would be x87 double rounding on 32-bit x86, which is not a wheel
+target. Assumed, as for any floating-point code: the default environment
+(rounding to nearest, subnormals not flushed to zero). Sums are written in a
+fixed order and never left to an iterator adaptor whose order or
+association could change (`sum()` over floats is not used).
 
-**No libm.** `make check-libm` (part of `make test`, and of every CI job)
-checks that the compiled core calls no libm function but `sqrt` and `fabs` (and no
+**No libm.** `check_libm.py` (a step of the CI's Rust job) checks that the
+compiled extension calls no libm function but `sqrt` and `fabs` (and no
 `float` or `long double` variant). Functions such as `exp`, `log` or `pow`
-have no rounding requirement and differ between C libraries. `sqrt` is
-correctly rounded by IEEE 754 and is a hardware instruction on every target
-(compilers inline it; a libm `sqrt` computes the same bits). `fabs` is
-exact (it clears the sign bit); MSVC calls it under `/fp:strict` where other
-compilers inline it, with the same bits. The fused
-multiply-add is also correctly rounded by IEEE 754, but on x86_64 without
-`-mfma` (the wheels' baseline) `fma()` is a libm call, which would make the
-results rest on each C library's `fma` (glibc, musl, macOS, the Windows
-UCRT) being right. The core never calls it. Every fused multiply-add is
-`hig_fma` (`core/internal.h`):
+(Rust's `f64::exp`, `ln`, `powf`, and `powi`, whose rounding is
+unspecified) have no rounding requirement and differ between C libraries;
+the core uses none of them. `f64::sqrt` is correctly rounded by IEEE 754
+and is an instruction on every target; `f64::abs` clears the sign bit. The
+fused multiply-add is also correctly rounded by IEEE 754, but `f64::mul_add`
+on a target without the instruction (x86_64 without `-C
+target-feature=+fma`, the wheels' baseline) is a call to the C library's
+`fma`, which would make the results rest on each C library's `fma` (glibc,
+musl, macOS, the Windows UCRT) being right. The core never calls it. Every
+fused multiply-add is `fma::fma`:
 
-* the instruction, where the target guarantees one at compile time: arm64
-  with GCC or Clang (`__builtin_fma`, which is `fmadd`), x86_64 with `-mfma`
-  or MSVC `/arch:AVX2` (`__FMA__`, `__AVX2__`), and the FMA build below;
-* otherwise `hig_soft_fma` (`core/softfma.h`), a correctly rounded fma in
-  integer arithmetic: the exact 106-bit product of the significands (four
-  32x32-bit products), the addend aligned with a sticky bit, an exact
-  128-bit sum, and one rounding to nearest-even done on the integer bits
-  (normal, subnormal and overflowing results), the double assembled from its
-  bits. It uses no `long double`, no libm and nothing of the floating-point
+* the instruction where the target guarantees it: aarch64 (`f64::mul_add`,
+  which is `fmadd` there and never a call);
+* on x86_64, the instruction (`_mm_fmadd_sd` in a function compiled with
+  `#[target_feature(enable = "fma")]`) when the CPU has it, else the soft
+  fma. The choice is made at the first call (`is_x86_feature_detected!`,
+  which reads CPUID and checks that the OS saves the AVX state) and kept in
+  an atomic: one build, dispatched at run time;
+* otherwise, and everywhere with the cargo feature `force-soft-fma`,
+  `soft_fma`, a correctly rounded fma in integer arithmetic: the exact
+  106-bit product of the significands, the addend aligned with a sticky
+  bit, an exact 128-bit sum, and one rounding to nearest-even done on the
+  integer bits (normal, subnormal and overflowing results), the double
+  assembled from its bits. It uses no libm and nothing of the floating-point
   environment (it raises no exception flags); the only floating-point
   operations left are on special operands (zeros, infinities, NaNs), where
-  `x * y` and `+` are exact or give the IEEE result. MSVC on arm64 takes
-  this path too, because whether its `fma()` is the instruction is not
-  documented.
+  `x * y` and `+` are exact or give the IEEE result.
 
-**x86_64 dispatch.** On x86_64 targets without a baseline FMA (`core/dispatch.h`)
-the core is compiled twice: `unity.c` with the soft fma, its entry points
-named `hig_x86soft_*`, and `unity_fma.c` (which includes `unity.c`) with every
-function given `target("fma")` (GCC: `#pragma GCC target`, Clang:
-`#pragma clang attribute`; MSVC: the `_mm_fmadd_sd` intrinsic, which needs no
-`/arch`), named `hig_x86fma_*`. `dispatch.c` defines the public functions:
-at the first call it reads CPUID (FMA, AVX and OSXSAVE in leaf 1, and XGETBV:
-the OS saves the XMM and YMM state) and from then on calls the FMA build or
-the soft one. Both compute the same correctly rounded `fma`, contraction is
-off in both, and nothing else changes how an operation rounds, so the two
-builds return the same results bit for bit; the choice only changes the
-speed. `setup.py` lists the same three files on every platform: elsewhere
-`unity_fma.c` and `dispatch.c` compile to nothing, so a cross or universal2
-build decides per target in the preprocessor. `HIG_FORCE_SOFT_FMA` builds
-the soft fma everywhere (tests); `hig_fma_path()` and `hig_fma_select()`
-(`core/check/hedonic_check.h`, tests only) report and force the build.
+The instruction and the soft fma compute the same correctly rounded `fma`,
+so the choice only changes the speed. `fma_path()` (`hedonic._core.fma_path()`)
+reports it: `instruction`, `soft`, or on x86_64 `dispatch: instruction` /
+`dispatch: soft`.
 
-**Tests.** `tests/test_core.c` compares `hig_soft_fma` with the instruction
-(arm64; x86_64 when the CPU has FMA) on 10^6 adversarial cases (random bit
-patterns and doubles, cancellation to the product's own rounding error,
-exact zeros, signed zeros and underflowing products, subnormal products and
-results, overflow, special operands, exact halfway cases built from integer
-products, exponent gaps up to 1100, addends near half an ulp) and checks a
-hash of its results against the one recorded on arm64, so a target without
-the instruction checks the same results; `HIG_FMA_CASES` sets the count. On
+**Tests.** `tests/pins.rs` compares `soft_fma` with the instruction (aarch64;
+x86_64 when the CPU has FMA), and `tests/core.rs` runs it on 10^6
+adversarial cases (random bit patterns and doubles, cancellation to the
+product's own rounding error, exact zeros, signed zeros and underflowing
+products, subnormal products and results, overflow, special operands, exact
+halfway cases built from integer products, exponent gaps up to 1100, addends
+near half an ulp) and checks a hash of its results against the one recorded
+on arm64, so a target without the instruction checks the same results. On
 arm64 (Apple M1 Max) 10^9 such cases gave 0 differences from `fmadd`, bit
 for bit (NaNs compared as NaN), among them 19.5 million exact ties (248,000
 with subnormal results) and 114 million zero, 101 million subnormal and 99
 million infinite results. (musl 1.2.5, the source, returns `+0` for
 `fma(x, y, +0)` when `x y` underflows to `-0`; IEEE 754 and the instruction
-give `-0`, as `hig_soft_fma` does.) `make test-soft-fma` runs the whole C
-suite with the soft fma, and `make test-release` and `make test` on an x86_64
-target run it as dispatched and with each build forced (`HIG_TEST_FMA`); the
-pins are the same in every case. `make test-x86_64` does all of this as
-x86_64 under Rosetta: Rosetta 2 executes FMA and AVX2 code but reports
-neither in CPUID unless `ROSETTA_ADVERTISE_AVX=1` (macOS 15 and later), so
-the tests run once dispatched to the soft build and once to the instruction.
+give `-0`, as `soft_fma` does.) `cargo test --release --features
+force-soft-fma` runs the whole suite with the soft fma, and on macOS the CI
+runs both again as x86_64 under Rosetta 2, where the CPU reports no FMA
+unless `ROSETTA_ADVERTISE_AVX=1`; the pins are the same in every case.
 
-`test_core.c` pins results bit for bit from the seeded order of Python's
-`random.Random(seed)` (an MT19937 equivalent), and the same results are
-pinned in the Python tests. Sorts break every tie by id. The result is
-relabelled `0, 1, ...` in order of first appearance; cover rows are sorted.
+`tests/pins.rs` pins results bit for bit from the seeded order of Python's
+`random.Random(seed)` (an MT19937 equivalent, `rng.rs`), and the same
+results are pinned in the Python tests (`tests/test_native_core.py`,
+`tests/test_native_backend.py`; `tools/native_tests.py` runs them with
+`HIG_PINNED=1`). They are the pins of hedonic 2.0's C core, unchanged. Sorts
+break every tie by id. The result is relabelled `0, 1, ...` in order of
+first appearance; cover rows are sorted.
 
 ## Licence
 
 GPL-3.0-or-later, like the package. The core was written for `hedonic`; it
-contains no code from igraph. `core/softfma.h` is adapted from musl libc
-1.2.5's `src/math/fma.c` (Copyright 2005-2020 Rich Felker, et al.) and keeps
-musl's MIT licence notice; the changes (the integer rounding and assembly
-of the result instead of `scalbn` and the floating-point environment, integer
-normalization of subnormals, the sign of an underflowing product plus zero,
-C portability) are released under the same MIT licence, which is compatible
-with the GPL. The binding's `binding/random.c` implements the MT19937 step
-(Matsumoto and Nishimura) as CPython's `Modules/_randommodule.c` does, to
-reproduce `random.Random` draws.
+contains no code from igraph. The soft fma (`fma.rs`) is adapted from musl
+libc 1.2.5's `src/math/fma.c` (Copyright 2005-2020 Rich Felker, et al.) and
+keeps musl's MIT licence notice; the changes (the integer rounding and
+assembly of the result instead of `scalbn` and the floating-point
+environment, integer normalization of subnormals, the sign of an
+underflowing product plus zero, the port) are released under the same MIT
+licence, which is compatible with the GPL. `rng.rs` implements the MT19937
+step (Matsumoto and Nishimura) as CPython's `Modules/_randommodule.c` does,
+to reproduce `random.Random` draws.
 
 ## Fixed-cover stability audit
 
-`hig_audit_prepare`, `hig_audit_intervals` and `hig_audit_regrets` in
-`core/check/audit.c` are public APIs declared in `include/hedonic_core.h`.
-They audit an existing labelled cover, without changing it or running the
+`AuditState::prepare`, `AuditState::intervals` and `AuditState::regrets` in
+`audit.rs` (in Python, the extension's `_audit_prepare`, `_audit_intervals`
+and `_audit_regrets`) audit an existing labelled cover, without changing it or running the
 detector. In Python, use `Game.stable_intervals` and `Game.regrets`; the
 module `hedonic.stability` supplies grid fractions, linear/log measures and
 the Nash-window intersection. An interval is closed and lies in [0, 1].
@@ -458,27 +455,26 @@ grid; it does not assert an exact-arithmetic equilibrium certificate.
 
 Preparation copies and sorts each row, removes repeated labels, computes
 `1.0 / sqrt(row_length)`, sums masses in vertex order, and orders labels by
-(mass, label). C labels must be contiguous non-negative integers; the Python
+(mass, label). The core's labels must be contiguous non-negative integers; the Python
 facade also renumbers gaps in numeric label order, as detector starts do.
 Rows must be non-empty. Duplicate community bodies remain distinct labels.
 Callers must explicitly complete uncovered vertices, for example with private
 labels. The cap defaults to the largest row and may exceed it, but cannot be
-smaller. Only unit node weights are supported: the C API rejects non-unit
-`graph.node_weights`. Python's audit has no node-weight parameter.
+smaller. Only unit node weights are supported: the core rejects non-unit
+node weights. Python's audit has no node-weight parameter.
 Undirected loopless graphs, parallel edges, isolated vertices, and zero edge
 weights are supported. Python defaults to an existing `weight` edge attribute,
 then to unit weights. Audits accept finite non-negative edge weights only.
 
 The prepared state is immutable and owns its adjacency, rows, intensities,
-masses and lightest-label order; it borrows no input memory. Release it with
-`hig_audit_free`. A query selects a range through `hig_audit_selection_t` or
-an ordered array of vertex indices (repeats allowed). Interval output is CSR
-(`offset` plus `hig_interval_t` pairs), released with
-`hig_audit_intervals_free`. Regret and tolerance outputs are caller-owned,
-row-major arrays with one row per selected vertex. Initialize options with
-`HIG_AUDIT_OPTIONS_INIT`; `prune=0` selects the paper's larger candidate
-superset for cross-checks. Prepared state can be shared by concurrent readers
-or inherited by forked processes; each query owns its scratch space.
+masses and lightest-label order; it borrows no input memory. A query selects
+a range of vertices or an ordered list of vertex indices (repeats allowed,
+`Selection`); intervals come back one list per selected vertex, and regrets
+and tolerances one row per selected vertex. `AuditOptions` holds the cap,
+isolation, the tolerances and `prune` (`prune` off selects the paper's larger
+candidate superset for cross-checks). Prepared state can be shared by
+concurrent readers or inherited by forked processes; each query owns its
+scratch space.
 
 There is no global (vertex, label) support table. At each visit, the adjacency
 is traversed in edge-id order, skipping zero-weight edges. Each contribution
@@ -494,7 +490,7 @@ score prefixes use sequential binary64 additions. Utilities divide by
 `sqrt(k)`; they never multiply by its reciprocal. No audit expression uses
 FMA, and contraction remains disabled. The supplied paper reference runs on
 CPython 3.12, whose built-in `sum` uses compensation: *only* `vertex_affine`'s
-`cur_a` and `cur_b` use that sum. The C audit reproduces those two compensated
+`cur_a` and `cur_b` use that sum. The audit reproduces those two compensated
 sums explicitly, independently of the host Python version. This is a narrow
 exception to sequential summation, needed for bit-identical interval endpoints
 with that reference. A Python 3.11 execution of the paper code can therefore
@@ -511,7 +507,7 @@ original operation order; surviving pieces are merged with the absolute gap
 clamp differences at most `1e-15` to zero. The two paths may disagree within
 rounding of an interval endpoint.
 
-`hig_audit_intervals` returns that search's intervals, bit for bit, without
+`AuditState::intervals` returns that search's intervals, bit for bit, without
 visiting most of its cells. It rests on convexity. Every candidate set S of
 size k has an affine utility `U_S(x) = (a_S - x b_S) / sqrt(k)`, and the
 current utility `u(x)` is affine, so the best response `best(x) = max_S
@@ -545,8 +541,8 @@ the disjoint game is likewise an interval bounded by Familiarity Indices.
 The cells visited are cells of the exhaustive search, in its order, and the
 ones skipped emit nothing or a whole-cell piece, so the merged output is the
 same. The exhaustive search stays in the core as
-`hig_audit_intervals_exhaustive` (tests only, `core/check/hedonic_check.h`);
-`make test` compares the two bit for bit on random covers with every option
+`AuditState::intervals_exhaustive` (tests only); `cargo test`
+(`tests/audit.rs`) compares the two bit for bit on random covers with every option
 and several tolerances.
 
 With n vertices, m edges, I membership incidences and K occupied labels,
@@ -563,11 +559,11 @@ Hedonic cover (hubs with over 10,000 candidates), with 8 workers, the exact
 stage of one cover's audit went from 48 and 63 minutes (the cover and
 labelled profiles) to 17 and 32 seconds. Counts and offsets are 64-bit,
 allocation products are checked, and out-of-range input or arithmetic that
-could overflow returns a core error. Signal callbacks run throughout queries,
-including breakpoint generation and sorting; the binding uses the detector's
-`PyErr_CheckSignals` callback.
+could overflow returns a core error. The interruption callback runs throughout
+queries, including breakpoint generation and sorting; the binding checks
+Python's signals with it, as the detector does.
 
-`tests/test_audit.c` checks the C API under all three native test targets.
+`tests/audit.rs` checks the audit under every cargo test configuration.
 `tests/test_stability_audit.py` compares interval tuples and regret/tolerance
 bits with an independent Python/NumPy port in `tests/_audit_reference.py`,
 and checks the labelled detector equilibrium without changing detector pins.
