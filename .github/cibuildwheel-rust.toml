@@ -1,0 +1,68 @@
+# cibuildwheel's configuration of the Rust-only wheels (.github/workflows/wheels-rust.yml,
+# `config-file`): hedonic with its Rust core (rust/) compiled by maturin into hedonic._core,
+# in a checkout whose pyproject.toml tools/rust_pyproject.py wrote and without native/.
+#
+# Every wheel is tested where it was built: the core's bit pins through the extension alone
+# (tools/core_pins.py, which also checks that the wheel names this checkout's core), the pinned
+# Python tests (tools/native_tests.py: HIG_PINNED=1, fails on any skip) and the library's test
+# suite (tests/experiments needs the cli extra: the workflow's sdist and verify jobs run it).
+# Where igraph or NumPy has no wheel to install, the overrides below run the first alone.
+
+[tool.cibuildwheel]
+build = ["cp312-*", "cp313-*", "cp314-*", "cp314t-*"]
+# rustup ships no cargo for 32-bit musl, and Alpine none for x86. Pyodide before 314.0 (cp312,
+# cp313) ships igraph 0.11, below the igraph>=1.0 hedonic needs.
+skip = ["*-musllinux_i686", "cp312-pyodide_*", "cp313-pyodide_*"]
+test-requires = ["pytest"]
+test-extras = ["metrics"]
+test-environment = { HIG_PINNED = "1" }
+# test_release_version.py tests the tag tool, whose rewrite of pyproject.toml's version on a
+# tag build it would then see.
+test-command = [
+    "python {project}/tools/core_pins.py",
+    "python {project}/tools/native_tests.py",
+    "python -m pytest -q -p no:cacheprovider {project}/tests --ignore={project}/tests/experiments --ignore={project}/tests/test_release_version.py",
+]
+
+[tool.cibuildwheel.linux]
+# rustup's toolchain in each container, or Alpine's cargo where rustup has no host toolchain
+# (musllinux s390x, armv7l and riscv64).
+before-all = "curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal || { rm -rf ~/.cargo ~/.rustup; apk add --no-cache cargo; }"
+environment = { PATH = "$HOME/.cargo/bin:$PATH" }
+
+[tool.cibuildwheel.macos]
+# x86_64 is cross-compiled on the Apple Silicon runner (maturin reads cibuildwheel's
+# ARCHFLAGS) and tested under Rosetta 2; the workflow adds the target to rustup.
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
+
+[tool.cibuildwheel.pyodide]
+# Pyodide's own Rust toolchain (pyodide-build's rust_toolchain, Rust 1.93.0 for 314.0.7) with
+# its emscripten target. Pyodide ships igraph 1.0 and NumPy since 314.0 (cp314). No
+# subprocesses in Pyodide: the pins, not the suite.
+before-build = "rustup toolchain install $(pyodide config get rust_toolchain) --profile minimal --target wasm32-unknown-emscripten && rustup default $(pyodide config get rust_toolchain)"
+test-command = [
+    "python {project}/tools/core_pins.py",
+    "python {project}/tools/native_tests.py",
+]
+
+# SciPy has no win32 wheel: the library suite without the tests that score with it.
+[[tool.cibuildwheel.overrides]]
+select = "*-win32"
+test-extras = []
+test-command = [
+    "python {project}/tools/core_pins.py",
+    "python {project}/tools/native_tests.py",
+    "python -m pytest -q -p no:cacheprovider {project}/tests --ignore={project}/tests/experiments --ignore={project}/tests/test_release_version.py -k \"not TestMetrics and not evaluate_against\"",
+]
+
+# igraph has no wheel for 32-bit Linux, ppc64le, s390x, armv7l or riscv64 (NumPy has none
+# either) and none for free-threaded CPython: the wheel is installed without its dependencies
+# and the core's pins run through the extension alone. The workflow's `foreign` job runs the
+# pinned tests and the suite on the cp314 wheels of these Linux architectures in Debian, whose
+# python3-igraph is built for them.
+[[tool.cibuildwheel.overrides]]
+select = ["*-manylinux_i686", "*linux_ppc64le", "*linux_s390x", "*linux_armv7l", "*linux_riscv64", "cp31?t-*"]
+test-environment = { PIP_NO_DEPS = "1" }
+test-requires = []
+test-extras = []
+test-command = "python {project}/tools/core_pins.py"
