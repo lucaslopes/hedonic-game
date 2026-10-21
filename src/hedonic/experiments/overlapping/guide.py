@@ -143,6 +143,9 @@ TOPICS: dict[str, tuple[str, str]] = {
         hedonic run stop NAME           explicit; nothing stops a run implicitly
         hedonic run resume [NAME]       continue an interrupted, stopped or failed run
         hedonic run check [NAME]        morning check: replay sampled results from their seeds and compare
+        hedonic run check --replay N [NAME | --root DIR]
+                                        after a change of core: replay N Hedonic units and N cover audits with the
+                                        loaded core, bit for bit (--dry-run lists them; a pass goes to adopted.json)
 
         Statuses: running, completed, completed_with_failures, stopped, interrupted (the worker vanished, for
         example after a reboot) and failed (an error, with its reason). NAME may be a unique fragment.
