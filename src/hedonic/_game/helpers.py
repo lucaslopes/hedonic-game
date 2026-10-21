@@ -9,7 +9,9 @@ it).
 
 from __future__ import annotations
 
+import contextlib
 import functools
+import gc
 import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
@@ -167,6 +169,25 @@ def real_vector(
             "resolution are scaled by the same factor)"
         )
     return np.ascontiguousarray(array)
+
+
+@contextlib.contextmanager
+def gc_paused():
+    """Hold the cyclic garbage collector while a block builds many small lists.
+
+    One list per vertex triggers a collection every few hundred lists, and the
+    older generations' passes traverse the whole heap: 93k one-element rows took
+    24.7 ms with the collector and 2.4 ms without it (perflog). Nothing the
+    block builds is cyclic garbage, and the collector runs again after it.
+    """
+    enabled = gc.isenabled()
+    if enabled:
+        gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
 
 
 def sequential_sum(values: np.ndarray) -> float:

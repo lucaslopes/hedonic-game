@@ -13,6 +13,7 @@ import math
 import random as _random
 import sys
 from dataclasses import dataclass
+from itertools import chain
 from numbers import Integral, Real
 from typing import Any, Callable, Iterable, NamedTuple
 
@@ -23,6 +24,7 @@ from ..utils import sample_uniform_ints
 from .helpers import (
     ARITHMETIC_BOUND,
     check_start_counts,
+    gc_paused,
     node_weight_values as _node_weight_values,
     runtime_versions,
     sequential_sum,
@@ -371,10 +373,13 @@ def plan(
         membership_vector = None
         max_communities_effect = "none: count limits select the default start"
     elif overlapping:
-        membership_vector = [[v] for v in range(n)]
+        # The core starts from singletons when given no start (v mod n = v),
+        # the state [[v] for v in range(n)] would give it, without n rows.
+        membership_vector = None
         max_communities_effect = "none: overlapping singleton start"
     elif max_communities is None:
-        membership_vector = list(range(n))
+        # The same singletons as list(range(n)), built by the core.
+        membership_vector = None
         max_communities_effect = "none: disjoint singleton start"
     else:
         # The start is drawn from the call's seed (its absolute value, as
@@ -440,7 +445,9 @@ def community_hedonic(
             "community_hedonic requires an undirected graph; "
             "project directed data before calling the detector"
         )
-    if game.ecount() and any(game.is_loop()):
+    # is_simple() is one pass in igraph; is_loop() builds a bool per edge, so
+    # it is asked only of a graph with loops or multiple edges.
+    if game.ecount() and not game.is_simple() and any(game.is_loop()):
         raise ValueError(
             "community_hedonic requires a graph without self-loops (a loop "
             "ties a vertex to no one else); remove them with "
@@ -488,13 +495,17 @@ def community_hedonic(
     # rebuilding them from the clusters (result.membership).
     native_rows = result.__dict__.pop("_hedonic_rows", None)
     if not call.overlapping:
-        returned_rows = [[label] for label in result.membership]
-    elif native_rows is not None:
-        returned_rows = native_rows
+        membership = result.membership
+        with gc_paused():
+            returned_rows = [[label] for label in membership]
+        occupied = len(set(membership))
     else:
-        returned_rows = [[int(label) for label in labels] for labels in result.membership]
-
-    occupied = len({label for row in returned_rows for label in row})
+        if native_rows is not None:
+            returned_rows = native_rows
+        else:
+            with gc_paused():
+                returned_rows = [[int(label) for label in labels] for labels in result.membership]
+        occupied = len(set(chain.from_iterable(returned_rows)))
     setattr(
         result,
         "_hedonic_provenance",

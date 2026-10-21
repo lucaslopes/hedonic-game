@@ -106,6 +106,23 @@ ALIASES: dict[str, dict] = {
                "compares Game's and the array path's results bit for bit, and the core class (fingerprints) is "
                "unchanged, so the runtime part of the digest is too.",
     },
+    # 2.1: the Python layer's shortcuts (the perflog's deferred proposals). The same rows, values and messages, the
+    # same arguments to the core but the default start, and the same provenance.
+    "e6867c79b89b3cf6eb8200320cdb6d82fe94b01a760d1e873d907d422af6a0a3": {
+        "earlier": "26062019eed2a9b65501db573dc08af3d6bd6f67130d68fe34376f66fbcd99a5",
+        "files": {
+            "hedonic/_game/detection.py": ["ca90b6fc57f8f01fe47eea96536979e1376242cdc2dc3da5b4c46b58caa2198f", "5db161f8a18be4296a083b4a88885cbb219e7adeedb75979d3ad886f86299564"],
+            "hedonic/_game/helpers.py": ["7bb582144d7bfcb7cd6d8cd9b844cf8f9725d8897bce329e2d5e4dd4d34e380f", "c5e9a7bec782097fa9c5cf5fa062dcf466dcf1888c03dbcc9e6deaa8c2e4b1c9"],
+            "hedonic/_game/memberships.py": ["9830410d7510723580360174df90d682eac7a8b12180eeca48c04f2b93309b64", "a85a3985585dfff83e5dd272cca23c16f508e48576bb1a7287e47b163ca7b83f"],
+            "hedonic/_native.py": ["5fd5bf03cf8c8b8346c5e56d3ce54724acdfe4d45f482454f0d9f365cc66b76a", "58578d1b6130e213fb69402d06a42924216efdae342b9ce71e9f2b83b82a2114"],
+        },
+        "why": "speed only: normalize_rows reads plain-int memberships without its per-label checks and falls back to "
+               "them for anything else (the same rows and the same first error, tests/test_python_layer_paths.py); "
+               "a default singleton start is passed to the core as None, whose default is the same singletons "
+               "(v mod n = v; the same bits, checked there and by the three fingerprints); the self-loop check asks "
+               "is_simple() first; the occupied count is the same set built in C; a VertexCover start is read without a second copy of its rows; the cyclic collector is held "
+               "while large row lists are built (gc_paused). Provenance, records and the core class are unchanged.",
+    },
 }
 
 

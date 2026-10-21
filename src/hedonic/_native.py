@@ -178,7 +178,10 @@ def community_hedonic(
                                 params={"quality": quality, "equilibrium_slack": slack},
                                 modularity_params=modularity_params)
     rows, clusters, nb_clusters, quality, slack = out
-    result = VertexCover(graph, clusters)
+    from ._game.helpers import gc_paused
+
+    with gc_paused():   # VertexCover copies every cluster
+        result = VertexCover(graph, clusters)
     result._params = {"quality": quality, "equilibrium_slack": slack}
     # The per-vertex rows, so callers need not rebuild them from the clusters.
     result._hedonic_rows = rows
