@@ -121,7 +121,9 @@ child process, and writes a markdown table (`--table`) and every number
 (`--json`). Where hedonic 2.0's C core is built beside it (`native/c`,
 `hedonic._core_c`, `HEDONIC_CORE=c`: the paper branch) it measures both;
 `bench/perflog-baseline.md` is the comparison before the Rust performance
-pass of 2.1 and `bench/perflog-after.md` the same run after it. The workloads
+pass of 2.1 and `bench/perflog-after.md` the same run after it;
+`bench/perflog-python.md` compares the Python layer before and after its own
+pass (the same core, Rust only). The workloads
 (`--list`, `--filter`): Zachary (100 calls a measurement), Barabasi-Albert
 50k as a partition and as covers at M = 2, 5 and -1, a weighted SBM, node
 weights, a seeded random start, the SNAP covered subgraphs of DBLP, Amazon
