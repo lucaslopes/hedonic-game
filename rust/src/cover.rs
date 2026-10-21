@@ -1136,32 +1136,34 @@ impl<'t> State<'t> {
         self.slack = slack;
         Ok(())
     }
+}
 
-    /// The rows with labels 0, 1, ... in order of first appearance, sorted.
-    fn result(&self) -> Result<(Cover, i64)> {
-        let n = self.graph.n as usize;
-        let total: usize = self.row.iter().map(|r| r.size as usize).sum();
-        let mut offset = filled(n + 1, 0i64)?;
-        let mut labels = filled(total, 0i64)?;
-        let mut relabel = filled(self.label_count as usize, -1i64)?;
-        let mut next = 0i64;
-        for v in 0..n {
-            let r = self.row[v];
-            let base = offset[v] as usize;
-            let out = &mut labels[base..base + r.size as usize];
-            for (i, o) in out.iter_mut().enumerate() {
-                let c = self.pool[r.start + i] as usize;
-                if relabel[c] < 0 {
-                    relabel[c] = next;
-                    next += 1;
-                }
-                *o = relabel[c];
+/// The cover a run ended in: labels 0, 1, ... in order of first
+/// appearance, each row sorted. Takes the rows and the pool alone, so the
+/// rest of the run state can be released first.
+fn result(row: &[RowRef], pool: &[Id], label_count: Id) -> Result<(Cover, i64)> {
+    let n = row.len();
+    let total: usize = row.iter().map(|r| r.size as usize).sum();
+    let mut offset = filled(n + 1, 0i64)?;
+    let mut labels = filled(total, 0i64)?;
+    let mut relabel = filled(label_count as usize, -1 as Id)?;
+    let mut next: Id = 0;
+    for v in 0..n {
+        let r = row[v];
+        let base = offset[v] as usize;
+        let out = &mut labels[base..base + r.size as usize];
+        for (i, o) in out.iter_mut().enumerate() {
+            let c = pool[r.start + i] as usize;
+            if relabel[c] < 0 {
+                relabel[c] = next;
+                next += 1;
             }
-            sort_ids(out);
-            offset[v + 1] = offset[v] + r.size as i64;
+            *o = relabel[c] as i64;
         }
-        Ok((Cover { offset, labels }, next))
+        sort_ids(out);
+        offset[v + 1] = offset[v] + r.size as i64;
     }
+    Ok((Cover { offset, labels }, next as i64))
 }
 
 /// Sorts labels ascending: insertion for the short rows of a cover (as
@@ -1456,9 +1458,17 @@ pub fn cover(
     s.trace = trace;
     s.run(cb)?;
     s.compute_slack()?;
-    let (cover, count) = s.result()?;
-    let q = quality(graph, options.resolution, &cover, count, &s.inv_sqrt)?;
+    // The run state goes before the result is built: only the rows, the
+    // pool and the 1/sqrt(k) table stay.
     let raw_slack = s.slack;
+    let (row, pool) = (std::mem::take(&mut s.row), std::mem::take(&mut s.pool));
+    let inv_sqrt = std::mem::take(&mut s.inv_sqrt);
+    let label_count = s.label_count;
+    drop(s);
+    let (cover, count) = result(&row, &pool, label_count)?;
+    drop(pool);
+    drop(row);
+    let q = quality(graph, options.resolution, &cover, count, &inv_sqrt)?;
     Ok(CoverResult {
         cover,
         count,

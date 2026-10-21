@@ -805,21 +805,26 @@ pub fn partition(
     }
     s.trace = trace;
     s.run(cb)?;
+    // The run state goes before the result is built: only the labels stay.
+    let (membership, raw_slack) = (std::mem::take(&mut s.membership), s.slack);
+    drop(s);
 
     // Communities 0, 1, ... in order of first appearance.
-    let mut relabel = filled(n as usize, -1i64)?;
-    let mut next = 0i64;
+    let mut relabel = filled(n as usize, -1 as Id)?;
+    let mut next: Id = 0;
     let mut out = filled(n as usize, 0i64)?;
     for v in 0..n as usize {
-        let c = s.membership[v] as usize;
+        let c = membership[v] as usize;
         if relabel[c] < 0 {
             relabel[c] = next;
             next += 1;
         }
-        out[v] = relabel[c];
+        out[v] = relabel[c] as i64;
     }
+    drop(membership);
+    drop(relabel);
+    let next = next as i64;
     let q = quality(graph, options.resolution, &out, next)?;
-    let raw_slack = s.slack;
     Ok(PartitionResult {
         membership: out,
         count: next,
