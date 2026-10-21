@@ -1,30 +1,29 @@
-"""The C core calls no libm function but sqrt and fabs.
+"""The core calls no libm function but sqrt and fabs.
 
-Usage: python check_libm.py OBJECT [OBJECT ...]
+Usage: python native/check_libm.py BINARY [BINARY ...]
 
-Lists each object's undefined symbols (``nm -u``; ``dumpbin /symbols`` for a
+Lists each binary's undefined symbols (``nm -u``; ``dumpbin /symbols`` for a
 ``.obj`` built by MSVC) and fails if one is a <math.h> function other than
-sqrt or fabs, or any float/long double variant (sqrtf, fmal, ...). Pass every object
-of the core: unity.c, and on x86_64 dispatch targets unity_fma.c and
-dispatch.c (elsewhere these compile to empty objects).
+sqrt or fabs, or any float/long double variant (sqrtf, fmal, ...). Pass the
+compiled extension (``python -c "import hedonic._core as c; print(c.__file__)"``)
+or every object it is linked from.
 
 Why this pins the results across platforms: IEEE 754 requires +, -, *, /
 and sqrt to be correctly rounded, and the hardware of every target does
 them (sqrt is an instruction everywhere; a libm sqrt computes the same
 correctly rounded result). fabs is exact (it clears the sign bit), so a call
-to it, which MSVC emits under /fp:strict where other compilers inline it,
-gives the same bits everywhere. The fused multiply-add is also correctly rounded
-by IEEE 754, but the core does not rely on a C library for it: it uses the
-instruction where the target has one at compile time and otherwise its own
-soft fma in integer arithmetic (core/softfma.h; x86_64 wheels choose between
-a build with the instruction and one with the soft fma from CPUID), so fma
-must not appear here either. With the core's other guarantees (no FP
-contraction, double everywhere, fixed summation orders, no threads) every
-operation then gives the same bits on every conforming platform. Functions
-such as exp, log or pow carry no such requirement and differ between C
-libraries; the core uses none of them. x87 double rounding (32-bit x86
-without SSE2) is the one exception to the argument, and 32-bit x86 is not a
-wheel target.
+to it gives the same bits everywhere. The fused multiply-add is also
+correctly rounded by IEEE 754, but the core does not rely on a C library for
+it: it uses the instruction where the target has one and otherwise its own
+soft fma in integer arithmetic (``native/README.md``), so fma must not appear
+here either; in Rust that rules out ``f64::mul_add``, which falls back to
+libm's fma where the target has no instruction. With the core's other
+guarantees (no FP contraction, double everywhere, fixed summation orders, no
+threads) every operation then gives the same bits on every conforming
+platform. Functions such as exp, log or pow carry no such requirement and
+differ between C libraries; the core uses none of them. x87 double rounding
+(32-bit x86 without SSE2) is the one exception to the argument, and 32-bit
+x86 is not a wheel target.
 """
 
 from __future__ import annotations

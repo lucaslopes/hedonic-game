@@ -1,10 +1,9 @@
-"""Records name the C core by the digest of its sources and hedonic by its release series, so a rebuilt wheel, another
+"""Records name the core by the digest of its sources and hedonic by its release series, so a rebuilt wheel, another
 platform or the next dev release keeps every finished record valid while the core's source is unchanged."""
 
 from __future__ import annotations
 
 import hashlib
-import runpy
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -16,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def rust_source_digest(crate: Path) -> str:
-    """native/rust/build.rs's digest of the Rust core: src/**/*.rs, build.rs and Cargo.toml, relative to the crate, in the
-    format of setup.py's source_digest."""
+    """native/rust/build.rs's digest of the Rust core: src/**/*.rs, build.rs and Cargo.toml, relative to the crate,
+    each as path, length and bytes (CRLF as LF), in path order."""
     paths = sorted([str(p.relative_to(crate)).replace("\\", "/") for p in (crate / "src").rglob("*.rs")]
                    + ["build.rs", "Cargo.toml"])
     digest = hashlib.sha256()
@@ -29,28 +28,13 @@ def rust_source_digest(crate: Path) -> str:
 
 class TestBuildIdentity(unittest.TestCase):
     def test_the_core_carries_the_digest_of_the_sources_it_was_built_from(self):
-        if getattr(_core, "backend", "c") == "rust":
-            crate = ROOT / "native" / "rust"
-            if not (crate / "build.rs").is_file():
-                self.skipTest("no source tree (an installed wheel)")
-            digest = rust_source_digest(crate)
-            self.assertEqual(_core.source_sha256, digest, "rebuild the extension: the Rust sources changed since")
-            self.assertEqual(runtime.core_built_source_sha256(), digest)
-            return
-        setup = ROOT / "setup.py"
-        if not setup.is_file():
+        if getattr(_core, "backend", None) != "rust":
+            self.skipTest(f"the loaded core is not this checkout's Rust core: {_core.__name__} (HEDONIC_CORE)")
+        crate = ROOT / "native" / "rust"
+        if not (crate / "build.rs").is_file():
             self.skipTest("no source tree (an installed wheel)")
-        try:
-            import setuptools  # noqa: F401
-        except ImportError:
-            self.skipTest("setuptools is not installed (an installed wheel)")
-        with patch("setuptools.setup"):
-            build = runpy.run_path(str(setup))
-        digest = build["source_digest"](str(ROOT))
-        compiled = {str(p.relative_to(ROOT)).replace("\\", "/") for p in (ROOT / "native").rglob("*")
-                    if p.suffix in (".c", ".h") and "tests" not in p.relative_to(ROOT / "native").parts}
-        self.assertEqual(set(build["source_paths"](str(ROOT))), compiled, "every C source of the core is in its digest")
-        self.assertEqual(_core.source_sha256, digest, "rebuild the extension: the C sources changed since it was built")
+        digest = rust_source_digest(crate)
+        self.assertEqual(_core.source_sha256, digest, "rebuild the extension: the Rust sources changed since")
         self.assertEqual(runtime.core_built_source_sha256(), digest)
 
     def test_an_equivalent_core_takes_the_earlier_identity(self):

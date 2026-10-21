@@ -23,7 +23,7 @@ ZACHARY_SEED0 = [0, 0, 0, 0, 1, 2, 2, 0, 3, 0, 1, 1, 0, 0, 3, 3, 2, 0, 3, 0, 3, 
                  4, 3, 4, 4, 3, 3, 4, 3, 3]
 
 
-# The pins of native/tests/test_core.c (test_pins), from the same seeded
+# The pins of native/rust/tests/pins.rs (test_core.c's test_pins in hedonic 2.0), from the same seeded
 # random.Random order: (seed, resolution or None for the density, cap,
 # isolation, edge-weighted, node-weighted, max_total, exact) -> (k, quality
 # hex, membership in order of first appearance or the sorted bit masks of the
@@ -169,7 +169,7 @@ class TestPartition(unittest.TestCase):
         self.assertTrue(math.isfinite(q))
 
     def test_former_tie_cycle_terminates(self):
-        """The instance of test_former_tie_cycle in native/tests/test_core.c, on
+        """The instance of former_tie_cycle in native/rust/tests/core.rs, on
         which the previous core cycled between equal-payoff moves:
         every run stops at an equilibrium."""
         edges = [(9, 20), (20, 19), (9, 3), (8, 11), (4, 10), (10, 17), (16, 7), (0, 17),

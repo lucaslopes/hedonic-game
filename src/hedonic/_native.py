@@ -12,7 +12,7 @@ error, so every move raises the exact potential and every call terminates;
 the result reports ``equilibrium_slack``, a bound of what any vertex could
 still gain by deviating (0 when the arithmetic is exact; ``native/README.md``).
 
-The C core (``native/`` in the repository, the extension ``hedonic._core``)
+The core (``native/rust/`` in the repository, the extension ``hedonic._core``)
 has no igraph dependency: it takes an edge list and draws random numbers from
 ``rng.getrandbits(32)``. The binding copies the edge list out of the igraph
 graph (through python-igraph's ``__graph_as_capsule``, checked against

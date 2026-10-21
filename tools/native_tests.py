@@ -3,7 +3,7 @@
     python tools/native_tests.py
 
 The pins (tests/test_native_core.py, tests/test_native_backend.py) hold exact
-results recorded on macOS arm64 (the same ones native/tests/test_core.c pins),
+results recorded on macOS arm64 (the same ones native/rust/tests/pins.rs pins),
 skipped unless HIG_PINNED=1. This sets it, so a platform whose rounding differs
 from the recorded results fails, and fails on any skipped test. It also runs
 the exact-arithmetic equilibrium oracle (tests/test_equilibrium.py) on the

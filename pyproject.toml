@@ -1,7 +1,7 @@
 [project]
 name = "hedonic"
-version = "2.0.0"
-description = "Community detection with hedonic games: best-response local moving to an equilibrium, disjoint and overlapping, in a purpose-built C core"
+version = "2.1.0"
+description = "Community detection with hedonic games: best-response local moving to an equilibrium, disjoint and overlapping, in a purpose-built Rust core"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
@@ -19,7 +19,7 @@ dependencies = [
 keywords = ["community detection", "hedonic games", "graphs", "networks", "overlapping communities"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: C",
+    "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
@@ -49,23 +49,26 @@ Homepage = "https://github.com/lucaslopes/hedonic"
 Documentation = "https://lucaslopes.github.io/hedonic/"
 
 [build-system]
-# setuptools: the package compiles its C core (native/, see setup.py) into the
-# extension hedonic._core.
-requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+# maturin: the package compiles its Rust core (native/rust/) into the extension
+# hedonic._core.
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
 
-[tool.setuptools]
-package-dir = { "" = "src" }
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-hedonic = ["py.typed"]
-# Shipped run configs (`hedonic run queue overlap`, `--config NAME`) and the external-method workers, including the
-# locked CDlib project (slpa_env/pyproject.toml and uv.lock): hedonic.experiments.resources finds them.
-"hedonic.experiments" = ["configs/*.toml", "workers/*.py", "workers/*.md", "workers/slpa_env/*.py",
-                         "workers/slpa_env/pyproject.toml", "workers/slpa_env/uv.lock"]
-
-[tool.setuptools.exclude-package-data]
-"*" = ["__pycache__/*", "*.pyc", ".venv/*"]
+[tool.maturin]
+manifest-path = "native/rust/Cargo.toml"
+python-source = "src"
+module-name = "hedonic._core"
+# The crate's CPython module under the name hedonic._core (the feature exists
+# only for this build; the crate's own tests need no Python).
+features = ["core-module"]
+# The package data (py.typed, the shipped run configs and the external-method
+# workers, with the locked CDlib project) is everything under src/hedonic;
+# hedonic.experiments.resources finds it. A compiled core left in the source
+# tree by another build, caches and a worker's local environment are not.
+exclude = [
+    "src/hedonic/_core*.so",
+    "src/hedonic/_core*.pyd",
+    "src/hedonic/**/__pycache__/**",
+    "src/hedonic/**/*.py[co]",
+    "src/hedonic/experiments/workers/slpa_env/.venv/**",
+]

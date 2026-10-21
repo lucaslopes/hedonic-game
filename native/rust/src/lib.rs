@@ -25,7 +25,7 @@ pub mod verify;
 mod python;
 
 /// The version of the core's algorithm (the C core's `HIG_CORE_VERSION`).
-pub const CORE_VERSION: &str = "2.0.0";
+pub const CORE_VERSION: &str = "2.1.0";
 
 /// SHA-256 over this crate's sources (path, length and bytes of each, in path
 /// order, line endings as LF), the format of setup.py's `source_digest`.

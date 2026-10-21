@@ -1,9 +1,9 @@
 [package]
 name = "hedonic-core-rs"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-description = "The hedonic core in Rust: best-response local moving for the CPM hedonic game, bit-identical to native/."
+description = "The hedonic core in Rust: best-response local moving for the CPM hedonic game, bit-identical to hedonic 2.0's C core."
 publish = false
 build = "build.rs"
 
@@ -13,10 +13,10 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-# The CPython module (maturin turns it on, see pyproject.toml).
+# The CPython module, named hedonic_core_rs.
 python = ["dep:pyo3"]
-# The module as hedonic._core instead of hedonic_core_rs (the hedonic package
-# built with the Rust core alone, see tools/rust_pyproject.py).
+# The module as hedonic._core instead: the hedonic package (maturin turns it on,
+# see the repository's pyproject.toml).
 core-module = ["python"]
 # The soft fma everywhere (tests): the counterpart of HIG_FORCE_SOFT_FMA.
 force-soft-fma = []

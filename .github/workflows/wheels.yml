@@ -1,19 +1,18 @@
-# Builds the hedonic wheels (with the C core hedonic._core) on every platform
-# the package ships for, and tests each one: every wheel job first runs the C
-# core's own tests on its runner (with the C bit pins, on x86_64 with both the
-# FMA and the soft-fma build, and the libm check), then
-# cibuildwheel runs the native Python tests of each wheel with HIG_PINNED=1
+# Builds the hedonic wheels (with the core hedonic._core, compiled from
+# native/rust by maturin) on every platform the package ships for, and tests
+# each one (the crate's own tests run in rust.yml): cibuildwheel runs the
+# native Python tests of each wheel with HIG_PINNED=1
 # (tools/native_tests.py, which fails on any skip), so a platform whose results
 # differ from the pinned ones, bit for bit, fails here. Wheels and the sdist are
 # uploaded as artifacts.
 #
 # Branch pushes and pull requests only build and test. A tag publishes exactly
 # those artifacts once every job has passed, and the tag sets their version
-# (tools/release_version.py; pyproject.toml holds the release, e.g. 2.0.0):
+# (tools/release_version.py; pyproject.toml holds the release, e.g. 2.1.0):
 #
-#   v2.0.0.dev1  -> TestPyPI (trial uploads; environment `testpypi`)
-#   v2.0.0rc1    -> PyPI, a pre-release pip installs only with --pre
-#   v2.0.0       -> PyPI (environment `pypi`)
+#   v2.1.0.dev1  -> TestPyPI (trial uploads; environment `testpypi`)
+#   v2.1.0rc1    -> PyPI, a pre-release pip installs only with --pre
+#   v2.1.0       -> PyPI (environment `pypi`)
 #
 # Publishing is trusted publishing (no token): each index needs a trusted
 # publisher for this repository, workflow `wheels.yml` and that environment.
@@ -46,68 +45,6 @@ env:
   CIBW_TEST_COMMAND: "python {project}/tools/native_tests.py"
 
 jobs:
-  c_core:
-    name: C core tests (${{ matrix.os }}, ${{ matrix.cc }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            cc: gcc
-          - os: ubuntu-24.04
-            cc: clang
-          - os: ubuntu-24.04-arm
-            cc: gcc
-          - os: macos-latest
-            cc: clang
-    steps:
-      - uses: actions/checkout@v5
-      # test: sanitized build and the libm check; test-release and test, on
-      # x86_64, run as dispatched and with each of the two builds forced;
-      # test-soft-fma uses the soft fma everywhere; test-x86_64 runs on Apple
-      # Silicon under Rosetta and says it is skipped elsewhere.
-      - name: Sanitized and release builds
-        run: make -C native test test-release test-soft-fma test-x86_64 CC=${{ matrix.cc }}
-
-  c_core_msvc:
-    name: C core tests (${{ matrix.os }}, MSVC)
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-2022
-            arch: x64
-          - os: windows-11-arm
-            arch: arm64
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.arch }}
-      # x64 is a dispatch target (native/core/dispatch.h): the tests run as
-      # dispatched and with each build forced (exit 77: not possible here).
-      - name: Release build, as the wheel compiles it
-        shell: cmd
-        run: |
-          cl /nologo /std:c11 /O2 /DNDEBUG /fp:strict /W3 /Inative\include /Inative\core native\tests\test_core.c native\unity.c native\unity_fma.c native\dispatch.c /Fe:test_core.exe || exit /b 1
-          test_core.exe || exit /b 1
-          set HIG_TEST_FMA=soft
-          test_core.exe
-          if %errorlevel% neq 0 if %errorlevel% neq 77 exit /b 1
-          set HIG_TEST_FMA=instruction
-          test_core.exe
-          if %errorlevel% neq 0 if %errorlevel% neq 77 exit /b 1
-          set HIG_TEST_FMA=
-          cl /nologo /std:c11 /O2 /DNDEBUG /fp:strict /W3 /DHIG_FORCE_SOFT_FMA /Inative\include /Inative\core native\tests\test_core.c native\unity.c native\unity_fma.c native\dispatch.c /Fe:test_core_soft.exe || exit /b 1
-          test_core_soft.exe
-      - name: The core calls no libm function but sqrt and fabs
-        shell: cmd
-        run: |
-          cl /nologo /c /std:c11 /O2 /DNDEBUG /fp:strict /Inative\include /Inative\core native\unity.c native\unity_fma.c native\dispatch.c || exit /b 1
-          python native\tests\check_libm.py unity.obj unity_fma.obj dispatch.obj
-
   sdist:
     name: Source distribution
     runs-on: ubuntu-24.04
@@ -116,6 +53,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
       - name: The version the tag names
         run: python tools/release_version.py
       - name: Build the sdist, then a wheel from it
@@ -162,32 +100,6 @@ jobs:
       - name: The version the tag names
         shell: bash
         run: python tools/release_version.py
-      # The C core's tests on this runner before any wheel: release and
-      # sanitized builds with the C bit pins (on x86_64 with each of the two
-      # builds), the soft fma everywhere, the libm check, and on macOS the
-      # same as x86_64 under Rosetta (the wheel's other architecture).
-      - name: C core tests (make)
-        if: runner.os != 'Windows'
-        run: make -C native test test-release test-soft-fma test-x86_64
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
-        with:
-          arch: ${{ matrix.archs == 'ARM64' && 'arm64' || 'x64' }}
-      - name: C core tests (MSVC)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          cl /nologo /std:c11 /O2 /DNDEBUG /fp:strict /W3 /Inative\include /Inative\core native\tests\test_core.c native\unity.c native\unity_fma.c native\dispatch.c /Fe:test_core.exe || exit /b 1
-          test_core.exe || exit /b 1
-          set HIG_TEST_FMA=soft
-          test_core.exe
-          if %errorlevel% neq 0 if %errorlevel% neq 77 exit /b 1
-          set HIG_TEST_FMA=instruction
-          test_core.exe
-          if %errorlevel% neq 0 if %errorlevel% neq 77 exit /b 1
-          set HIG_TEST_FMA=
-          cl /nologo /c /std:c11 /O2 /DNDEBUG /fp:strict /Inative\include /Inative\core native\unity.c native\unity_fma.c native\dispatch.c || exit /b 1
-          python native\tests\check_libm.py unity.obj unity_fma.obj dispatch.obj
       - name: Build and test wheels
         uses: pypa/cibuildwheel@v3.2.1
         env:
@@ -201,7 +113,7 @@ jobs:
   publish:
     name: Publish to ${{ contains(github.ref_name, '.dev') && 'TestPyPI' || 'PyPI' }}
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [c_core, c_core_msvc, sdist, wheels]
+    needs: [sdist, wheels]
     runs-on: ubuntu-24.04
     environment: ${{ contains(github.ref_name, '.dev') && 'testpypi' || 'pypi' }}
     permissions:

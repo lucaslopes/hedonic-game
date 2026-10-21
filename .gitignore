@@ -7,10 +7,10 @@ wheels/
 wheelhouse/
 *.egg-info
 
-# The compiled C core (setup.py build_ext --inplace) and the C test builds
+# The compiled core (maturin develop puts hedonic/_core.*.so beside the sources)
+# and the crate's build folder (native/rust/.gitignore)
 *.so
 *.pyd
-native/build/
 
 # Virtual environments
 .venv

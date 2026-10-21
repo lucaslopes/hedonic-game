@@ -2,16 +2,16 @@
 
     python tools/release_version.py [REF_NAME]
 
-pyproject.toml holds the version being released (2.0.0). A tag names that
+pyproject.toml holds the version being released (2.1.0). A tag names that
 version or one of its pre-releases:
 
-    v2.0.0          the release                        -> PyPI
-    v2.0.0rc1       a release candidate (pip --pre)    -> PyPI
-    v2.0.0.dev1     a trial upload                     -> TestPyPI
+    v2.1.0          the release                        -> PyPI
+    v2.1.0rc1       a release candidate (pip --pre)    -> PyPI
+    v2.1.0.dev1     a trial upload                     -> TestPyPI
 
 On a tag (GITHUB_REF_TYPE=tag, or REF_NAME given) this checks the tag against
-the version in pyproject.toml, writes the tag's version into pyproject.toml so
-the sdist and every wheel carry it, and prints the index the tag publishes to
+the version in pyproject.toml, writes the tag's version into pyproject.toml's
+[project] table, where maturin reads it, so the sdist and every wheel carry it, and prints the index the tag publishes to
 (`pypi` or `testpypi`). A candidate and the release are therefore built from
 the same commit. Anywhere else it changes nothing and prints `none`.
 """
