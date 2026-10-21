@@ -29,11 +29,10 @@ never rewritten. ``tests/experiments/test_spectrum_code.py`` recomputes the load
 file without an entry here fails it, and its message prints the entry to add (or says to add a root, when results
 change).
 
-The next entry (2.1, the Rust core: ``hedonic/__init__.py`` changes and new modules join ``hedonic/*.py``) is added
-the same way, on the release line that makes the change: run the test, check that only identity or plumbing
-changed, paste the printed entry. It maps 2.1's digest to the digest 2.0 records name (the chain may go through
-the 2.0.0rc12 entry; ``canonical`` follows it to the root). A core of the same results class keeps the runtime part
-of the digest unchanged; a new class changes it, and no entry may bridge that (the results differ).
+A later entry is added the same way, on the release line that makes the change: run the test, check that only
+identity or plumbing changed, paste the printed entry (or chain it to the latest entry, as 2.1's is to rc12's;
+``canonical`` follows the chain to the root). A core of the same results class keeps the runtime part of the digest
+unchanged; a new class changes it, and no entry may bridge that (the results differ).
 """
 
 from __future__ import annotations
@@ -83,6 +82,29 @@ ALIASES: dict[str, dict] = {
                "(now implementation_drift) read spectrum_code; _runtime_identity calls runtime.algorithm_identity() "
                "(the same string); docstrings. No detector call, audit, score or record field other than the "
                "identity's provenance (tracked_files_built, tracked_files_sha256_built) changed.",
+    },
+    # 2.1: the Rust core and the array API. The package's __init__ selects a core (HEDONIC_CORE) and imports Game
+    # lazily; detection.plan, _audit.state and helpers.real_vector are the argument checks Game and hedonic.arrays share
+    # (the same checks, messages, start and provenance, moved out of community_hedonic); arrays.py is a new module the
+    # study does not run; Game.py and _native.py change in docstrings only.
+    "26062019eed2a9b65501db573dc08af3d6bd6f67130d68fe34376f66fbcd99a5": {
+        "earlier": "ed05acde78603c2120ff9bd7e6cf8a080a104ae9f52b07a031fcdabd6914ac74",
+        "files": {
+            "hedonic/Game.py": ["524cd68b33e0076960d6e82ba867a28a7a49cea0ac59653d5ea9d8cfa4c0f505", "405c34fd0e9feaeeb0f0e105186c5daf4ea321349793c5e7823db8be6e0e6b79"],
+            "hedonic/__init__.py": ["3dfd738c06a31430c417836b0b265dc523c0ac7f429f0d58776235733b85eacb", "cb51a6f79f105459797fd1ca0d55ce427e7678164b13da63b42e9b36a3de40b5"],
+            "hedonic/_audit.py": ["d8f8e6a259047aa7240dbe0253a15a7ad5d46ec9e29a94860c6151f2ab51ff16", "8bff73bc42d3cbe0219d7003c26a7359fd80ed8acbdfa55b7b99a42f909eee86"],
+            "hedonic/_game/detection.py": ["82dcab563f39ff9079c4474b38a8e4fceb0883bf927af1ddfe2a90afddfe00b6", "ca90b6fc57f8f01fe47eea96536979e1376242cdc2dc3da5b4c46b58caa2198f"],
+            "hedonic/_game/helpers.py": ["d958d0e8776db670632c3e73e1df3603099dd580b97b4d4c07511ead0253817f", "7bb582144d7bfcb7cd6d8cd9b844cf8f9725d8897bce329e2d5e4dd4d34e380f"],
+            "hedonic/_game/memberships.py": ["0933215338c836793bfc4de76888771167a41dab80b4bc8386e6303f8445b58b", "9830410d7510723580360174df90d682eac7a8b12180eeca48c04f2b93309b64"],
+            "hedonic/_native.py": ["e597ccfe3fe419da718da822a4c78ab48841ec1e1cef201c9314e761b341cdb8", "5fd5bf03cf8c8b8346c5e56d3ce54724acdfe4d45f482454f0d9f365cc66b76a"],
+            "hedonic/arrays.py": [None, "9cd43a29450b941e5679f839f8dc08a3c5b05e5ae09f582d66a33f1ca8ca302f"],
+        },
+        "why": "plumbing only: the checks of a detector call and of an audit's cover moved into functions that take a "
+               "vertex count and an edge source (plan, state, normalize_rows, real_vector), with the same checks in "
+               "the same order, the same start, arguments to the core and provenance; igraph is looked up instead "
+               "of imported; the core is chosen at import (HEDONIC_CORE unset: hedonic._core). tests/test_arrays.py "
+               "compares Game's and the array path's results bit for bit, and the core class (fingerprints) is "
+               "unchanged, so the runtime part of the digest is too.",
     },
 }
 
