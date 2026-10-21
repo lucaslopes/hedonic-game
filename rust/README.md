@@ -121,7 +121,8 @@ partition apart.
 `.agents/skills/hedonic-native-core/scripts/guard.sh 16`, one heavy job at a
 time) measures both cores, workload by workload, each measurement in a fresh
 child process, and writes a markdown table (`--table`) and every number
-(`--json`); `rust/bench/perflog-baseline.md` is the baseline. The workloads
+(`--json`); `rust/bench/perflog-baseline.md` is the baseline and
+`rust/bench/perflog-after.md` the same run after the Rust performance pass. The workloads
 (`--list`, `--filter`): Zachary (100 calls a measurement), Barabasi-Albert
 50k as a partition and as covers at M = 2, 5 and -1, a weighted SBM, node
 weights, a seeded random start, the SNAP covered subgraphs of DBLP, Amazon
