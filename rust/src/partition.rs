@@ -326,7 +326,7 @@ impl<'t> State<'t> {
             debug_assert!((u as usize) < self.membership.len());
             if unsafe { *self.membership.get_unchecked(u as usize) } != best {
                 // native/README.md, "Requeueing"
-                unsafe { self.queue.push_unchecked(u) };
+                self.queue.push(u);
             }
         }
         best
@@ -428,15 +428,14 @@ impl<'t> State<'t> {
         let vu = v as usize;
         debug_assert!(vu < self.membership.len());
         // SAFETY: the queue holds vertex ids below n = membership.len(); a
-        // community id is below n = group.len(); the adjacency is well formed
-        // (as Adjacency::build makes it), so begin <= end <= adj.len().
-        let (c0, alone, begin, end, nv) = unsafe {
+        // community id is below n = group.len().
+        let (c0, alone) = unsafe {
             let c0 = *self.membership.get_unchecked(vu);
             debug_assert!((c0 as usize) < self.group.len());
-            let alone = self.group.get_unchecked(c0 as usize).members == 1;
-            let (begin, end) = self.graph.range_unchecked(v);
-            (c0, alone, begin, end, self.graph.node_weight_unchecked(v))
+            (c0, self.group.get_unchecked(c0 as usize).members == 1)
         };
+        let (begin, end) = (self.graph.range(v).start, self.graph.range(v).end);
+        let nv = self.graph.node_weight(v);
         let gn = self.gamma * nv;
         let mut count = 0usize;
         let mut best = c0;
@@ -515,11 +514,13 @@ impl<'t> State<'t> {
         // most the degree + 1 <= candidate.len() = candidate_weight.len().
         let (g0, lo0) = unsafe { (*self.group.get_unchecked(c0 as usize), self.tail.get_unchecked(c0 as usize).lo) };
         if W && g0.slot >= 0 {
+            debug_assert!((g0.slot as usize) < count);
             own_weight = unsafe { *self.candidate_weight.get_unchecked(g0.slot as usize) };
         }
         let stay = fma(-gn, if alone { 0.0 } else { (g0.mass - nv) + lo0 }, own_weight);
         let mut best_gain = stay;
         let group = &self.group[..];
+        // SAFETY: as above, count <= candidate.len() = candidate_weight.len().
         let (candidate, candidate_weight) =
             unsafe { (self.candidate.get_unchecked(..count), self.candidate_weight.get_unchecked(..count)) };
         // Selects, not branches: the order of encounter decides ties, and
@@ -614,8 +615,7 @@ impl<'t> State<'t> {
         {
             self.raise_slack(v, count, walked, walk, cutoff, other_gain > cutoff);
         }
-        // SAFETY: v came from the queue, a vertex id below n.
-        unsafe { self.queue.settle_unchecked(v) };
+        self.queue.settle(v);
         Ok(())
     }
 

@@ -783,6 +783,7 @@ impl AuditState {
         let (entries, order) = (&w.entries[..], &w.order[..top]);
         let (roots, margin) = (&w.roots[..=top], &w.margin[..=top]);
         for k in 1..=top {
+            debug_assert!(order[k - 1] < entries.len());
             // SAFETY: `order` is a permutation of the entries' indices (see `resort`).
             let entry = unsafe { entries.get_unchecked(order[k - 1]) };
             sum_a += entry.a;

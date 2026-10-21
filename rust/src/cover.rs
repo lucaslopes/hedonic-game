@@ -465,6 +465,7 @@ impl<'t> State<'t> {
                     slot = kept;
                     kept += 1;
                 } else {
+                    debug_assert!(kept >= 1 && kept <= top.len());
                     let last = unsafe { *top.get_unchecked(kept - 1) };
                     if scored_before(gain, label, last.gain, last.label) {
                         slot = kept - 1;
@@ -473,6 +474,7 @@ impl<'t> State<'t> {
                     }
                 }
                 while slot > 0 {
+                    debug_assert!(slot < kept && kept <= top.len());
                     let previous = unsafe { *top.get_unchecked(slot - 1) };
                     if !scored_before(gain, label, previous.gain, previous.label) {
                         break;
@@ -634,13 +636,13 @@ impl<'t> State<'t> {
         let vu = v as usize;
         debug_assert!(vu < self.row.len());
         // SAFETY: v is a vertex (from the queue, or the slack's pass over
-        // the settled ones), below n = row.len(); the adjacency is well formed; a row's size is at most cap, below
-        // inv_sqrt.len() (State's invariants).
+        // the settled ones), below n = row.len(); a row's size is at most
+        // cap, below inv_sqrt.len() (State's invariants).
         let r = unsafe { *self.row.get_unchecked(vu) };
         let k = r.size;
         let ku = k as usize;
-        let (begin, end) = unsafe { self.graph.range_unchecked(v) };
-        let nv = unsafe { self.graph.node_weight_unchecked(v) };
+        let (begin, end) = (self.graph.range(v).start, self.graph.range(v).end);
+        let nv = self.graph.node_weight(v);
         let gn = self.gamma * nv;
         debug_assert!(ku < self.inv_sqrt.len());
         let old_term = nv * unsafe { *self.inv_sqrt.get_unchecked(ku) };
@@ -701,7 +703,7 @@ impl<'t> State<'t> {
             // Gains, and the payoff of v's row.
             let exact = self.exact as Id;
             let (group, tail) = (&self.group[..], &self.tail[..]);
-            debug_assert!(ku <= count && ku < self.own_support.len());
+            debug_assert!(ku <= count && ku < self.own_support.len() && group.len() == tail.len());
             // SAFETY: the first ku candidates are v's labels (below
             // group.len() = tail.len()); ku <= cap < own_support.len().
             let own_support = unsafe { self.own_support.get_unchecked_mut(..ku) };
@@ -1008,7 +1010,7 @@ impl<'t> State<'t> {
         // SAFETY: v's block of the well-formed adjacency; neighbours are
         // vertices, below n.
         for &u in unsafe { self.graph.adj.get_unchecked(begin..end) } {
-            unsafe { self.queue.push_unchecked(u) };
+            self.queue.push(u);
         }
         Ok(0.0)
     }

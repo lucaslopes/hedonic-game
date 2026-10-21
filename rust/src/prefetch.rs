@@ -1,22 +1,23 @@
 //! A hint to bring the cache line of `slice[index]` in: no effect on any
-//! result, and no access is made (an index out of bounds is ignored).
+//! result, and no access is made (an index out of bounds is ignored). Miri
+//! runs no inline assembly: there the hint is left out.
 
 #[inline(always)]
 pub fn prefetch<T>(slice: &[T], index: usize) {
     if index < slice.len() {
         let p = slice.as_ptr().wrapping_add(index);
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         // SAFETY: prfm only hints the cache; it never faults or writes, and
         // p points into `slice`.
         unsafe {
             std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) p, options(nostack, readonly, preserves_flags));
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         // SAFETY: as above (SSE is in the x86_64 baseline).
         unsafe {
             std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(p as *const i8);
         }
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+        #[cfg(any(miri, not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
         let _ = p;
     }
 }

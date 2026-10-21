@@ -19,7 +19,10 @@ pub fn fma(x: f64, y: f64, z: f64) -> f64 {
     #[cfg(all(target_arch = "x86_64", not(feature = "force-soft-fma")))]
     {
         if x86::has_fma() {
-            // SAFETY: the CPU reports FMA (and the OS saves its state).
+            // SAFETY: fma_instruction needs the FMA feature, and has_fma is
+            // true only when std_detect found it (CPUID's FMA bit, with
+            // OSXSAVE and XCR0 saving the AVX state: the check of C's
+            // hig_cpu_has_fma). Under Miri, std_detect reports no feature.
             unsafe { x86::fma_instruction(x, y, z) }
         } else {
             soft_fma(x, y, z)
@@ -79,6 +82,8 @@ mod x86 {
         yes
     }
 
+    /// # Safety
+    /// The CPU has FMA (`has_fma`).
     #[target_feature(enable = "fma")]
     pub unsafe fn fma_instruction(x: f64, y: f64, z: f64) -> f64 {
         use std::arch::x86_64::*;
