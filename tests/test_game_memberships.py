@@ -17,11 +17,12 @@ class _Result:
 
 def _fake_native(calls):
     """Stand-in for the C layer that records the start it receives and
-    returns it unchanged."""
+    returns it unchanged (None, the default start, as the core's singletons)."""
 
     def fake(graph, **kwargs):
-        calls.append(kwargs["initial_membership"])
-        return _Result(kwargs["initial_membership"])
+        start = kwargs["initial_membership"]
+        calls.append(start)
+        return _Result([[v] for v in range(graph.vcount())] if start is None else start)
 
     return fake
 
@@ -59,7 +60,7 @@ def test_a_call_ignores_the_stored_state_unless_it_is_passed():
     with patch(NATIVE, side_effect=_fake_native(calls)):
         game.community_hedonic(max_memberships=2, resolution=0.5)
         game.community_hedonic(game.memberships, max_memberships=2, resolution=0.5)
-    assert calls == [[[0], [1], [2]], [[0], [1], [2]]]
+    assert calls == [None, [[0], [1], [2]]]
     assert game.memberships == [[0], [1], [2]]
 
 

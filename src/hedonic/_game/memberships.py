@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import sys
+from itertools import chain
 from numbers import Integral
+
+from .helpers import gc_paused
 
 
 def memberships_as_cover(game) -> list[list[int]]:
@@ -52,7 +55,8 @@ def _rows_of(membership):
     if igraph is not None and isinstance(membership, igraph.VertexClustering):
         return list(membership.membership), membership.graph
     if igraph is not None and isinstance(membership, igraph.VertexCover):
-        return [list(row) for row in membership.membership], membership.graph
+        # Its rows as they are: normalize_rows copies every row it keeps.
+        return membership.membership, membership.graph
     if hasattr(membership, "tolist") and not isinstance(membership, (list, tuple)):
         membership = membership.tolist()   # a NumPy array
     return membership, None
@@ -123,6 +127,68 @@ def normalize_rows(
     ):
         raise ValueError("max_memberships must be an integer >= 1")
 
+    with gc_paused():
+        plain = _plain_rows(membership, max_memberships, collapse_duplicate_labels)
+    if plain is not None:
+        rows, all_labels = plain
+    else:
+        rows, all_labels = _checked_rows(membership, name, max_memberships,
+                                         collapse_duplicate_labels)
+
+    if all_labels and max(all_labels) != len(all_labels) - 1 and renumber_labels:
+        new = {label: index for index, label in enumerate(sorted(all_labels))}
+        with gc_paused():
+            return [[new[label] for label in row] for row in rows]
+    if all_labels and max(all_labels) != len(all_labels) - 1:
+        # Labels are non-negative and distinct, so they are 0 .. k-1
+        # exactly when the largest is k - 1.
+        missing = min(set(range(max(all_labels) + 1)) - all_labels) \
+            if max(all_labels) < 10 * len(membership) else None
+        raise ValueError(
+            f"{name} labels must be contiguous from 0"
+            + (f" (label {missing} is unused)" if missing is not None else "")
+        )
+    return rows
+
+
+def _plain_rows(membership, max_memberships, collapse_duplicate_labels):
+    """The rows and label set of a membership of plain ``int`` labels (flat, or
+    rows that are all lists or tuples) that passes every check of
+    :func:`_checked_rows`, without its per-label checks; None for anything
+    else, which :func:`_checked_rows` then reads (and names what is wrong).
+
+    ``type(x) is int`` admits exactly the labels the per-label check accepts
+    as they are (``int(x)`` is ``x``; a bool's type is ``bool``), so the rows
+    are the same lists of the same values.
+    """
+    kinds = set(map(type, membership))
+    if kinds == {int}:
+        if min(membership) < 0:
+            return None
+        return [[label] for label in membership], set(membership)
+    if not kinds <= {list, tuple}:
+        return None
+    lengths = list(map(len, membership))
+    if min(lengths) == 0:
+        return None
+    labels = list(chain.from_iterable(membership))
+    if set(map(type, labels)) != {int} or min(labels) < 0:
+        return None
+    if max(lengths) == 1:
+        rows = list(map(list, membership))
+    else:
+        rows = [list(dict.fromkeys(row)) for row in membership]
+        if not collapse_duplicate_labels and any(map(int.__ne__, map(len, rows), lengths)):
+            return None
+        if max_memberships is not None and max(map(len, rows)) > max_memberships:
+            return None
+    return rows, set(labels)
+
+
+def _checked_rows(membership, name, max_memberships, collapse_duplicate_labels):
+    """The rows and label set of ``membership``, checked label by label: the
+    first vertex that breaks a rule is named."""
+
     def row_of(entry):
         if isinstance(entry, (list, tuple)):
             return entry
@@ -182,20 +248,7 @@ def normalize_rows(
             )
         rows.append(labels)
         all_labels.update(labels)
-
-    if all_labels and max(all_labels) != len(all_labels) - 1 and renumber_labels:
-        new = {label: index for index, label in enumerate(sorted(all_labels))}
-        return [[new[label] for label in row] for row in rows]
-    if all_labels and max(all_labels) != len(all_labels) - 1:
-        # Labels are non-negative and distinct, so they are 0 .. k-1
-        # exactly when the largest is k - 1.
-        missing = min(set(range(max(all_labels) + 1)) - all_labels) \
-            if max(all_labels) < 10 * len(membership) else None
-        raise ValueError(
-            f"{name} labels must be contiguous from 0"
-            + (f" (label {missing} is unused)" if missing is not None else "")
-        )
-    return rows
+    return rows, all_labels
 
 
 def as_overlapping_init(

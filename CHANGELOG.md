@@ -25,6 +25,16 @@
   1.2 times fewer, and the core's memory peaks are C's or lower; see
   `native/rust/README.md` and its perflog. Calls release the GIL, and the
   module runs on free-threaded CPython (3.14t) without enabling it.
+- The Python layer around the core does less, with the same rows, messages,
+  results and provenance: memberships of plain integers (flat, or rows of
+  lists and tuples) are checked in bulk, and anything else label by label as
+  before (the audit's cover preparation was most of a capped audit's
+  instructions); a default singleton start is left to the core instead of
+  built as n Python lists and read back; the self-loop check asks igraph's
+  `is_simple()` before building a bool per edge; and the cyclic garbage
+  collector is held while one list per vertex is built (the stored
+  memberships, a cover's clusters), which it otherwise traverses again and
+  again. The ground-truth spectrum's code digest gets an alias to 2.1's.
 - `hedonic.arrays` runs the detector and the stability audit on NumPy arrays
   (an edge list, or a NetworkX or SciPy graph), without igraph: `pip install
   hedonic` still brings igraph for `Game`, but the array path never imports
