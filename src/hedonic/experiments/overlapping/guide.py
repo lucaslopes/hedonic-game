@@ -143,6 +143,9 @@ TOPICS: dict[str, tuple[str, str]] = {
         hedonic run stop NAME           explicit; nothing stops a run implicitly
         hedonic run resume [NAME]       continue an interrupted, stopped or failed run
         hedonic run check [NAME]        morning check: replay sampled results from their seeds and compare
+        hedonic run check --replay N [NAME | --root DIR]
+                                        after a change of core: replay N Hedonic units and N cover audits with the
+                                        loaded core, bit for bit (--dry-run lists them; a pass goes to adopted.json)
 
         Statuses: running, completed, completed_with_failures, stopped, interrupted (the worker vanished, for
         example after a reboot) and failed (an error, with its reason). NAME may be a unique fragment.
@@ -174,6 +177,15 @@ TOPICS: dict[str, tuple[str, str]] = {
         longer. A limit never changes what a record is: a run it stopped runs again under a larger limit or none.
         The spectrum keeps its own per-run timeout (part of each condition's identity); --dry-run shows, per run,
         what one run is and where a limit does not apply.
+
+        Memory: while a detector runs (a benchmark run, a calibration probe, a start-quality condition), the
+        machine's free memory is read twice a second; below the floor (HEDONIC_MEMORY_FLOOR, default 10% free)
+        that run's processes are killed and it is recorded as out of memory (status memory, with the floor and
+        the free memory seen). Like a timeout it stands: the queue does not run it again unless the floor is lower
+        or you add --rerun-memory to `hedonic run ...`. In a queue file, `--alone PAIRS` runs those pairs of a
+        calibration one at a time, never beside another, and `--out-of-memory METHOD@PAIR,...` records a run as
+        out of memory without starting it (the overlap queue does so for Clique Percolation on LiveJournal and
+        Friendster). Tables and `hedonic run check` say "out of memory".
     """),
     "config": ("Your settings (`hedonic config`)", """
         hedonic config                                show ~/.config/hedonic/config.toml

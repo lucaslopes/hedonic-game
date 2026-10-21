@@ -683,6 +683,20 @@ class TestParallelCalibration(unittest.TestCase):
                              sorted(s["key"] for s in cal.searches(plan)))
             self.assertEqual(max(e["done"] for e in events if e["type"] == "unit"), 4)
 
+    def test_a_pair_marked_alone_runs_first_with_no_other_search_beside_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = self.plan(tmp, "--workers", "4", "--networks", "dblp,amazon,youtube,livejournal", "--alone", "livejournal")
+            self.assertEqual(cal.resolve(cal.launch_argv(plan))["alone"], ["livejournal"])
+            self.assertEqual(cal.run_calibration(plan, emit=lambda _: None), 0)
+            spans = {path.stem: json.loads(path.read_text())[:2] for path in (plan["output"] / "ledger").glob("*.span")}
+            alone = next(span for name, span in spans.items() if "livejournal" in name)
+            others = [span for name, span in spans.items() if "livejournal" not in name]
+            self.assertEqual(len(others), 3)
+            self.assertTrue(all(alone[1] <= start + 0.05 for start, _ in others))  # the others start once it ended
+            self.assertLess(max(s[0] for s in others), min(s[1] for s in others))  # and still run side by side
+            with self.assertRaises(ValueError):
+                cal.resolve(["--networks", "dblp", "--alone", "amazon", "--output-dir", str(Path(tmp) / "x")])
+
     def test_one_worker_is_the_one_at_a_time_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             plan = self.plan(tmp, "--workers", "1")

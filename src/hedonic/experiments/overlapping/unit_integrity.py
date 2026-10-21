@@ -5,7 +5,7 @@ a cover ``covers/<net>/<runner>.json.gz`` (and, for Hedonic, its labelled rows `
 ``cover_store``). Beside ``runs/`` sits a seal, ``integrity/<net>/<runner>.json``: the SHA-256 of the record's bytes and of
 the cover's (and labels') bytes, taken when the unit finished. A unit is certified when
 
-* the record parses and has a final status (completed, unavailable or failed),
+* the record parses and has a final status (completed, unavailable or failed; timeout and memory while they stand),
 * its ``config_digest`` is the one the runner would stamp now (the same settings),
 * the cover (and labels file) it names exists, and
 * the bytes of record, cover and labels are the sealed ones.
@@ -36,6 +36,7 @@ SEAL_DIR = "integrity"
 SCHEMA = 1
 FINAL = ("completed", "unavailable", "failed")
 TIMEOUT = "timeout"  # a run a queue's time limit stopped (``limits``): final only under a limit no larger than that one
+MEMORY = "memory"  # a run the memory watchdog stopped, or declared out of memory (``memwatch``): final while it stands
 
 
 def final(record: dict, limit: float | None = None) -> bool:
@@ -43,7 +44,7 @@ def final(record: dict, limit: float | None = None) -> bool:
     from hedonic.experiments.overlapping import limits
 
     status = record.get("status")
-    return status in FINAL or (status == TIMEOUT and limits.stands(record, limit))
+    return status in FINAL or (status in (TIMEOUT, MEMORY) and limits.stands(record, limit))
 OK_STATES = ("verified", "unsealed")
 
 

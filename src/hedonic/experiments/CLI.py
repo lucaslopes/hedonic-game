@@ -404,6 +404,8 @@ HELP_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("hedonic run check [NAME]", "morning check: replay a sample of the results and compare"),
         ("hedonic run queue FILE|NAME", "run the experiments of a queue file one after another (overnight)"),
         ("hedonic run", "your favourite config (hedonic config set run NAME), else the wizard"),
+        ("hedonic run ... --rerun-memory", "run again what the memory watchdog stopped (below HEDONIC_MEMORY_FLOOR, "
+                                           "default 10% free) or a queue declared out of memory; by default they stand"),
     )),
     ("Data, runtimes and settings", (
         ("hedonic setup [--all]", "download SNAP pairs and build the external methods (--dry-run checks the tools)"),
@@ -464,6 +466,15 @@ def hedonic_main(argv: list[str] | None = None) -> int:
     if argv[0] in ("-V", "--version"):
         print(_package_version())
         return 0
+    if argv[0] == "run" and "--rerun-memory" in argv[1:]:
+        # every `hedonic run` verb: runs stopped for memory (or declared out of memory) are run again; the variable
+        # reaches the detached worker and every runner it starts (``memwatch.rerun_requested``)
+        import os
+
+        from hedonic.experiments.overlapping import memwatch
+
+        argv = [arg for arg in argv if arg != "--rerun-memory"]
+        os.environ[memwatch.RERUN_ENV] = "1"
     if argv[0] == "setup":  # data and external runtimes
         from hedonic.experiments.overlapping import codeseg_setup
 

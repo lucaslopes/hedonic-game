@@ -66,7 +66,7 @@ from typing import Any, Callable
 from hedonic.experiments.config import RUNS_ROOT, expand_path
 from hedonic.experiments.overlapping import parallel
 from hedonic.experiments.overlapping import quickstart as qs
-from hedonic.experiments.runtime import ALGORITHM_IDENTITY, runtime_versions
+from hedonic.experiments.runtime import algorithm_identity, runtime_versions
 
 PROTOCOL = "hedonic-calibration-v2"
 TUNED_NAME = qs.TUNED_NAME  # hedonic_tuned.json; quickstart.LEGACY_TUNED_NAMES are read too
@@ -120,6 +120,10 @@ def build_parser(prog: str = "hedonic run calibrate") -> argparse.ArgumentParser
     parser.add_argument("--workers", type=int, metavar="N",
                         help="cores for the whole calibration: the searches run side by side and share this budget "
                              "(default: the performance cores, or HEDONIC_WORKERS); 1 runs one evaluation at a time")
+    parser.add_argument("--alone", default="", metavar="PAIRS",
+                        help="pairs too large to share the machine: their searches run first, one at a time, with no "
+                             "other search beside them (each still uses the --workers budget for its own probes); the "
+                             "other searches then run side by side; policy, not part of any record")
     parser.add_argument("--budget", type=int, metavar="N",
                         help="lazy calibration: stop each search before its Nth+1 selection evaluation and keep the "
                              "best-observed setting by selection-seed F1 (no snap, no confirmation); see lazy_search")
@@ -188,10 +192,14 @@ def resolve(argv: list[str], prog: str = "hedonic run calibrate") -> dict[str, A
             raise ValueError(f"{flag} must be a positive number of seconds")
     if args.cap == "unlimited" and args.budget is not None:
         raise ValueError("--cap unlimited searches the resolution only; it does not go with --budget")
+    alone = qs.parse_targets(args.alone) if args.alone.strip() else []
+    stray = [t for t in alone if t not in networks]
+    if stray:
+        raise ValueError(f"--alone names pair(s) not in --networks: {', '.join(stray)}")
     return {"script": script, "mode": args.mode, "cap": args.cap, "networks": networks, "methods": methods,
             "factor": float(args.factor), "confirm": qs.parse_seeds(args.confirm_seeds), "python": args.python or sys.executable,
             "workers": parallel.default_workers(args.workers),
-            "budget": args.budget, "cap_minutes": args.cap_minutes,
+            "budget": args.budget, "cap_minutes": args.cap_minutes, "alone": alone,
             "timeout": args.timeout, "limit": args.limit_seconds,
             "network_root": expand_path(args.network_root).resolve() if args.network_root else None,
             "snap_cache_dir": expand_path(args.snap_cache_dir).resolve() if args.snap_cache_dir else None,
@@ -334,6 +342,8 @@ def plan_lines(plan: dict[str, Any]) -> list[str]:
              f"  workers  {plan['workers']} "
              + ("(the searches run side by side and share this many cores)" if plan["workers"] > 1
                 else "(one evaluation at a time)")]
+    if plan.get("alone"):
+        lines.append(f"  alone    {', '.join(plan['alone'])}: searched first, one at a time, with no other search beside it")
     data = data_status(plan) if not script else {}
     if not script:
         from hedonic.experiments.overlapping import snap
@@ -490,7 +500,7 @@ def record_search(plan: dict[str, Any], search: dict[str, Any], summary: dict[st
                                                         "probe_seconds", "detection_seconds", "selection")}
     data = read_tuned(plan) or {}
     data.update({"protocol": PROTOCOL, "mode": plan["mode"], "cap": plan.get("cap", "search"),
-                 "algorithm_identity": ALGORITHM_IDENTITY,
+                 "algorithm_identity": algorithm_identity(),
                  "environment": runtime_versions(),
                  "search": str(plan["script"]) if plan.get("script") else SEARCH_MODULE})
     data.setdefault("searches", {})[search["key"]] = entry
@@ -549,11 +559,15 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
          f"{plan['workers']} worker{'s' if plan['workers'] != 1 else ''}")
     if pending and not script:  # the packaged search: every pair on disk first (a script loads its own data)
         provision({**plan, "networks": [s["network"] for s in pending]}, emit)
-    together = plan["workers"] > 1 and len(pending) > 1  # searches side by side; their lines carry a prefix
+    # ``--alone``: the searches of those pairs first, one at a time, with nothing beside them; then the rest side by side
+    alone = set(plan.get("alone") or [])
+    solo = [s for s in pending if s["network"] in alone]
+    rest = [s for s in pending if s["network"] not in alone]
+    together = plan["workers"] > 1 and len(rest) > 1  # searches side by side; their lines carry a prefix
     lock = threading.RLock()
     finished = [len(done & wanted)]
     probes: dict[str, int] = {}
-    active = {s["key"] for s in pending}  # the searches still running: a finished one is not shown as if it were
+    active = {s["key"] for s in (solo[:1] or rest)}  # the searches running: a finished or waiting one is not shown
     failures: list[str] = []
 
     def say(line: str) -> None:
@@ -574,7 +588,9 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
                 progress(item)
 
     def one(search: dict[str, Any]) -> None:
-        prefix = f"[{search['key']}] " if together else ""
+        prefix = f"[{search['key']}] " if together and search["network"] not in alone else ""
+        with lock:
+            active.add(search["key"])
         try:
             run_search(plan, search, event, say, prefix)
             summary = final_of(out / "ledger", search)
@@ -596,14 +612,20 @@ def run_calibration(plan: dict[str, Any], *, progress: Progress = _silent, emit:
                 active.discard(search["key"])
                 emit(f"hedonic calibration: {search['key']} FAILED: {exc}")
 
-    if together:
-        threads = [threading.Thread(target=one, args=(search,), name=search["key"]) for search in pending]
+    for search in solo:
+        one(search)
+        if failures:
+            break
+    if not failures and together:
+        with lock:
+            active.update(s["key"] for s in rest)
+        threads = [threading.Thread(target=one, args=(search,), name=search["key"]) for search in rest]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
-    else:
-        for search in pending:
+    elif not failures:
+        for search in rest:
             one(search)
             if failures:
                 break
@@ -655,6 +677,8 @@ def launch_argv(plan: dict[str, Any]) -> list[str]:
         argv += ["--budget", str(plan["budget"])]
     if plan.get("cap_minutes"):
         argv += ["--cap-minutes", f"{plan['cap_minutes']:g}"]
+    if plan.get("alone"):
+        argv += ["--alone", ",".join(plan["alone"])]
     if plan.get("timeout") is not None:
         argv += ["--timeout", f"{plan['timeout']:g}"]
     if plan.get("limit") is not None:

@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 
 from hedonic import Game
-from hedonic.experiments.overlapping import limits
+from hedonic.experiments.overlapping import limits, memwatch
 from hedonic.experiments.overlapping import parallel as par
 from hedonic.experiments.overlapping.calibration_audit import CoverAudit, active_density, internal_densities
 
@@ -315,13 +315,16 @@ def _held():
 
 def _compute(spec: str, cfg: dict, timeout: float) -> dict:
     """One detector run plus scoring and label-free diagnostics. Touches neither the cache nor the ledger, so it can
-    run in a forked worker."""
+    run in a forked worker. The probe's child is watched for memory (``memwatch.join``): below the free-memory floor
+    its tree is killed and the probe is recorded as ``status: "memory"``, which a later search reuses like a timeout."""
     key = cfg_key(spec, cfg)
     inst = load_instance(spec)
     fd, path = tempfile.mkstemp(suffix=".pkl"); os.close(fd)
     proc = mp.get_context("fork").Process(target=_child, args=(spec, cfg, path))
-    t0 = time.perf_counter(); proc.start(); proc.join(timeout)
-    if proc.is_alive():
+    t0 = time.perf_counter(); proc.start(); watch = memwatch.join(proc, timeout)
+    if watch.tripped is not None:
+        out = {**watch.tripped, "wall_seconds": time.perf_counter() - t0}
+    elif proc.is_alive():
         proc.kill(); proc.join()
         # ``limit_seconds``: a larger timeout later runs this configuration again (``limits.stands``)
         out = {"status": "timeout", "wall_seconds": time.perf_counter() - t0, "limit_seconds": float(timeout)}

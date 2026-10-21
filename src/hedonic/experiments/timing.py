@@ -169,6 +169,7 @@ class DetectorClock:
         self.harness_peak_rss_bytes: int | None = None
         self.rss_before_bytes: int | None = None
         self.stopped_at: float | None = None
+        self.memory_stop: dict[str, Any] | None = None  # the watchdog's stop of a process (``memwatch``), if any
 
     # ------------------------------------------------------------------ what ran
     @property
@@ -222,7 +223,13 @@ class DetectorClock:
         ``counted=False`` records the region without adding it to ``seconds``: a worker that times itself calls
         :meth:`adopt` afterwards. Raises ``subprocess.TimeoutExpired`` (the whole process group is killed) and
         ``OSError`` like ``subprocess.run`` did, after recording the time up to then.
+
+        While it runs, a thread of this process reads the machine's free memory every half second (``memwatch``; the
+        program's own process is never touched): below the floor the program's whole tree is killed and
+        ``memwatch.MemoryLimitReached`` is raised, after recording the time up to then (``memory_stop``).
         """
+        from hedonic.experiments.overlapping import memwatch
+
         command = [str(part) for part in command]
         with tempfile.TemporaryDirectory(prefix="hedonic-clock-") as scratch:
             out_path, err_path = Path(scratch, "stdout"), Path(scratch, "stderr")
@@ -256,8 +263,10 @@ class DetectorClock:
                         timer.daemon = True
                         timer.start()
                     hwm = _HighWater(handle.pid) if _PROC_HWM else None
+                    watch = memwatch.Watch(handle.pid)
                     try:
-                        _pid, status, usage = os.wait4(handle.pid, 0)
+                        with watch.thread():
+                            _pid, status, usage = os.wait4(handle.pid, 0)
                     except BaseException:  # Ctrl-C or an unexpected error: leave nothing running
                         kill_group()
                         with contextlib.suppress(OSError):
@@ -278,6 +287,8 @@ class DetectorClock:
                       "peak_rss_bytes": peak, "input_bytes": input_bytes}
             if hwm is not None:
                 region["peak_rss_source"] = "proc_vmhwm_sampled"
+            if watch.tripped is not None:
+                region["stopped_for_memory"] = True
             self.regions.append(region)
             if counted:
                 self.seconds += seconds
@@ -285,6 +296,10 @@ class DetectorClock:
             self.child_system_cpu_seconds += usage.ru_stime
             self.process_peak_rss_bytes = max(self.process_peak_rss_bytes, peak)
             self._stop()
+            if watch.tripped is not None:
+                self.memory_stop = dict(watch.tripped)
+                raise memwatch.MemoryLimitReached(watch.tripped["free_memory_percent"],
+                                                  watch.tripped["memory_floor_percent"])
             if killed.is_set():
                 raise subprocess.TimeoutExpired(command, timeout)
             return ProcessResult(

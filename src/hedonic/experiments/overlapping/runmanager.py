@@ -16,6 +16,8 @@ record, so ``hedonic run resume NAME`` continues where an interrupted run
     hedonic run stop NAME            stop a run (explicit)
     hedonic run resume NAME          restart an interrupted/stopped run; finished runs are reused
     hedonic run check [NAME]         morning check: replay a sample of the run's results
+    hedonic run check --replay N [NAME | --root DIR]
+                                     replay N Hedonic units and N cover audits with the loaded core (after a change of core)
     hedonic run queue FILE|NAME      run a list of experiments one after another (see runqueue.py)
 
 Nine kinds of run share this machinery: benchmark runs (``hedonic run exp`` /
@@ -534,7 +536,10 @@ def stop_for_memory(name: str, entry: dict, prog: dict, free: float, floor: floa
 
 
 def start_memory_guard(name: str, entry: dict, prog: dict):
-    """Watch the machine's free memory from a daemon thread; the returned event stops the watch (``None``: no watch)."""
+    """Watch the machine's free memory from a daemon thread; the returned event stops the watch (``None``: no watch).
+
+    The last resort: below half the floor it stops the run at once, else after ``parallel.LAST_RESORT_SECONDS`` below
+    it (``parallel.FloorWatch``), so the detector run's own watchdog can stop that run and record it first."""
     import threading
 
     from hedonic.experiments.overlapping import parallel
@@ -543,11 +548,12 @@ def start_memory_guard(name: str, entry: dict, prog: dict):
     if not floor or parallel.free_memory_percent() is None:
         return None
     done = threading.Event()
+    breach = parallel.FloorWatch(floor)  # a detector run's own watchdog (``memwatch``) stops and records it first
 
     def watch() -> None:
         while not done.wait(MEMORY_GUARD_SECONDS):
             free = parallel.free_memory_percent()
-            if free is not None and free < floor:
+            if breach.breached(free):
                 stop_for_memory(name, entry, prog, free, floor)
 
     threading.Thread(target=watch, name="memory-guard", daemon=True).start()
@@ -1645,6 +1651,10 @@ def check_benchmark(entry: dict, sample: int) -> int:
     prog = read_progress(entry)
     done = [p for p in prog.get("plan", []) if p.get("status") == "completed"]
     print(f"  run      {entry['name']} · {len(done)}/{len(prog.get('plan', []))} detector runs completed")
+    for p in prog.get("plan", []):  # stopped by the memory watchdog, or declared out of memory: said, never rerun here
+        if p.get("status") == "memory":
+            print(style(f"  out of memory  {qs.NETWORKS[p['network']][0]} · seed {p['seed']} · {p.get('label') or p['method']}"
+                        f": {str(p.get('reason') or '')[:160]}", "yellow"))
     replicas = sorted({p["method"] for p in done if replication.kind(p["method"]) == "replicas"})
     if replicas:
         print(f"  skipped  {', '.join(qs.BY_KEY[m].label for m in replicas)}: its runs are independent replicas "
@@ -1755,6 +1765,14 @@ def dispatch(argv: list[str]) -> int:
         parser.add_argument("--sample", type=int, default=None,
                             help="graphs to regenerate (disjoint, default 20) or detector runs to rerun (default 2)")
         parser.add_argument("--rows", type=int, default=10, help="rows replayed per graph (disjoint)")
+        parser.add_argument("--replay", type=int, default=None, metavar="N",
+                            help="replay N Hedonic units and N cover audits of the run's folder (or --root) with the "
+                                 "loaded core and compare bit for bit; a pass is recorded in <folder>/adopted.json")
+        parser.add_argument("--root", default=None, help="with --replay: a run folder instead of a registered run")
+        parser.add_argument("--vertices", type=int, default=None,
+                            help="with --replay: vertices audited again per cover audit (default 32)")
+        parser.add_argument("--network-root", default=None, help="with --replay: where the SNAP pairs are")
+        parser.add_argument("--dry-run", action="store_true", help="with --replay: list what it would replay, then exit")
     args = parser.parse_args(argv[1:])
     name = getattr(args, "name", None)
     if verb == "list":
@@ -1774,7 +1792,15 @@ def dispatch(argv: list[str]) -> int:
         return cmd_logs(name)
     if verb == "stop":
         return cmd_stop(name)
+    if verb == "check" and args.replay is not None:
+        from hedonic.experiments.overlapping import replay
+
+        root = args.root or load_entry(name).get("output_dir")
+        return replay.check(root, args.replay, vertices=args.vertices or replay.DEFAULT_VERTICES,
+                            network_root=args.network_root, dry_run=args.dry_run)
     if verb == "check":
+        if args.root or args.dry_run or args.vertices is not None or args.network_root:
+            raise SystemExit("--root, --vertices, --network-root and --dry-run go with --replay N")
         return cmd_check(name, args.sample, args.rows)
     if not args.again:  # the verb continues unfinished runs; a completed one only says where its results are
         entry = load_entry(name)

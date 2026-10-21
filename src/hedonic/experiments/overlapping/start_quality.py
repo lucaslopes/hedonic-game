@@ -51,7 +51,7 @@ from typing import Any, Callable
 from hedonic.experiments import runtime
 from hedonic.experiments.config import RUNS_ROOT, expand_path
 from hedonic.experiments.resources import config_path as resolve_config
-from hedonic.experiments.overlapping import limits
+from hedonic.experiments.overlapping import limits, memwatch
 from hedonic.experiments.overlapping import gt_spectrum as gs
 from hedonic.experiments.overlapping import ground_truth_robustness as v3
 from hedonic.experiments.overlapping import parallel
@@ -108,9 +108,10 @@ def parse_phase(value: str) -> str:
 
 @lru_cache(maxsize=1)
 def code_identity() -> str:
-    """The code a condition ran on, as it enters the record key: ``hedonic-<version>+core-<first 16 hex of its SHA-256>``."""
+    """The code a condition ran on, as it enters the record key: ``hedonic-<results series>+core-<first 16 hex of the
+    core's identity>`` (``runtime.build_identity``: the full version and the compiled bytes are provenance)."""
     sha = runtime.core_source_sha256() or "unknown"
-    return f"hedonic-{runtime.release_series()}+core-{sha[:16]}"
+    return f"hedonic-{runtime.RESULTS_SERIES}+core-{sha[:16]}"
 
 
 def load_tuned(files: str | list[str] | None) -> tuple[dict | None, list[str]]:
@@ -558,16 +559,21 @@ def run_condition(job: Any, setting: dict[str, Any], level: float | str, seed: i
         requested, perturbation_seed = float(level), SWAP_SEED_BASE + seed
     start_f1, start_onmi = score(start_cover, job.gt_cover, n)
     started = time.monotonic()
-    # allow_isolation is True, as in the calibrated rows (methods._hedonic_local). ``limit`` bounds this one detector run.
+    # allow_isolation is True, as in the calibrated rows (methods._hedonic_local). ``limit`` bounds this one detector run;
+    # the memory watchdog (``memwatch``) stops it below the free-memory floor.
+    stopped = None
     try:
-        with limits.wall_clock(limit):
+        with limits.wall_clock(limit), memwatch.in_process():
             outcome = v3._detector_worker(graph, contiguous_labels(start_memberships), cap, gamma, phase, True, seed)
     except limits.RunLimitReached as exc:
+        stopped = limits.timed_out(exc.seconds, started)
+    except memwatch.MemoryLimitReached as exc:
+        stopped = {**exc.fields(), "seconds": time.monotonic() - started}
+    if stopped is not None:
         return {"study": STUDY, "schema_version": SCHEMA_VERSION, "key": key, "phase": phase, "network": job.dataset,
                 "cover": job.cover, "level": label_of(level), "level_kind": "random" if level == "random" else "swap",
                 "detector_seed": seed, "start_symmetric_f1": start_f1, "start_onmi": start_onmi, "cap": cap,
-                "gamma": gamma, "n_vertices": n, "n_edges": graph.ecount(), "code": code_identity(),
-                **limits.timed_out(exc.seconds, started)}
+                "gamma": gamma, "n_vertices": n, "n_edges": graph.ecount(), "code": code_identity(), **stopped}
     seconds = time.monotonic() - started
     final_raw = v3._normalize_raw_memberships(outcome["final_memberships"], n, cap if cap >= 1 else n)
     final_cover = rb.canonicalize_cover(rb.vertex_memberships_to_cover(final_raw), n)
@@ -613,7 +619,8 @@ def read_records(path: Path, limit: float | None = None) -> dict[str, dict[str, 
     a phase field was written before the phase option (1.x), so it is the 1.x multilevel phase.
 
     A condition a time limit stopped counts only under a ``limit`` no larger than that one (``limits.stands``); the
-    latest record of a key wins over a stopped one, so a rerun under a larger limit replaces it."""
+    latest record of a key wins over a stopped one, so a rerun under a larger limit replaces it. A condition the memory
+    watchdog stopped (``status: "memory"``) counts the same way, by its free-memory floor (``memwatch.stands``)."""
     records: dict[str, dict[str, Any]] = {}
     if not path.is_file():
         return records
@@ -627,7 +634,7 @@ def read_records(path: Path, limit: float | None = None) -> dict[str, dict[str, 
         if isinstance(record, dict) and isinstance(record.get("key"), str):
             phase = str(record.setdefault("phase", LEGACY_PHASE))
             key = resume_key(record["key"], phase)
-            if key not in records or records[key].get("status") == limits.TIMEOUT_STATUS:
+            if key not in records or records[key].get("status") in (limits.TIMEOUT_STATUS, limits.MEMORY_STATUS):
                 records[key] = record
     return {key: record for key, record in records.items() if limits.stands(record, limit)}
 

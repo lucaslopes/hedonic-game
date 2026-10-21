@@ -1119,13 +1119,21 @@ def _baselines_state(args: list[str]) -> tuple[str, str]:
         if search["method"] in bc.FIXED_METHODS and search["key"] not in own and search["key"] not in adopted:
             result = bc.calibrate(search["method"], None)
             fixed[search["key"]] = {**result.to_dict(), "runner_params": bc.runner_params(result.method, result.params)}
-    results = {**fixed, **adopted, **own}
+    declared = {}  # declared out of memory (--out-of-memory): recorded when the run starts, nothing loaded or run
+    for search in todo:
+        why = (plan.get("out_of_memory") or {}).get((search["method"], search["network"]))
+        if why and search["key"] not in own and search["key"] not in adopted:
+            declared[search["key"]] = br.declared_result(search["method"], search["network"], why).to_dict()
+    results = {**fixed, **declared, **adopted, **own}
     have = set(results)
     earlier = ([f"{len(adopted)} finished calibration(s) of {', '.join(sorted({Path(v['adopted_from']).name for v in adopted.values()}))} "
                 "are copied in when this run starts (counted as done here)"] if adopted else [])
     if fixed:
         earlier.append(f"{len(fixed)} pair(s) take the authors' published setting, written when this run starts "
                        "(nothing is run or loaded for them)")
+    if declared:
+        earlier.append(f"{len(declared)} search(es) are declared out of memory (--out-of-memory), recorded as such when "
+                       "this run starts (nothing is run or loaded for them)")
     _note(plan["output"], len(have & {s["key"] for s in todo}), len(todo), "calibrations",
           [(_pair_label(network), "calibrations", [f"{method}/{network}" in have for method in plan["methods"]])
            for network in plan["networks"]], earlier=earlier)

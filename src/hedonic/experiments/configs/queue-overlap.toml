@@ -43,6 +43,14 @@
 # An [[items]] entry may set its own `limits = { timeout = "30m" }` ("none" removes one); `hedonic run queue NAME
 # --timeout 2h --max-eta 6h` sets them from the command line, under the file's. A limit never changes a record's
 # identity: a run it stopped runs again once the limit is larger or gone.
+#
+# Memory. While a detector runs, its parent reads the machine's free memory twice a second; below the floor
+# (HEDONIC_MEMORY_FLOOR, default 10% free) that run's processes are killed and it is recorded as out of memory (status
+# "memory"), which stands like a timeout (`hedonic run ... --rerun-memory` runs it again). The phase-2 calibrations run
+# their pairs with `--alone`: LiveJournal/top5000 and Friendster/top5000 are never calibrated beside another pair (two
+# Clique Percolation evaluations side by side restarted the 64 GB machine). Clique Percolation is not run on those two
+# pairs at all (`--out-of-memory`): every evaluation on LiveJournal/top5000 was killed by the OS for memory (k = 3, 4
+# and 5), and Friendster/top5000 is larger. Its calibration and benchmark record them as out of memory, citing that.
 
 name = "overlap-queue"
 schedule = "file"
@@ -210,7 +218,7 @@ name = "calibration-hedonic-large"
 short = "calibrate-L"
 title = "Hedonic: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "Searches Hedonic's resolution on each pair's covered subgraph with no membership cap (-1), scored against that pair's cover. Writes hedonic_tuned.json, which the Hedonic experiments read."
-run = ["calibrate", "--cap", "unlimited", "--networks", "livejournal:top5000,friendster:top5000", "--name", "calibration-hedonic-large", "--output-dir", "{root}/calibration-hedonic-large"]
+run = ["calibrate", "--cap", "unlimited", "--networks", "livejournal:top5000,friendster:top5000", "--alone", "livejournal:top5000,friendster:top5000", "--name", "calibration-hedonic-large", "--output-dir", "{root}/calibration-hedonic-large"]
 
 [[items]]
 name = "gt-robustness-large"
@@ -238,7 +246,7 @@ name = "calibration-codeseg-large"
 short = "cal-codeseg-L"
 title = "CoDeSEG: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "CoDeSEG on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "codeseg", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-codeseg-large", "--output-dir", "{root}/calibration-codeseg-large"]
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "codeseg", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--alone", "livejournal:top5000,friendster:top5000", "--name", "calibration-codeseg-large", "--output-dir", "{root}/calibration-codeseg-large"]
 
 [[items]]
 name = "benchmark-codeseg-large"
@@ -252,7 +260,7 @@ name = "calibration-ncgame-large"
 short = "cal-ncgame-L"
 title = "NcGame: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "NcGame on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ncgame", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-ncgame-large", "--output-dir", "{root}/calibration-ncgame-large"]
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ncgame", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--alone", "livejournal:top5000,friendster:top5000", "--name", "calibration-ncgame-large", "--output-dir", "{root}/calibration-ncgame-large"]
 
 [[items]]
 name = "benchmark-ncgame-large"
@@ -266,7 +274,7 @@ name = "calibration-fox-large"
 short = "cal-fox-L"
 title = "FOX: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "FOX on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "fox", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-fox-large", "--output-dir", "{root}/calibration-fox-large"]
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "fox", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--alone", "livejournal:top5000,friendster:top5000", "--name", "calibration-fox-large", "--output-dir", "{root}/calibration-fox-large"]
 
 [[items]]
 name = "benchmark-fox-large"
@@ -280,7 +288,7 @@ name = "calibration-bigclam-large"
 short = "cal-bigclam-L"
 title = "BigCLAM: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "BigCLAM on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "bigclam", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-bigclam-large", "--output-dir", "{root}/calibration-bigclam-large"]
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "bigclam", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--alone", "livejournal:top5000,friendster:top5000", "--name", "calibration-bigclam-large", "--output-dir", "{root}/calibration-bigclam-large"]
 
 [[items]]
 name = "benchmark-bigclam-large"
@@ -294,7 +302,7 @@ name = "calibration-neo-kmeans-large"
 short = "cal-neo-kmea-L"
 title = "NEO-K-Means: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "NEO-K-Means on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "neo_kmeans", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-neo-kmeans-large", "--output-dir", "{root}/calibration-neo-kmeans-large"]
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "neo_kmeans", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--alone", "livejournal:top5000,friendster:top5000", "--name", "calibration-neo-kmeans-large", "--output-dir", "{root}/calibration-neo-kmeans-large"]
 
 [[items]]
 name = "benchmark-neo-kmeans-large"
@@ -308,21 +316,21 @@ name = "calibration-clique-percolation-large"
 short = "cal-clique-p-L"
 title = "CliquePerc: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "CliquePerc on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "clique_percolation", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-clique-percolation-large", "--output-dir", "{root}/calibration-clique-percolation-large"]
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "clique_percolation", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--alone", "livejournal:top5000,friendster:top5000", "--out-of-memory", "clique_percolation@livejournal:top5000,clique_percolation@friendster:top5000", "--name", "calibration-clique-percolation-large", "--output-dir", "{root}/calibration-clique-percolation-large"]
 
 [[items]]
 name = "benchmark-clique-percolation-large"
 short = "bench-clique-p-L"
 title = "CliquePerc: benchmark (LiveJournal/top5k and Friendster/top5k)"
 about = "CliquePerc on the subgraph each cover induces (seeds 0-9 for a seeded method, one run for a deterministic one); its cover is saved for the robustness audit (the audit item)."
-run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "clique_percolation", "--tuned", "{root}/calibration-clique-percolation-large/baseline_tuned.json", "--name", "benchmark-clique-percolation-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
+run = ["exp", "--config", "paper-benchmark", "--no-robustness", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "clique_percolation", "--tuned", "{root}/calibration-clique-percolation-large/baseline_tuned.json", "--out-of-memory", "clique_percolation@livejournal:top5000,clique_percolation@friendster:top5000", "--name", "benchmark-clique-percolation-large", "--output-dir", "{root}/benchmark", "--shared-folder", "--yes"]
 
 [[items]]
 name = "calibration-ego-splitting-large"
 short = "cal-ego-spli-L"
 title = "Ego-Splitting: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "Ego-Splitting on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ego_splitting", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-ego-splitting-large", "--output-dir", "{root}/calibration-ego-splitting-large"]
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "ego_splitting", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--alone", "livejournal:top5000,friendster:top5000", "--name", "calibration-ego-splitting-large", "--output-dir", "{root}/calibration-ego-splitting-large"]
 
 [[items]]
 name = "benchmark-ego-splitting-large"
@@ -336,7 +344,7 @@ name = "calibration-angel-large"
 short = "cal-angel-L"
 title = "ANGEL: calibration (LiveJournal/top5k and Friendster/top5k)"
 about = "ANGEL on each pair's covered subgraph without ground truth (a fixed method keeps its published setting). Adopts the searches baseline-calibration-rc1 finished."
-run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "angel", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=5:240", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--name", "calibration-angel-large", "--output-dir", "{root}/calibration-angel-large"]
+run = ["calibrate-baselines", "--networks", "livejournal:top5000,friendster:top5000", "--methods", "angel", "--max-evals", "8", "--max-minutes", "240", "--eval-timeout-minutes", "60", "--replicates", "1", "--method-budget", "angel=5:240", "--transfer-missing", "--adopt-from", "{root}/baseline-calibration-rc1", "--alone", "livejournal:top5000,friendster:top5000", "--name", "calibration-angel-large", "--output-dir", "{root}/calibration-angel-large"]
 
 [[items]]
 name = "benchmark-angel-large"

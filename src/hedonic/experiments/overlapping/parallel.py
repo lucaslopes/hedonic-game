@@ -87,11 +87,18 @@ def default_workers(requested: int | None = None) -> int:
 
 
 # --------------------------------------------------------------------------- free memory
+@functools.lru_cache(maxsize=1)
+def _libc() -> ctypes.CDLL:
+    """The C library, opened once: ``find_library`` alone costs tens of microseconds, and the memory watchdog
+    (``memwatch``) reads the free memory twice a second, inside a detector run."""
+    return ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+
+
 def free_memory_percent() -> float | None:
     """Percentage of the machine's memory that is free or reclaimable, or ``None`` when this platform does not say."""
     if sys.platform == "darwin":
         try:
-            libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+            libc = _libc()
             value = ctypes.c_int(0)
             size = ctypes.c_size_t(ctypes.sizeof(value))
             if libc.sysctlbyname(b"kern.memorystatus_level", ctypes.byref(value), ctypes.byref(size), None, 0) == 0:
@@ -121,6 +128,34 @@ def memory_floor() -> float:
     return DEFAULT_MEMORY_FLOOR
 
 
+LAST_RESORT_SECONDS = 2.0  # how long a whole-run guard lets free memory stay below the floor before it acts
+
+
+class FloorWatch:
+    """When a guard of a whole run (:func:`run_forked`, the worker guard) stops everything: at once below half the
+    floor, else once free memory has stayed below the floor for ``LAST_RESORT_SECONDS``.
+
+    Such a guard records nothing for the runs it kills, so a queue started again meets the same wall. The per-run
+    watchdog (``memwatch``) reads the same measure at least as often and stops only the run that is growing, which is
+    recorded as out of memory; the grace lets it act first, and lets the memory it frees show, unless the machine is
+    already close to running out."""
+
+    def __init__(self, floor: float):
+        self.floor = float(floor)
+        self.since: float | None = None
+
+    def breached(self, free: float | None) -> bool:
+        if free is None or free >= self.floor:
+            self.since = None
+            return False
+        if free < self.floor / 2:
+            return True
+        now = time.monotonic()
+        if self.since is None:
+            self.since = now
+        return now - self.since >= LAST_RESORT_SECONDS
+
+
 # --------------------------------------------------------------------------- forked one-shot workers
 def _child(fn: Callable[[Any], Any], item: Any, path: str) -> None:
     try:
@@ -143,7 +178,7 @@ def _outcome(path: str, exitcode: int | None) -> tuple[bool, Any]:
 
 def run_forked(fn: Callable[[Any], Any], items: Iterable[Any], workers: int,
                floor: float | None = None, admit: Callable[[int], bool] | None = None,
-               stagger: float = 0.0) -> Iterator[tuple[int, Any]]:
+               stagger: float = 0.0, alone: Callable[[Any], bool] | None = None) -> Iterator[tuple[int, Any]]:
     """Yield ``(index, fn(item))`` as results arrive, running at most ``workers`` forked children at a time.
 
     Results come back in completion order; the index is the item's position, so a caller that needs the input order
@@ -151,12 +186,17 @@ def run_forked(fn: Callable[[Any], Any], items: Iterable[Any], workers: int,
     are still yielded, so finished work can be recorded), and :class:`WorkerFailed` is raised with the first traceback.
     Leaving the generator early, or an exception in the caller, kills the running children. While children run, the
     machine's free memory is read about once a second; below ``floor`` percent (default :func:`memory_floor`) the children
-    are killed and :class:`MemoryLow` is raised (the single-worker path runs in this process and has no such check).
+    are killed and :class:`MemoryLow` is raised, at once below half the floor and otherwise after
+    ``LAST_RESORT_SECONDS`` below it (:class:`FloorWatch`), so a run's own watchdog can stop and record it first (the
+    single-worker path runs in this process and has no such check).
 
     ``admit(running)`` and ``stagger`` decide *when* the next item may start, never how many run at most: a new child
     starts only while fewer than ``workers`` run, ``stagger`` seconds have passed since the last start, and ``admit`` (given
     the number running) says yes. One item always starts when none is running, so the queue cannot stall. A caller whose
     items grow slowly to their peak memory uses them to see one child's footprint before the next begins.
+
+    ``alone(item)`` true marks an item that runs with nothing beside it (a pair too large to share the machine): it
+    starts only when no child runs, and no other item starts while it runs. Items keep their order.
     """
     work = list(items)
     if not work:
@@ -172,24 +212,34 @@ def run_forked(fn: Callable[[Any], Any], items: Iterable[Any], workers: int,
     queue = iter(enumerate(work))
     failure: tuple[int, str] | None = None
     limit = memory_floor() if floor is None else float(floor)
+    guard = FloorWatch(limit)
     last_look = float("-inf")
     last_start = float("-inf")
+    waiting: tuple[int, Any] | None = None  # the next item, held back until the running ones are done (``alone``)
+    solo = False  # the running child is an item that runs alone
     try:
         while True:
             if limit > 0 and time.monotonic() - last_look >= 1.0:
                 last_look = time.monotonic()
                 free = free_memory_percent()
-                if free is not None and free < limit:
+                if guard.breached(free):
                     raise MemoryLow(
                         f"free memory fell to {free:.0f}% (floor {limit:.0f}%): stopped {len(running)} running worker(s); "
                         f"rerun with fewer workers (the finished items are kept)")
             while failure is None and len(running) < workers:
                 if running and (time.monotonic() - last_start < stagger or (admit is not None and not admit(len(running)))):
                     break
-                nxt = next(queue, None)
+                if running and (solo or waiting is not None):
+                    break  # an item that runs alone is running, or is next and waits for the others to finish
+                nxt = waiting if waiting is not None else next(queue, None)
+                waiting = None
                 if nxt is None:
                     break
                 index, item = nxt
+                if running and alone is not None and alone(item):
+                    waiting = nxt
+                    break
+                solo = alone is not None and alone(item)
                 path = os.path.join(folder, f"{index}.pkl")
                 process = context.Process(target=_child, args=(fn, item, path))
                 process.start()
