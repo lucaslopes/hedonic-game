@@ -12,6 +12,8 @@
 //! two numbers in one argument list (an order C leaves unspecified), this
 //! file draws them left to right, as clang does.
 
+#![allow(clippy::neg_cmp_op_on_partial_ord)] // test_core.c's comparisons
+
 use std::cell::Cell;
 
 use hedonic_core_rs::cover::{cover, Cover};
@@ -883,7 +885,7 @@ fn planted() {
                 partition_regret(&g, &r.membership, k, &o) <= 1.0,
                 "planted regret"
             );
-            assert!(k >= BLOCKS / 2 && k <= 4 * BLOCKS, "planted k = {k}");
+            assert!((BLOCKS / 2..=4 * BLOCKS).contains(&k), "planted k = {k}");
             for cap in [2, 4, 8] {
                 for negative in [false, true] {
                     let o = options(if negative { -0.001 } else { 0.02 }, cap, isolation);

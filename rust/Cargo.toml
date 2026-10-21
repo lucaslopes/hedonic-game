@@ -2,6 +2,7 @@
 name = "hedonic-core-rs"
 version = "2.0.0"
 edition = "2021"
+rust-version = "1.78"
 license = "GPL-3.0-or-later"
 description = "The hedonic core in Rust: best-response local moving for the CPM hedonic game, bit-identical to native/."
 publish = false
