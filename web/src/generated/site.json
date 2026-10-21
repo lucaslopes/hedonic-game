@@ -1,7 +1,7 @@
 {
   "repositoryUrl": "https://github.com/lucaslopes/hedonic",
   "sourceRef": "main",
-  "packageVersion": "2.0.0",
+  "packageVersion": "2.1.0",
   "graphDependency": "igraph>=1.0",
   "requiresPython": ">=3.12"
 }
