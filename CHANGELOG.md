@@ -11,19 +11,38 @@
   still fixed by the source: every fused multiply-add is the instruction or
   the core's own correctly rounded soft fma (x86_64 picks one at run time),
   and the core calls no libm function but `sqrt` and `fabs`.
+- Finished runs stay valid. The Rust core has 2.0's three fingerprints
+  (`partitions-v1`, `covers-v1`, `audit-v1`), so it is a member of 2.0's core
+  class and records name the same core digest and results series (`2.0`) as
+  under 2.0.0rc11 and rc12; the ground-truth spectrum's code digest is
+  aliased to rc12's (`hedonic.experiments.spectrum_code`). The overlap
+  queue's state reads the same under 2.0 and 2.1.
 - It is faster: about 1.2 times as fast as the C core on the benchmark's
   geometric mean, 1.5 to 2.5 times on small graphs (the random generator's
   state is read in place) and 1.3 to 1.6 on large ones (prefetching ahead of
-  the queue); see `native/rust/README.md`.
+  the queue); see `native/rust/README.md`. Calls release the GIL, and the
+  module runs on free-threaded CPython (3.14t) without enabling it.
+- `hedonic.arrays` runs the detector and the stability audit on NumPy arrays
+  (an edge list, or a NetworkX or SciPy graph), without igraph: `pip install
+  hedonic` still brings igraph for `Game`, but the array path never imports
+  it. Results are the same as `Game`'s, bit for bit.
+- Wheels for more platforms: Linux x86_64, aarch64, i686, ppc64le, s390x,
+  armv7l and riscv64 (manylinux and musllinux), macOS arm64 and x86_64,
+  Windows AMD64, ARM64 and x86, and Pyodide, for CPython 3.12 to 3.14 and
+  free-threaded 3.14t; each is tested where it was built
+  (`native/rust/README.md`, "Platforms").
+- Hardening: every `unsafe` block is justified and debug-asserted, the crate
+  is fuzzed (`native/rust/fuzz`) and run under Miri in CI, its dependencies
+  are checked by cargo-deny, and errors match 2.0's types and messages.
 - To compare the two releases, install `hedonic==2.0.*` and `hedonic==2.1.*`
   in two environments and run the same calls (README, "Comparing hedonic 2.0
   (C) and 2.1 (Rust)"). `hedonic._core.backend` is `"rust"`. A second build of
   the core installed beside it as `hedonic._core_<name>` is used in its place
   with `HEDONIC_CORE=<name>`, so the same program runs on either.
 - Building from source needs a Rust toolchain instead of a C compiler.
-- Records name the Rust core by the digest of its sources
-  (`hedonic_core_source_sha256`, embedded by `native/rust/build.rs`) and the
-  release series `2.1`.
+  `hedonic._core.source_sha256` is the digest of the crate's sources
+  (`native/rust/build.rs`: `src/`, `build.rs`, `Cargo.toml`, `Cargo.lock`),
+  kept in records as provenance (`hedonic_core_built_source_sha256`).
 
 ## 2.0.0
 
