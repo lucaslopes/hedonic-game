@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -224,9 +225,9 @@ class TestResultsSeries(unittest.TestCase):
 
 @unittest.skipIf(os.environ.get("HEDONIC_REBUILD_CORES") == "0", "HEDONIC_REBUILD_CORES=0")
 class TestRebuildMembers(unittest.TestCase):
-    """Each member of a class, rebuilt from its release tag, has the class's three fingerprints (about 8 s a member:
-    git archive, setup.py build_ext, the three grids). It needs a git checkout with the tags and setuptools: an
-    installed wheel skips it."""
+    """Each member of a class, rebuilt from its release tag, has the class's three fingerprints (git archive, then
+    setup.py build_ext for a C core, about 8 s, or maturin for a Rust core, about a minute; the three grids). It needs
+    a git checkout with the tags, and setuptools or maturin: an installed wheel skips it."""
 
     def test_every_member_rebuilt_from_its_tag_is_in_its_class(self):
         if shutil.which("git") is None or not (ROOT / ".git").exists() or importlib.util.find_spec("setuptools") is None:
@@ -239,11 +240,23 @@ class TestRebuildMembers(unittest.TestCase):
                 if tagged.returncode:
                     self.skipTest(f"the tag {member['tag']} is not in this checkout")
                 with self.subTest(member=member["tag"]), tempfile.TemporaryDirectory() as tmp:
-                    archive = subprocess.run(["git", "-C", str(ROOT), "archive", member["tag"], "src", "native",
-                                              "setup.py", "pyproject.toml"], capture_output=True, check=True)
+                    listed = subprocess.run(["git", "-C", str(ROOT), "ls-tree", "--name-only", member["tag"]],
+                                            capture_output=True, text=True, check=True).stdout.split()
+                    paths = [p for p in ("src", "native", "setup.py", "pyproject.toml", "README.md", "LICENSE") if p in listed]
+                    archive = subprocess.run(["git", "-C", str(ROOT), "archive", member["tag"], *paths],
+                                             capture_output=True, check=True)
                     subprocess.run(["tar", "-x", "-C", tmp], input=archive.stdout, check=True)
-                    subprocess.run([sys.executable, "setup.py", "build_ext", "--inplace", "-q"], cwd=tmp,
-                                   capture_output=True, check=True)
+                    if "setup.py" in paths:  # a C core (hedonic 2.0)
+                        subprocess.run([sys.executable, "setup.py", "build_ext", "--inplace", "-q"], cwd=tmp,
+                                       capture_output=True, check=True)
+                    else:  # a Rust core (hedonic 2.1): maturin builds the wheel, its extension goes into src/
+                        if shutil.which("maturin") is None:
+                            self.skipTest(f"the tag {member['tag']} is a Rust core: needs maturin")
+                        subprocess.run(["maturin", "build", "--release", "--locked", "-o", "wheel"], cwd=tmp,
+                                       capture_output=True, check=True)
+                        with zipfile.ZipFile(next(Path(tmp, "wheel").glob("*.whl"))) as wheel:
+                            name = next(n for n in wheel.namelist() if n.startswith("hedonic/_core"))
+                            Path(tmp, "src", name).write_bytes(wheel.read(name))
                     script = ("import importlib.util, json, sys; import hedonic._core as c\n"
                               "spec = importlib.util.spec_from_file_location('grids', sys.argv[1])\n"
                               "g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)\n"
