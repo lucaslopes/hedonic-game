@@ -13,6 +13,7 @@ mod args;
 use std::borrow::Cow;
 
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
+use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -347,23 +348,54 @@ fn trace_cover<'py>(
 
 /// The rows of a cover and its clusters (one list of vertices per label,
 /// vertices increasing); each label and vertex one int object shared by both.
+/// As results.c: every list is created at its final size (the clusters' from
+/// a count of the labels) and filled in place.
 fn cover_lists<'py>(py: Python<'py>, cover: &Cover, count: i64) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
     let labels: Vec<Any<'py>> = (0..count).map(|c| c.into_pyobject(py).unwrap().into_any()).collect();
-    let mut members: Vec<Vec<Any<'py>>> = (0..count).map(|_| Vec::new()).collect();
-    let rows = PyList::empty(py);
-    for v in 0..cover.vertex_count() as usize {
-        let vertex = (v as i64).into_pyobject(py)?.into_any();
-        let row = cover.row(v);
-        rows.append(PyList::new(py, row.iter().map(|&c| &labels[c as usize]))?)?;
-        for &c in row {
-            members[c as usize].push(vertex.clone());
+    let n = cover.vertex_count() as usize;
+    let mut fill = vec![0usize; count as usize];
+    for &c in &cover.labels[..cover.offset[n] as usize] {
+        fill[c as usize] += 1;
+    }
+    // SAFETY: every list is new, created at its final size, and only this
+    // function holds it until it returns; each slot is set exactly once to a
+    // new reference (PyList_SET_ITEM steals it): a cluster's slots by its
+    // cursor in `fill`, which ends at the size it was created with. An int's
+    // allocation may run the cyclic GC, whose traversal of a list skips the
+    // slots not set yet (NULL), as for results.c's lists; on an error the
+    // lists' deallocation releases what was set.
+    unsafe {
+        let clusters = Bound::from_owned_ptr_or_err(py, ffi::PyList_New(count as ffi::Py_ssize_t))?;
+        for (c, size) in fill.iter_mut().enumerate() {
+            let cluster = ffi::PyList_New(*size as ffi::Py_ssize_t);
+            if cluster.is_null() {
+                return Err(PyErr::fetch(py));
+            }
+            ffi::PyList_SET_ITEM(clusters.as_ptr(), c as ffi::Py_ssize_t, cluster);
+            *size = 0;
         }
+        let rows = Bound::from_owned_ptr_or_err(py, ffi::PyList_New(n as ffi::Py_ssize_t))?;
+        for v in 0..n {
+            let vertex = (v as i64).into_pyobject(py)?;
+            let row = cover.row(v);
+            let list = ffi::PyList_New(row.len() as ffi::Py_ssize_t);
+            if list.is_null() {
+                return Err(PyErr::fetch(py));
+            }
+            ffi::PyList_SET_ITEM(rows.as_ptr(), v as ffi::Py_ssize_t, list);
+            for (i, &c) in row.iter().enumerate() {
+                let c = c as usize;
+                ffi::PyList_SET_ITEM(list, i as ffi::Py_ssize_t, labels[c].clone().into_ptr());
+                let cluster = ffi::PyList_GET_ITEM(clusters.as_ptr(), c as ffi::Py_ssize_t);
+                ffi::PyList_SET_ITEM(cluster, fill[c] as ffi::Py_ssize_t, vertex.clone().into_ptr());
+                fill[c] += 1;
+            }
+        }
+        debug_assert!(fill.iter().enumerate().all(|(c, &k)| {
+            k as ffi::Py_ssize_t == ffi::PyList_GET_SIZE(ffi::PyList_GET_ITEM(clusters.as_ptr(), c as ffi::Py_ssize_t))
+        }));
+        Ok((rows.cast_into_unchecked(), clusters.cast_into_unchecked()))
     }
-    let clusters = PyList::empty(py);
-    for m in &members {
-        clusters.append(PyList::new(py, m)?)?;
-    }
-    Ok((rows, clusters))
 }
 
 /// detect(graph, rng, resolution, *, max_memberships=1, start=None, allow_isolation=False, edge_weights=None, node_weights=None, max_total_communities=None, n_communities=None)
