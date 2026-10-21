@@ -585,6 +585,39 @@ class TestQueueFile(_Base):
         cfg = qs.load_config(runqueue._option(by_name["benchmark-hedonic"]["run"], "--config"))
         self.assertEqual(cfg.order, "seed,network,method")
 
+    def test_the_large_pairs_are_calibrated_one_at_a_time(self):
+        # two Clique Percolation evaluations side by side (LiveJournal and Friendster) restarted the 64 GB machine: every
+        # phase-2 calibration runs its pairs alone; phase 1 keeps its pairs side by side
+        queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
+        for item in queue["items"]:
+            if item["run"][0] not in ("calibrate", "calibrate-baselines"):
+                self.assertIsNone(runqueue._option(item["run"], "--alone"), item["name"])
+                continue
+            alone = runqueue._option(item["run"], "--alone")
+            self.assertEqual(alone.split(",") if alone else None,
+                             LARGE_PAIRS if item["name"].endswith("-large") else None, item["name"])
+
+    def test_clique_percolation_is_declared_out_of_memory_on_the_large_pairs_and_nothing_else_is(self):
+        # every Clique Percolation evaluation on LiveJournal/top5000 was killed for memory and Friendster/top5000 is
+        # larger: its calibration and benchmark there record "out of memory" (citing that) instead of running
+        from hedonic.experiments.overlapping import baseline_run as br
+
+        queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
+        declared = {item["name"]: item["run"] for item in queue["items"]
+                    if runqueue._option(item["run"], "--out-of-memory") is not None}
+        self.assertEqual(sorted(declared), ["benchmark-clique-percolation-large", "calibration-clique-percolation-large"])
+        want = {("clique_percolation", pair) for pair in LARGE_PAIRS}
+        plan = br.front_study(declared["calibration-clique-percolation-large"][1:])
+        self.assertEqual(set(plan["out_of_memory"]), want)
+        self.assertTrue(all("killed by the OS for memory" in why for why in plan["out_of_memory"].values()))
+        run = declared["benchmark-clique-percolation-large"][1:]
+        at = run.index("--tuned")  # the calibration is not on disk here; its file is not what is checked
+        cfg = qs.config_from_args(qs.build_parser().parse_args(run[:at] + run[at + 2:]))
+        self.assertEqual(set(cfg.declared_out_of_memory()), want)
+        m = qs.BY_KEY["clique_percolation"]
+        for pair in LARGE_PAIRS:
+            self.assertIn("--memory-declared", qs.unit_argv(cfg, pair, 0, m, None)[0])
+
     def test_the_benchmarks_save_covers_and_the_audit_items_audit_them_after_every_detector_run(self):
         queue = runqueue.load_queue(QUEUE, root=str(self.root / "q"))
         names = [item["name"] for item in queue["items"]]
