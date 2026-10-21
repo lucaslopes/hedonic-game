@@ -5,8 +5,9 @@
 quality, slack, provenance) on any graph, weights, options and seed, and the
 audit those of ``Game.stable_intervals`` / ``Game.regrets``: the differential
 tests below draw many cases and compare every bit, on whichever core is loaded
-(run them with ``HEDONIC_CORE=rust`` too). The array path never imports
-igraph, and reads the edges without copying them into Python objects.
+(run them with ``HEDONIC_CORE=c`` too where the C core is installed). The
+array path never imports igraph, and reads the edges without copying them
+into Python objects.
 """
 
 from __future__ import annotations
@@ -363,7 +364,7 @@ class TestWithoutIgraph(unittest.TestCase):
         # (sysconfig's platform data, _sysconfigdata_*, is the standard library's too)
         third = sorted({name.split(".")[0] for name in set(sys.modules) - before
                         if not name.startswith("_sysconfigdata_")}
-                       - set(sys.stdlib_module_names) - {"hedonic", "numpy", "hedonic_core_rs"})
+                       - set(sys.stdlib_module_names) - {"hedonic", "numpy"})
         print(p.membership.tolist(), len(iv), r.regret.shape, "igraph" in sys.modules, third)
         if BLOCK:
             try:

@@ -7,6 +7,23 @@
 //! The engines take plain slices and return owned results; the CPython module
 //! (feature `python`) is a thin layer over them with the binding's semantics.
 
+// Lints the port keeps on purpose (`cargo clippy --all-targets --features
+// python -- -D warnings` is otherwise clean, and CI runs it):
+// - `!(a <= b)` is the C core's comparison, false for NaN on purpose;
+// - index loops and long argument lists mirror native/'s loops and calls, so
+//   each line can be read against its C;
+// - constants are spelled as in the C sources (ETA's 17 digits);
+// - a variable declared before the branches that set it, as in C;
+// - Mt19937::next is random.c's name (the struct is no iterator).
+#![allow(
+    clippy::neg_cmp_op_on_partial_ord,
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::excessive_precision,
+    clippy::needless_late_init,
+    clippy::should_implement_trait
+)]
+
 pub mod arith;
 pub mod audit;
 pub mod cover;

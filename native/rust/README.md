@@ -23,8 +23,8 @@ the C core's order. Its doc comments name the C file each module ports
 The module has the functions of hedonic 2.0's extension with the same
 arguments, results, exceptions and messages, plus `backend` (`"rust"`) and
 `fma_path()`. `source_sha256` is the digest of this crate's sources
-(`build.rs`: every `src/**/*.rs`, `build.rs` and `Cargo.toml`, each as path,
-length and bytes, in path order, CRLF as LF), so records name the build of the
+(`build.rs`: every `src/**/*.rs`, `build.rs`, `Cargo.toml` and `Cargo.lock`,
+each as path, length and bytes, in path order, CRLF as LF), so records name the build of the
 core by its source.
 
 The stability audit is rc11's: the windowed search (exclusion by Newton
@@ -58,17 +58,12 @@ answer, error and the caller's generator state, bit for bit) and timed
 against it by `bench/bench.py`; both skip (or stop) with the reason when it
 is absent.
 
-What is safer: the engines are safe Rust except the hot paths (the visits
-of both engines: their scans, scoring, slot resets and requeueing; the
-queue's next vertex; the adjacency's fill), whose indexing invariants are
-stated and debug-asserted (the cover's in one place, on its `State`, and
-checked whole before and after each run in debug builds), and the prefetch hints
-(`prefetch.rs`), which read nothing. `Adjacency::build` checks every edge
-end against the vertex range itself before its unchecked fill, so no
-caller's check is relied upon; the visits rely on the shape it builds
-(`Adjacency::well_formed`, asserted in debug builds). Allocation failures
-are errors, not aborts; Python buffers are borrowed only while no Python
-code can run, and copied for a generator that calls Python on each draw.
+What is safer: allocation failures are errors, not aborts; every input the
+engines take is validated by the engine itself (`Adjacency::build` checks
+every edge end, so no caller's check is relied upon), and the unchecked
+indexing that remains is the part measured to pay (see "Unsafe code").
+Python buffers and igraph's edges are read with the GIL held, and the
+visits run on the engine's own state built from them (see "Threads").
 
 What is faster (the same visits, moves and bits as C, in less time):
 
@@ -88,7 +83,8 @@ What is faster (the same visits, moves and bits as C, in less time):
 - **Less per visit.** The queue's next vertex is inlined, its refill and
   interruption check are out of line (it was a call returning through
   memory on every visit); the partition scores candidates with selects, not
-  branches (as C does), and the visits of both engines read unchecked.
+  branches (as C does), and the visits of both engines read unchecked
+  (where that pays: "Unsafe code").
   The cover's best-prefix selection sorts in a persistent buffer (C's is
   the same; the first port copied a 512-byte array per visit); rows are
   packed in one buffer at the start; short rows are insertion-sorted; the
@@ -106,16 +102,205 @@ graphs 1.5 to 2.5 (the generator in place), the large games 1.3 to 1.4
 (prefetching); the geometric mean of C time / Rust time is 1.23 (1.35
 under a heavy load, where the mid-size partitions gain 1.15 to 1.6).
 
+## Unsafe code
+
+Every `unsafe` block has a `// SAFETY:` comment, and where the check is
+cheap a `debug_assert!` of it, which the debug test build (`cargo test`)
+runs. What is left, and why:
+
+| Where | What | Why |
+|---|---|---|
+| `partition.rs` | `get_unchecked` in the visit (labels of the neighbours, community records, candidate slots), the scoring loop, the slot reset and the requeue | 1.06 to 1.13 times faster partitions |
+| `cover.rs` | the same in `collect`, the visit, the best-set insertion buffer (`top_positive`) and the requeue | 1.05 to 1.19 times faster covers |
+| `audit.rs` | the audit's insertion sort and best-prefix walk over `order`, a permutation (debug-asserted) | 1.015 to 1.04 times faster audits |
+| `fma.rs` | the FMA instruction, called only after runtime detection | the instruction |
+| `prefetch.rs` | `prfm` / `_mm_prefetch`, which never access memory (compiled out under Miri) | 1.3 to 1.6 on large games |
+| `python/` | the CPython C API: buffers, the `random.Random` struct in place, igraph's capsule, C's integer conversions | the binding itself |
+
+The numbers come from `python native/rust/bench/ab_unsafe.py --group G` (under
+`guard.sh`, arm64): it builds `examples/bench_core` from the crate and from
+a copy whose files of group G index with bounds checks, runs the two
+alternately (fastest of 60 runs of BA 50k, a weighted SBM 20k and ER 100k,
+partitions, covers at cap 3 and their audits), checks that both compute
+the same hashes, and prints checked / unchecked. The adjacency build
+(including a spare-capacity fill with `set_len`) and the queue measured
+0.94 to 1.05, inside the noise, so they are checked code now. All three
+kept groups together: 1.04 to 1.07 on runs, 1.01 to 1.02 on the audit.
+
+The CI job `miri` runs `cargo miri test` (no `python` feature; the random
+games scaled down with `HIG_RANDOM_CASES`, `HIG_AUDIT_FUZZ`; the 10^6-case
+fma tests and the 1500-vertex planted game skipped). Miri needs rustup's
+nightly; this crate has been developed with Homebrew's stable Rust (no
+rustup), so Miri has not run locally.
+
+## Fuzzing
+
+`native/rust/fuzz` is a cargo-fuzz crate (its own workspace and `Cargo.lock`) with
+two targets, whose checks are plain functions in `fuzz/src/lib.rs`:
+
+- `inputs`: arbitrary bytes as vertex counts, edge ends in both layouts,
+  weights, options, partition starts, cover offsets and labels, verifier
+  inputs and audit queries (prepare with an interruption, both interval
+  searches, regrets). Every call must return Ok or Err; its release profile
+  keeps debug assertions and overflow checks on.
+- `runs`: small valid games (weights, count limits, starts, caps up to n).
+  Every traced move's improvement must beat its bound, the verifier must
+  certify no gain above the raw slack (tests/test_equilibrium.py's check),
+  the result must be well formed, and the same seed must give the same bits.
+
+```bash
+cd native/rust/fuzz
+cargo test --release                                  # the checks on pseudo-random inputs (HIG_FUZZ_CASES, default 20 000)
+cargo +nightly fuzz run inputs -- -max_total_time=60  # libFuzzer with AddressSanitizer (CI: nightly, 60 s each)
+```
+
+On stable, libFuzzer still runs with coverage if the targets are built with
+sancov (macOS also needs the cdylib's sancov symbols left undefined):
+
+```bash
+CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS="-Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 \
+  -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table \
+  -Cllvm-args=-sanitizer-coverage-trace-compares --cfg fuzzing -Clink-arg=-Wl,-undefined,dynamic_lookup" \
+  cargo build --release --bins --target aarch64-apple-darwin --target-dir target/sancov
+target/sancov/aarch64-apple-darwin/release/inputs -max_total_time=60 CORPUS_DIR
+```
+
+So built, 60 s per target ran 1.5 million (`inputs`) and 1.4 million
+(`runs`) inputs without a failure, after 300 000 of each through
+`cargo test`.
+
+## x86_64: which fma
+
+aarch64 always has the fused multiply-add. On x86_64, `fma::fma` asks once
+(`is_x86_feature_detected!("fma")`, cached in an atomic) and calls the
+instruction (`#[target_feature(enable = "fma")]`) or the soft fma. The
+detection checks CPUID's FMA bit and that the OS saves the AVX state
+(OSXSAVE, XCR0), as C's `hig_cpu_has_fma` does; under Miri it reports
+nothing, so Miri runs the soft fma. Both give the same bits, so the choice
+only changes the speed; `fma_path()` says which one runs.
+`HIG_EXPECT_FMA=soft|instruction` makes the test `fma_dispatch_as_expected`
+assert it. The CI job `x86_64_dispatch` runs the pins built for
+`target-cpu=x86-64` and for `haswell` (instruction), with `force-soft-fma`,
+and the baseline build under QEMU's Nehalem, a CPU without FMA, where the
+dispatch must choose the soft fma. Locally there is no x86_64 standard
+library (Homebrew's Rust has only aarch64-apple-darwin), so this runs in CI
+only; macOS x86_64 runs under Rosetta 2 in `rust_core`.
+
+## igraph's edges
+
+`detect` and `_audit_prepare` read an `igraph.Graph`'s edges as the C
+binding does (`native/binding/graph_edges.c`): `vcount()` and `ecount()`,
+then the `igraph_t` head behind `Graph.__graph_as_capsule()`, borrowed only
+if everything read from it agrees with the public API (vertex count,
+undirected, `end - stor_begin` equal to the edge count in both vectors,
+`end <= stor_end`, every end a vertex, edges 0, m/2 and m - 1 equal to
+`graph.es[e].tuple`); otherwise `get_edgelist()` is copied. The Rust side
+also requires aligned pointers, and reads the head after the probes
+(`es[e].tuple` runs Python code), so nothing runs between reading and using
+it. In a free-threaded interpreter without the GIL another thread could
+change the graph at any moment, so there the edges are always copied.
+`_edges_borrowed(graph)` (tests) says which path a graph takes.
+`tests/test_graph_edges.py` forces each fallback through a subclass whose
+capsule method raises, returns no capsule, or the capsule of a directed
+graph, of other edges or of fewer vertices, and checks that results,
+audits and the generator's state equal the plain graph's on both cores;
+the CI job `igraph_versions` checks the capsule is still read on
+python-igraph's newest release and (not blocking) its main branch.
+
+A divergence from C: a generator that is called (not copied) can run any
+Python code during the visits, for example add an edge. C keeps the edge
+pointers it read at the start and reads them again for the quality (which
+then may read freed memory); Rust reads the capsule afresh for `finish` and
+raises `RuntimeError("The graph changed during the call.")` if the counts
+changed.
+
+## Threads
+
+Each call runs in three steps (`PartitionCall`, `CoverCall`): `prepare`
+builds the engine's own state from the borrowed inputs with the GIL held,
+`run` draws the visiting order and runs the visits on that state only, and
+`finish` computes the result from the inputs read again. For an exact
+`random.Random` (the generator runs natively) `run` releases the GIL
+(`Python::detach`); a generator that is called keeps it. The audit's
+queries (`_audit_intervals`, `_audit_regrets`) run without the GIL on copies
+of their inputs and write the outputs after re-attaching. Ctrl-C: the
+detached visits re-attach to check signals at most every 10 ms, and only on
+the main thread (where CPython runs signal handlers), so a handler that
+raises stops the call, and the generator's state is still written back.
+
+`tests/test_native_threads.py`: detections (partitions, covers, weighted),
+plain `partition()` calls, `stable_intervals` and `regrets` from 8 threads
+at once equal their serial results bit for bit, with each caller's
+generator ending where its serial call leaves it; while a detection runs on
+one thread, another keeps running Python code in the middle half of the
+call (the C core lets it in only past 95% of the call); and a signal stops a
+detached detection.
+
+Both modules declare `gil_used = false`: the module keeps no Python-visible
+mutable state (its caches are once-initialised, its counters atomics), and
+on a free-threaded build the generator goes through
+`getstate`/`setstate` (under its own lock) and igraph's edges through its
+API. On CPython 3.13.6t (`uv python install 3.13t`, macOS arm64), the module
+loads without enabling the GIL. python-igraph has no free-threaded wheels
+and its sdist builds only with the limited API, which free-threaded builds
+lack; built from its 1.0.0 sdist with the full API (and one fix to a call
+of `igraph_vector_int_view` in that unused path), its import enables the
+GIL. With the GIL so enabled and with `PYTHON_GIL=0` (forcing it off),
+`tools/native_tests.py` passed (35 tests),
+`tests/test_native_threads.py` passed, and `native/rust/tests/test_differential.py`
+passed against the C core (6 tests); `_edges_borrowed` is True with the GIL
+and False without it.
+
+## Errors
+
+The functions raise what the C binding raises, type and message. Arguments
+C parses as `n`, `L`, `d` and `p` go through `CArg` (PyNumber_Index and
+PyLong_AsSsize_t, PyLong_AsLongLong, PyFloat_AsDouble, truth), not PyO3's
+typed parameters, whose errors carry an `argument 'name': ` prefix and whose
+i64 overflows say "C long"; integers read from sequences use
+PyLong_AsLongLong too (`long_long`). `native/rust/tests/test_differential.py`
+compares the plain functions' errors in one process;
+`native/rust/tests/test_error_parity.py` runs 118 calls of `Game.community_hedonic`,
+`Game.stable_intervals` and `Game.regrets` (52 detections, 25 bad covers
+through both audit functions, 10 regret grids, 6 graphs and generators) in a
+process on each core and compares every exception type and message
+(and the results of the rows that are fine).
+
+## Toolchain and supply chain
+
+- `Cargo.lock` (and `fuzz/Cargo.lock`) is committed, and every cargo
+  build, test, clippy and Miri run in CI is `--locked` (cargo-fuzz's own
+  nightly run builds from the committed lock file too).
+- `rust-version = "1.78"`: `Cargo.lock` is version 4, which cargo reads
+  from 1.78; PyO3 0.27 and its build dependencies need 1.74, the crate's own
+  code 1.65. The CI job `msrv` builds and tests with 1.78 exactly.
+- `deny.toml` (CI job `supply_chain`, `cargo deny check --all-features`):
+  any RustSec advisory or yanked version fails; licences are those of the
+  dependency tree (MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception,
+  Unicode-3.0) and the crate's GPL-3.0-or-later; one version of each crate;
+  crates.io only. The same job checks that `Cargo.toml`, `fuzz/Cargo.toml`,
+  `pyproject.toml` here and the repository's `pyproject.toml` name one
+  licence.
+- `cargo clippy --all-targets -- -D warnings` is clean on every feature
+  set (CI job `lints`); the lints allowed on purpose are listed, with the
+  reason, at the top of `src/lib.rs`.
+- `source_sha256` (`build.rs`) is the digest of `src/`, `build.rs`,
+  `Cargo.toml` and `Cargo.lock`: a dependency bump changes the compiled
+  core, so it changes the core's identity.
+
 ## Build and test
 
 ```bash
 cd native/rust
 cargo test --release                              # the bit pins and the C core's tests (test_core.c, test_audit.c), soft fma vs the instruction
 cargo test --release --features force-soft-fma    # the same with the soft fma everywhere
+cargo test                                        # debug: every debug_assert of the unchecked paths
+cargo clippy --all-targets --features python -- -D warnings
 cd ../..
 pip install -e ".[cli]" pytest                    # maturin builds the crate into hedonic._core (or: maturin develop --release)
 python tools/native_tests.py                      # the pinned Python tests (HIG_PINNED=1, no skips)
 python native/check_libm.py "$(python -c 'import hedonic._core as c; print(c.__file__)')"
+python -m pytest -q tests/test_native_threads.py tests/test_graph_edges.py   # threads, igraph's edges
 python -m pytest -q                               # the whole suite
 ```
 
@@ -123,7 +308,8 @@ python -m pytest -q                               # the whole suite
 profiling loop over an edge-list file (`a b` lines, or `a b w` with `w`);
 `ab_prefetch` times prefetching off and on in one process and checks the
 results agree; `phases` times the input check, the adjacency build and the
-partition apart.
+partition apart; `bench_core` times the engines and the audit on fixed
+synthetic graphs (what `bench/ab_unsafe.py` compares).
 
 ## The Rust API
 

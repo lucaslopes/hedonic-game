@@ -222,8 +222,8 @@ fingerprints (`partitions-v1`, `covers-v1`, `audit-v1`,
 `hedonic.experiments.fingerprint`) to the digest the class's records name, so
 hedonic 2.0's C core and this Rust core, which compute the same results, are
 one class. `hedonic._core.source_sha256`, the digest `build.rs` embeds (every
-`src/**/*.rs`, `build.rs` and `Cargo.toml` of the crate: path, length and
-bytes, CRLF as LF, in path order), stays as provenance
+`src/**/*.rs`, `build.rs`, `Cargo.toml` and `Cargo.lock` of the crate:
+path, length and bytes, CRLF as LF, in path order), stays as provenance
 (`hedonic_core_built_source_sha256`) and is the name of a core whose triple
 is not in the table.
 

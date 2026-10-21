@@ -79,8 +79,9 @@ def load_core():
 
 def rust_source_digest(crate):
     """build.rs's digest of the crate at `crate` (setup.py's format)."""
+    lock = ["Cargo.lock"] if (crate / "Cargo.lock").is_file() else []
     files = sorted([(p.relative_to(crate).as_posix(), p) for p in (crate / "src").rglob("*.rs")]
-                   + [(name, crate / name) for name in ("build.rs", "Cargo.toml")])
+                   + [(name, crate / name) for name in ["build.rs", "Cargo.toml"] + lock])
     stream = hashlib.sha256()
     for rel, path in files:
         data = path.read_bytes().replace(b"\r\n", b"\n")

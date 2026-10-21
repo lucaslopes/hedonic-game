@@ -105,8 +105,9 @@ struct Work {
     norm: f64,
 }
 
-/// Scores descending, ties by ascending index: the cells' order.
-#[inline(always)]
+/// Scores descending, ties by ascending index: the cells' order (`resort`
+/// spells it out inline; the unit tests check the keys against it).
+#[cfg(test)]
 fn before(e: &[Entry], x: usize, y: usize) -> bool {
     e[x].score > e[y].score || (e[x].score == e[y].score && x < y)
 }
@@ -782,6 +783,7 @@ impl AuditState {
         let (entries, order) = (&w.entries[..], &w.order[..top]);
         let (roots, margin) = (&w.roots[..=top], &w.margin[..=top]);
         for k in 1..=top {
+            debug_assert!(order[k - 1] < entries.len());
             // SAFETY: `order` is a permutation of the entries' indices (see `resort`).
             let entry = unsafe { entries.get_unchecked(order[k - 1]) };
             sum_a += entry.a;

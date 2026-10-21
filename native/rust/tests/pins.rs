@@ -192,6 +192,7 @@ fn errors_are_values() {
 
 /// The soft fma against the instruction on adversarial cases.
 #[test]
+#[cfg_attr(miri, ignore = "400 000 fma cases; no unsafe code")]
 fn soft_fma_matches_the_instruction() {
     let mut s = 0x243f6a8885a308d3u64;
     let mut next = move || {

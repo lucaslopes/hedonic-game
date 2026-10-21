@@ -1,7 +1,7 @@
 //! Inputs (native/core/shared/inputs.c): the graph and the options, their
 //! checks, the adjacency and the labels of a start.
 
-use crate::error::{filled, with_capacity, Error, Result};
+use crate::error::{filled, Error, Result};
 
 /// Vertex, community and label ids (32 bits, as the C core's `hig_id`).
 pub type Id = i32;
@@ -361,16 +361,11 @@ impl Adjacency {
         let a = self;
         let m = m as usize;
         let mut start = filled(n as usize + 1, 0i64)?;
-        let counts = &mut start[..];
         for e in 0..m {
             let (x, y) = ends(e);
-            debug_assert!((0..n as i64).contains(&x) && (0..n as i64).contains(&y));
             if x != y {
-                // SAFETY: build checked both ends lie in [0, n); counts has n + 1.
-                unsafe {
-                    *counts.get_unchecked_mut(x as usize + 1) += 1;
-                    *counts.get_unchecked_mut(y as usize + 1) += 1;
-                }
+                start[x as usize + 1] += 1;
+                start[y as usize + 1] += 1;
             }
         }
         for v in 0..n as usize {
@@ -380,47 +375,24 @@ impl Adjacency {
             start[v + 1] += start[v];
         }
         let half_edges = start[n as usize] as usize;
-        // Written in place below, once each, without a zero fill first.
-        let mut adj: Vec<Id> = with_capacity(half_edges)?;
-        let mut weight: Vec<f64> = if unit { Vec::new() } else { with_capacity(half_edges)? };
-        {
-            let adj_slots = &mut adj.spare_capacity_mut()[..half_edges];
-            let weight_slots = if unit { &mut [][..] } else { &mut weight.spare_capacity_mut()[..half_edges] };
-            // start[v + 1] is the end of v's block; filling backwards moves it
-            // to the block's beginning, so afterwards start[v + 1] = begin(v).
-            let weights = if unit { &[][..] } else { &weights.unwrap()[..m] };
-            for e in (0..m).rev() {
-                let (x, y) = ends(e);
-                if x != y {
-                    // SAFETY: both ends lie in [0, n) (checked by build); a
-                    // block position lies below half_edges (see below); e < m
-                    // = weights.len().
-                    unsafe {
-                        let sx = start.get_unchecked_mut(x as usize + 1);
-                        *sx -= 1;
-                        let ia = *sx as usize;
-                        let sy = start.get_unchecked_mut(y as usize + 1);
-                        *sy -= 1;
-                        let ib = *sy as usize;
-                        adj_slots.get_unchecked_mut(ia).write(y as Id);
-                        adj_slots.get_unchecked_mut(ib).write(x as Id);
-                        if !unit {
-                            let w = *weights.get_unchecked(e);
-                            weight_slots.get_unchecked_mut(ia).write(w);
-                            weight_slots.get_unchecked_mut(ib).write(w);
-                        }
-                    }
+        let mut adj: Vec<Id> = filled(half_edges, 0)?;
+        let mut weight: Vec<f64> = if unit { Vec::new() } else { filled(half_edges, 0.0)? };
+        // start[v + 1] is the end of v's block; filling backwards moves it
+        // to the block's beginning, so afterwards start[v + 1] = begin(v).
+        let weights = if unit { &[][..] } else { &weights.unwrap()[..m] };
+        for e in (0..m).rev() {
+            let (x, y) = ends(e);
+            if x != y {
+                start[x as usize + 1] -= 1;
+                let ia = start[x as usize + 1] as usize;
+                start[y as usize + 1] -= 1;
+                let ib = start[y as usize + 1] as usize;
+                adj[ia] = y as Id;
+                adj[ib] = x as Id;
+                if !unit {
+                    weight[ia] = weights[e];
+                    weight[ib] = weights[e];
                 }
-            }
-        }
-        // SAFETY: v's block holds exactly its count of non-loop half-edges,
-        // and the pass above takes each block's positions down from its end
-        // once per half-edge: every one of the half_edges positions (of adj,
-        // and of weight when weighted) was written exactly once.
-        unsafe {
-            adj.set_len(half_edges);
-            if !unit {
-                weight.set_len(half_edges);
             }
         }
         a.adj = adj;
@@ -444,32 +416,6 @@ impl Adjacency {
             && self.adj.iter().all(|&u| (u as u64) < n as u64)
             && self.weight.len() == if self.weighted { h } else { 0 }
             && self.node_weight.len() == if self.node_weighted { n } else { 0 }
-    }
-
-    /// The node weight of a vertex below n of a well-formed adjacency.
-    ///
-    /// # Safety
-    /// v < n and `well_formed()`.
-    #[inline(always)]
-    pub unsafe fn node_weight_unchecked(&self, v: Id) -> f64 {
-        debug_assert!(!self.node_weighted || (v as usize) < self.node_weight.len());
-        if self.node_weighted {
-            unsafe { *self.node_weight.get_unchecked(v as usize) }
-        } else {
-            1.0
-        }
-    }
-
-    /// The block of a vertex below n of a well-formed adjacency.
-    ///
-    /// # Safety
-    /// v < n and `well_formed()`.
-    #[inline(always)]
-    pub unsafe fn range_unchecked(&self, v: Id) -> (usize, usize) {
-        debug_assert!((v as usize) + 1 < self.start.len());
-        unsafe {
-            (*self.start.get_unchecked(v as usize) as usize, *self.start.get_unchecked(v as usize + 1) as usize)
-        }
     }
 
     #[inline(always)]

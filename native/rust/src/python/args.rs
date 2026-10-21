@@ -5,6 +5,7 @@
 
 use std::borrow::Cow;
 use std::ffi::CStr;
+use std::time::{Duration, Instant};
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::ffi;
@@ -33,7 +34,11 @@ const ORDER: u8 = b'<';
 const ORDER: u8 = b'>';
 
 /// A C-contiguous buffer of 8-byte items, released on drop. The `Py_buffer`
-/// is boxed: exporters may point into it (`shape = &view->len`).
+/// is boxed: exporters may point into it (`shape = &view->len`). While the
+/// view is held the exporter keeps its memory where it is (array.array and
+/// NumPy refuse to resize an exported buffer), so slices of it are formed only
+/// while the GIL is held and no Python code runs: the calls read their inputs
+/// in `prepare` and `finish`, never during the visits.
 pub struct Buffer {
     view: Box<ffi::Py_buffer>,
 }
@@ -102,30 +107,20 @@ impl Buffer {
 
     fn read<T: Copy>(&self) -> Cow<'_, [T]> {
         let (ptr, len) = (self.view.buf as *const T, self.len());
+        debug_assert!(std::mem::size_of::<T>() == 8 && self.view.itemsize == 8 && self.view.len >= 0);
         if len == 0 {
             Cow::Borrowed(&[])
         } else if (ptr as usize) % std::mem::align_of::<T>() == 0 {
-            // SAFETY: the exporter keeps len * 8 bytes at buf alive until the
-            // release in drop; T is an 8-byte plain type and ptr is aligned.
+            debug_assert!(!ptr.is_null());
+            // SAFETY: a C-contiguous view of len * 8 bytes at buf (`get`
+            // checked the item size; len = view.len / 8), which the exporter
+            // keeps alive and in place until the release in drop, which the
+            // slice cannot outlive (it borrows self); T is an 8-byte type
+            // valid for every bit pattern, and ptr is non-null and aligned.
             Cow::Borrowed(unsafe { std::slice::from_raw_parts(ptr, len) })
         } else {
-            // SAFETY: as above, read one unaligned item at a time.
+            // SAFETY: as above; each item is read on its own without alignment.
             Cow::Owned((0..len).map(|i| unsafe { ptr.add(i).read_unaligned() }).collect())
-        }
-    }
-
-    /// The items, copied when `own` (Python code runs during the call).
-    pub fn ints_owned(&self, own: bool) -> Cow<'_, [i64]> {
-        match self.ints() {
-            Cow::Borrowed(b) if own => Cow::Owned(b.to_vec()),
-            c => c,
-        }
-    }
-
-    pub fn doubles_owned(&self, own: bool) -> Cow<'_, [f64]> {
-        match self.doubles() {
-            Cow::Borrowed(b) if own => Cow::Owned(b.to_vec()),
-            c => c,
         }
     }
 
@@ -139,9 +134,11 @@ impl Buffer {
 
     /// Copies `values` into a writable buffer of doubles of the same length.
     pub fn write_doubles(&self, values: &[f64]) {
-        debug_assert!(!self.readonly() && values.len() == self.len());
-        // SAFETY: a writable buffer of len * 8 bytes, written byte-wise (no
-        // alignment needed, no reference into the buffer is formed).
+        assert!(!self.readonly() && values.len() == self.len());
+        // SAFETY: a writable view of len * 8 bytes (asserted above: the
+        // callers check both before computing), written byte-wise (no
+        // alignment needed, and no reference into the buffer is formed, so
+        // inputs that alias it are no concern).
         unsafe {
             std::ptr::copy_nonoverlapping(values.as_ptr() as *const u8, self.view.buf as *mut u8, values.len() * 8)
         }
@@ -160,7 +157,7 @@ pub fn optional_doubles(obj: Option<&Bound<'_, PyAny>>, expected: usize, name: &
 pub fn optional_limit(obj: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<i64> {
     match obj {
         Some(o) if !o.is_none() => {
-            let limit: i64 = o.extract()?;
+            let limit = long_long(o)?;
             if limit < 1 {
                 return Err(PyValueError::new_err(format!("{name} must be a positive integer or None")));
             }
@@ -170,11 +167,92 @@ pub fn optional_limit(obj: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<i6
     }
 }
 
-/// The truth of an optional flag ("p" of PyArg_Parse), `default` when absent.
-pub fn flag(obj: Option<&Bound<'_, PyAny>>, default: bool) -> PyResult<bool> {
-    match obj {
-        Some(o) => o.is_truthy(),
-        None => Ok(default),
+/// An argument that C's binding parses with PyArg_ParseTupleAndKeywords as
+/// "n", "L", "d" or "p", converted the same way but kept with its error until
+/// the body takes it (`get`, in parameter order, as C parses them): PyO3
+/// prefixes a parameter's TypeError with "argument 'name': ", C does not.
+pub struct CArg<T>(PyResult<T>);
+
+impl<T> CArg<T> {
+    /// A default value.
+    pub const fn ok(value: T) -> CArg<T> {
+        CArg(Ok(value))
+    }
+
+    pub fn get(self) -> PyResult<T> {
+        self.0
+    }
+}
+
+/// "d": PyFloat_AsDouble, as PyO3's f64 is.
+impl<'a, 'py> FromPyObject<'a, 'py> for CArg<f64> {
+    type Error = PyErr;
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(CArg(obj.extract::<f64>()))
+    }
+}
+
+/// "L": PyLong_AsLongLong itself, as `long_long`.
+impl<'a, 'py> FromPyObject<'a, 'py> for CArg<i64> {
+    type Error = PyErr;
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(CArg(long_long(&obj)))
+    }
+}
+
+/// PyLong_AsLongLong, which the C binding calls for every 64-bit integer it
+/// reads: PyO3's i64 goes through C long, whose overflow message differs
+/// ("Python int too large to convert to C long", not "int too big to
+/// convert"), so the binding reads integers here, with C's messages on every
+/// CPython.
+pub fn long_long(obj: &Bound<'_, PyAny>) -> PyResult<i64> {
+    // SAFETY: obj is a live object and the GIL is held (we hold a Bound);
+    // PyLong_AsLongLong takes any object (it calls __index__) and reports a
+    // failure as -1 with an exception set.
+    let value = unsafe { ffi::PyLong_AsLongLong(obj.as_ptr()) };
+    match (value, PyErr::take(obj.py())) {
+        (-1, Some(e)) => Err(e),
+        _ => Ok(value),
+    }
+}
+
+/// PyLong_AsUnsignedLong, as random.c reads getrandbits(32).
+fn unsigned_long(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
+    // SAFETY: as `long_long`; failure is (unsigned long) -1 with an
+    // exception set.
+    let value = unsafe { ffi::PyLong_AsUnsignedLong(obj.as_ptr()) };
+    match (value, PyErr::take(obj.py())) {
+        (v, Some(e)) if v == std::os::raw::c_ulong::MAX => Err(e),
+        _ => Ok(value as u64),
+    }
+}
+
+/// "n": PyNumber_Index, then PyLong_AsSsize_t, as getargs.c does.
+impl<'a, 'py> FromPyObject<'a, 'py> for CArg<isize> {
+    type Error = PyErr;
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let py = obj.py();
+        // SAFETY: as above; PyNumber_Index returns a new reference or NULL
+        // with an exception set, which from_owned_ptr_or_err takes over.
+        let index = match unsafe { Bound::from_owned_ptr_or_err(py, ffi::PyNumber_Index(obj.as_ptr())) } {
+            Ok(index) => index,
+            Err(e) => return Ok(CArg(Err(e))),
+        };
+        // SAFETY: index is a live int and the GIL is held; failure is -1
+        // with an exception set.
+        let value = unsafe { ffi::PyLong_AsSsize_t(index.as_ptr()) };
+        match (value, PyErr::take(py)) {
+            (-1, Some(e)) => Ok(CArg(Err(e))),
+            _ => Ok(CArg(Ok(value))),
+        }
+    }
+}
+
+/// "p": the object's truth (None is false).
+impl<'a, 'py> FromPyObject<'a, 'py> for CArg<bool> {
+    type Error = PyErr;
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(CArg(obj.is_truthy()))
     }
 }
 
@@ -211,11 +289,85 @@ pub fn to_py(py: Python<'_>, error: Error, rng_error: Option<PyErr>) -> PyErr {
     }
 }
 
-/// The core's interruption check: PyErr_CheckSignals (a handler that raises
-/// leaves its exception set, which `to_py` then returns).
-pub fn check_signals() -> bool {
-    // SAFETY: called only from calls that hold the GIL.
-    unsafe { ffi::PyErr_CheckSignals() != 0 }
+/// The core's interruption check: PyErr_CheckSignals, whose exception (a
+/// handler's, KeyboardInterrupt by default) is kept for `to_py`.
+///
+/// With the GIL held (`attached`) it runs at every check, as in the C
+/// binding. Without it (`detached`) it re-attaches for the check, at the
+/// core's cadence but at most every `RECHECK`, and only on the main thread:
+/// CPython runs signal handlers there alone (PyErr_CheckSignals returns 0 on
+/// any other thread), so a call on another thread never waits for the GIL.
+pub struct Signals {
+    main: bool,
+    last: Option<Instant>,
+    error: Option<PyErr>,
+}
+
+/// Without the GIL, the interruption check re-attaches at most this often:
+/// Ctrl-C still stops a call within milliseconds, and a call that runs next
+/// to busy Python threads does not wait for the GIL at every check.
+const RECHECK: Duration = Duration::from_millis(10);
+
+impl Signals {
+    pub fn new(py: Python<'_>) -> PyResult<Signals> {
+        Ok(Signals { main: on_main_thread(py)?, last: None, error: None })
+    }
+
+    /// The check with the GIL held: true to stop.
+    pub fn attached(&mut self, py: Python<'_>) -> bool {
+        match py.check_signals() {
+            Ok(()) => false,
+            Err(e) => {
+                self.error = Some(e);
+                true
+            }
+        }
+    }
+
+    /// The check without the GIL (see above): true to stop.
+    pub fn detached(&mut self) -> bool {
+        if !self.main {
+            return false;
+        }
+        let now = Instant::now();
+        if self.last.is_some_and(|last| now.duration_since(last) < RECHECK) {
+            return false;
+        }
+        self.last = Some(now);
+        Python::attach(|py| self.attached(py))
+    }
+
+    /// The exception a check raised, if any.
+    pub fn take(&mut self) -> Option<PyErr> {
+        self.error.take()
+    }
+}
+
+/// Whether this is the interpreter's main thread (threading.main_thread()),
+/// asked once per process (a fork from another thread makes that thread the
+/// child's main thread).
+fn on_main_thread(py: Python<'_>) -> PyResult<bool> {
+    struct Main {
+        pid: u32,
+        ident: u64,
+    }
+    static GET_IDENT: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+    static MAIN: std::sync::Mutex<Option<Main>> = std::sync::Mutex::new(None);
+    let get_ident = GET_IDENT.get_or_try_init(py, || py.import("_thread")?.getattr("get_ident").map(Bound::unbind))?;
+    let me: u64 = get_ident.bind(py).call0()?.extract()?;
+    let pid = std::process::id();
+    // The lock is never held while Python runs (which could wait for a thread
+    // that waits for the lock while holding the GIL).
+    let known = MAIN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| (m.pid == pid).then_some(m.ident));
+    let ident = match known {
+        Some(ident) => ident,
+        None => {
+            let ident = py.import("threading")?.call_method0("main_thread")?.getattr("ident")?.extract()?;
+            *MAIN.lock().unwrap_or_else(|e| e.into_inner()) = Some(Main { pid, ident });
+            ident
+        }
+    };
+    Ok(ident == me)
 }
 
 // ---- Random numbers ----------------------------------------------------------
@@ -224,6 +376,8 @@ const MT_N: usize = 624;
 
 /// The caller's generator. An exact random.Random runs here on a copy of its
 /// state (written back by `release`); any other is called as getrandbits(32).
+/// One per call, on the stack: the large variant needs no box.
+#[allow(clippy::large_enum_variant)]
 pub enum PyRng<'py> {
     /// An exact random.Random run natively; `gauss_next` is None when its
     /// state is read and written in place (`direct_layout`).
@@ -237,7 +391,7 @@ impl Rng for PyRng<'_> {
         match self {
             PyRng::Native { mt, .. } => Ok(mt.next()),
             PyRng::Calls { getrandbits, error } => {
-                match getrandbits.call1((32,)).and_then(|r| r.extract::<u64>()) {
+                match getrandbits.call1((32,)).and_then(|r| unsigned_long(&r)) {
                     Ok(value) => Ok(value as u32),
                     Err(e) => {
                         *error = Some(e);
@@ -257,25 +411,43 @@ impl Rng for PyRng<'_> {
 // getstate and setstate; otherwise the tuples are used, as in the C binding.
 const MT_INDEX_AT: usize = std::mem::size_of::<ffi::PyObject>();
 const MT_STATE_AT: usize = MT_INDEX_AT + 4;
+const MT_END: usize = MT_STATE_AT + 4 * MT_N;
 
 /// The state of an exact random.Random read in place; None for an index
-/// outside 0..=624. Safety: the layout passed `direct_layout`.
+/// outside 0..=624.
+///
+/// # Safety
+/// `direct_layout` returned true, `rng`'s type is exactly random.Random (so
+/// its object is at least MT_END bytes with the layout above) and the GIL is
+/// held (nothing else touches the generator meanwhile).
 unsafe fn read_direct(rng: &Bound<'_, PyAny>) -> Option<Mt19937> {
+    debug_assert!(rng.get_type().getattr("__basicsize__").and_then(|b| b.extract::<usize>()).is_ok_and(|b| b >= MT_END));
     let base = rng.as_ptr() as *const u8;
-    let index = std::ptr::read_unaligned(base.add(MT_INDEX_AT) as *const i32);
+    // SAFETY: the caller's contract: MT_END bytes of the live object at base,
+    // read without alignment, as plain integers (any bits are valid).
+    let index = unsafe { std::ptr::read_unaligned(base.add(MT_INDEX_AT) as *const i32) };
     if !(0..=MT_N as i32).contains(&index) {
         return None;
     }
     let mut mt = Mt19937 { state: [0; MT_N], index: index as usize };
-    std::ptr::copy_nonoverlapping(base.add(MT_STATE_AT), mt.state.as_mut_ptr() as *mut u8, 4 * MT_N);
+    // SAFETY: as above; the destination is the 4 * MT_N bytes of mt.state.
+    unsafe { std::ptr::copy_nonoverlapping(base.add(MT_STATE_AT), mt.state.as_mut_ptr() as *mut u8, 4 * MT_N) };
     Some(mt)
 }
 
-/// Writes a state in place. Safety: as `read_direct`.
+/// Writes a state in place.
+///
+/// # Safety
+/// As `read_direct`.
 unsafe fn write_direct(rng: &Bound<'_, PyAny>, mt: &Mt19937) {
+    debug_assert!(mt.index <= MT_N);
     let base = rng.as_ptr() as *mut u8;
-    std::ptr::write_unaligned(base.add(MT_INDEX_AT) as *mut i32, mt.index as i32);
-    std::ptr::copy_nonoverlapping(mt.state.as_ptr() as *const u8, base.add(MT_STATE_AT), 4 * MT_N);
+    // SAFETY: the caller's contract: MT_END bytes of the live object, which
+    // no reference of ours points into, written without alignment.
+    unsafe {
+        std::ptr::write_unaligned(base.add(MT_INDEX_AT) as *mut i32, mt.index as i32);
+        std::ptr::copy_nonoverlapping(mt.state.as_ptr() as *const u8, base.add(MT_STATE_AT), 4 * MT_N);
+    }
 }
 
 /// Whether random.Random has the layout above: its size fits it, and on a
@@ -292,20 +464,22 @@ fn direct_layout(py: Python<'_>) -> bool {
             }
             let random = py.import("random")?.getattr("Random")?;
             let size: usize = random.getattr("__basicsize__")?.extract()?;
-            if size < MT_STATE_AT + 4 * MT_N {
+            if size < MT_END {
                 return Ok(false);
             }
             let a = random.call1((20261020,))?;
             a.call_method1("getrandbits", (32 * 700,))?; // past a refill, index inside
             let state = a.call_method0("getstate")?;
             let words: Vec<u64> = state.get_item(1)?.extract()?;
-            // SAFETY: the size covers the layout; a is an exact random.Random.
+            // SAFETY: random.Random's basic size covers MT_END bytes and `a`
+            // is an exact random.Random; the GIL is held. A wrong layout reads
+            // integers that the comparisons below reject.
             let Some(mt) = (unsafe { read_direct(&a) }) else { return Ok(false) };
             if mt.state.iter().map(|&w| w as u64).chain([mt.index as u64]).ne(words.iter().copied()) {
                 return Ok(false);
             }
             let b = random.call1((7,))?;
-            // SAFETY: as above.
+            // SAFETY: as above (the read just matched getstate's words).
             unsafe { write_direct(&b, &mt) };
             if !b.call_method0("getstate")?.get_item(1)?.eq(state.get_item(1)?)? {
                 return Ok(false);
@@ -319,20 +493,8 @@ fn direct_layout(py: Python<'_>) -> bool {
 
 /// The generator's words and index as the tuple setstate takes.
 fn state_words<'py>(py: Python<'py>, mt: &Mt19937) -> PyResult<Bound<'py, PyTuple>> {
-    // SAFETY: a new tuple of MT_N + 1 slots, each set once to a new reference
-    // (PyTuple_SET_ITEM steals it) before the tuple is used.
-    unsafe {
-        let words = Bound::from_owned_ptr_or_err(py, ffi::PyTuple_New(MT_N as ffi::Py_ssize_t + 1))?;
-        for i in 0..=MT_N {
-            let value = if i < MT_N { mt.state[i] as u64 } else { mt.index as u64 };
-            let item = ffi::PyLong_FromUnsignedLongLong(value);
-            if item.is_null() {
-                return Err(PyErr::fetch(py));
-            }
-            ffi::PyTuple_SET_ITEM(words.as_ptr(), i as ffi::Py_ssize_t, item);
-        }
-        Ok(words.cast_into_unchecked())
-    }
+    let words: Vec<u64> = mt.state.iter().map(|&w| w as u64).chain([mt.index as u64]).collect();
+    PyTuple::new(py, words)
 }
 
 /// `mt_take`: the state of an exact random.Random whose methods are the
@@ -344,12 +506,9 @@ fn take_state<'py>(rng: &Bound<'py, PyAny>) -> PyResult<Option<PyRng<'py>>> {
     if !rng.get_type().is(random_type) {
         return Ok(None);
     }
-    // SAFETY: rng is a live object; a NULL context is the documented use.
-    let dict = unsafe { Bound::from_owned_ptr_or_err(py, ffi::PyObject_GenericGetDict(rng.as_ptr(), std::ptr::null_mut())) };
-    let dict = match dict {
-        Ok(d) => d,
-        Err(_) => return Ok(None),
-    };
+    // The instance dict (C: PyObject_GenericGetDict): a method set on the
+    // instance makes the generator one to call.
+    let Ok(dict) = rng.getattr(intern!(py, "__dict__")) else { return Ok(None) };
     if let Ok(dict) = dict.cast::<PyDict>() {
         for name in ["getrandbits", "random", "getstate", "setstate"] {
             if dict.get_item(name).ok().flatten().is_some() {
@@ -358,8 +517,8 @@ fn take_state<'py>(rng: &Bound<'py, PyAny>) -> PyResult<Option<PyRng<'py>>> {
         }
     }
     if direct_layout(py) {
-        // SAFETY: the layout was checked against getstate/setstate; rng is an
-        // exact random.Random.
+        // SAFETY: direct_layout checked the layout against getstate/setstate;
+        // rng's type is exactly random.Random (above); the GIL is held.
         if let Some(mt) = unsafe { read_direct(rng) } {
             return Ok(Some(PyRng::Native { mt, rng: rng.clone(), gauss_next: None }));
         }
@@ -376,13 +535,10 @@ fn take_state<'py>(rng: &Bound<'py, PyAny>) -> PyResult<Option<PyRng<'py>>> {
         return Ok(None);
     }
     let mut mt = Mt19937 { state: [0; MT_N], index: 0 };
-    for i in 0..=MT_N {
-        // SAFETY: words is a tuple of MT_N + 1 items (checked above); the
-        // item is borrowed while the tuple lives.
-        let value = unsafe { ffi::PyLong_AsUnsignedLongLong(ffi::PyTuple_GET_ITEM(words.as_ptr(), i as ffi::Py_ssize_t)) };
-        if value == u64::MAX && PyErr::take(py).is_some() {
-            return Ok(None);
-        }
+    for (i, word) in words.iter().enumerate() {
+        // A word that is no int in [0, 2^64) (C: PyLong_AsUnsignedLongLong
+        // failing) makes the generator one to call.
+        let Ok(value) = word.extract::<u64>() else { return Ok(None) };
         if i < MT_N {
             if value > 0xffff_ffff {
                 return Ok(None);
@@ -407,11 +563,6 @@ impl<'py> PyRng<'py> {
         Ok(PyRng::Calls { getrandbits: rng.getattr("getrandbits")?, error: None })
     }
 
-    /// Whether every draw is a Python call (which may run any Python code).
-    pub fn calls_python(&self) -> bool {
-        matches!(self, PyRng::Calls { .. })
-    }
-
     /// The exception the generator raised, if any.
     pub fn take_error(&mut self) -> Option<PyErr> {
         match self {
@@ -426,9 +577,10 @@ impl<'py> PyRng<'py> {
         if let PyRng::Native { mt, rng, gauss_next } = self {
             let py = rng.py();
             let written = match gauss_next {
-                // SAFETY: direct_layout checked this layout; rng is an exact
-                // random.Random, alive while bound.
                 None => {
+                    // SAFETY: the state was read in place (`take_state`): the
+                    // layout passed direct_layout, rng is an exact
+                    // random.Random, alive while bound, and the GIL is held.
                     unsafe { write_direct(&rng, &mt) };
                     Ok(())
                 }
@@ -466,38 +618,39 @@ struct IgHead {
 }
 
 /// The edges of a graph for one call: borrowed from the igraph_t behind the
-/// capsule (kept alive here), or copied from get_edgelist().
-pub struct GraphEdges<'py> {
+/// capsule, or copied from get_edgelist().
+///
+/// Borrowed edges are read only while the GIL is held and no Python code
+/// runs (`prepare` and `finish` of a call), never during the visits: Python
+/// code (another thread while the GIL is released, the generator's
+/// getrandbits, a signal handler) may add edges, which reallocates them. So
+/// `again` reads the capsule afresh for `finish`.
+pub struct GraphEdges {
     pub n: i64,
     pub m: i64,
-    _capsule: Option<Bound<'py, PyAny>>,
+    borrowed: bool,
     first: *const i64,
     second: *const i64,
     owned: Vec<i64>,
 }
 
-impl GraphEdges<'_> {
-    /// Copies borrowed edges and lets the capsule go: for calls that run
-    /// Python code while the core holds the edges.
-    pub fn detach(&mut self) {
-        if let Some(capsule) = self._capsule.take() {
-            let mut owned = Vec::with_capacity(2 * self.m as usize);
-            for e in 0..self.m as usize {
-                // SAFETY: e < m, checked in `from_capsule`; the capsule is alive.
-                unsafe { owned.extend_from_slice(&[*self.first.add(e), *self.second.add(e)]) };
-            }
-            self.owned = owned;
-            drop(capsule);
-        }
-    }
-
+impl GraphEdges {
+    /// The edge list for `Graph::new`.
+    ///
+    /// Borrowed, it points into the graph: call it with the GIL held, and use
+    /// it only before any Python code can run (it is the pointers read by the
+    /// last `graph_edges`/`again`, which checked them).
     pub fn edges(&self) -> Edges<'_> {
-        if self._capsule.is_some() && self.m > 0 {
-            // SAFETY: checked in `from_capsule`: m entries at each pointer,
-            // owned by the igraph_t the capsule keeps alive. A call whose
-            // generator runs Python code detaches first; otherwise only a
-            // signal handler could run Python during the call, and it must
-            // not modify the graph (as with the C binding).
+        if self.borrowed && self.m > 0 {
+            debug_assert!(!self.first.is_null() && !self.second.is_null());
+            debug_assert!((self.first as usize) % std::mem::align_of::<i64>() == 0);
+            debug_assert!((self.second as usize) % std::mem::align_of::<i64>() == 0);
+            // SAFETY: `from_capsule` checked, just before this call's Python-
+            // free stretch began, that both pointers are non-null, aligned and
+            // start m initialised entries inside their igraph vectors (end -
+            // stor_begin = m, end <= stor_end), owned by the igraph_t of a
+            // graph the caller keeps alive; no Python code runs while the
+            // slices live (see above), so nothing reallocates or writes them.
             unsafe {
                 Edges::Split(
                     std::slice::from_raw_parts(self.first, self.m as usize),
@@ -508,78 +661,146 @@ impl GraphEdges<'_> {
             Edges::Flat(&self.owned)
         }
     }
+
+    /// Whether the edges point into the graph (`_edges_borrowed`, tests).
+    pub fn borrowed(&self) -> bool {
+        self.borrowed
+    }
+
+    /// The edges again, for `finish` after Python code may have run: borrowed
+    /// ones read afresh (and checked again), copied ones kept. A graph whose
+    /// counts changed meanwhile is refused.
+    pub fn again(self, graph: &Bound<'_, PyAny>) -> PyResult<GraphEdges> {
+        if !self.borrowed {
+            return Ok(self);
+        }
+        graph_edges(graph, Some((self.n, self.m)))
+    }
 }
 
+/// The length of an igraph vector of i64 whose storage looks sound: non-null
+/// and aligned, end within [stor_begin, stor_end], whole items.
 fn span(v: &IgVector) -> Option<usize> {
     let (begin, end, stor_end) = (v.stor_begin as usize, v.end as usize, v.stor_end as usize);
-    if v.stor_begin.is_null() || end < begin || end > stor_end || (end - begin) % 8 != 0 {
+    if v.stor_begin.is_null() || begin % std::mem::align_of::<i64>() != 0 || end < begin || end > stor_end {
         return None;
     }
-    Some((end - begin) / 8)
+    if (end - begin) % std::mem::size_of::<i64>() != 0 {
+        return None;
+    }
+    Some((end - begin) / std::mem::size_of::<i64>())
 }
 
-/// es[e].tuple == (u, v); Err on a Python error, Ok(None) when it is not a pair.
-fn edge_matches(graph: &Bound<'_, PyAny>, e: i64, u: i64, v: i64) -> PyResult<Option<bool>> {
+/// es[e].tuple as a pair of ints; Err on a Python error, Ok(None) when it is
+/// not a pair.
+fn edge_tuple(graph: &Bound<'_, PyAny>, e: i64) -> PyResult<Option<(i64, i64)>> {
     let pair = graph.getattr("es")?.get_item(e)?.getattr("tuple")?;
     let Ok(pair) = pair.cast::<PyTuple>() else { return Ok(None) };
     if pair.len() != 2 {
         return Ok(None);
     }
-    let (a, b): (i64, i64) = (pair.get_item(0)?.extract()?, pair.get_item(1)?.extract()?);
-    Ok(Some(a == u && b == v))
+    Ok(Some((long_long(&pair.get_item(0)?)?, long_long(&pair.get_item(1)?)?)))
 }
 
-fn from_capsule<'py>(graph: &Bound<'py, PyAny>, n: i64, m: i64) -> PyResult<Option<GraphEdges<'py>>> {
+/// Whether this free-threaded interpreter runs without the GIL now (then
+/// another thread can run igraph code on the graph at any time, and its
+/// edges are copied through igraph's own API instead).
+fn gil_disabled(py: Python<'_>) -> bool {
+    py.import("sys")
+        .and_then(|sys| sys.getattr("_is_gil_enabled"))
+        .and_then(|f| f.call0())
+        .and_then(|on| on.is_truthy())
+        .is_ok_and(|on| !on)
+}
+
+/// `edges_from_capsule` of graph_edges.c: the edges of the igraph_t behind
+/// Graph.__graph_as_capsule(), in get_edgelist()'s order, when everything
+/// read from it agrees with the public API (vcount, ecount, undirected, every
+/// end a vertex, edges 0, m/2 and m - 1 as graph.es reports them); None (fall
+/// back to get_edgelist) otherwise. The Python calls come first: from the
+/// read of the struct to the end of the caller's use of the edges no Python
+/// code runs, so nothing can change the graph in between.
+fn from_capsule(graph: &Bound<'_, PyAny>, n: i64, m: i64) -> PyResult<Option<GraphEdges>> {
     // igraph's integers are as wide as a pointer (IGRAPH_INTEGER_SIZE): on a
     // 32-bit target the head is not the one above, so the edges are copied.
-    if cfg!(not(target_pointer_width = "64")) {
+    if cfg!(not(target_pointer_width = "64")) || gil_disabled(graph.py()) {
         return Ok(None);
     }
     let Ok(capsule) = graph.call_method0("__graph_as_capsule") else { return Ok(None) };
-    // SAFETY: a capsule's pointer is read only when its name is NULL, as
-    // python-igraph makes it; anything else clears the error and falls back.
+    let probes = if m > 0 { [0, m / 2, m - 1] } else { [0; 3] };
+    let mut seen = [(0i64, 0i64); 3];
+    for (k, &e) in probes.iter().enumerate().take(if m > 0 { 3 } else { 0 }) {
+        match edge_tuple(graph, e)? {
+            Some(pair) => seen[k] = pair,
+            None => return Ok(None),
+        }
+    }
+    // SAFETY: capsule is a live object; PyCapsule_GetPointer checks that it
+    // is a capsule named NULL (as python-igraph makes it) and otherwise sets
+    // an error, cleared below before falling back. It runs no Python code.
     let head = unsafe { ffi::PyCapsule_GetPointer(capsule.as_ptr(), std::ptr::null()) } as *const IgHead;
     if head.is_null() {
         let _ = PyErr::take(graph.py());
         return Ok(None);
     }
-    // SAFETY: the pointer is the igraph_t the capsule owns; only its head is
-    // read, and every field is checked before an edge is read.
-    let head = unsafe { &*head };
+    if (head as usize) % std::mem::align_of::<IgHead>() != 0 {
+        return Ok(None);
+    }
+    // SAFETY: python-igraph's capsule points at the igraph_t inside the graph
+    // object, which `graph` keeps alive; only the head's fields (integers and
+    // pointers: any bits are valid) are copied out, and every one of them is
+    // checked against the public API before an edge is read.
+    let head = unsafe { std::ptr::read(head) };
     if head.n != n || head.directed != 0 || span(&head.from) != Some(m as usize) || span(&head.to) != Some(m as usize) {
         return Ok(None);
     }
     let (first, second) = (head.to.stor_begin as *const i64, head.from.stor_begin as *const i64);
     // Undirected edges come out as (to, from): igraph_edge().
     for e in 0..m as usize {
-        // SAFETY: e < m, the length of both vectors checked above.
+        // SAFETY: e < m, the length of both vectors (`span`: non-null,
+        // aligned, m whole items before end <= stor_end).
         let (u, v) = unsafe { (*first.add(e), *second.add(e)) };
         if u < 0 || u >= n || v < 0 || v >= n {
             return Ok(None);
         }
     }
-    if m > 0 {
-        for probe in [0, m / 2, m - 1] {
-            // SAFETY: probe < m.
-            let (u, v) = unsafe { (*first.add(probe as usize), *second.add(probe as usize)) };
-            if edge_matches(graph, probe, u, v)? != Some(true) {
-                return Ok(None);
-            }
+    for (k, &e) in probes.iter().enumerate().take(if m > 0 { 3 } else { 0 }) {
+        // SAFETY: as above, e < m.
+        let pair = unsafe { (*first.add(e as usize), *second.add(e as usize)) };
+        if pair != seen[k] {
+            return Ok(None);
         }
     }
-    Ok(Some(GraphEdges { n, m, _capsule: Some(capsule), first, second, owned: Vec::new() }))
+    Ok(Some(GraphEdges { n, m, borrowed: true, first, second, owned: Vec::new() }))
+}
+
+/// `call_count` of graph_edges.c for vcount and ecount.
+pub fn graph_counts(graph: &Bound<'_, PyAny>) -> PyResult<(i64, i64)> {
+    let n = long_long(&graph.call_method0("vcount")?)?;
+    let m = long_long(&graph.call_method0("ecount")?)?;
+    if n < 0 || m < 0 {
+        return Err(PyValueError::new_err("invalid vertex or edge count"));
+    }
+    Ok((n, m))
 }
 
 /// `graph_edges`: borrowed when the capsule can be read, else get_edgelist().
-pub fn graph_edges<'py>(graph: &Bound<'py, PyAny>) -> PyResult<GraphEdges<'py>> {
-    let n: i64 = graph.call_method0("vcount")?.extract()?;
-    let m: i64 = graph.call_method0("ecount")?.extract()?;
-    if n < 0 || m < 0 {
-        return Err(PyValueError::new_err("invalid vertex or edge count"));
+/// Called last before the edges are used: with `counts` (read earlier, before
+/// other arguments ran Python code), a graph that changed in between is
+/// refused.
+pub fn graph_edges(graph: &Bound<'_, PyAny>, counts: Option<(i64, i64)>) -> PyResult<GraphEdges> {
+    let (n, m) = graph_counts(graph)?;
+    if counts.is_some_and(|c| c != (n, m)) {
+        return Err(PyRuntimeError::new_err("The graph changed during the call."));
     }
     if let Some(edges) = from_capsule(graph, n, m)? {
         return Ok(edges);
     }
+    edges_from_edgelist(graph, n, m)
+}
+
+/// `edges_from_edgelist`: a copy of get_edgelist(), checked against ecount().
+fn edges_from_edgelist(graph: &Bound<'_, PyAny>, n: i64, m: i64) -> PyResult<GraphEdges> {
     let list = graph.call_method0("get_edgelist")?;
     let items = fast(&list, "get_edgelist() must return a sequence")?;
     if items.len() as i64 != m {
@@ -594,10 +815,10 @@ pub fn graph_edges<'py>(graph: &Bound<'py, PyAny>) -> PyResult<GraphEdges<'py>> 
         if pair.len() != 2 {
             return Err(PyTypeError::new_err("get_edgelist() must return pairs"));
         }
-        owned.push(pair.get_item(0)?.extract::<i64>()?);
-        owned.push(pair.get_item(1)?.extract::<i64>()?);
+        owned.push(long_long(&pair.get_item(0)?)?);
+        owned.push(long_long(&pair.get_item(1)?)?);
     }
-    Ok(GraphEdges { n, m, _capsule: None, first: std::ptr::null(), second: std::ptr::null(), owned })
+    Ok(GraphEdges { n, m, borrowed: false, first: std::ptr::null(), second: std::ptr::null(), owned })
 }
 
 // ---- Start rows of detect() -----------------------------------------------------
@@ -668,10 +889,10 @@ pub fn read_start_rows(obj: &Bound<'_, PyAny>, n: i64, max_memberships: i64) -> 
                 return Err(PyValueError::new_err("each membership row must be non-empty"));
             }
             for item in &items {
-                labels.push(read_label(item, &integral)?);
+                labels.push(read_label(item, integral)?);
             }
         } else {
-            labels.push(read_label(entry, &integral)?);
+            labels.push(read_label(entry, integral)?);
         }
         // Distinct labels in order of first appearance (sorted above 16).
         let row = &mut labels[start..];

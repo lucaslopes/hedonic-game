@@ -12,6 +12,8 @@
 //! two numbers in one argument list (an order C leaves unspecified), this
 //! file draws them left to right, as clang does.
 
+#![allow(clippy::neg_cmp_op_on_partial_ord)] // test_core.c's comparisons
+
 use std::cell::Cell;
 
 use hedonic_core_rs::cover::{cover, Cover};
@@ -34,8 +36,11 @@ const ZACHARY: [i64; 156] = [
     29, 26, 33, 27, 33, 28, 31, 28, 33, 29, 32, 29, 33, 30, 32, 30, 33, 31, 32, 31, 33, 32, 33,
 ];
 
-/// The number of random games of each kind (test_core.c's 1500 at scale 1).
-const RANDOM_CASES: usize = 1500;
+/// The number of random games of each kind (test_core.c's 1500 at scale 1;
+/// HIG_RANDOM_CASES sets another, as the Miri job does).
+fn random_cases() -> usize {
+    std::env::var("HIG_RANDOM_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(1500)
+}
 
 // ---- Random numbers for the tests -------------------------------------------
 
@@ -540,7 +545,8 @@ fn random_partitions() {
     let (mut run, mut not_equilibria, mut exact) = (0, 0, 0);
     let mut seen = Verified::default();
 
-    for i in 0..RANDOM_CASES {
+    let cases = random_cases();
+    for i in 0..cases {
         let Some((s, o, start)) = partition_case(&mut d) else {
             continue;
         };
@@ -609,7 +615,7 @@ fn random_partitions() {
          certainly improving deviation",
         seen.vertices, seen.improvable
     );
-    assert!(run > RANDOM_CASES / 2);
+    assert!(run > cases / 2);
 }
 
 /// Random covers: every result enumerated by brute force (n cap <= 16),
@@ -619,13 +625,14 @@ fn random_covers() {
     const CAPS: [i64; 4] = [1, 2, 3, -1];
     let mut d = Draw::new();
     planted_graph(&mut d);
-    for _ in 0..RANDOM_CASES {
+    let cases = random_cases();
+    for _ in 0..cases {
         partition_case(&mut d);
     }
     let (mut run, mut enumerated, mut not_equilibria) = (0, 0, 0);
     let mut seen = Verified::default();
 
-    for i in 0..RANDOM_CASES {
+    for i in 0..cases {
         let use_start = d.below(3) == 0;
         // n cap <= MAX_ENUMERATED_LABELS: every result is enumerated.
         let mut cap = CAPS[d.below(4) as usize];
@@ -863,6 +870,7 @@ fn counts() {
 /// A larger planted partition (1500 vertices, 15 blocks), unweighted and
 /// weighted, with and without isolation; covers at caps 2, 4, 8.
 #[test]
+#[cfg_attr(miri, ignore = "1500 vertices: hours under Miri")]
 fn planted() {
     const N: i64 = 1500;
     const BLOCKS: i64 = 15;
@@ -883,7 +891,7 @@ fn planted() {
                 partition_regret(&g, &r.membership, k, &o) <= 1.0,
                 "planted regret"
             );
-            assert!(k >= BLOCKS / 2 && k <= 4 * BLOCKS, "planted k = {k}");
+            assert!((BLOCKS / 2..=4 * BLOCKS).contains(&k), "planted k = {k}");
             for cap in [2, 4, 8] {
                 for negative in [false, true] {
                     let o = options(if negative { -0.001 } else { 0.02 }, cap, isolation);
@@ -1331,6 +1339,7 @@ const FMA_HASH: u64 = 0x6dd6a440fccd0f72;
 /// against the instruction itself where this build runs it (`fma` is the
 /// instruction then; never libm's fma).
 #[test]
+#[cfg_attr(miri, ignore = "10^6 soft fma cases; no unsafe code")]
 fn soft_fma_classes_and_hash() {
     let instruction = fma_path().contains("instruction");
     let mut d = FmaDraw(0x243f6a8885a308d3);
@@ -1383,4 +1392,73 @@ fn soft_fma_classes_and_hash() {
         hash, FMA_HASH,
         "soft fma results: hash {hash:#x}, pinned {FMA_HASH:#x}"
     );
+}
+
+/// HIG_EXPECT_FMA=soft|instruction: the fma this build runs is that one (CI
+/// runs x86_64 tests on a CPU with FMA and, under QEMU, on one without, and
+/// checks that the dispatch picked the instruction or the soft fma).
+#[test]
+fn fma_dispatch_as_expected() {
+    let path = fma_path();
+    match std::env::var("HIG_EXPECT_FMA").as_deref() {
+        Ok("soft") => assert!(path.ends_with("soft"), "fma: {path}"),
+        Ok("instruction") => assert!(path.ends_with("instruction"), "fma: {path}"),
+        Ok(other) => panic!("HIG_EXPECT_FMA must be soft or instruction, not {other}"),
+        Err(_) => println!("fma: {path}"),
+    }
+}
+
+/// Caps above SHORT_SELECTION (32): the best set is chosen by sorting, not by
+/// insertion. A dense game at a low resolution, from a start of many labels
+/// per vertex, so visits rank dozens of positive gains; checked by the
+/// verifier, the rows' shape and determinism.
+#[test]
+fn large_caps_sort_the_gains() {
+    let mut d = Draw::new();
+    let n = if cfg!(miri) { 40 } else { 90 };
+    let mut flat = Vec::new();
+    for u in 0..n {
+        for v in u + 1..n {
+            if d.uniform() < 0.5 {
+                flat.extend([u, v]);
+            }
+        }
+    }
+    let g = Graph::new(n, Edges::Flat(&flat), None, None).unwrap();
+    let mut offset = vec![0i64];
+    let mut labels = Vec::new();
+    for v in 0..n {
+        labels.extend((0..48).filter(|l| (v + l) % 3 != 0));
+        offset.push(labels.len() as i64);
+    }
+    let start = Cover { offset, labels };
+    for cap in [33, 40, n] {
+        let o = options(0.002, cap, false);
+        let r = cover(&g, &o, Some(&start), &mut Callbacks::new(&mut seeded(1)), None).unwrap();
+        assert!(cover_well_formed(&r.cover, n, r.count, cap), "cap {cap}");
+        assert!((0..n as usize).any(|v| r.cover.row(v).len() > 32), "cap {cap}: no row past the short selection");
+        let report = verify_cover(&g, &o, &r.cover).unwrap();
+        assert!(report.max_certified <= r.raw_slack, "cap {cap}: {:e} > {:e}", report.max_certified, r.raw_slack);
+        let again = cover(&g, &o, Some(&start), &mut Callbacks::new(&mut seeded(1)), None).unwrap();
+        assert_eq!(again.cover, r.cover);
+        assert_eq!(again.quality.to_bits(), r.quality.to_bits());
+    }
+}
+
+/// Prefetching (on above a working-set size, forced on here) changes no
+/// result, and its hints stay inside their slices (debug builds check the
+/// indices; Miri runs it with the hints compiled out).
+#[test]
+fn prefetching_changes_nothing() {
+    use hedonic_core_rs::prefetch::set_override;
+    let g = zachary();
+    let mut runs = Vec::new();
+    for on in [false, true] {
+        set_override(Some(on));
+        let p = partition(&g, &options(0.1, 1, false), None, &mut Callbacks::new(&mut seeded(5)), None).unwrap();
+        let c = cover(&g, &options(0.1, 3, true), None, &mut Callbacks::new(&mut seeded(5)), None).unwrap();
+        runs.push((p.membership, p.quality.to_bits(), c.cover, c.quality.to_bits()));
+    }
+    set_override(None);
+    assert!(runs[0] == runs[1], "prefetching changed a result");
 }

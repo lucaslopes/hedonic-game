@@ -4,8 +4,8 @@
 
 Compares hedonic._core.source_sha256 (the digest native/rust/build.rs compiled
 into the extension) with the digest of the checkout's crate now: every
-src/**/*.rs, build.rs and Cargo.toml, each as path, length and bytes (CRLF as
-LF), in path order. Exit 0 when they are equal; 1, with both digests, when the
+src/**/*.rs, build.rs, Cargo.toml and Cargo.lock, each as path, length and
+bytes (CRLF as LF), in path order. Exit 0 when they are equal; 1, with both digests, when the
 extension is stale (rebuild with ``maturin develop --release`` or ``pip install
 -e .``), is another core (HEDONIC_CORE set: unset it) or comes from somewhere
 else.
@@ -18,7 +18,8 @@ from pathlib import Path
 
 
 def crate_digest(crate):
-    paths = sorted([p.relative_to(crate).as_posix() for p in (crate / "src").rglob("*.rs")] + ["build.rs", "Cargo.toml"])
+    lock = ["Cargo.lock"] if (crate / "Cargo.lock").is_file() else []
+    paths = sorted([p.relative_to(crate).as_posix() for p in (crate / "src").rglob("*.rs")] + ["build.rs", "Cargo.toml"] + lock)
     digest = hashlib.sha256()
     for rel in paths:
         data = (crate / rel).read_bytes().replace(b"\r\n", b"\n")

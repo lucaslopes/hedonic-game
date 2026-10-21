@@ -1,6 +1,8 @@
 //! Embeds the digest of the crate's sources as HIG_RUST_SOURCE_SHA256, in the
 //! format of hedonic 2.0's setup.py source_digest (path, length and bytes of each file, in
-//! path order, CRLF as LF). No dependency: SHA-256 is written out below.
+//! path order, CRLF as LF): src/, build.rs, Cargo.toml and Cargo.lock (the dependency
+//! versions are part of what is compiled; a build without the lock file digests the rest, a
+//! different digest). No dependency: SHA-256 is written out below.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +12,7 @@ fn collect(dir: &Path, root: &Path, out: &mut Vec<(String, PathBuf)>) {
         let path = entry.unwrap().path();
         if path.is_dir() {
             collect(&path, root, out);
-        } else if path.extension().map_or(false, |e| e == "rs") {
+        } else if path.extension().is_some_and(|e| e == "rs") {
             let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
             out.push((rel, path));
         }
@@ -69,8 +71,10 @@ fn main() {
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let mut files = Vec::new();
     collect(&root.join("src"), &root, &mut files);
-    for name in ["build.rs", "Cargo.toml"] {
-        files.push((name.to_string(), root.join(name)));
+    for name in ["build.rs", "Cargo.toml", "Cargo.lock"] {
+        if name != "Cargo.lock" || root.join(name).is_file() {
+            files.push((name.to_string(), root.join(name)));
+        }
     }
     files.sort();
     let mut stream = Vec::new();
@@ -94,5 +98,6 @@ fn main() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
     println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.lock");
     println!("cargo:rustc-env=HIG_RUST_SOURCE_SHA256={}", sha256(&stream));
 }

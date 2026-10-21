@@ -246,6 +246,26 @@ def test_errors_agree():
         ("cover", (3, edges, random.Random(0)), {"memberships": [[0, 0, 1], [0], [1]]}),
         ("_verify_cover", (3, edges, [[1, 0], [0], [0]], 2), {}),
         ("_verify_partition", (3, edges, [0, 0]), {}),
+        # Arguments C parses as "n", "L", "d", "p": the same messages, no
+        # argument name (PyO3 would add one), None where C reads a number.
+        ("partition", ("3", edges, random.Random(0)), {}),
+        ("partition", (2**70, edges, random.Random(0)), {}),
+        ("partition", (3, edges, random.Random(0)), {"resolution": "x"}),
+        ("partition", (3, edges, random.Random(0)), {"resolution": None}),
+        ("partition", (3, edges, random.Random(0)), {"allow_isolation": None}),
+        ("cover", (3, edges, random.Random(0)), {"max_memberships": 1.5}),
+        ("cover", (3, edges, random.Random(0)), {"max_memberships": None}),
+        ("cover", (3.0, edges, random.Random(0)), {}),
+        ("_verify_cover", (3, edges, [[0], [0], [0]], "2"), {}),
+        ("_verify_partition", (3, edges, [0, 0, 0]), {"resolution": None, "allow_isolation": None}),
+        ("partition", (3, edges, random.Random(0)), {"max_total_communities": 2**70}),
+        ("partition", (3, edges, random.Random(0)), {"n_communities": "x"}),
+        ("partition", (3, edges, random.Random(0)), {"membership": [0, 2**70, 1]}),
+        ("partition", (3, edges, random.Random(0)), {"membership": [0, "a", 1]}),
+        ("cover", (3, edges, random.Random(0)), {"memberships": [[0], [2**70], [1]]}),
+        ("cover", (3, edges, random.Random(0)), {"memberships": [[0], [1.0], [1]]}),
+        ("_verify_partition", (3, edges, [0, 2**70, 0]), {}),
+        ("_verify_cover", (3, edges, [[0], ["a"], [0]], 2), {}),
     ]
     for fn, args, kw in bad:
         same(f"{fn}{args[:1]} {kw}", lambda m: outcome(getattr(m, fn), *args, **kw))
@@ -260,12 +280,30 @@ def test_errors_agree():
     same("detect cap 0", lambda m: outcome(m.detect, g, random.Random(0), 0.1, max_memberships=0))
     same("detect weights", lambda m: outcome(m.detect, g, random.Random(0), 0.1,
                                              edge_weights=array("d", [1.0])))
+    for kw in ({"resolution": "x"}, {"resolution": None}, {"max_memberships": "2"}, {"allow_isolation": None},
+               {"max_memberships": 2**70}):
+        same(f"detect {kw}", lambda m: outcome(m.detect, g, random.Random(0), **{"resolution": 0.1, **kw}))
+    offsets, labels = np.arange(4, dtype=np.int64), np.array([0, 1, 0], dtype=np.int64)
+    vertices = np.arange(3, dtype=np.int64)
+    for kw in ({"atol": None}, {"rtol": "x"}, {"max_memberships": 1.5}, {"prune": None}, {"allow_isolation": None},
+               {"atol": 2**2000}):
+        def audit(m, kw=kw):
+            state = m._audit_prepare(g, offsets, labels)
+            out = np.zeros(3)
+            return (outcome(m._audit_intervals, state, vertices, **kw),
+                    outcome(m._audit_regrets, state, vertices, np.array([0.5]), out, out.copy(), **kw))
+        same(f"audit {kw}", audit)
 
     class Broken(random.Random):
         def getrandbits(self, k):
             raise ZeroDivisionError("no bits")
 
     same("broken generator", lambda m: outcome(m.partition, 3, edges, Broken(0)))
+    for value in (-1, 2**70, "x", 1.5):
+        class Wrong(random.Random):
+            def getrandbits(self, k, value=value):
+                return value
+        same(f"getrandbits returns {value!r}", lambda m: outcome(m.partition, 3, edges, Wrong(0)))
     with pytest.raises(ZeroDivisionError, match="no bits"):
         rs.partition(3, edges, Broken(0))
 

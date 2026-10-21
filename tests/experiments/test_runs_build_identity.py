@@ -16,10 +16,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def rust_source_digest(crate: Path) -> str:
-    """native/rust/build.rs's digest of the Rust core: src/**/*.rs, build.rs and Cargo.toml, relative to the crate,
-    each as path, length and bytes (CRLF as LF), in path order."""
+    """native/rust/build.rs's digest of the Rust core: src/**/*.rs, build.rs, Cargo.toml and Cargo.lock (when
+    present), relative to the crate, each as path, length and bytes (CRLF as LF), in path order."""
+    lock = ["Cargo.lock"] if (crate / "Cargo.lock").is_file() else []
     paths = sorted([str(p.relative_to(crate)).replace("\\", "/") for p in (crate / "src").rglob("*.rs")]
-                   + ["build.rs", "Cargo.toml"])
+                   + ["build.rs", "Cargo.toml"] + lock)
     digest = hashlib.sha256()
     for rel in paths:
         data = (crate / rel).read_bytes().replace(b"\r\n", b"\n")
