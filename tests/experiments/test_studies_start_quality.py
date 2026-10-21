@@ -443,7 +443,7 @@ class TestPhase(unittest.TestCase):
             local = plan_for(folder, levels=[0.0], seeds=[0])
             key = sq.conditions(local)[0]["key"]
             self.assertEqual(key, f"tiny|0|0|cap=2|gamma=0.5|phase=local|code={sq.code_identity()}")
-            self.assertTrue(sq.code_identity().startswith(f"hedonic-{runtime.release_series()}+core-"))
+            self.assertTrue(sq.code_identity().startswith(f"hedonic-{runtime.RESULTS_SERIES}+core-"))
             self.assertNotIn("/", sq.code_identity())  # no path ever enters a key
             with patch.object(sq.v3, "_detector_worker", side_effect=original) as worker:
                 sq.run_study(local, loader=lambda _: job, emit=lambda _: None)
