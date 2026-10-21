@@ -41,6 +41,7 @@ metrics ledger.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import hashlib
 import json
@@ -64,6 +65,7 @@ from hedonic.experiments.leiden import seeded_igraph_rng
 from hedonic.experiments import timing
 from hedonic.experiments.overlapping import limits
 from hedonic.experiments.overlapping import cover_store
+from hedonic.experiments.overlapping import memwatch
 from hedonic.experiments.overlapping.cdlib_env import (
     MethodUnavailable,
     run_slpa,
@@ -1987,7 +1989,8 @@ def _run_dataset(
                 isinstance(cached, dict)
                 and cached.get("config_digest") == config_digest
                 and (cached.get("status") in {"completed", "unavailable", "failed"}
-                     or (cached.get("status") == limits.TIMEOUT_STATUS and limits.stands(cached, limit_seconds)))
+                     or (cached.get("status") in (limits.TIMEOUT_STATUS, limits.MEMORY_STATUS)
+                         and limits.stands(cached, limit_seconds)))
                 and (not save_covers or cached.get("status") != "completed" or _cover_on_disk(cached, output_dir))
             ):
                 records.append(cached)
@@ -2014,11 +2017,15 @@ def _run_dataset(
             "paper_filter_enabled": bool(paper_filter),
         }
         clock: timing.DetectorClock | None = None
+        watch: memwatch.Watch | None = None
         try:
             # The detector clock runs inside the adapters (``timing``), around the detector's own computation only.
             # Everything below it (validation, canonicalisation, scoring, saving the cover) comes after it stopped.
+            # The memory watchdog (``memwatch``) stops this run alone below the free-memory floor: from a thread of
+            # this process for a program the clock runs, from a profiling-timer signal for a detector in this process.
             in_process = name in HEDONIC_IN_PROCESS or name in IGRAPH_IN_PROCESS
-            with timing.detector_run() as clock, limits.wall_clock(limit_seconds if binding and in_process else None):
+            with timing.detector_run() as clock, limits.wall_clock(limit_seconds if binding and in_process else None), \
+                    (memwatch.in_process() if in_process else contextlib.nullcontext()) as watch:
                 cover, detector_metadata = _run_method(
                     name, dataset.graph, ground_truth, int(seed), parameters
                 )
@@ -2044,6 +2051,8 @@ def _run_dataset(
             )
         except limits.RunLimitReached as exc:  # the in-process detector, interrupted at the queue's limit
             record.update(limits.timed_out(exc.seconds))
+        except memwatch.MemoryLimitReached as exc:  # the free-memory floor: this run alone was stopped
+            record.update(exc.fields())
         except MethodUnavailable as exc:
             reason = str(exc)
             lowered_reason = reason.lower()
@@ -2073,6 +2082,9 @@ def _run_dataset(
                     "reason": f"{type(exc).__name__}: {exc}",
                 }
             )
+        stop = (clock.memory_stop if clock is not None else None) or (watch.tripped if watch is not None else None)
+        if stop is not None and record["status"] != memwatch.MEMORY_STATUS:  # an adapter wrapped the stop in its own error
+            record.update(stop)
         if clock is not None and "resources" not in record:  # the detector raised: keep what it had run for
             _stamp_detector_clock(record, clock)
         record["unit_seconds"] = time.perf_counter() - unit_started
@@ -2088,6 +2100,39 @@ def _run_dataset(
             metric_text = " " + json.dumps(record["metrics"], sort_keys=True)
         print(f"[{status}] {dataset.name}/{name}{metric_text}")
     return records
+
+
+def _declare_out_of_memory(datasets: Sequence[str], methods: Sequence[str], seed: int, output_dir: Path,
+                           config_digest: str, reason: str, *, resume: bool, paper_filter: bool) -> None:
+    """The record of each unit declared out of memory (``--memory-declared``), written as a run's record is, without
+    loading the graph or starting a detector: ``status: "memory"``, ``memory_declared``, and the reason cited."""
+    for dataset in datasets:
+        for name in methods:
+            run_path = output_dir / "runs" / dataset / f"{name}.json"
+            if resume and run_path.is_file():
+                try:
+                    cached = json.loads(run_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    cached = None
+                if isinstance(cached, dict) and cached.get("config_digest") == config_digest \
+                        and cached.get("memory_declared") and limits.stands(cached, None):
+                    print(f"[resume] {dataset}/{name}: {cached.get('status')}")
+                    continue
+            record = {
+                "protocol_version": PROTOCOL_VERSION,
+                "config_digest": config_digest,
+                "dataset": dataset,
+                "method": name,
+                "seed": int(seed),
+                "timing_scope": timing.TIMING_SCOPE,
+                "runtime_versions": runtime.runtime_versions(),
+                "method_spec": METHOD_SPECS[name].__dict__,
+                "paper_filter_enabled": bool(paper_filter),
+                "unit_seconds": 0.0,
+                **memwatch.declared(reason),
+            }
+            _atomic_json(run_path, record)
+            print(f"[{record['status']}] {dataset}/{name}: {record['reason']}")
 
 
 def _write_csv(path: Path, records: Sequence[dict[str, Any]]) -> None:
@@ -2264,6 +2309,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit-seconds", type=float, default=None,
                         help="a queue's time limit for one detector run: lowers --timeout for this run without changing "
                              "the record's identity; a run it stops is recorded as a timeout and reruns under a larger limit")
+    parser.add_argument("--memory-declared", metavar="REASON", default=None,
+                        help="record every unit of this run as out of memory (status memory) without loading the data or "
+                             "running a detector, citing REASON; policy, not part of the record's identity")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--preflight", action="store_true", help="load/report data and dependencies without running detectors")
     parser.add_argument(
@@ -2622,6 +2670,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.identity_only:  # the digest a run with these arguments stamps on its records; nothing else happens
         print(json.dumps({"config_digest": config_digest, "protocol_version": PROTOCOL_VERSION,
                           "identity": identity_payload(config_payload), "config": config_payload}, default=str))
+        return 0
+    if args.memory_declared:  # declared out of memory: the record says so, nothing is loaded or run
+        _declare_out_of_memory(datasets, methods, int(args.seed), output_dir, config_digest, args.memory_declared,
+                               resume=bool(args.resume), paper_filter=bool(args.paper_filter))
         return 0
     preflight = {
         "protocol_version": PROTOCOL_VERSION,

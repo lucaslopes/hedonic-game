@@ -77,6 +77,10 @@ static uint64_t next64(void) {
     return z ^ (z >> 31);
 }
 
+/* Every draw below is its own statement: C leaves the order of sibling
+ * arguments and operands unspecified (GCC on x86_64 evaluates arguments
+ * right to left), so two draws in one expression made GCC, Clang and MSVC
+ * test different games. The statements keep the order Clang evaluated. */
 static double uniform(void) {
     return (double) (next64() >> 11) / 9007199254740992.0;   /* 2^53 */
 }
@@ -426,7 +430,8 @@ typedef struct {
 static void random_graph(small_graph_t *s, int cover, hig_int largest) {
     const double p = 0.15 + 0.6 * uniform();
     const int signed_weights = !cover && below(4) == 0;
-    const int weighted = signed_weights || below(3) == 0, node_weighted = below(3) == 0;
+    const int weighted = signed_weights || below(3) == 0;
+    const int node_weighted = below(3) == 0;
     s->n = 2 + below(largest - 1);
     do {
         s->m = 0;
@@ -436,9 +441,13 @@ static void random_graph(small_graph_t *s, int cover, hig_int largest) {
                 if (uniform() < p && s->m < SMALL_M - 1) {
                     s->edges[2 * s->m] = a;
                     s->edges[2 * s->m + 1] = b;
-                    s->edge_weights[s->m] = signed_weights ? uniform() * 3.0 - 1.0
-                                            : below(5) == 0 ? (double) (1 + below(3))
-                                                            : 0.1 + 2.0 * uniform();
+                    if (signed_weights) {
+                        s->edge_weights[s->m] = uniform() * 3.0 - 1.0;
+                    } else if (below(5) == 0) {
+                        s->edge_weights[s->m] = (double) (1 + below(3));
+                    } else {
+                        s->edge_weights[s->m] = 0.1 + 2.0 * uniform();
+                    }
                     s->m++;
                 }
             }
@@ -451,7 +460,8 @@ static void random_graph(small_graph_t *s, int cover, hig_int largest) {
         }
     } while (s->m == 0);
     for (hig_int v = 0; v < s->n; v++) {
-        s->node_weights[v] = below(6) == 0 ? 0.0 : 0.2 + 2.0 * uniform();
+        s->node_weights[v] = 0.0;
+        if (below(6) != 0) s->node_weights[v] = 0.2 + 2.0 * uniform();
     }
     memset(&s->graph, 0, sizeof s->graph);
     s->graph.vertex_count = s->n;
@@ -518,13 +528,16 @@ static void test_random_partitions(int cases) {
         small_graph_t s;
         test_rng_t r;
         hig_options_t o;
-        hig_int k = 0;
+        hig_int k = 0, resolution;
         double quality = 0.0, raw_slack = -1.0, regret;
+        int isolation;
         const int start = below(3) == 0;
         hig_error_t status;
         random_graph(&s, 0, SMALL_N);
         seed_rng(&r, (uint64_t) i);
-        o = options(RESOLUTIONS[below(8)], 1, (int) below(2), &r.rng);
+        resolution = below(8);
+        isolation = (int) below(2);
+        o = options(RESOLUTIONS[resolution], 1, isolation, &r.rng);
         random_limits(&o, s.n, 1);
         if (!(total_edge_weight(&s.graph) > 0.0)) continue;
         if (start) {
@@ -567,8 +580,9 @@ static void test_random_covers(int cases) {
         test_rng_t r;
         hig_options_t o;
         hig_cover_t start, result = {0, NULL, NULL};
-        hig_int k = 0, cap;
+        hig_int k = 0, cap, resolution;
         double quality = 0.0, raw_slack = -1.0, regret;
+        int isolation;
         const int use_start = below(3) == 0;
         hig_error_t status;
         /* n cap <= MAX_ENUMERATED_LABELS: every result is enumerated. */
@@ -576,7 +590,9 @@ static void test_random_covers(int cases) {
         random_graph(&s, 1, cap == 2 ? 8 : cap == 3 ? 5 : 4);
         seed_rng(&r, (uint64_t) i + 1000003);
         if (cap < 0 || cap > s.n) cap = s.n;
-        o = options(RESOLUTIONS[below(8)], cap, (int) below(2), &r.rng);
+        resolution = below(8);
+        isolation = (int) below(2);
+        o = options(RESOLUTIONS[resolution], cap, isolation, &r.rng);
         random_limits(&o, s.n, cap);
         if (use_start) {
             /* Row v holds v, v + n, ... below K (every label used, at most
@@ -1181,6 +1197,7 @@ static uint64_t to_bits(double x) {
     return b;
 }
 
+/* One draw per statement here too (see uniform()). */
 static int fma_range(int lo, int hi) {
     return lo + (int) (fma_next() % (uint64_t) (hi - lo + 1));
 }
@@ -1230,21 +1247,27 @@ static void fma_case(int cls, double *x, double *y, double *z) {
         *z = random_double(-1080, 1030);
         break;
     case 2: {
-        int ex = fma_range(-40, 40), ey = fma_range(-40, 40);
+        const int ex = fma_range(-40, 40);
+        const int ey = fma_range(-40, 40);
         *x = random_double(ex, ex); *y = random_double(ey, ey);
         *z = random_double(ex + ey - 60, ex + ey + 60);
         break;
     }
     case 3: {   /* z = -fl(x y) moved by a few ulps: the result is the product's error */
-        int ex = fma_range(-300, 300), ey = fma_range(-300, 300);
+        const int ex = fma_range(-300, 300);
+        const int ey = fma_range(-300, 300);
         *x = random_double(ex, ex); *y = random_double(ey, ey);
         *z = from_bits(to_bits(-(*x * *y)) + (uint64_t) (int64_t) fma_range(-3, 3));
         break;
     }
     case 4: {   /* short significands: x y exact, z = -x y */
-        const double a = (double) (fma_next() >> 38), b = (double) (fma_next() >> 38);
+        const double a = (double) (fma_next() >> 38);
+        const double b = (double) (fma_next() >> 38);
         const int s = fma_range(-500, 500);
-        *x = random_sign(ldexp(a, s)); *y = random_sign(ldexp(b, fma_range(-500, 500) - s));
+        int t;
+        *x = random_sign(ldexp(a, s));
+        t = fma_range(-500, 500);
+        *y = random_sign(ldexp(b, t - s));
         *z = -(*x * *y);
         break;
     }
@@ -1258,16 +1281,25 @@ static void fma_case(int cls, double *x, double *y, double *z) {
         break;
     }
     case 6: {   /* subnormal products and results */
-        const int s = fma_range(-1140, -990), ex = fma_range(-600, -400);
+        const int s = fma_range(-1140, -990);
+        const int ex = fma_range(-600, -400);
+        double t;
         *x = random_double(ex, ex); *y = random_double(s - ex, s - ex);
-        *z = random_sign(random_double(-1080, -1015));
-        if (fma_next() & 1) *z = -(*x * *y) + random_sign(random_double(-1080, -1070));
+        t = random_double(-1080, -1015);
+        *z = random_sign(t);
+        if (fma_next() & 1) {
+            t = random_double(-1080, -1070);
+            *z = -(*x * *y) + random_sign(t);
+        }
         break;
     }
     case 7: {   /* products near and above the overflow threshold */
-        const int s = fma_range(990, 1060), ex = fma_range(500, 520);
+        const int s = fma_range(990, 1060);
+        const int ex = fma_range(500, 520);
+        double t;
         *x = random_double(ex, ex); *y = random_double(s - ex, s - ex);
-        *z = random_sign(random_double(1000, 1023));
+        t = random_double(1000, 1023);
+        *z = random_sign(t);
         break;
     }
     case 8:
@@ -1288,21 +1320,22 @@ static void fma_case(int cls, double *x, double *y, double *z) {
         break;
     }
     case 10: {  /* exponent gaps from 54 to 1100 between x y and z */
-        const int ex = fma_range(-30, 30), ey = fma_range(-30, 30);
-        /* One draw per statement (the operands of * are unsequenced). */
+        const int ex = fma_range(-30, 30);
+        const int ey = fma_range(-30, 30);
         const int magnitude = fma_range(54, 1100);
         const int gap = magnitude * (fma_next() & 1 ? 1 : -1);
+        double t;
         *x = random_double(ex, ex); *y = random_double(ey, ey);
-        *z = random_sign(ldexp(random_double(0, 0), ex + ey + gap));
+        t = random_double(0, 0);
+        *z = random_sign(ldexp(t, ex + ey + gap));
         break;
     }
     default: {  /* z a small multiple of a quarter ulp of fl(x y) */
         int e;
-        const int ex = fma_range(-200, 200), ey = fma_range(-200, 200);
+        const int ex = fma_range(-200, 200);
+        const int ey = fma_range(-200, 200);
         *x = random_double(ex, ex); *y = random_double(ey, ey);
         (void) frexp(*x * *y, &e);
-        /* One draw per statement: C leaves the order of sibling arguments
-         * unspecified (GCC on x86_64 evaluates them right to left). */
         const double multiple = (double) fma_range(1, 8);
         const int drop = fma_range(0, 3);
         *z = random_sign(ldexp(multiple, e - 53 - drop));

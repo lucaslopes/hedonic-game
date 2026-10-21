@@ -360,6 +360,8 @@ hedonic-exp list                       # analysis and utility commands
   never skipped. A skipped benchmark, start-quality or spectrum pair leaves
   `--networks`/`--pairs`, a skipped baseline-calibration pair moves to
   `--transfer`; the Hedonic calibration is never skipped on an estimate.
+  A run the memory watchdog stopped (`status: "memory"`, see Memory) stands
+  the same way, by its floor instead of its limit (`memwatch.stands`).
 - **The overlap queue goes method by method, in two phases** (`schedule =
   "file"`). Phase 1 is DBLP, Amazon and YouTube (`pairs`, each network's
   `top5000` and `all` covers together): Hedonic first (`synthetic-hedonic`,
@@ -380,7 +382,12 @@ hedonic-exp list                       # analysis and utility commands
   --skip-missing` into `{root}/benchmark/robustness`, the ledger the old
   inline stage wrote): the benchmark items run `--no-robustness`, so every
   detector run of a phase (accuracy and time) is in before any audit starts.
-  `tests/experiments/test_queue_skip.py` pins the order.
+  Every phase-2 calibration runs its pairs `--alone` (one at a time), and
+  Clique Percolation is declared out of memory on both phase-2 pairs
+  (`--out-of-memory` on `calibration-clique-percolation-large` and
+  `benchmark-clique-percolation-large`, the evidence in `memwatch.DECLARED`):
+  nothing loads or runs it there, and its records say "out of memory".
+  `tests/experiments/test_queue_skip.py` pins the order and both.
 - **Answers first, audits and scores after.** A benchmark unit run with
   `--save-covers` keeps its answer (`overlapping/cover_store.py`): the cover,
   Hedonic's labelled rows in `<runner>.labels.json.gz` (older records keep
@@ -450,6 +457,27 @@ hedonic-exp list                       # analysis and utility commands
   time; parallel steps use `overlapping/parallel.py` (forked workers, a
   free-memory floor) and plan their workers with `overlapping/capacity.py`.
   Check a new heavy step under a memory guard before running it for real.
+  Every detector run is also watched on its own (`overlapping/memwatch.py`):
+  its parent reads the free memory (`parallel.free_memory_percent`,
+  `HEDONIC_MEMORY_FLOOR`, default 10%) at most every 0.5 s and below the
+  floor kills that run's whole tree (`memwatch.join` for a forked probe,
+  `memwatch.Watch` from a thread in `timing.DetectorClock.process`,
+  `memwatch.in_process` from an `ITIMER_PROF` signal for an in-process
+  detector). The run is recorded as `status: "memory"` with
+  `memory_floor_percent` and `free_memory_percent`, never part of an identity,
+  digest or unit key; it stands while the floor is at least the one that
+  stopped it, and `hedonic run ... --rerun-memory` (`HEDONIC_RERUN_MEMORY`)
+  runs it again. The whole-run guards (`run_forked`'s floor, the worker
+  guard) record nothing, so they act at once only below half the floor and
+  otherwise after `parallel.LAST_RESORT_SECONDS` below it
+  (`parallel.FloorWatch`): the run's own watchdog stops and records it
+  first. A calibration search whose every evaluation was stopped is
+  `out_of_memory` and is never transferred. `--alone PAIRS` (`run_forked`'s
+  `alone`) keeps a pair from running beside any other; `--out-of-memory
+  METHOD@PAIR` records a search or unit as out of memory without running it
+  (`memory_declared`). The spectrum (`execution.run_in_subprocess`, a tracked
+  file) keeps only its own guard. A new runner that forks or execs a detector
+  watches it with `memwatch`.
 - **CLI registry.** Every runnable `main(argv=None)` is registered in
   `CLI.COMMANDS` (import-safe, `--help` works, a test names it). Commands
   that `hedonic run` performs durably stay registered in `hedonic-exp` with a

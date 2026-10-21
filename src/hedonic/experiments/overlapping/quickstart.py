@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hedonic.experiments.config import RUNS_ROOT, codeseg_cache_dir, expand_path
-from hedonic.experiments.overlapping import replication, snap, tui
+from hedonic.experiments.overlapping import memwatch, replication, snap, tui
 from hedonic.experiments.overlapping.tui import style
 
 # --------------------------------------------------------------------------- catalogue
@@ -152,9 +152,10 @@ class Config:
     induce: str = "full"                    # "covered": every method sees only the subgraph induced by the cover's vertices
     replication: str = "auto"               # "auto": a deterministic method runs once (lowest seed); "all": every seed
     shared_folder: bool = False             # output_dir is the run's folder itself, shared with other runs (never /NAME)
+    out_of_memory: str = ""                 # METHOD@PAIR,...: units recorded out of memory, never run (memwatch; not identity)
 
     def command(self) -> str:
-        allowed = {"output_dir", "cache_dir", "network_root", "json", "shared_folder", "limit"} | (
+        allowed = {"output_dir", "cache_dir", "network_root", "json", "shared_folder", "limit", "out_of_memory"} | (
             {"tuned", "method_params"} if self.tuned else set())
         if self.profile in PROFILES and PROFILES[self.profile].differences(self) <= allowed:
             parts = ["hedonic run exp", "--config", self.profile]
@@ -166,6 +167,8 @@ class Config:
                 parts.append("--shared-folder")
             if self.limit is not None:
                 parts += ["--limit-seconds", f"{self.limit:g}"]
+            if self.out_of_memory:
+                parts += ["--out-of-memory", self.out_of_memory]
             if self.cache_dir != "~/.cache/hedonic":
                 parts += ["--cache-dir", self.cache_dir]
             if self.network_root:
@@ -202,7 +205,13 @@ class Config:
             parts.append("--shared-folder")
         if self.limit is not None:
             parts += ["--limit-seconds", f"{self.limit:g}"]
+        if self.out_of_memory:
+            parts += ["--out-of-memory", self.out_of_memory]
         return " ".join(shlex.quote(p) if " " in p and p != "hedonic run exp" else p for p in parts)
+
+    def declared_out_of_memory(self) -> dict[tuple[str, str], str]:
+        """``out_of_memory`` read: {(method key, network:cover): the reason cited} (``memwatch.parse_declared``)."""
+        return memwatch.parse_declared(self.out_of_memory, pair_key)
 
     def pretty_command(self) -> str:
         """The same command broken at option boundaries, for narrow terminals (shell line continuations)."""
@@ -401,6 +410,12 @@ def split_target(target: str) -> tuple[str, str | None]:
     return base, (snap.canonical_cover_variant(cover) if cover else None)
 
 
+def pair_key(target: str) -> str:
+    """One spelling of a target: ``dblp:top5k`` -> ``dblp:top5000``; a plain name stays as it is."""
+    base, cover = split_target(target)
+    return f"{base}:{cover}" if cover else base
+
+
 def parse_targets(value: str) -> list[str]:
     """Networks, each optionally with the ground-truth cover to score against: ``dblp,amazon:top5k``.
 
@@ -466,6 +481,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit-seconds", type=float, default=None, metavar="S",
                    help="a queue's time limit for one detector run: lowers --timeout without changing any record's "
                         "identity; a run it stops is recorded as a timeout and reruns under a larger limit or none")
+    p.add_argument("--out-of-memory", default=None, metavar="METHOD@PAIR,...",
+                   help="units recorded as out of memory (status memory, the evidence cited) without loading the pair or "
+                        "running the method, e.g. clique_percolation@livejournal:top5000; not part of any record's identity")
     p.add_argument("--output-dir", default=None, help="where run records and the summary are saved (default ~/Databases/Hedonic/Overlap/exp; a durable run adds /NAME)")
     p.add_argument("--cache-dir", default=None, help="downloads and built runtimes (default ~/.cache/hedonic)")
     p.add_argument("--network-root", default=None, help="optional folder with local SNAP archives")
@@ -616,6 +634,14 @@ def config_from_args(a: argparse.Namespace) -> Config:
         if not a.limit_seconds > 0:
             raise ValueError("--limit-seconds must be a positive number of seconds")
         cfg.limit = float(a.limit_seconds)
+    if a.out_of_memory is not None:
+        cfg.out_of_memory = a.out_of_memory
+    if cfg.out_of_memory:
+        declared = cfg.declared_out_of_memory()  # a misspelled item is refused here, before anything runs
+        stray = sorted({f"{m}@{n}" for m, n in declared if m not in cfg.methods or n not in {pair_key(t) for t in cfg.networks}})
+        if stray:
+            raise ValueError(f"--out-of-memory names unit(s) this run does not plan: {', '.join(stray)}")
+        cfg.out_of_memory = memwatch.spell_declared(declared)
     if cfg.preset == "paper":
         cfg.preset = "registry"
     if a.threads is not None:
@@ -1165,6 +1191,9 @@ def unit_argv(cfg: Config, net: str, seed: int, m: Method, binary: Path | None) 
         argv.append("--save-covers")
     if cfg.limit is not None:  # policy, not identity: the runner keeps it out of the config digest
         argv += ["--limit-seconds", f"{cfg.limit:g}"]
+    declared = cfg.declared_out_of_memory().get((m.key, pair_key(net))) if cfg.out_of_memory else None
+    if declared is not None:  # policy too: the unit's record says out of memory, and nothing is loaded or run
+        argv += ["--memory-declared", declared]
     return argv, out
 
 
@@ -1317,6 +1346,12 @@ def attach_robustness(stage, net: str, seed: int, m: Method, rec: dict) -> bool:
     return failed
 
 
+def status_text(status: str | None) -> str:
+    """A unit's status as the tables say it: ``memory`` (stopped by the memory watchdog, or declared) reads
+    "out of memory"."""
+    return "out of memory" if status == memwatch.MEMORY_STATUS else str(status)
+
+
 def result_line(tag: str, rec: dict) -> str:
     mm = rec.get("metrics") or {}
     if rec.get("status") == "completed":
@@ -1324,7 +1359,7 @@ def result_line(tag: str, rec: dict) -> str:
         if isinstance(rec.get("robustness"), (int, float)):
             note += f" · robust {rec['robustness']:.3f}"
         return f"  {style('✓', 'green')} {tag}  {style(note, 'dim')}"
-    why = f"{rec.get('status')}: {str(rec.get('reason'))[:110]}"
+    why = f"{status_text(rec.get('status'))}: {str(rec.get('reason'))[:110]}"
     return f"  {style('✗', 'red')} {tag}  {style(why, 'yellow')}"
 
 
@@ -1471,7 +1506,7 @@ def _render_tables(rows: list[dict], cfg: Config, show_sd: bool) -> str:
         out += [bar("┌", "┬", "┐"), row_line(headers), bar("├", "┼", "┤")]
         for r, cells in body:
             if cells is None:
-                note = f"{r['label']}  —  {r['status']}: {str(r['reason'] or '')}"[:inner]
+                note = f"{r['label']}  —  {status_text(r['status'])}: {str(r['reason'] or '')}"[:inner]
                 out.append("  │ " + style(note, "yellow") + " " * (inner - len(note)) + " │")
             else:
                 out.append(row_line(cells))

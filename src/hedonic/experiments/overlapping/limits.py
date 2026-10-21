@@ -34,6 +34,7 @@ from typing import Any, Iterator
 
 KEYS = ("timeout", "max_eta")
 TIMEOUT_STATUS = "timeout"
+MEMORY_STATUS = "memory"  # a run the memory watchdog stopped, or one declared out of memory (``memwatch``)
 _UNITS = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
 _PART = re.compile(r"(\d+(?:\.\d+)?)\s*([smhd])")
 
@@ -144,7 +145,14 @@ def wall_clock(seconds: float | None) -> Iterator[bool]:
 
 def stands(record: dict, limit: float | None, default: float | None = None) -> bool:
     """Whether a record a time limit stopped still answers a run under ``limit``: only when that limit is at most the
-    one that stopped it (``default``: the limit a record from before ``limit_seconds`` was written ran under)."""
+    one that stopped it (``default``: the limit a record from before ``limit_seconds`` was written ran under).
+
+    A run the memory watchdog stopped (``status: "memory"``, ``memwatch``) stands the same way, by its floor: while
+    the floor is at least the one that stopped it, and unless ``--rerun-memory`` asks for it again."""
+    if record.get("status") == MEMORY_STATUS:
+        from hedonic.experiments.overlapping import memwatch
+
+        return memwatch.stands(record)
     if record.get("status") != TIMEOUT_STATUS:
         return True
     stopped = record.get("limit_seconds", default)

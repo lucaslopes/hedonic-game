@@ -534,7 +534,10 @@ def stop_for_memory(name: str, entry: dict, prog: dict, free: float, floor: floa
 
 
 def start_memory_guard(name: str, entry: dict, prog: dict):
-    """Watch the machine's free memory from a daemon thread; the returned event stops the watch (``None``: no watch)."""
+    """Watch the machine's free memory from a daemon thread; the returned event stops the watch (``None``: no watch).
+
+    The last resort: below half the floor it stops the run at once, else after ``parallel.LAST_RESORT_SECONDS`` below
+    it (``parallel.FloorWatch``), so the detector run's own watchdog can stop that run and record it first."""
     import threading
 
     from hedonic.experiments.overlapping import parallel
@@ -543,11 +546,12 @@ def start_memory_guard(name: str, entry: dict, prog: dict):
     if not floor or parallel.free_memory_percent() is None:
         return None
     done = threading.Event()
+    breach = parallel.FloorWatch(floor)  # a detector run's own watchdog (``memwatch``) stops and records it first
 
     def watch() -> None:
         while not done.wait(MEMORY_GUARD_SECONDS):
             free = parallel.free_memory_percent()
-            if free is not None and free < floor:
+            if breach.breached(free):
                 stop_for_memory(name, entry, prog, free, floor)
 
     threading.Thread(target=watch, name="memory-guard", daemon=True).start()
@@ -1645,6 +1649,10 @@ def check_benchmark(entry: dict, sample: int) -> int:
     prog = read_progress(entry)
     done = [p for p in prog.get("plan", []) if p.get("status") == "completed"]
     print(f"  run      {entry['name']} · {len(done)}/{len(prog.get('plan', []))} detector runs completed")
+    for p in prog.get("plan", []):  # stopped by the memory watchdog, or declared out of memory: said, never rerun here
+        if p.get("status") == "memory":
+            print(style(f"  out of memory  {qs.NETWORKS[p['network']][0]} · seed {p['seed']} · {p.get('label') or p['method']}"
+                        f": {str(p.get('reason') or '')[:160]}", "yellow"))
     replicas = sorted({p["method"] for p in done if replication.kind(p["method"]) == "replicas"})
     if replicas:
         print(f"  skipped  {', '.join(qs.BY_KEY[m].label for m in replicas)}: its runs are independent replicas "
