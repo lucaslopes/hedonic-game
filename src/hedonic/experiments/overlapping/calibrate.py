@@ -66,7 +66,7 @@ from typing import Any, Callable
 from hedonic.experiments.config import RUNS_ROOT, expand_path
 from hedonic.experiments.overlapping import parallel
 from hedonic.experiments.overlapping import quickstart as qs
-from hedonic.experiments.runtime import ALGORITHM_IDENTITY, runtime_versions
+from hedonic.experiments.runtime import algorithm_identity, runtime_versions
 
 PROTOCOL = "hedonic-calibration-v2"
 TUNED_NAME = qs.TUNED_NAME  # hedonic_tuned.json; quickstart.LEGACY_TUNED_NAMES are read too
@@ -490,7 +490,7 @@ def record_search(plan: dict[str, Any], search: dict[str, Any], summary: dict[st
                                                         "probe_seconds", "detection_seconds", "selection")}
     data = read_tuned(plan) or {}
     data.update({"protocol": PROTOCOL, "mode": plan["mode"], "cap": plan.get("cap", "search"),
-                 "algorithm_identity": ALGORITHM_IDENTITY,
+                 "algorithm_identity": algorithm_identity(),
                  "environment": runtime_versions(),
                  "search": str(plan["script"]) if plan.get("script") else SEARCH_MODULE})
     data.setdefault("searches", {})[search["key"]] = entry
