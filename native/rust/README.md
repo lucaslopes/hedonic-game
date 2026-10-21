@@ -103,6 +103,15 @@ graphs 1.5 to 2.5 (the generator in place), the large games 1.3 to 1.4
 (prefetching); the geometric mean of C time / Rust time is 1.23 (1.35
 under a heavy load, where the mid-size partitions gain 1.15 to 1.6).
 
+The performance pass of 2.1 (`bench/perflog-after.md`, "Perflog" below)
+then sorts the long best-set selection of uncapped covers as integer keys
+over the same total order, and releases the run state before the result is
+built. Against 2.0's C core, in retired instructions (a loaded machine does
+not blur them): uncapped covers 14.1G against 26.8G (BA 50k), 21.2G against
+34.2G (YouTube top5000) and 3.5G against 4.4G (DBLP top5000), the uncapped
+DBLP audit 7.45G against 8.96G, partitions equal; the core's heap peaks are
+C's or lower.
+
 ## Perflog: where time and memory go
 
 `python native/rust/bench/perflog.py` (run it under

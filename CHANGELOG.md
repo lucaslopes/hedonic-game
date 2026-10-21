@@ -20,7 +20,10 @@
 - It is faster: about 1.2 times as fast as the C core on the benchmark's
   geometric mean, 1.5 to 2.5 times on small graphs (the random generator's
   state is read in place) and 1.3 to 1.6 on large ones (prefetching ahead of
-  the queue); see `native/rust/README.md`. Calls release the GIL, and the
+  the queue). Uncapped covers retire 1.3 to 1.9 times fewer instructions
+  than in C (the best-set selection sorts integer keys), the uncapped audit
+  1.2 times fewer, and the core's memory peaks are C's or lower; see
+  `native/rust/README.md` and its perflog. Calls release the GIL, and the
   module runs on free-threaded CPython (3.14t) without enabling it.
 - `hedonic.arrays` runs the detector and the stability audit on NumPy arrays
   (an edge list, or a NetworkX or SciPy graph), without igraph: `pip install
