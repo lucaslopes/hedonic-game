@@ -1,0 +1,42 @@
+YouTube_top5000_cover_M-1.c.sample.txt: top 40 functions by samples at the top of the stack (macOS sample, 1 ms interval; 13195 samples listed)
+
+        hig_cover_traced  (in _core.cpython-312-darwin.so)        5058
+        _qsort  (in libsystem_c.dylib)        4420
+        hig_scored_compare  (in _core.cpython-312-darwin.so)        1471
+        _isort  (in libsystem_c.dylib)        1263
+        hig_cover_quality  (in _core.cpython-312-darwin.so)        201
+        hig_cover_top_positive  (in _core.cpython-312-darwin.so)        109
+        list_traverse  (in libpython3.12.dylib)        108
+        hig_cover_rescale  (in _core.cpython-312-darwin.so)        105
+        cover_lists  (in _core.cpython-312-darwin.so)        69
+        hig_cover_join  (in _core.cpython-312-darwin.so)        57
+        _PyEval_EvalFrameDefault  (in libpython3.12.dylib)        53
+        hig_cover_result  (in _core.cpython-312-darwin.so)        40
+        visit_decref  (in libpython3.12.dylib)        33
+        min_max  (in libpython3.12.dylib)        29
+        visit_reachable  (in libpython3.12.dylib)        28
+        hig_cover_leave  (in _core.cpython-312-darwin.so)        20
+        list_dealloc  (in libpython3.12.dylib)        20
+        _xzm_xzone_malloc_from_freelist_chunk  (in libsystem_malloc.dylib)        18
+        long_richcompare  (in libpython3.12.dylib)        18
+        _platform_memmove  (in libsystem_platform.dylib)        14
+        list_extend.llvm.15600038148701866435  (in libpython3.12.dylib)        14
+        _tlv_get_addr  (in libdyld.dylib)        10
+        hig_cover_write_row  (in _core.cpython-312-darwin.so)        8
+        gc_collect_main.llvm.949403569146434147  (in libpython3.12.dylib)        7
+        hig_queue_next  (in _core.cpython-312-darwin.so)        7
+        _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib)        5
+        listiter_next  (in libpython3.12.dylib)        5
+        long_hash  (in libpython3.12.dylib)        5
+Binary Images:
+       0x100d94000 -        0x100d9565f +python3.12 (???) <4C4C4430-5555-3144-A1E2-274F3F858120> /Users/*/python3.12
+       0x100fd4000 -        0x100fd5487 +libXau.6.dylib (0) <244B2979-9D73-3CD5-AD6D-A6C9A01A4320> /Users/*/libXau.6.dylib
+       0x100fe8000 -        0x100fffff3 +_umath_linalg.cpython-312-darwin.so (0) <80D60FEF-66B0-35B3-A0B5-22E43D5F84C3> /Users/*/_umath_linalg.cpython-312-darwin.so
+       0x101040000 -        0x10105bff3 +_c_internal_utils.cpython-312-darwin.so (0) <0C78005B-BE62-31B2-8204-6CE494A35A30> /Users/*/_c_internal_utils.cpython-312-darwin.so
+       0x101230000 -        0x10124bcd7 +libz.1.3.1.zlib-ng.dylib (0) <9EA7C0DD-E134-3F03-993D-5684959B80CA> /Users/*/libz.1.3.1.zlib-ng.dylib
+       0x102254000 -        0x102267303 +libxcb.1.1.0.dylib (0) <074DF1DF-12B0-3A9B-A63D-634AFF793E07> /Users/*/libxcb.1.1.0.dylib
+       0x102284000 -        0x10229e64f +_core.cpython-312-darwin.so (0) <87315777-2258-3CF7-81D2-BE4CCF46FD91> /Users/*/_core.cpython-312-darwin.so
+       0x1022bc000 -        0x1022dcfe7 +liblzma.5.dylib (0) <0DF6CE6D-40F9-3648-8DBB-5F53137F838C> /Users/*/liblzma.5.dylib
+       0x102320000 -        0x10306525f +libpython3.12.dylib (3.12) <4C4C441C-5555-3144-A1FA-A39B6AC064E5> /Users/*/libpython3.12.dylib
+       0x107558000 -        0x10794599f +_igraph.abi3.so (0) <803A2CF0-C9E2-3F94-9A8A-076114A62007> /Users/*/_igraph.abi3.so
+       0x107ccc000 -        0x107d39d9f +_imaging.cpython-312-darwin.so (0) <3DA42F56-A19F-3866-AC25-71CFCE13D99E> /Users/*/_imaging.cpython-312-darwin.so

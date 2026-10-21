@@ -113,3 +113,43 @@ profiling loop over an edge-list file (`a b` lines, or `a b w` with `w`);
 `ab_prefetch` times prefetching off and on in one process and checks the
 results agree; `phases` times the input check, the adjacency build and the
 partition apart.
+
+## Perflog: where time and memory go
+
+`python rust/bench/perflog.py` (run it under
+`.agents/skills/hedonic-native-core/scripts/guard.sh 16`, one heavy job at a
+time) measures both cores, workload by workload, each measurement in a fresh
+child process, and writes a markdown table (`--table`) and every number
+(`--json`); `rust/bench/perflog-baseline.md` is the baseline. The workloads
+(`--list`, `--filter`): Zachary (100 calls a measurement), Barabasi-Albert
+50k as a partition and as covers at M = 2, 5 and -1, a weighted SBM, node
+weights, a seeded random start, the SNAP covered subgraphs of DBLP, Amazon
+and YouTube (`top5000`, from the read-only pair pickles in
+`~/Databases/Hedonic/Pickles`: partitions at the density, uncapped covers at
+the paper queue's calibrated resolutions) and the stability audit of a DBLP
+cover, capped and uncapped.
+
+- **Time by layer.** Wrappers timestamp `Game.community_hedonic`,
+  `hedonic._native.community_hedonic` and `_core.detect` (or `_prepare`,
+  `_audit_prepare`, `_audit_intervals`), with retired instructions at each
+  boundary (`proc_pid_rusage`), which a loaded machine does not blur. The
+  core alone runs in a native driver on the very same input (edges in the
+  capsule's order, weights, start, the Mersenne Twister words of the seeded
+  generator), `rust/examples/perflog_core.rs` and `rust/bench/perflog_core.c`
+  (the C core included as one translation unit), and must return the call's
+  result (count, quality and a hash of the rows); the driver times the input
+  check and the adjacency build apart. Whatever detect spends beyond the
+  driver's call (and beyond the same call with `start=None`, the start rows'
+  read) is the binding's: generator, buffers and result lists.
+- **Memory.** `ru_maxrss` of each child (`wait4`), the growth of its high-water
+  mark and of its peak physical footprint across the one call (the interval
+  maximum of `proc_pid_rusage`, reset just before the call: on macOS freed
+  pages stay in the footprint, so the high-water mark is the honest number),
+  the Python objects the call allocates (tracemalloc, a child of its own) and
+  the core's own heap, counted in the drivers by a global allocator (Rust)
+  and by wrappers of `malloc`/`calloc`/`realloc`/`free` seen only by the
+  driver's copy of the C core.
+- **Profiles.** `perflog.py --profile NAME [--seconds 20] [--cores c,rust]`
+  runs the workload in a loop and attaches macOS `sample`; the full call trees
+  go to `rust/bench/profiles/*.sample.txt` (ignored by git) and the functions
+  at the top of the stack to `*.top.txt`.
