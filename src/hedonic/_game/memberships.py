@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from numbers import Integral
 
 
@@ -45,12 +46,12 @@ def validate_membership(
 
 def _rows_of(membership):
     """Per-vertex entries of a membership given as a list, tuple, NumPy array or
-    igraph clustering/cover."""
-    from igraph import VertexClustering, VertexCover
-
-    if isinstance(membership, VertexClustering):
+    igraph clustering/cover (only when igraph is loaded: nothing else can make
+    one, so the array path never imports it)."""
+    igraph = sys.modules.get("igraph")
+    if igraph is not None and isinstance(membership, igraph.VertexClustering):
         return list(membership.membership), membership.graph
-    if isinstance(membership, VertexCover):
+    if igraph is not None and isinstance(membership, igraph.VertexCover):
         return [list(row) for row in membership.membership], membership.graph
     if hasattr(membership, "tolist") and not isinstance(membership, (list, tuple)):
         membership = membership.tolist()   # a NumPy array
@@ -66,7 +67,24 @@ def normalize_membership(
     renumber_labels: bool = False,
     name: str = "memberships",
 ) -> list[list[int]]:
-    """Validate and normalize a partition or cover to per-vertex rows.
+    """:func:`normalize_rows` for the vertices of ``game``."""
+    return normalize_rows(
+        membership, game.vcount(), max_memberships=max_memberships,
+        collapse_duplicate_labels=collapse_duplicate_labels,
+        renumber_labels=renumber_labels, name=name,
+    )
+
+
+def normalize_rows(
+    membership: list[int] | list[list[int]],
+    n: int,
+    *,
+    max_memberships: int | None = None,
+    collapse_duplicate_labels: bool = False,
+    renumber_labels: bool = False,
+    name: str = "memberships",
+) -> list[list[int]]:
+    """Validate and normalize a partition or cover of ``n`` vertices to per-vertex rows.
 
     Labels are required to be non-negative integers and contiguous from zero,
     matching igraph's membership convention. Every row must be non-empty and
@@ -85,14 +103,14 @@ def normalize_membership(
             "VertexClustering/VertexCover) with one entry per vertex, got "
             f"{type(membership).__name__}"
         )
-    if source_graph is not None and source_graph.vcount() != game.vcount():
+    if source_graph is not None and source_graph.vcount() != n:
         raise ValueError(
             f"{name} is a clustering of a graph with {source_graph.vcount()} "
-            f"vertices; this graph has {game.vcount()}"
+            f"vertices; this graph has {n}"
         )
-    if len(membership) != game.vcount():
+    if len(membership) != n:
         raise ValueError(
-            f"{name} must contain one row per vertex ({game.vcount()}), "
+            f"{name} must contain one row per vertex ({n}), "
             f"got {len(membership)}: give each vertex its label (or its list "
             "of labels), not a list of communities"
         )
