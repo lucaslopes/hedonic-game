@@ -285,13 +285,20 @@ is not in the table.
 `.github/workflows/rust.yml` runs the cargo tests (release, soft fma, debug;
 x86_64 under Rosetta on macOS) on Linux x86_64/aarch64, macOS and Windows
 AMD64/ARM64, then builds the package and runs the pinned tests and the libm
-check, and the whole suite with the `cli` extra. The wheel workflow builds
-the sdist (and a wheel from it, tested), the wheels (CPython 3.12-3.14,
-Linux manylinux and musllinux, macOS, Windows AMD64/ARM64; free-threaded
-builds and 32-bit x86, with its x87 rounding, are skipped), runs
-`tools/native_tests.py` against every wheel, then `publish` (tags only,
-after every job) and `verify` (installs the uploaded version from its index
-on each platform and runs the pinned tests and the suite). A wheel's test
+check, and the whole suite with the `cli` extra. `wheels.yml` (cibuildwheel,
+`.github/cibuildwheel.toml`) builds the sdist (and a wheel from it, tested)
+and the wheels: CPython 3.12-3.14 and 3.14t; Linux x86_64, i686, aarch64 and,
+under QEMU, ppc64le, s390x (big-endian), armv7l, riscv64 (manylinux and
+musllinux); macOS arm64 and x86_64; Windows AMD64, x86 and ARM64; Pyodide
+cp314. 32-bit x86 is in: Rust's i686 targets compute f64 in SSE2, not x87.
+Every wheel runs `tools/core_pins.py` (the bit pins through the extension
+alone, no igraph or NumPy needed); where igraph has a wheel also
+`tools/native_tests.py` and the library suite; `foreign` tests the cp314
+wheels of the QEMU architectures and i686 in Debian with its python3-igraph.
+`cargo test` also runs under qemu-user (`tools/cargo_cross_test.sh TARGET`)
+and on wasm32-wasip1. Then `publish` (tags only, after every job) and
+`verify` (installs the uploaded version from its index on each platform and
+runs the pinned tests and the suite). A wheel's test
 installs only the library's dependencies: keep heavy dependencies in extras
 and tests independent of build tools.
 
