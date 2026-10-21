@@ -88,7 +88,7 @@ def main(argv=None):
     parser.add_argument("--records", help="write one JSON line per call to this file")
     args = parser.parse_args(argv)
     from hedonic import _core
-    print(f"# hedonic {hedonic.__version__}, core {_core.__name__} (backend {getattr(_core, 'backend', 'c')}) "
+    print(f"# hedonic {hedonic.__version__}, core {_core.__spec__.name} (backend {getattr(_core, 'backend', 'c')}) "
           f"from {_core.__file__}", file=sys.stderr)
     print(f"# core source sha256 {getattr(_core, 'source_sha256', '?')}", file=sys.stderr)
     records = open(args.records, "w") if args.records else None

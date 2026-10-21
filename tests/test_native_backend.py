@@ -72,7 +72,7 @@ class TestBackendRouting(unittest.TestCase):
         import re
         from importlib.metadata import version
 
-        if _core.__name__ != "hedonic._core":
+        if _core.__spec__.name != "hedonic._core":
             self.assertRegex(_core.core_version, r"^\d+\.\d+\.\d+$")
             return
         self.assertEqual(_core.core_version, re.match(r"\d+\.\d+\.\d+", version("hedonic")).group())

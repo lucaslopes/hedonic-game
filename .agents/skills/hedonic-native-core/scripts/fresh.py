@@ -33,8 +33,8 @@ now, count = crate_digest(root / "native" / "rust")
 import hedonic._core as core  # noqa: E402
 
 built = getattr(core, "source_sha256", None)
-print(f"extension  {core.__file__}  (module {core.__name__}, backend {getattr(core, 'backend', '?')})\n"
+print(f"extension  {core.__file__}  (module {core.__spec__.name}, backend {getattr(core, 'backend', '?')})\n"
       f"built from {built}\ncheckout   {now}  ({count} files)")
 if os.environ.get("HEDONIC_CORE"):
     print(f"HEDONIC_CORE={os.environ['HEDONIC_CORE']} is set: unset it to check the package's own core")
-sys.exit(0 if built == now and core.__name__ == "hedonic._core" else 1)
+sys.exit(0 if built == now and core.__spec__.name == "hedonic._core" else 1)

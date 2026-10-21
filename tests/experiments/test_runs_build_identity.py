@@ -31,7 +31,7 @@ def rust_source_digest(crate: Path) -> str:
 class TestBuildIdentity(unittest.TestCase):
     def test_the_core_carries_the_digest_of_the_sources_it_was_built_from(self):
         if getattr(_core, "backend", None) != "rust":
-            self.skipTest(f"the loaded core is not this checkout's Rust core: {_core.__name__} (HEDONIC_CORE)")
+            self.skipTest(f"the loaded core is not this checkout's Rust core: {_core.__spec__.name} (HEDONIC_CORE)")
         crate = ROOT / "native" / "rust"
         if not (crate / "build.rs").is_file():
             self.skipTest("no source tree (an installed wheel)")

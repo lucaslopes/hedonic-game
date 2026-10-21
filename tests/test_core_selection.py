@@ -46,7 +46,7 @@ PROBE = """
 class TestCoreSelection(unittest.TestCase):
     def test_unset_or_empty_loads_hedonic_core(self):
         for core in (None, ""):
-            out = run("import hedonic; from hedonic import _core; print(_core.__name__)", core)
+            out = run("import hedonic; from hedonic import _core; print(_core.__spec__.name)", core)
             self.assertEqual(out.returncode, 0, out.stderr)
             self.assertEqual(out.stdout.strip(), "hedonic._core")
 
@@ -59,7 +59,7 @@ class TestCoreSelection(unittest.TestCase):
         backend = run("from hedonic import _core; print(getattr(_core, 'backend', ''))", None).stdout.strip()
         if not backend:
             self.skipTest("hedonic._core names no backend")
-        out = run("import hedonic; from hedonic import _core; print(_core.__name__)", backend)
+        out = run("import hedonic; from hedonic import _core; print(_core.__spec__.name)", backend)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(), "hedonic._core")
 
