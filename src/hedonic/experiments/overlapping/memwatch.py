@@ -251,9 +251,18 @@ def in_process(floor: float | None = None, poll: float = POLL_SECONDS) -> Iterat
         yield None
         return
     watch = Watch(os.getpid(), limit)
+    reading = [False]
 
     def look(_signum, _frame) -> None:
-        free = parallel.free_memory_percent()
+        # A tick that lands while a reading is under way would run this handler inside itself (Python runs handlers
+        # between bytecodes, the handler's own included): skip it, the next tick reads again.
+        if reading[0]:
+            return
+        reading[0] = True
+        try:
+            free = parallel.free_memory_percent()
+        finally:
+            reading[0] = False
         if free is not None and free < limit and watch.tripped is None:
             signal.setitimer(signal.ITIMER_PROF, 0)
             watch.tripped = stopped(free, limit)
