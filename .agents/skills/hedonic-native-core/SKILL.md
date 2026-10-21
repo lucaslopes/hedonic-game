@@ -182,29 +182,42 @@ each side.
 
 ## Identity and run records
 
-Records name the build by `runtime.build_identity()`: the release series
-(`1.0`, `2.0`) and `hedonic_core_source_sha256`, the digest of every file in
-`setup.py`'s `SOURCE_GLOBS` (path, length and bytes, CRLF as LF). Since the
-rounding is fixed by the source, the source digest, not the compiled bytes,
-is what results depend on.
+Records name the build by `runtime.build_identity()`: the results series
+(`runtime.RESULTS_SERIES`, `1.0` or `2.0`; not the package version) and
+`hedonic_core_source_sha256`. On hedonic 2 that digest is the core's results
+class, not its bytes: `runtime.CORE_CLASSES` maps the triple of the core's
+fingerprints (`partitions-v1`, `covers-v1`, `audit-v1`,
+`hedonic.experiments.fingerprint`) to the digest the class's records name.
+`hedonic._core.source_sha256` (every file in `setup.py`'s `SOURCE_GLOBS`:
+path, length and bytes, CRLF as LF) stays as provenance
+(`hedonic_core_built_source_sha256`) and is the name of a core whose triple
+is not in the table.
 
-* **Any byte** of any file in `SOURCE_GLOBS` changes the digest, a comment
-  included. A disjoint store, a benchmark unit or a calibration recorded
-  under another digest no longer counts as done for the new build: a running
-  queue keeps its build, and its records must be redone on the new one.
-  Batch native edits; do not polish comments while the user's runs depend on
-  the build.
-* **The disjoint store has a second fingerprint**, of behaviour:
-  `hedonic.experiments.fingerprint` runs 8,736 partition calls on the loaded
-  build (`partitions-v1:0668d101...`, pinned in
-  `tests/experiments/test_fingerprint.py`) and the store keys Hedonic's rows
-  on it, so the two lines (different sources, same partitions) share one
+* **A source change that keeps every fingerprint keeps every record**: a
+  comment, a refactor, a faster search, another language. Check it with the
+  pins of `tests/experiments/test_fingerprint.py` (seconds), then add the new
+  digest to the class's `members` with the release and the evidence
+  (`EQUIVALENT_CORES` follows from the table) and say so in the commit.
+  `tests/experiments/test_core_identity.py` rebuilds every member from its
+  tag and recomputes its triple.
+* **A change that moves a fingerprint changes results**: the core is a new
+  class, names its own digest, and every overlap record, calibration and
+  start-quality key is redone on it (a running queue keeps its build). Say so,
+  re-pin in the same commit, and add the new triple to `CORE_CLASSES` when it
+  ships. Batch such edits; do not change behaviour while the user's runs
+  depend on the build.
+* **The disjoint store keys Hedonic's rows on the partition fingerprint**
+  alone, so the two lines (different sources, same partitions) share one
   store. Each shard records the source that wrote it; before a run keeps rows
   of another source it replays a sample of them and refuses on any
-  difference. If a change of yours moves the fingerprint, every store's
-  Hedonic rows are recomputed: say so, and update the pin in the same commit.
-* Overlap records (hedonic 2) keep the source identity: there a source change
-  always means new records.
+  difference. If a change of yours moves `partitions-v1`, every store's
+  Hedonic rows are recomputed.
+* **Overlap runs can be replayed**: `hedonic run check --replay N` reruns the
+  cheapest Hedonic units and a vertex sample of the cover audits with the
+  loaded core, and records a clean pass in the root's `adopted.json`. Use it
+  to show a new core reproduces finished runs before relying on its class.
+* hedonic 1 keeps the source identity: there any byte of `SOURCE_GLOBS`
+  changes the digest of its records.
 * `SOURCE_GLOBS` must cover every C file the extension compiles or includes:
   it once missed the engines under `native/core/*/`, so editing an engine did
   not change the digest. `tests/experiments/test_runs_build_identity.py`

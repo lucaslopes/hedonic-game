@@ -98,7 +98,9 @@ src/hedonic/
     ├── CLI.py           # `hedonic` and `hedonic-exp`; COMMANDS is the registry
     ├── config.py        # DATA_ROOT, RUNS_ROOT, NETWORKS_DIR, codeseg_cache_dir()
     ├── resources.py     # shipped configs and worker scripts (package data)
-    ├── runtime.py       # the identity every record carries (release series, digest of the core's sources)
+    ├── runtime.py       # the identity every record carries (results series, the core's results class)
+    ├── fingerprint.py   # the core's three fingerprints (partitions, covers, audit)
+    ├── spectrum_code.py # the ground-truth spectrum's equivalence table of code digests
     ├── configs/         # run configs and the queues (queue-overlap.toml, queue-disjoint.toml, queue-all.toml)
     ├── workers/         # scripts external methods run in their own environments
     ├── disjoint/        # SBM sweep, Parquet result store, `hedonic run disjoint`
@@ -273,43 +275,83 @@ hedonic-exp list                       # analysis and utility commands
   NAME`. CoDeSEG has no licence file and is never vendored; CDlib runs only
   in its locked environment, never in the hedonic process.
 - **Identity.** A record's identity names Hedonic by `runtime.build_identity()`:
-  the release series (`major.minor`, so `2.0.0.devN`, `rcN` and patch
-  releases share it) and `hedonic._core.source_sha256`, the digest of the C
-  sources that `setup.py` embeds at build time (rounding is fixed by the
-  source, so every wheel of one source computes the same results). A source
-  change proven to leave every recorded result unchanged (the audit's
-  windowed search, bit for bit the exhaustive one) maps its digest to the
-  earlier one in `runtime.EQUIVALENT_CORES`, so finished records stay valid;
-  `hedonic_core_built_source_sha256` keeps the real digest. The full
-  version and the compiled bytes' SHA-256 stay in `runtime_versions()` as
-  provenance only. A change of the Python layer that changes results bumps
-  the minor version. Every study checks it before reusing work: a
-  calibration search (`build`), a start-quality key (`code=`), the
-  spectrum's runtime identity, a benchmark unit's `config_digest`, the
-  controlled study's environment, and the disjoint store's per-method
-  identity (`store.method_identity`: call, parameters, runs, `ROW_CODE`,
-  runtime fields; a store holding another identity is refused before any
-  write, `--rerun` / `--reuse-from` resolve it). There is no igraph version
-  pin and no protocol lock file.
-- **Two fingerprints (disjoint store).** The store's Hedonic rows are keyed on
-  what the core computes, not on its bytes: `hedonic.experiments.fingerprint`
-  runs a fixed grid of 8,736 partition calls (`GRID = "partitions-v1"`; seconds,
-  cached per compiled core in `~/.cache/hedonic/fingerprints`,
-  `HEDONIC_FINGERPRINT_CACHE`) and hashes memberships, quality and slack bits;
-  `store.runtime_identity()` carries it as `hedonic_partition_fingerprint` next
-  to `hedonic_core_source_sha256`, and `METHOD_RUNTIME_FIELDS["Hedonic"]` keys on
-  it, so hedonic 1 and hedonic 2 (other sources, the same partitions) share a
-  store. Each shard records the `source` that wrote a method's rows
-  (`SOURCE_FIELDS`); `disjoint-store` lists the graphs per source. Before a run
-  keeps rows of a source other than the loaded one, `store.check_adoption`
-  replays a sample of them with this build (5 shards x 10 rows per source) and
-  refuses on any difference (`--rerun hedonic` recomputes those rows); a source
-  it accepted is recorded in `manifest["adopted"]` and not replayed again.
-  A store of the same build written before the fingerprint stays current
-  (`store.identity_aliases`). The pinned fingerprint is in
-  `tests/experiments/test_fingerprint.py`: changing it means every store's
-  Hedonic rows are recomputed. Other records (overlap studies) keep the source
-  identity.
+  `{"hedonic": runtime.RESULTS_SERIES, "hedonic_core_source_sha256": ...}`.
+  `RESULTS_SERIES` (`"2.0"`) is the series of the Python layer's results, not
+  the package version: `2.0.0.devN`, `rcN`, `2.0.x` and a 2.1 that computes
+  the same results all keep it; bump it (and say why in the changelog) only
+  when a change of the Python layer changes results. The core is named by its
+  results class (`runtime.CORE_CLASSES`): the triple of its three fingerprints
+  (`partitions-v1`, `covers-v1`, `audit-v1`, below) maps to the source digest
+  the class's records name (`ead786fe...`, the core of rc5 to rc9) and lists
+  the member sources checked (rc10/rc11's `c8684664...`, whose only change was
+  the audit's windowed search). A core whose fingerprints are a key takes that
+  digest whatever its own sources (a refactor, a faster search, the Rust core
+  of 2.1); a core with other fingerprints is a new class and names its own
+  digest. `runtime.EQUIVALENT_CORES` is the members as data, checked against
+  the table. The fingerprints are computed lazily, once per compiled core and
+  cached on disk (about 5 s cold, nothing at import); `ALGORITHM_IDENTITY` is
+  computed on first use. `hedonic_core_built_source_sha256`,
+  `hedonic_core_fingerprints`, the full version and the compiled bytes'
+  SHA-256 stay in `runtime_versions()` as provenance only.
+  `tests/experiments/test_core_identity.py` pins every consumer's identity at
+  rc11's values (same dicts, same digests), checks that a fake core with the
+  class's fingerprints and another source keeps them and one with other
+  fingerprints does not, and rebuilds every member from its tag to recompute
+  its triple (`HEDONIC_REBUILD_CORES=0` skips that). Every study checks the
+  identity before reusing work: a calibration search (`build`), a
+  start-quality key (`code=`), the spectrum's runtime identity, a benchmark
+  unit's `config_digest`, the controlled study's environment, and the
+  disjoint store's per-method identity (`store.method_identity`: call,
+  parameters, runs, `ROW_CODE`, runtime fields; a store holding another
+  identity is refused before any write, `--rerun` / `--reuse-from` resolve
+  it). There is no igraph version pin and no protocol lock file.
+- **Three fingerprints.** `hedonic.experiments.fingerprint` hashes what the
+  core computes on fixed grids, bit for bit (seconds each, cached per compiled
+  core in `~/.cache/hedonic/fingerprints`, `HEDONIC_FINGERPRINT_CACHE`; pinned
+  in `tests/experiments/test_fingerprint.py`): `partitions-v1` (8,736 partition
+  calls: memberships, quality and slack bits), `covers-v1` (6,912 cover calls
+  over caps, resolutions, weights, count limits and starts) and `audit-v1`
+  (1,728 audits: stable intervals, regrets and tolerances of fixed covers).
+  Changing a pin changes the core's class: say so, and either add the new
+  triple to `CORE_CLASSES` with a new digest (results changed, records are
+  redone) or find what moved it.
+- **The disjoint store.** The store's Hedonic rows are keyed on the
+  partition fingerprint: `store.runtime_identity()` carries it as
+  `hedonic_partition_fingerprint` next to `hedonic_core_source_sha256`, and
+  `METHOD_RUNTIME_FIELDS["Hedonic"]` keys on it, so hedonic 1 and hedonic 2
+  (other sources, the same partitions) share a store. Each shard records the
+  `source` that wrote a method's rows (`SOURCE_FIELDS`, the class digest);
+  `disjoint-store` lists the graphs per source. Before a run keeps rows of a
+  source other than the loaded one, `store.check_adoption` replays a sample of
+  them with this build (5 shards x 10 rows per source) and refuses on any
+  difference (`--rerun hedonic` recomputes those rows); a source it accepted
+  is recorded in `manifest["adopted"]` and not replayed again. A store of the
+  same build written before the fingerprint stays current
+  (`store.identity_aliases`).
+- **The spectrum's code identity.** The ground-truth spectrum
+  (`gt-robustness`) files records under `tracked_files_sha256`, a digest of
+  the bytes of its source modules, `hedonic/*.py` and `hedonic/_game/*.py`
+  with the runtime identity, so any byte change there (a comment included)
+  reruns the study. `hedonic/experiments/spectrum_code.py`, outside every
+  tracked file, is its equivalence table: `ROOTS` (rc11's `18ca62d9...` and
+  its per-file hashes) and `ALIASES` (later digest -> earlier digest, with the
+  files that differ and why no result can). The loaded code files its records
+  under the end of its chain, each step verified by recomputing the digest;
+  the real digest and files stay as provenance (`tracked_files_sha256_built`).
+  `tests/experiments/test_spectrum_code.py` fails when a tracked file changes
+  without an entry and prints the entry to paste; add it only for identity or
+  plumbing changes, and a root when results change. 2.1 (the Rust core:
+  `hedonic/__init__.py` changes and modules join `hedonic/*.py`) adds its
+  entry the same way, on the line that makes the change.
+- **Replay check.** `hedonic run check --replay N [NAME | --root DIR]`
+  (`overlapping/replay.py`) replays the N cheapest Hedonic benchmark units
+  (the cover and labelled rows, bit for bit) and N cover audits (a vertex
+  sample, `--vertices`, of the C audit against the Python reference) with the
+  loaded core, skipping a record whose graph or cover on disk is not the one
+  it describes. A pass with no difference is appended to the root's
+  `adopted.json` (core version, digests, fingerprints, sources, items);
+  `--dry-run` lists what it would replay and the sources that wrote the
+  units, loading and writing nothing.
 - **Hedonic calibration, no cap.** `hedonic run calibrate --cap unlimited`
   searches the resolution only at `max_memberships = -1` (no cap: the
   detector's cap is the vertex count), on a log grid over [1e-6, 0.5] at
