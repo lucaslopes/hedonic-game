@@ -34,7 +34,11 @@
   `is_simple()` before building a bool per edge; and the cyclic garbage
   collector is held while one list per vertex is built (the stored
   memberships, a cover's clusters), which it otherwise traverses again and
-  again. The ground-truth spectrum's code digest gets an alias to 2.1's.
+  again. A capped DBLP audit runs 1.5 times faster (320 to 211 ms; its cover
+  preparation spends 3.1 times fewer instructions), a DBLP partition 1.5
+  times (71 to 47 ms), and building a DBLP cover's `VertexCover` costs up to
+  4.8 times less (`native/rust/bench/perflog-python.md`). The ground-truth
+  spectrum's code digest gets an alias to 2.1's.
 - `hedonic.arrays` runs the detector and the stability audit on NumPy arrays
   (an edge list, or a NetworkX or SciPy graph), without igraph: `pip install
   hedonic` still brings igraph for `Game`, but the array path never imports
