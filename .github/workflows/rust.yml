@@ -173,7 +173,8 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: native/rust/Cargo.toml
-          command: check --all-features
+          command: check
+          arguments: --all-features
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -229,23 +230,29 @@ jobs:
           while read -r exe; do echo "== $exe"; qemu-x86_64 -cpu Nehalem "$exe"; done < tests.txt
 
   # Miri on the engines' unchecked indexing (no python feature, small games).
+  # One job per test target: together they took the 90 minutes of one job
+  # (tests/audit.rs and tests/core.rs about 45 each).
   miri:
-    name: Miri
+    name: Miri (${{ matrix.target }})
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ["--lib", "--doc", "--test audit", "--test core", "--test pins"]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
         with:
-          components: miri
+          components: miri, rust-src
       - name: cargo miri test
         working-directory: native/rust
         env:
           HIG_RANDOM_CASES: "12"
           HIG_AUDIT_FUZZ: "12"
           MIRIFLAGS: -Zmiri-env-forward=HIG_RANDOM_CASES -Zmiri-env-forward=HIG_AUDIT_FUZZ
-        run: cargo miri test --locked
+        run: cargo miri test --locked ${{ matrix.target }}
 
   # The fuzz targets: their checks on pseudo-random inputs on every push, and
   # libFuzzer (cargo-fuzz, nightly, AddressSanitizer) for 60 s each nightly.

@@ -1,0 +1,5 @@
+# The musllinux s390x wheels only (.github/cibuildwheel.toml): maturin has no wheel for that
+# platform, so pip builds it from its sdist with Alpine's cargo (rustup has no s390x musl host
+# toolchain), Rust 1.87 on musllinux_1_2. maturin 1.15's locked dependencies need Rust 1.89;
+# 1.9.6 (rust-version 1.74, every locked dependency at most 1.75) builds with it.
+maturin==1.9.6

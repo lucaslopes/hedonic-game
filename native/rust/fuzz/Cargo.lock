@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "hedonic-core-rs"
-version = "2.0.0"
+version = "2.1.0"
 
 [[package]]
 name = "hedonic-core-rs-fuzz"

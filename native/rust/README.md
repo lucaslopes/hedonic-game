@@ -180,11 +180,16 @@ the same hashes, and prints checked / unchecked. The adjacency build
 0.94 to 1.05, inside the noise, so they are checked code now. All three
 kept groups together: 1.04 to 1.07 on runs, 1.01 to 1.02 on the audit.
 
-The CI job `miri` runs `cargo miri test` (no `python` feature; the random
-games scaled down with `HIG_RANDOM_CASES`, `HIG_AUDIT_FUZZ`; the 10^6-case
-fma tests and the 1500-vertex planted game skipped). Miri needs rustup's
-nightly; this crate has been developed with Homebrew's stable Rust (no
-rustup), so Miri has not run locally.
+The CI job `miri` runs `cargo miri test`, one job per test target (no
+`python` feature; the random games scaled down with `HIG_RANDOM_CASES`,
+`HIG_AUDIT_FUZZ`; the 10^6-case fma tests and the 1500-vertex planted game
+skipped). Miri perturbs, on purpose, the float operations Rust does not
+promise to be exact (`powi`, `exp`, ...): the core uses none (`+ - * /`,
+`sqrt` and its fma only), and the tests build their expected values without
+them, so the pins hold under Miri bit for bit. Miri needs rustup's nightly:
+`cargo +nightly miri test --target x86_64-unknown-linux-gnu --test pins`
+runs the x86_64 path (the soft fma, since Miri reports no CPU feature) on
+any host.
 
 ## Fuzzing
 

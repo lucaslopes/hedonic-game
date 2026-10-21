@@ -51,7 +51,12 @@ fn hex(s: &str) -> f64 {
         bits = bits * 16 + c.to_digit(16).unwrap() as u64;
         shift += 4;
     }
-    let v = bits as f64 * 2f64.powi(exp - shift);
+    // An exact power of two from its bits, never powi: Rust does not promise
+    // powi is exact, and Miri perturbs it on purpose. bits < 2^53 converts
+    // exactly, and the pins' exponents keep every product normal.
+    let e = exp - shift;
+    assert!((-1022..=1023).contains(&e), "pin exponent {e} out of range");
+    let v = bits as f64 * f64::from_bits(((0x3ff + e) as u64) << 52);
     if neg {
         -v
     } else {

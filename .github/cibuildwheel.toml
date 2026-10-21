@@ -44,6 +44,12 @@ test-command = [
     "python {project}/tools/native_tests.py",
 ]
 
+# maturin has no musllinux s390x wheel and Alpine's cargo (Rust 1.87) cannot build the newest
+# from source: a maturin whose locked dependencies it can build (the file says why).
+[[tool.cibuildwheel.overrides]]
+select = "*-musllinux_s390x"
+environment = { PATH = "$HOME/.cargo/bin:$PATH", PIP_CONSTRAINT = "/project/.github/constraints-musllinux-s390x.txt" }
+
 # SciPy has no win32 wheel: the library suite without the tests that score with it.
 [[tool.cibuildwheel.overrides]]
 select = "*-win32"
