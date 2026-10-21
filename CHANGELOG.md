@@ -108,6 +108,33 @@
     run is estimated longer. Neither is ever applied to a total of runs, and
     neither changes a record's identity: a stopped run is recorded as a
     `timeout` and runs again under a larger limit.
+  - A memory watchdog guards every detector run of the experiments (2.0.0rc12):
+    while a benchmark run, a calibration probe or evaluation, a start-quality
+    condition or a controlled-study run is going, its parent reads the
+    machine's free memory twice a second (`HEDONIC_MEMORY_FLOOR`, default 10%
+    free), and below the floor kills that run's whole process tree; a detector
+    running in-process is interrupted from a profiling-timer signal. The run
+    is recorded as `status: "memory"` with the floor and the free memory seen,
+    and stands like a timeout: a queue does not run it again unless the floor
+    is lower or `hedonic run ... --rerun-memory` asks for it. Tables and
+    `hedonic run check` say "out of memory". Before, the guard looked only
+    before a pair started, so two Clique Percolation evaluations side by side
+    (LiveJournal/top5000 and Friendster/top5000) exhausted a 64 GB machine
+    and restarted it. The guards of a whole run (a pool of forked workers,
+    the run's worker), which record nothing, now act at once only below half
+    the floor and otherwise after 2 s below it, so the run's own watchdog
+    stops and records it first. The ground-truth spectrum keeps its own
+    per-run guard.
+  - `--alone PAIRS` (`hedonic run calibrate`, `calibrate-baselines`) runs the
+    calibrations of those pairs one at a time, never beside another pair; the
+    overlap queue's phase-2 calibrations use it for LiveJournal/top5000 and
+    Friendster/top5000.
+  - `--out-of-memory METHOD@PAIR,...` (`calibrate-baselines`, `hedonic run
+    exp`) records a search or a benchmark unit as out of memory without
+    loading the pair or starting anything, citing the evidence; such a search
+    gets no setting and is never transferred. The overlap queue declares
+    Clique Percolation on LiveJournal/top5000 (every evaluation, k = 3, 4 and
+    5, was killed by the OS for memory) and Friendster/top5000 (larger).
   - The queue tree times a finished benchmark unit by its whole span
     (detection, the robustness audits of its cover, scoring), not by its
     detection alone, and a running unit's ETA includes the audit profiles
