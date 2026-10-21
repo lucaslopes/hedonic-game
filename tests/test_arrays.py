@@ -26,6 +26,14 @@ import numpy as np
 from hedonic import Game, arrays
 
 
+def _buffer_entry_points(test):
+    """A test of the binding's buffer entry points: skipped on a second core (HEDONIC_CORE) built without them."""
+    from hedonic import _core
+
+    return unittest.skipUnless(hasattr(_core, "detect_arrays"),
+                               "the loaded core has no buffer entry points (HEDONIC_CORE)")(test)
+
+
 def _bits(value):
     """A float's bits (so 0.0 and -0.0 differ, and NaN equals NaN)."""
     return value.hex() if isinstance(value, float) else value
@@ -249,6 +257,7 @@ class TestEdges(unittest.TestCase):
 
     PAIRS = ig.Graph.Famous("Zachary").get_edgelist()
 
+    @_buffer_entry_points
     def test_the_edges_go_to_the_core_as_buffers(self):
         from hedonic import _core
 
@@ -259,6 +268,7 @@ class TestEdges(unittest.TestCase):
             arrays.detect(34, self.PAIRS, max_memberships=2, seed=0)
             arrays.stable_intervals(34, self.PAIRS, [[v % 3] for v in range(34)])
 
+    @_buffer_entry_points
     def test_any_buffer_of_the_edges_gives_the_same_result(self):
         from array import array
 
@@ -292,6 +302,7 @@ class TestEdges(unittest.TestCase):
             self.assertEqual(_bits(fallback.quality), _bits(expected.quality))
             self.assertEqual(_plain(fallback.provenance), _plain(expected.provenance))
 
+    @_buffer_entry_points
     def test_the_binding_checks_its_buffers(self):
         from array import array
 
