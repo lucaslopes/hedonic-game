@@ -592,9 +592,21 @@ python -m pytest                               # library and tests/experiments
 `.github/workflows/rust.yml` runs the cargo tests (release, soft fma, debug,
 and x86_64 under Rosetta on macOS) on Linux, macOS and Windows, then builds
 the package and runs the pinned tests, the libm check and the whole suite.
-`.github/workflows/wheels.yml` builds and tests the wheels on Linux, macOS
-and Windows; every wheel job runs `tools/native_tests.py` (HIG_PINNED=1, no
-skips) on its wheels, and publishing needs every job. Branch pushes only
+`.github/workflows/wheels.yml` builds the wheels with cibuildwheel
+(`.github/cibuildwheel.toml`) for cp312, cp313, cp314 and cp314t on Linux
+(x86_64, i686, aarch64, and ppc64le, s390x, armv7l, riscv64 under QEMU;
+manylinux and musllinux), macOS arm64 and x86_64, Windows AMD64, x86 and
+ARM64, and Pyodide cp314, and tests each where it was built: every wheel
+runs `tools/core_pins.py` (the core's bit pins through the extension alone,
+and the wheel's `source_sha256` against the checkout); where igraph has a
+wheel, also `tools/native_tests.py` (HIG_PINNED=1, no skips) and the library
+suite. The `foreign` job tests the cp314 wheels of the architectures igraph
+has no wheel for in Debian (python3-igraph), and `core` runs `cargo test`
+natively, cross under qemu-user (`tools/cargo_cross_test.sh`) and on
+wasm32-wasip1. The binding assumes no byte order or pointer width (buffers
+in the target's own byte order only; the igraph capsule fast path on 64-bit
+targets only). Wheels are per CPython version, not abi3 (measured:
+`native/rust/README.md`, "abi3"). Publishing needs every job. Branch pushes only
 build and test; a tag publishes, and sets the version
 (`tools/release_version.py` writes it into `pyproject.toml`'s `[project]`,
 where maturin reads it; `pyproject.toml` holds the release):
