@@ -1114,10 +1114,14 @@ impl<'t> State<'t> {
                 slack = s.bound;
             }
         }
+        // Counted first and reserved once, as C does (no growth by doubling
+        // with the whole state alive).
+        let count = self.queue.settled.iter().filter(|s| -s.bound > slack).count();
         let mut open: Vec<(f64, Id)> = Vec::new();
+        open.try_reserve_exact(count).map_err(|_| Error::nomem())?;
         for (v, s) in self.queue.settled.iter().enumerate() {
             if -s.bound > slack {
-                push(&mut open, (-s.bound, v as Id))?;
+                open.push((-s.bound, v as Id));
             }
         }
         // Descending; ties (equal coarse bounds) in vertex order, a total
