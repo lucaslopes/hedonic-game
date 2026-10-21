@@ -1,23 +1,30 @@
-# Builds the hedonic wheels (with the core hedonic._core, compiled from
-# native/rust by maturin) on every platform the package ships for, and tests
-# each one (the crate's own tests run in rust.yml): cibuildwheel runs the
-# native Python tests of each wheel with HIG_PINNED=1
-# (tools/native_tests.py, which fails on any skip), so a platform whose results
-# differ from the pinned ones, bit for bit, fails here. Wheels and the sdist are
-# uploaded as artifacts.
+# Builds hedonic with its Rust core (native/rust, compiled by maturin into hedonic._core) on
+# every platform Rust, CPython and GitHub's runners reach, and tests each wheel where it was
+# built.
 #
-# Branch pushes and pull requests only build and test. A tag publishes exactly
-# those artifacts once every job has passed, and the tag sets their version
-# (tools/release_version.py; pyproject.toml holds the release, e.g. 2.1.0):
+#   core      the crate's own tests (the C core's bit pins, the soft fma against the target's
+#             fma, the verifier, the audit): native on Linux, macOS (and x86_64 under Rosetta 2)
+#             and Windows (x64, x86, ARM64); cross-compiled and run under qemu-user on s390x
+#             (big-endian), ppc64le, armv7, riscv64 and i686 (tools/cargo_cross_test.sh); and on
+#             wasm32-wasip1 under wasmtime, where everything runs on the soft fma.
+#   sdist     maturin's sdist, a wheel built from it, its pins and the whole test suite.
+#   wheels    cibuildwheel (.github/cibuildwheel.toml): CPython 3.12, 3.13, 3.14 and
+#             3.14t (free-threaded) for manylinux and musllinux on x86_64, i686, aarch64, and
+#             under QEMU ppc64le, s390x, armv7l and riscv64; macOS arm64 and x86_64; Windows
+#             AMD64, x86 and ARM64; and Pyodide (cp314, WebAssembly). Each wheel runs the core's
+#             pins through the extension (tools/core_pins.py), the pinned Python tests
+#             (tools/native_tests.py: HIG_PINNED=1, no skips) and the library's suite; where
+#             igraph has no wheel (the QEMU architectures, 32-bit Linux, free-threaded
+#             CPython) the core's pins alone.
+#   foreign   the cp314 manylinux wheels of s390x, ppc64le, armv7l, riscv64 and i686 under QEMU
+#             in Debian (python3-igraph, python3-numpy and python3-scipy are built there):
+#             their pinned tests and library suite, the bits of a big-endian platform included.
+#   publish   on a tag, every distribution to TestPyPI or PyPI (tools/release_version.py), then
+#   verify    installs that version from its index on every platform and runs the pins and
+#             the whole suite.
 #
-#   v2.1.0.dev1  -> TestPyPI (trial uploads; environment `testpypi`)
-#   v2.1.0rc1    -> PyPI, a pre-release pip installs only with --pre
-#   v2.1.0       -> PyPI (environment `pypi`)
-#
-# Publishing is trusted publishing (no token): each index needs a trusted
-# publisher for this repository, workflow `wheels.yml` and that environment.
-# After the upload, `verify` installs that version from the index on every
-# platform and runs the pinned tests and the whole test suite against it.
+# The tools: tools/core_pins.py, tools/native_tests.py, tools/cargo_cross_test.sh and
+# tools/release_version.py.
 name: Wheels
 
 on:
@@ -35,16 +42,91 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CIBW_BUILD: "cp312-* cp313-* cp314-*"
-  # Free-threaded builds are not supported; 32-bit x86 would round doubles in
-  # x87 registers, so its results could differ from every other platform.
-  CIBW_SKIP: "cp3??t-* *-win32 *_i686"
-  # tools/native_tests.py sets HIG_PINNED=1 and fails on any skipped test.
-  # Testing a wheel installs only the library's dependencies (igraph, numpy),
-  # which have wheels everywhere, musllinux included.
-  CIBW_TEST_COMMAND: "python {project}/tools/native_tests.py"
+  CARGO_TERM_COLOR: always
 
 jobs:
+  core:
+    name: Core tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+          # Also x86_64, cross-compiled and run under Rosetta 2.
+          - name: macos
+            os: macos-latest
+            also: x86_64-apple-darwin
+          - name: windows-amd64
+            os: windows-2022
+          # 32-bit x86 runs natively on the x64 runner (SSE2 doubles: no x87 rounding).
+          - name: windows-x86
+            os: windows-2022
+            target: i686-pc-windows-msvc
+          - name: windows-arm64
+            os: windows-11-arm
+          - name: linux-i686
+            os: ubuntu-24.04
+            cross: i686-unknown-linux-gnu
+          - name: linux-s390x (big-endian, QEMU)
+            os: ubuntu-24.04
+            cross: s390x-unknown-linux-gnu
+          - name: linux-ppc64le (QEMU)
+            os: ubuntu-24.04
+            cross: powerpc64le-unknown-linux-gnu
+          - name: linux-armv7 (QEMU)
+            os: ubuntu-24.04
+            cross: armv7-unknown-linux-gnueabihf
+          - name: linux-riscv64 (QEMU)
+            os: ubuntu-24.04
+            cross: riscv64gc-unknown-linux-gnu
+          # The soft fma everywhere, 32-bit usize, no CPython.
+          - name: wasm32-wasip1 (wasmtime)
+            os: ubuntu-24.04
+            target: wasm32-wasip1
+            runner: wasmtime
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target || matrix.also || '' }}
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+        if: matrix.runner == 'wasmtime'
+        with:
+          version: "v49.0.4"
+      # Release (the pins as the wheels compile them), the soft fma everywhere, and debug
+      # (every debug assertion the unchecked paths state, overflow checks).
+      - name: Cargo tests (release, soft fma, debug)
+        if: ${{ !matrix.cross && !matrix.target }}
+        working-directory: native/rust
+        run: |
+          cargo test --release --locked
+          cargo test --release --locked --features force-soft-fma
+          cargo test --locked
+      - name: Cargo tests on x86_64 under Rosetta 2
+        if: matrix.also
+        working-directory: native/rust
+        run: |
+          cargo test --release --locked --target ${{ matrix.also }}
+          cargo test --release --locked --target ${{ matrix.also }} --features force-soft-fma
+      - name: Cargo tests on ${{ matrix.target }}
+        if: matrix.target
+        working-directory: native/rust
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+        run: |
+          cargo test --release --locked --target ${{ matrix.target }}
+          cargo test --locked --target ${{ matrix.target }}
+      - name: Cargo tests on ${{ matrix.cross }}
+        if: matrix.cross
+        run: tools/cargo_cross_test.sh ${{ matrix.cross }}
+
   sdist:
     name: Source distribution
     runs-on: ubuntu-24.04
@@ -56,13 +138,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: The version the tag names
         run: python tools/release_version.py
-      - name: Build the sdist, then a wheel from it
+      - name: Build the sdist (maturin), then a wheel from it
         run: |
-          python -m pip install -U build
+          python -m pip install -U pip build
           python -m build --sdist
-          python -m pip install dist/*.tar.gz
+          python -m pip install "$(ls dist/*.tar.gz)[cli]" pytest
+      # core_pins.py also checks that the wheel built from the sdist names this checkout's
+      # core: the sdist must carry native/rust/ byte for byte (build.rs digests it).
       - name: Test the wheel built from the sdist
-        run: python tools/native_tests.py
+        env:
+          HIG_PINNED: "1"
+        run: |
+          python tools/core_pins.py
+          python tools/native_tests.py
+          python -m pytest -q -p no:cacheprovider --ignore=tests/test_release_version.py
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
@@ -75,45 +164,115 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x86_64
+          - name: linux-x86_64-i686
             os: ubuntu-24.04
-            archs: x86_64
+            archs: "x86_64 i686"
           - name: linux-aarch64
             os: ubuntu-24.04-arm
             archs: aarch64
-          # x86_64 is cross-compiled on the Apple Silicon runner and tested
-          # under Rosetta 2.
+          # QEMU: the containers, and Rust in them, run emulated (slow). One job per
+          # architecture and libc, so they build side by side.
+          - {name: linux-ppc64le-manylinux, os: ubuntu-24.04, archs: ppc64le, qemu: true, skip: "*-musllinux_*"}
+          - {name: linux-ppc64le-musllinux, os: ubuntu-24.04, archs: ppc64le, qemu: true, skip: "*-manylinux_*"}
+          - {name: linux-s390x-manylinux, os: ubuntu-24.04, archs: s390x, qemu: true, skip: "*-musllinux_*"}
+          - {name: linux-s390x-musllinux, os: ubuntu-24.04, archs: s390x, qemu: true, skip: "*-manylinux_*"}
+          - {name: linux-armv7l-manylinux, os: ubuntu-24.04, archs: armv7l, qemu: true, skip: "*-musllinux_*"}
+          - {name: linux-armv7l-musllinux, os: ubuntu-24.04, archs: armv7l, qemu: true, skip: "*-manylinux_*"}
+          - {name: linux-riscv64-manylinux, os: ubuntu-24.04, archs: riscv64, qemu: true, skip: "*-musllinux_*"}
+          - {name: linux-riscv64-musllinux, os: ubuntu-24.04, archs: riscv64, qemu: true, skip: "*-manylinux_*"}
+          # x86_64 is cross-compiled on the Apple Silicon runner and tested under Rosetta 2.
           - name: macos
             os: macos-latest
             archs: "x86_64 arm64"
+            rust_targets: x86_64-apple-darwin
           - name: windows-amd64
             os: windows-2022
             archs: AMD64
+          # 32-bit Windows: maturin builds i686-pc-windows-msvc for a 32-bit interpreter.
+          - name: windows-x86
+            os: windows-2022
+            archs: x86
+            rust_targets: i686-pc-windows-msvc
           - name: windows-arm64
             os: windows-11-arm
             archs: ARM64
+          # WebAssembly: Pyodide's toolchain (emscripten, its Rust) is set up by cibuildwheel
+          # and the config's before-build.
+          - name: pyodide
+            os: ubuntu-24.04
+            platform: pyodide
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      # The runner's own Rust (macOS, Windows, Pyodide); Linux containers install theirs
+      # (the config's before-all).
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os != 'Linux' || matrix.platform == 'pyodide'
+        with:
+          targets: ${{ matrix.rust_targets || '' }}
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.qemu
       - name: The version the tag names
         shell: bash
         run: python tools/release_version.py
       - name: Build and test wheels
-        uses: pypa/cibuildwheel@v3.2.1
+        uses: pypa/cibuildwheel@v4.3.1
+        with:
+          config-file: .github/cibuildwheel.toml
         env:
-          CIBW_ARCHS: ${{ matrix.archs }}
-          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          CIBW_ARCHS: ${{ matrix.archs || 'auto' }}
+          CIBW_PLATFORM: ${{ matrix.platform || 'auto' }}
+          # A QEMU job's libc, added to the config's skip list.
+          CIBW_INHERIT: skip
+          CIBW_SKIP: ${{ matrix.skip || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.name }}
           path: ./wheelhouse/*.whl
 
+  # The cp314 manylinux wheels of the architectures igraph has no wheel for, installed into
+  # Debian's Python 3.14 next to Debian's python3-igraph, python3-numpy and python3-scipy
+  # (built for every Debian architecture), under QEMU: the pinned tests and the library's
+  # suite through the package, as on the other platforms.
+  foreign:
+    name: Pinned tests in Debian (${{ matrix.arch }})
+    needs: wheels
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: s390x, platform: linux/s390x, wheels: linux-s390x-manylinux}
+          - {arch: ppc64le, platform: linux/ppc64le, wheels: linux-ppc64le-manylinux}
+          - {arch: armv7l, platform: linux/arm/v7, wheels: linux-armv7l-manylinux}
+          - {arch: riscv64, platform: linux/riscv64, wheels: linux-riscv64-manylinux}
+          - {arch: i686, platform: linux/386, wheels: linux-x86_64-i686}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-${{ matrix.wheels }}
+          path: wheelhouse
+      - name: Pinned tests and library suite (Debian forky, Python 3.14)
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} -v "$PWD:/src" debian:forky-slim sh -euxc '
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 python3-pip python3-igraph python3-numpy python3-scipy python3-pytest >/dev/null
+            python3 -m pip install -q --break-system-packages --no-deps --no-index --find-links /src/wheelhouse hedonic
+            cd /tmp
+            python3 /src/tools/core_pins.py
+            python3 /src/tools/native_tests.py
+            HIG_PINNED=1 python3 -m pytest -q -p no:cacheprovider /src/tests --ignore=/src/tests/experiments \
+              --ignore=/src/tests/test_release_version.py'
+
   publish:
     name: Publish to ${{ contains(github.ref_name, '.dev') && 'TestPyPI' || 'PyPI' }}
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [sdist, wheels]
+    needs: [core, sdist, wheels, foreign]
     runs-on: ubuntu-24.04
     environment: ${{ contains(github.ref_name, '.dev') && 'testpypi' || 'pypi' }}
     permissions:
@@ -127,8 +286,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      # The tag names pyproject.toml's version and its index, and every
-      # distribution carries the tag's version.
+      # The tag names pyproject.toml's version and its index, and every distribution
+      # carries the tag's version.
       - name: Check the tag and the distributions
         id: check
         run: |
@@ -141,7 +300,10 @@ jobs:
           files = sorted(p.name for p in pathlib.Path("dist").iterdir())
           print("\n".join(files))
           assert any(f.endswith(".tar.gz") for f in files), "no sdist"
-          assert sum(f.endswith(".whl") for f in files) >= 15, "wheels missing"
+          # 4 CPythons (3.12, 3.13, 3.14, 3.14t) x (manylinux + musllinux) x 7 Linux
+          # architectures, less musllinux i686; 4 x 2 macOS; 4 x 3 Windows; 1 Pyodide.
+          expected = 4 * 2 * 7 - 4 + 4 * 2 + 4 * 3 + 1
+          assert sum(f.endswith(".whl") for f in files) >= expected, "wheels missing"
           wrong = [f for f in files if not f.startswith(f"hedonic-{version}")]
           assert not wrong, f"not version {version}: {wrong}"
           PY
@@ -154,11 +316,10 @@ jobs:
         if: steps.check.outputs.index == 'pypi'
         uses: pypa/gh-action-pypi-publish@release/v1
 
-  # What was published, installed from the index it went to on every platform
-  # (hedonic with --no-deps from that index, its dependencies from PyPI, so a
-  # TestPyPI upload never pulls other projects from TestPyPI), then the pinned
-  # tests and the whole test suite against the installed package (the src
-  # layout keeps the checkout's sources off the path).
+  # What was published, installed from the index it went to on every platform (hedonic with
+  # --no-deps from that index, its dependencies from PyPI, so a TestPyPI upload never pulls
+  # other projects from TestPyPI), then the pinned tests and the whole test suite against the
+  # installed package (the src layout keeps the checkout's sources off the path).
   verify:
     name: Install from ${{ contains(github.ref_name, '.dev') && 'TestPyPI' || 'PyPI' }} (${{ matrix.os }}, Python ${{ matrix.python }})
     needs: publish
@@ -173,6 +334,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+      - name: Keep the checkout's pyproject.toml
+        shell: bash
+        run: cp pyproject.toml pyproject.release.toml
       - name: Install the published version
         shell: bash
         run: |
@@ -198,15 +362,18 @@ jobs:
             sleep 30
           done
           python - "$version" <<'PY'
-          import sys, importlib.metadata, hedonic
+          import sys, importlib.metadata, hedonic, hedonic._core as core
           assert importlib.metadata.version("hedonic") == sys.argv[1]
           assert "site-packages" in hedonic.__file__, hedonic.__file__
+          assert core.backend == "rust", core.backend
           print("hedonic", sys.argv[1], "from", hedonic.__file__)
           PY
           # The tests read pyproject.toml's own version (the release).
-          git checkout -- pyproject.toml
+          mv pyproject.release.toml pyproject.toml
       - name: Pinned tests (no skips), library alone
-        run: python tools/native_tests.py
+        run: |
+          python tools/core_pins.py
+          python tools/native_tests.py
       - name: The command line asks for the cli extra
         if: runner.os != 'Windows'
         shell: bash

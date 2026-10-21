@@ -1,6 +1,5 @@
-# cibuildwheel's configuration of the Rust-only wheels (.github/workflows/wheels-rust.yml,
-# `config-file`): hedonic with its Rust core (rust/) compiled by maturin into hedonic._core,
-# in a checkout whose pyproject.toml tools/rust_pyproject.py wrote and without native/.
+# cibuildwheel's configuration of the wheels (.github/workflows/wheels.yml, `config-file`):
+# hedonic with its Rust core (native/rust) compiled by maturin into hedonic._core.
 #
 # Every wheel is tested where it was built: the core's bit pins through the extension alone
 # (tools/core_pins.py, which also checks that the wheel names this checkout's core), the pinned

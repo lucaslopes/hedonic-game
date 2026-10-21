@@ -4,7 +4,7 @@
 
 Loads hedonic._core from the installed hedonic without importing the package
 (whose Game needs igraph) and runs the pins of native/tests/test_core.c and
-rust/tests/pins.rs (Zachary, random.Random(seed)'s order) through its plain
+native/rust/tests/pins.rs (Zachary, random.Random(seed)'s order) through its plain
 calls, partition() and cover() over array buffers: count, quality, slack and
 result, bit for bit, once with the generator run natively and once called
 from Python, with the generator's end state compared. For wheels on platforms
@@ -123,7 +123,7 @@ def main():
           f"{sysconfig.get_platform()} {sys.byteorder}-endian, Python {sys.version.split()[0]}"
           f"{' free-threaded' if free_threaded else ''}", flush=True)
     failed = 0
-    crate = Path(__file__).resolve().parent.parent / "rust"
+    crate = Path(__file__).resolve().parent.parent / "native" / "rust"
     if getattr(core, "backend", "c") == "rust" and (crate / "Cargo.toml").exists():
         expected = rust_source_digest(crate)
         same = core.source_sha256 == expected

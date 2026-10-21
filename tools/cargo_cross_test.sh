@@ -42,7 +42,7 @@ if [ "$native" = no ]; then
     export "CARGO_TARGET_${upper}_RUNNER=qemu-$qemu -L /usr/$gnu"
 fi
 
-cd "$(dirname "$0")/../rust"
+cd "$(dirname "$0")/../native/rust"
 echo "== cargo test --release --target $target ($([ "$native" = yes ] && echo native || echo "qemu-$qemu"))"
 cargo test --release --locked --target "$target" "$@"
 echo "== cargo test (debug) --target $target"
