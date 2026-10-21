@@ -95,7 +95,10 @@ struct RowRef {
     capacity: Id,
 }
 
+/// A positive gain of a visit. Aligned as a u128: the long selection sorts
+/// integer keys in the same buffer (`top_positive`).
 #[derive(Clone, Copy, Debug)]
+#[repr(C, align(16))]
 struct Scored {
     gain: f64,
     label: Id,
@@ -485,27 +488,46 @@ impl<'t> State<'t> {
             }
             Ok(kept)
         } else {
+            // Sorted as integer keys in `scored_before`'s order, in top's
+            // own buffer: the gain's bits inverted (for a gain > 0 they
+            // ascend with its value), then the label, then the index. Labels
+            // are distinct, so (gain desc, label asc) is a total order and the
+            // index never decides; an integer sort is the comparator's sort.
             self.top.clear();
             if self.top.capacity() < count {
                 self.top.try_reserve(count).map_err(|_| Error::nomem())?;
             }
+            let base = self.top.as_mut_ptr() as *mut u128;
+            let mut positive = 0usize;
             for (i, (&gain, &label)) in values.iter().zip(labels).enumerate() {
                 if gain > 0.0 {
-                    self.top.push(Scored { gain, label, index: i as Id });
+                    let key = (!gain.to_bits() as u128) << 64 | (label as u32 as u128) << 32 | i as u32 as u128;
+                    // SAFETY: positive < count <= capacity; Scored is 16 bytes
+                    // aligned to 16 (repr(C, align(16))), as a u128 is.
+                    unsafe { base.add(positive).write(key) };
+                    positive += 1;
                 }
             }
-            // Labels are distinct, so (gain desc, label asc) is a total order.
-            self.top.sort_unstable_by(|x, y| {
-                if scored_before(x.gain, x.label, y.gain, y.label) {
-                    std::cmp::Ordering::Less
-                } else if scored_before(y.gain, y.label, x.gain, x.label) {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Equal
+            // SAFETY: the first `positive` slots hold initialized u128s; no
+            // other reference to top's buffer lives while `keys` does.
+            let keys = unsafe { std::slice::from_raw_parts_mut(base, positive) };
+            keys.sort_unstable();
+            let kept = positive.min(limit as usize);
+            for j in 0..kept {
+                // SAFETY: j < positive; each slot is read as a key before the
+                // Scored it decodes to is written over it. Every bit pattern
+                // is a valid Scored (an f64 and two i32s).
+                unsafe {
+                    let key = base.add(j).read();
+                    let gain = f64::from_bits(!((key >> 64) as u64));
+                    let (label, index) = ((key >> 32) as u32 as Id, key as u32 as Id);
+                    (base.add(j) as *mut Scored).write(Scored { gain, label, index });
                 }
-            });
-            self.top.truncate(limit as usize);
-            Ok(self.top.len())
+            }
+            // SAFETY: kept <= positive <= capacity, and the first kept slots
+            // are Scored values now.
+            unsafe { self.top.set_len(kept) };
+            Ok(kept)
         }
     }
 
