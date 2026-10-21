@@ -24,7 +24,10 @@ use hedonic_core_rs::verify::{verify_cover, verify_partition};
 
 /// How far inputs got (the tests check that the checks are not vacuous).
 #[cfg(test)]
-static REACHED: [std::sync::atomic::AtomicUsize; 5] = [const { std::sync::atomic::AtomicUsize::new(0) }; 5];
+static REACHED: [std::sync::atomic::AtomicUsize; 5] = {
+    use std::sync::atomic::AtomicUsize;
+    [AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0)]
+};
 const ENGINES: usize = 0;
 const AUDIT: usize = 1;
 const QUERIES: usize = 2;
