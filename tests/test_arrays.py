@@ -244,26 +244,90 @@ class TestAuditAgainstGame(unittest.TestCase):
 
 
 class TestEdges(unittest.TestCase):
-    """The binding borrows the endpoint arrays; get_edgelist() is the fallback."""
+    """The binding reads the endpoint arrays as buffers (``_core.detect_arrays``,
+    ``_core._audit_prepare_arrays``), never an igraph graph or edge list."""
 
     PAIRS = ig.Graph.Famous("Zachary").get_edgelist()
 
-    def test_the_edges_are_borrowed_not_listed(self):
-        with patch.object(arrays._Edges, "get_edgelist", side_effect=AssertionError("listed")):
+    def test_the_edges_go_to_the_core_as_buffers(self):
+        from hedonic import _core
+
+        listed = AssertionError("the graph entry points were called")
+        with patch.object(_core, "detect", side_effect=listed), \
+                patch.object(_core, "_audit_prepare", side_effect=listed):
             arrays.detect(34, self.PAIRS, seed=0)
             arrays.detect(34, self.PAIRS, max_memberships=2, seed=0)
             arrays.stable_intervals(34, self.PAIRS, [[v % 3] for v in range(34)])
 
-    def test_without_the_capsule_the_result_is_the_same(self):
-        def refuse(self):
-            raise RuntimeError("no capsule")
+    def test_any_buffer_of_the_edges_gives_the_same_result(self):
+        from array import array
 
+        from hedonic import _core
+
+        first, second = (array("q", side) for side in zip(*self.PAIRS))
         for cap in (1, 2):
             expected = arrays.detect(34, self.PAIRS, max_memberships=cap, seed=3)
-            with patch.object(arrays._Edges, "__graph_as_capsule", refuse):
-                fallback = arrays.detect(34, self.PAIRS, max_memberships=cap, seed=3)
+            out = _core.detect_arrays(34, first, second, random.Random(3), expected.provenance["resolution"],
+                                      max_memberships=cap)
+            rows = [[label] for label in out[0]] if cap == 1 else out[0]
+            self.assertEqual(rows, expected.rows())
+            self.assertEqual(_bits(out[-2]), _bits(expected.quality))
+
+    def test_a_core_without_the_buffer_entry_points_gives_the_same_result(self):
+        """A second core (HEDONIC_CORE) built without them reads the edge list instead."""
+        import types
+
+        from hedonic import _core
+
+        older = types.SimpleNamespace(**{name: getattr(_core, name) for name in dir(_core)
+                                         if name not in ("detect_arrays", "_audit_prepare_arrays")})
+        cover = [[v % 3] for v in range(34)]
+        for cap in (1, 2):
+            expected = arrays.detect(34, self.PAIRS, max_memberships=cap, seed=3, initial_membership=cover)
+            intervals = arrays.stable_intervals(34, self.PAIRS, expected)
+            with patch.object(arrays, "_core", older), patch.object(arrays._audit, "_core", older):
+                fallback = arrays.detect(34, self.PAIRS, max_memberships=cap, seed=3, initial_membership=cover)
+                self.assertEqual(arrays.stable_intervals(34, self.PAIRS, fallback), intervals)
             self.assertEqual(fallback.rows(), expected.rows())
             self.assertEqual(_bits(fallback.quality), _bits(expected.quality))
+            self.assertEqual(_plain(fallback.provenance), _plain(expected.provenance))
+
+    def test_the_binding_checks_its_buffers(self):
+        from array import array
+
+        from hedonic import _core
+
+        q = lambda *values: array("q", values)  # noqa: E731
+        call = lambda *edges, **options: _core.detect_arrays(  # noqa: E731
+            3, *edges, random.Random(0), 0.5, **options)
+        with self.assertRaisesRegex(ValueError, "second has 1 entries, expected 2"):
+            call(q(0, 1), q(1))
+        with self.assertRaisesRegex(TypeError, "first must be a contiguous buffer of 64-bit integers"):
+            call(array("i", [0]), q(1))
+        with self.assertRaisesRegex(ValueError, "n must be non-negative"):
+            _core.detect_arrays(-1, q(), q(), random.Random(0), 0.5)
+        with self.assertRaisesRegex(ValueError, "together, or neither"):
+            call(q(0), q(1), start_offsets=q(0, 1, 2, 3))
+        with self.assertRaisesRegex(ValueError, "start_offsets has 3 entries, expected 4"):
+            call(q(0), q(1), start_offsets=q(0, 1, 2), start_labels=q(0, 0))
+        with self.assertRaisesRegex(ValueError, "start_offsets must start at 0"):
+            call(q(0), q(1), start_offsets=q(0, 2, 1, 3), start_labels=q(0, 0, 0))
+        with self.assertRaisesRegex(ValueError, "each membership row must be non-empty"):
+            call(q(0), q(1), start_offsets=q(0, 1, 1, 2), start_labels=q(0, 0))
+        with self.assertRaisesRegex(ValueError, "membership labels must be non-negative"):
+            call(q(0), q(1), start_offsets=q(0, 1, 2, 3), start_labels=q(0, -1, 0))
+        with self.assertRaisesRegex(ValueError, r"a vertex exceeds max_memberships \(2 > 1\)"):
+            call(q(0), q(1), start_offsets=q(0, 2, 3, 4), start_labels=q(0, 1, 0, 1))
+        with self.assertRaisesRegex(ValueError, "contiguous from 0"):
+            call(q(0), q(1), start_offsets=q(0, 1, 2, 3), start_labels=q(0, 2, 0))
+        with self.assertRaisesRegex(ValueError, "outside|vertex"):
+            call(q(0), q(3))
+        # A repeated label counts once, as in detect()'s rows.
+        self.assertEqual(
+            call(q(0), q(1), max_memberships=2, start_offsets=q(0, 2, 3, 4), start_labels=q(1, 1, 1, 0))[0],
+            _core.detect(ig.Graph(3, [(0, 1)]), random.Random(0), 0.5, max_memberships=2,
+                         start=[[1, 1], [1], [0]])[0],
+        )
 
     def test_pairs_in_either_orientation_are_one_edge(self):
         flipped = [(v, u) for u, v in self.PAIRS]

@@ -28,7 +28,12 @@
 - `hedonic.arrays` runs the detector and the stability audit on NumPy arrays
   (an edge list, or a NetworkX or SciPy graph), without igraph: `pip install
   hedonic` still brings igraph for `Game`, but the array path never imports
-  it. Results are the same as `Game`'s, bit for bit.
+  it. Results are the same as `Game`'s, bit for bit. It reaches the core
+  through the binding's buffer entry points, `hedonic._core.detect_arrays`
+  (the vertex count, the two endpoint arrays, weights and the start as CSR
+  rows, with `detect`'s checks and messages, the GIL released during the
+  visits) and `_audit_prepare_arrays`, so it assumes no igraph struct layout
+  and runs the same on 32-bit and free-threaded builds.
 - Wheels for more platforms: Linux x86_64, aarch64, i686, ppc64le, s390x,
   armv7l and riscv64 (manylinux and musllinux), macOS arm64 and x86_64,
   Windows AMD64, ARM64 and x86, and Pyodide, for CPython 3.12 to 3.14 and

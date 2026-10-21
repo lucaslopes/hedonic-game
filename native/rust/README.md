@@ -265,6 +265,24 @@ audits and the generator's state equal the plain graph's on both cores;
 the CI job `igraph_versions` checks the capsule is still read on
 python-igraph's newest release and (not blocking) its main branch.
 
+`detect_arrays` and `_audit_prepare_arrays` (the entry points of
+`hedonic.arrays`) take no graph: a vertex count and two buffers of 64-bit
+integers, edge e joining `first[e]` and `second[e]` (igraph's order, the
+smaller end first, which `hedonic.arrays` writes), the core reading them as
+the capsule's two vectors (`Edges::Split`); `detect_arrays` takes the start
+as CSR buffers (`start_offsets`, n + 1 entries, and `start_labels`), checked
+as `detect` checks its rows (`start_rows_from_csr` shares `read_start_rows`'
+dedup, cap and contiguity checks and messages). Everything else is
+`detect`'s (`run_detect`: options, `prepare`, the visits without the GIL for
+an exact `random.Random`, `finish`, the result lists). The buffers are held
+for the whole call (an exporter keeps an exported buffer in place) and
+sliced, like `partition()`'s, only in `prepare` and `finish`; nothing
+depends on igraph's struct layout, the pointer width or the GIL.
+`tests/test_arrays.py` checks them against `Game`, bit for bit, and their
+own argument checks. A second core without them (2.0's C core under
+`HEDONIC_CORE=c`) is given an edge-list object instead, read through
+`get_edgelist()`.
+
 A divergence from C: a generator that is called (not copied) can run any
 Python code during the visits, for example add an edge. C keeps the edge
 pointers it read at the start and reads them again for the quality (which

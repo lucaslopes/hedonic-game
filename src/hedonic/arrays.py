@@ -34,7 +34,6 @@ An unseeded call (``seed=None``) draws from Python's ``random`` module, as
 from __future__ import annotations
 
 import random as _random
-import functools
 from dataclasses import dataclass
 from itertools import chain
 from numbers import Integral
@@ -178,17 +177,14 @@ def _node_values(values, n: int) -> np.ndarray | None:
     return real_vector(values, n, "node_weights", per_vertex=True, nonnegative=True)
 
 
-class _Edges:
-    """The graph as the core's binding reads an ``igraph.Graph``: ``vcount``,
-    ``ecount``, ``get_edgelist`` and, without copying the edges, the head of
-    an ``igraph_t`` behind ``__graph_as_capsule`` (``n``, undirected, and the
-    ``from``/``to`` vectors, which here point into the two endpoint arrays).
-    The binding checks that head against ``es[e].tuple`` and falls back to
-    ``get_edgelist`` when it does not match, so this is an optimization only."""
+class _EdgeList:
+    """The graph as the core's graph entry points read an ``igraph.Graph``
+    without its capsule (``vcount``, ``ecount``, ``get_edgelist``), for a
+    core selected with ``HEDONIC_CORE`` that has no buffer entry points
+    (hedonic 2.0's C core): the same edges, so the same results."""
 
     def __init__(self, n: int, first: np.ndarray, second: np.ndarray):
         self.n, self.first, self.second = n, first, second
-        self._head = None
 
     def vcount(self) -> int:
         return self.n
@@ -196,69 +192,22 @@ class _Edges:
     def ecount(self) -> int:
         return len(self.first)
 
-    def is_directed(self) -> bool:
-        return False
-
     def get_edgelist(self) -> list[tuple[int, int]]:
         return list(zip(self.first.tolist(), self.second.tolist()))
 
-    @property
-    def es(self):
-        return _EdgeTuples(self.first, self.second)
 
-
-class _EdgeTuples:
-    def __init__(self, first, second):
-        self.first, self.second = first, second
-
-    def __len__(self):
-        return len(self.first)
-
-    def __getitem__(self, e):
-        return _EdgeTuple((int(self.first[e]), int(self.second[e])))
-
-
-class _EdgeTuple(NamedTuple):
-    tuple: tuple
-
-
-@functools.cache
-def _capsule_types():
-    """The head of igraph's ``igraph_t`` (igraph 0.10 and 1.0) that the binding
-    reads, and ``PyCapsule_New``."""
-    import ctypes
-
-    class Vector(ctypes.Structure):
-        _fields_ = [("stor_begin", ctypes.c_void_p), ("stor_end", ctypes.c_void_p),
-                    ("end", ctypes.c_void_p)]
-
-    class Head(ctypes.Structure):
-        _fields_ = [("n", ctypes.c_int64), ("directed", ctypes.c_ubyte),
-                    ("source", Vector), ("target", Vector)]
-
-    new = ctypes.PYFUNCTYPE(ctypes.py_object, ctypes.c_void_p, ctypes.c_char_p,
-                            ctypes.c_void_p)(("PyCapsule_New", ctypes.pythonapi))
-    return Vector, Head, new, ctypes.addressof
-
-
-def _graph_as_capsule(self):
-    # The name would be mangled in the class body (it starts with two
-    # underscores and does not end with them), so it is set below.
-    Vector, Head, new, address = _capsule_types()
-
-    def vector(array):
-        begin = array.ctypes.data
-        end = begin + array.nbytes
-        return Vector(begin, end, end)
-
-    # igraph_edge() reports an undirected edge as (to, from): to is the
-    # smaller end, which the binding reads first. The head lives as long as
-    # this object, which the binding holds for the call.
-    self._head = Head(self.n, 0, vector(self.second), vector(self.first))
-    return new(address(self._head), None, None)
-
-
-setattr(_Edges, "__graph_as_capsule", _graph_as_capsule)
+def _start_buffers(start, overlapping: bool):
+    """A planned start (flat labels, or rows for a cover) as the CSR buffers of
+    ``_core.detect_arrays``: vertex ``v`` starts in ``labels[offsets[v]:offsets[v + 1]]``."""
+    if start is None:
+        return None, None
+    if not overlapping:
+        labels = np.asarray(start, dtype=np.int64)
+        return np.arange(len(labels) + 1, dtype=np.int64), labels
+    offsets = np.zeros(len(start) + 1, dtype=np.int64)
+    np.cumsum(np.fromiter(map(len, start), dtype=np.int64, count=len(start)), out=offsets[1:])
+    labels = np.fromiter(chain.from_iterable(start), dtype=np.int64, count=int(offsets[-1]))
+    return offsets, labels
 
 
 # ---- Results ---------------------------------------------------------------------
@@ -397,18 +346,20 @@ def detect(
         default_rng=_random_module,
     )
     rng = _random.Random(call.seed) if call.seed is not None else _random
-    out = _core.detect(
-        _Edges(n, first, second),
-        rng,
-        call.resolution,
+    options = dict(
         max_memberships=call.max_memberships,
-        start=call.start,
         allow_isolation=call.allow_isolation,
         edge_weights=call.edge_weights,
         node_weights=call.node_weights,
         max_total_communities=call.native_max_total,
         n_communities=call.n_communities,
     )
+    if hasattr(_core, "detect_arrays"):
+        start_offsets, start_labels = _start_buffers(call.start, call.overlapping)
+        out = _core.detect_arrays(n, first, second, rng, call.resolution, start_offsets=start_offsets,
+                                  start_labels=start_labels, **options)
+    else:
+        out = _core.detect(_EdgeList(n, first, second), rng, call.resolution, start=call.start, **options)
     if not call.overlapping:
         membership_list, count, quality, slack = out
         membership = np.array(membership_list, dtype=np.int64)
@@ -435,8 +386,13 @@ def _audit_state(n, edges, memberships, max_memberships, edge_weights, vertices,
     if memberships is None:
         raise ValueError(f"{caller} needs a cover: memberships (rows, flat labels or a Result)")
     m = len(first)
+    def prepare(offsets, labels, weights):
+        if hasattr(_core, "_audit_prepare_arrays"):
+            return _core._audit_prepare_arrays(n, first, second, offsets, labels, weights)
+        return _core._audit_prepare(_EdgeList(n, first, second), offsets, labels, weights)
+
     state, cap = _audit.state(
-        _Edges(n, first, second), n, _state(memberships), max_memberships,
+        prepare, n, _state(memberships), max_memberships,
         lambda: None if weights is None else _edge_values(weights, m, True),
     )
     return state, cap, selected

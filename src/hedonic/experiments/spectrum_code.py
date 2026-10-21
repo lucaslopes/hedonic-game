@@ -106,16 +106,6 @@ ALIASES: dict[str, dict] = {
                "compares Game's and the array path's results bit for bit, and the core class (fingerprints) is "
                "unchanged, so the runtime part of the digest is too.",
     },
-    # 2.1: hedonic.arrays passes counts and labels to np.repeat and np.bincount as the platform's index type (int32 on
-    # 32-bit builds, where int64 was refused). arrays.py is a module the study does not run.
-    "6335be594b521fe5796b325dc00b9ecfb333808980a1ca7690e729c40fc1a81b": {
-        "earlier": "26062019eed2a9b65501db573dc08af3d6bd6f67130d68fe34376f66fbcd99a5",
-        "files": {
-            "hedonic/arrays.py": ["9cd43a29450b941e5679f839f8dc08a3c5b05e5ae09f582d66a33f1ca8ca302f", "60390df57a92435ffdaf42268f888e3b2fc2543abee97afee5bab4d605c1f2ec"],
-        },
-        "why": "a module the study does not run: hedonic.arrays casts counts and labels to np.intp before np.repeat "
-               "and np.bincount (the same values; 64-bit builds already used int64 = intp).",
-    },
 }
 
 
