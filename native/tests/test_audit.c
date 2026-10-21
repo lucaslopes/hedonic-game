@@ -20,6 +20,8 @@ static uint64_t fuzz_next(void) {
     return fuzz_state;
 }
 static hig_int fuzz_below(hig_int n) { return (hig_int) (fuzz_next() % (uint64_t) n); }
+/* One draw per statement: C leaves the order of sibling operands and
+ * arguments unspecified, and every compiler must fuzz the same covers. */
 
 static void fuzz_windowed(int games) {
     static const double tolerances[][2] = {{1e-10, 1e-9}, {0.0, 0.0}, {1e-3, 1e-2}, {0.05, 0.0}, {0.0, 0.1}};
@@ -46,7 +48,8 @@ static void fuzz_windowed(int games) {
                 }
         offset[0] = 0;
         for (hig_int v = 0; v < n; v++) {
-            const hig_int size = 1 + fuzz_below(fuzz_below(3) == 0 ? 4 : 2);
+            const int wide = fuzz_below(3) == 0;
+            const hig_int size = 1 + fuzz_below(wide ? 4 : 2);
             for (hig_int j = 0; j < size; j++) rows[total++] = fuzz_below(labels);
             offset[v + 1] = total;
         }
@@ -72,7 +75,8 @@ static void fuzz_windowed(int games) {
             o.atol = tolerances[t][0]; o.rtol = tolerances[t][1];
             o.allow_isolation = (int) fuzz_below(2);
             o.prune = (int) fuzz_below(4) != 0;
-            o.max_memberships = fuzz_below(2) ? 0 : 4 + fuzz_below(60);
+            if (fuzz_below(2)) o.max_memberships = 0;
+            else o.max_memberships = 4 + fuzz_below(60);
             CHECK(hig_audit_intervals(state, &o, selection, &fast) == HIG_SUCCESS);
             CHECK(hig_audit_intervals_exhaustive(state, &o, selection, &full) == HIG_SUCCESS);
             CHECK(fast.interval_count == full.interval_count);
