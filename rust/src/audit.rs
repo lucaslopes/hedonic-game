@@ -120,18 +120,52 @@ fn descending(score: f64) -> u64 {
     !ascending
 }
 
+/// The intervals of the selected vertices, in one buffer: vertex j's are
+/// `pairs[offset[j]..offset[j + 1]]` (`row(j)`), as hig_audit_intervals_t.
+#[derive(Debug, Default)]
+pub struct Intervals {
+    pub offset: Vec<usize>,
+    pub pairs: Vec<(f64, f64)>,
+}
+
+impl Intervals {
+    /// The number of vertices.
+    pub fn len(&self) -> usize {
+        self.offset.len().saturating_sub(1)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn row(&self, j: usize) -> &[(f64, f64)] {
+        &self.pairs[self.offset[j]..self.offset[j + 1]]
+    }
+
+    pub fn rows(&self) -> impl Iterator<Item = &[(f64, f64)]> + '_ {
+        self.offset.windows(2).map(|w| &self.pairs[w[0]..w[1]])
+    }
+}
+
+/// The vertex being searched: its intervals are the store's from `begin`.
+struct Row<'a> {
+    pairs: &'a mut Vec<(f64, f64)>,
+    begin: usize,
+}
+
 /// Add [lo, hi] to a vertex's row, merged into the last interval when it
-/// starts within 1e-15 of its end.
-fn emit(row: &mut Vec<(f64, f64)>, lo: f64, hi: f64) -> Result<()> {
-    match row.last_mut() {
-        Some(last) if lo <= last.1 + 1e-15 => {
+/// starts within 1e-15 of its end (never into another vertex's: `begin`).
+fn emit(row: &mut Row, lo: f64, hi: f64) -> Result<()> {
+    if row.pairs.len() > row.begin {
+        let last = row.pairs.last_mut().unwrap();
+        if lo <= last.1 + 1e-15 {
             if hi > last.1 {
                 last.1 = hi;
             }
-            Ok(())
+            return Ok(());
         }
-        _ => push(row, (lo, hi)),
     }
+    push(row.pairs, (lo, hi))
 }
 
 /// A point of the windowed search (a cut or a bisection point).
@@ -670,7 +704,7 @@ impl AuditState {
     /// One cell [p, q] between consecutive cuts: the reference's prefix
     /// inequalities in the score order at its midpoint (`w.order` must hold
     /// it), and its stable piece. Both searches run exactly this.
-    fn cell(w: &Work, o: &AuditOptions, cap: i64, p: f64, q: f64, row: &mut Vec<(f64, f64)>) -> Result<()> {
+    fn cell(w: &Work, o: &AuditOptions, cap: i64, p: f64, q: f64, row: &mut Row) -> Result<()> {
         let mid = 0.5 * (p + q);
         let (mut lo, mut hi) = (p, q);
         let (mut sum_a, mut sum_b) = (0.0f64, 0.0f64);
@@ -721,7 +755,7 @@ impl AuditState {
         w: &mut Work,
         o: &AuditOptions,
         cap: i64,
-        row: &mut Vec<(f64, f64)>,
+        row: &mut Row,
         interrupt: &mut Interrupt,
     ) -> Result<()> {
         self.cuts(w, interrupt)?;
@@ -974,7 +1008,7 @@ impl AuditState {
         win: &Window,
         first: usize,
         last: usize,
-        row: &mut Vec<(f64, f64)>,
+        row: &mut Row,
         interrupt: &mut Interrupt,
     ) -> Result<()> {
         for cell in first..last {
@@ -998,7 +1032,7 @@ impl AuditState {
         last: usize,
         a: &Point,
         b: &Point,
-        row: &mut Vec<(f64, f64)>,
+        row: &mut Row,
         interrupt: &mut Interrupt,
     ) -> Result<()> {
         if last - first <= 8 {
@@ -1066,7 +1100,7 @@ impl AuditState {
         w: &mut Work,
         o: &AuditOptions,
         cap: i64,
-        row: &mut Vec<(f64, f64)>,
+        row: &mut Row,
         interrupt: &mut Interrupt,
     ) -> Result<()> {
         let count = w.entries.len() as i64;
@@ -1105,7 +1139,7 @@ impl AuditState {
     }
 
     /// The closed stable intervals in [0, 1] of each selected vertex.
-    pub fn intervals(&self, o: &AuditOptions, sel: Selection, interrupt: Interrupt) -> Result<Vec<Vec<(f64, f64)>>> {
+    pub fn intervals(&self, o: &AuditOptions, sel: Selection, interrupt: Interrupt) -> Result<Intervals> {
         self.search(o, sel, interrupt, false)
     }
 
@@ -1116,7 +1150,7 @@ impl AuditState {
         o: &AuditOptions,
         sel: Selection,
         interrupt: Interrupt,
-    ) -> Result<Vec<Vec<(f64, f64)>>> {
+    ) -> Result<Intervals> {
         self.search(o, sel, interrupt, true)
     }
 
@@ -1126,21 +1160,22 @@ impl AuditState {
         sel: Selection,
         mut interrupt: Interrupt,
         exhaustive: bool,
-    ) -> Result<Vec<Vec<(f64, f64)>>> {
+    ) -> Result<Intervals> {
         let cap = self.check_options(o, &sel, &mut interrupt)?;
         let mut w = self.work(cap)?;
-        let mut out = Vec::new();
-        out.try_reserve_exact(sel.len() as usize).map_err(|_| Error::nomem())?;
+        let mut out = Intervals::default();
+        out.offset.try_reserve_exact(sel.len() as usize + 1).map_err(|_| Error::nomem())?;
+        out.offset.push(0);
         for j in 0..sel.len() {
             poll(&mut interrupt)?;
             self.vertex(sel.get(j), cap, o, &mut w, &mut interrupt)?;
-            let mut row: Vec<(f64, f64)> = Vec::new();
+            let mut row = Row { begin: out.pairs.len(), pairs: &mut out.pairs };
             if exhaustive {
                 self.vertex_exhaustive(&mut w, o, cap, &mut row, &mut interrupt)?;
             } else {
                 Self::vertex_windowed(&mut w, o, cap, &mut row, &mut interrupt)?;
             }
-            out.push(row);
+            out.offset.push(out.pairs.len());
         }
         Ok(out)
     }

@@ -642,8 +642,8 @@ fn audit_intervals<'py>(
         .intervals(&o, Selection::List(&list), Some(&mut check))
         .map_err(|e| to_py(py, e, None))?;
     let out = PyList::empty(py);
-    for (v, row) in intervals.into_iter().enumerate() {
-        out.append(PyList::new(py, row)?)?;
+    for (v, row) in intervals.rows().enumerate() {
+        out.append(PyList::new(py, row.iter().copied())?)?;
         if v & 4095 == 0 {
             py.check_signals()?;
         }

@@ -205,8 +205,8 @@ fn main() {
                 call_s.push(t.elapsed().as_secs_f64());
                 if rep == 0 {
                     alloc_call = w.json();
-                    let count: usize = out.iter().map(|row| row.len()).sum();
-                    let hash = fnv(out.iter().flat_map(|row| row.iter().flat_map(|&(a, b)| [a.to_bits(), b.to_bits()])));
+                    let count = out.pairs.len();
+                    let hash = fnv(out.pairs.iter().flat_map(|&(a, b)| [a.to_bits(), b.to_bits()]));
                     result = format!("{{\"count\": {count}, \"hash\": \"{hash:016x}\"}}");
                 }
             }
