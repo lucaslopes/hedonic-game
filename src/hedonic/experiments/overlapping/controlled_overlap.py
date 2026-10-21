@@ -35,6 +35,7 @@ import hedonic
 from hedonic import Game
 from hedonic.experiments import runtime
 from hedonic.experiments.config import OVERLAPPING_ARTIFACTS_DIR, expand_path
+from hedonic.experiments.overlapping import memwatch
 from hedonic.experiments.leiden import leiden
 from hedonic.experiments.overlapping.metrics import (
     evaluate_cover,
@@ -379,7 +380,11 @@ def _run_detector_isolated(
         },
     )
     process.start()
-    process.join(timeout_seconds)
+    watch = memwatch.join(process, timeout_seconds)  # below the free-memory floor the child's tree is killed
+    if watch.tripped is not None:
+        queue.close()
+        queue.join_thread()
+        return {**watch.tripped, "elapsed_seconds": None, "error": watch.tripped["reason"], "predicted_cover": None}
     if process.is_alive():
         process.terminate()
         process.join(1.0)
@@ -547,7 +552,7 @@ def _summary(rows: Sequence[dict], *, keys: Sequence[str] | None = None) -> list
                 "n_expected": len(values),
                 "n_completed": len(completed),
                 "n_timeout": sum(value["status"] == "timeout" for value in values),
-                "n_failed": sum(value["status"] == "failed" for value in values),
+                "n_failed": sum(value["status"] in ("failed", memwatch.MEMORY_STATUS) for value in values),
                 **aggregate("matching_f1"),
                 **aggregate("node_micro_f1"),
                 **aggregate("elapsed_seconds"),

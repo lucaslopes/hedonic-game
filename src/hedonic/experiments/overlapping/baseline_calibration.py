@@ -64,7 +64,7 @@ from typing import Any, Callable, Sequence
 import igraph as ig
 
 from hedonic.experiments.config import codeseg_cache_dir
-from hedonic.experiments.overlapping import limits, replication
+from hedonic.experiments.overlapping import limits, memwatch, replication
 
 PROTOCOL = "baseline-calibration-v1"
 CRITERION = "heldout-pair-loglik-v1"
@@ -298,6 +298,8 @@ def _child(runner, method, graph, params, seed, path):
     try:
         cover = runner(method, graph, params, seed)
         out: dict[str, Any] = {"status": "completed", "cover": cover}
+    except memwatch.MemoryLimitReached as exc:  # a program the runner started, stopped by its clock's watchdog
+        out = exc.fields()
     except BaseException as exc:  # noqa: BLE001 - recorded as a failed probe
         unavailable = type(exc).__name__ == "MethodUnavailable"
         out = {"status": "unavailable" if unavailable else "failed", "reason": f"{type(exc).__name__}: {exc}"[:500]}
@@ -308,38 +310,24 @@ def _child(runner, method, graph, params, seed, path):
 
 def _kill_tree(pid: int) -> None:
     """Kill a process and everything it started: an isolated CDlib worker (ANGEL, Ego-Splitting) is a grandchild of the
-    probe, and killing only the probe leaves it running for hours as an orphan."""
-    import signal
-    import subprocess
-
-    try:
-        rows = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout.split("\n")
-    except (OSError, subprocess.SubprocessError):
-        rows = []
-    kids: dict[int, list[int]] = {}
-    for row in rows:
-        parts = row.split()
-        if len(parts) == 2 and all(x.isdigit() for x in parts):
-            kids.setdefault(int(parts[1]), []).append(int(parts[0]))
-    order, stack = [], [pid]
-    while stack:
-        cur = stack.pop()
-        order.append(cur)
-        stack.extend(kids.get(cur, []))
-    for one in reversed(order):
-        with contextlib.suppress(OSError):
-            os.kill(one, signal.SIGKILL)
+    probe, and killing only the probe leaves it running for hours as an orphan (``memwatch.kill_tree``)."""
+    memwatch.kill_tree(pid)
 
 
 def run_isolated(runner, method, graph, params, seed, timeout: float | None) -> dict[str, Any]:
-    """The detector in a forked child (its memory is freed on exit, a hang is killed at ``timeout``)."""
+    """The detector in a forked child (its memory is freed on exit, a hang is killed at ``timeout``).
+
+    While it runs, the machine's free memory is read every half second (``memwatch.join``): below the floor the child's
+    whole tree is killed and the evaluation is recorded as ``status: "memory"``, the way a timeout is."""
     fd, path = tempfile.mkstemp(suffix=".pkl")
     os.close(fd)
     proc = mp.get_context("fork").Process(target=_child, args=(runner, method, graph, params, seed, path))
     t0 = time.perf_counter()
     proc.start()
-    proc.join(timeout)
+    watch = memwatch.join(proc, timeout)
     try:
+        if watch.tripped is not None:
+            return {**watch.tripped, "detect_seconds": time.perf_counter() - t0}
         if proc.is_alive():
             _kill_tree(proc.pid)
             proc.kill()
@@ -353,6 +341,11 @@ def run_isolated(runner, method, graph, params, seed, timeout: float | None) -> 
     finally:
         with contextlib.suppress(OSError):
             os.unlink(path)
+
+
+def _memory_fields(out: dict[str, Any]) -> dict[str, Any]:
+    """What a ledger line keeps of a memory stop: the floor and the free memory seen (``memwatch.stopped``)."""
+    return {k: out[k] for k in ("memory_floor_percent", "free_memory_percent", "memory_declared") if k in out}
 
 
 def _ledger_path(ctx: Context, method: str) -> Path | None:
@@ -405,6 +398,7 @@ def _run_replica(ctx: Context, method: str, params: dict[str, Any], replica: int
     else:
         rec["reason"] = out.get("reason")
         rec["score_seconds"] = 0.0
+        rec.update(_memory_fields(out))
         if out["status"] == "timeout" and b.eval_timeout:
             rec["limit_seconds"] = float(b.eval_timeout)
     ctx.seconds += rec["detect_seconds"] + rec["score_seconds"]
@@ -479,7 +473,7 @@ def evaluate(ctx: Context, method: str, params: dict[str, Any]) -> dict[str, Any
 @dataclass
 class CalibrationResult:
     method: str
-    status: str                       # "calibrated" | "fixed" | "unavailable" | "failed"
+    status: str                       # "calibrated" | "fixed" | "unavailable" | "failed" | "out_of_memory"
     params: dict[str, Any] | None     # a ready method_params table (None when nothing could be chosen)
     rule: str
     faithful_to_paper: bool | None    # True/False when the result is a claim about reproducing the authors; None = n/a
@@ -527,7 +521,9 @@ def _best(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 def _all_failed(method: str, rule: str, cands: list[dict], stop: str) -> CalibrationResult:
     statuses = {c["status"] for c in cands}
-    status = "unavailable" if statuses == {"unavailable"} else "failed"
+    # every evaluation stopped for memory: "out_of_memory", which --transfer-missing never fills with another pair's setting
+    status = ("unavailable" if statuses == {"unavailable"} else
+              "out_of_memory" if statuses == {memwatch.MEMORY_STATUS} else "failed")
     reasons = sorted({str(c.get("reason")) for c in cands if c.get("reason")})
     return CalibrationResult(method, status, None, rule, None, criterion=CRITERION, candidates=cands, stop_reason=stop,
                              notes=reasons[:3] or ["no evaluation completed"])
@@ -616,6 +612,8 @@ def calibrate_clique_percolation(ctx: Context, *, ks: Sequence[int] = CLIQUE_SIZ
         path = _ledger_path(ctx, "clique_percolation")
         key = _key(ctx, "clique_percolation", {**params, "split": "whole"})
         rec = _read_ledger(path).get(key)
+        if memwatch.is_memory(rec) and not limits.stands(rec, ctx.budget.eval_timeout):
+            rec = None  # a lower floor, or --rerun-memory: evaluated again
         if rec is None:
             out = run_isolated(runner, "clique_percolation", ctx.graph,
                                {**ctx.runtime.get("clique_percolation", {}), **params,
@@ -629,12 +627,17 @@ def calibrate_clique_percolation(ctx: Context, *, ks: Sequence[int] = CLIQUE_SIZ
                 rec["score"] = -rec["summary"]["largest_fraction_of_covered"]  # reported as a curve, not maximised
             else:
                 rec["reason"] = out.get("reason")
+                rec.update(_memory_fields(out))
             ctx.evaluations += 1
             ctx.seconds += rec["detect_seconds"]
             if path is not None:
                 with path.open("a") as fh:
                     fh.write(json.dumps(rec, default=str) + "\n")
         cands.append(_candidate(rec))
+        if memwatch.is_memory(rec):  # a larger k enumerates the same maximal cliques (keeping those of at least k
+            # vertices), so it meets the same wall: on LiveJournal/top5000 k = 3, 4 and 5 were all killed for memory
+            stop = f"out of memory at k {k}: larger k not tried"
+            break
         if rec["status"] == "completed" and chosen is None and rec["summary"]["largest_fraction_of_covered"] < giant_fraction:
             chosen = k
             break  # larger k only fragments further; the transition is bracketed from above

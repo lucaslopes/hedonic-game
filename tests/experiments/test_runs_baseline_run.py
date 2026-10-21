@@ -333,6 +333,32 @@ class TestAdoptAndTransfer(unittest.TestCase):
             self.assertEqual(entry["transferred_from"], "dblp:top5000")
             self.assertEqual(entry["failed_search"]["status"], "failed")  # the search that failed is kept beside it
 
+    def test_a_search_declared_out_of_memory_loads_nothing_counts_as_done_and_is_never_transferred(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            loader = Loader()
+            argv = ["--networks", "dblp:top5000,amazon:all", "--methods", "clique_percolation", "--transfer-missing",
+                    "--out-of-memory", "clique_percolation@amazon:all", "--alone", "amazon:all", "--output-dir", tmp]
+            plan = br.resolve(argv)
+            self.assertEqual(br.resolve(br.launch_argv(plan))["out_of_memory"], plan["out_of_memory"])
+            self.assertEqual(br.resolve(br.launch_argv(plan))["alone"], ["amazon:all"])
+            with patch.object(bc, "load_context", loader), redirect_stdout(io.StringIO()):
+                self.assertEqual(br.run_calibration(plan), 0)  # complete: the declared search is recorded
+            self.assertEqual(loader.targets, ["dblp:top5000"])  # amazon:all was never loaded
+            data = br.read_tuned(plan)
+            entry = data["searches"]["clique_percolation/amazon:all"]
+            self.assertEqual(entry["status"], br.OUT_OF_MEMORY)
+            self.assertIsNone(entry["params"])
+            self.assertNotIn("amazon:all", data["settings"]["clique_percolation"])  # no setting, none transferred
+            self.assertEqual(br.state_of(plan), "complete")
+            with patch.dict("os.environ", {"HEDONIC_RERUN_MEMORY": "1"}):  # --rerun-memory: searched again
+                self.assertEqual(br.state_of(plan), "partial")
+            for bad in (["--out-of-memory", "clique_percolation@youtube:all"], ["--out-of-memory", "angel@amazon:all"],
+                        ["--alone", "youtube:all"], ["--out-of-memory", "clique_percolation@amazon:all",
+                                                     "--transfer", "amazon:all"]):
+                with self.assertRaises(ValueError):
+                    br.resolve(["--networks", "dblp:top5000,amazon:all", "--methods", "clique_percolation",
+                                "--output-dir", tmp, *bad])
+
     def test_finished_searches_are_adopted_with_their_ledgers_and_the_source_is_untouched(self):
         with tempfile.TemporaryDirectory() as earlier, tempfile.TemporaryDirectory() as tmp:
             first = br.resolve(["--networks", "dblp:top5000,amazon", "--methods", "codeseg,bigclam", "--output-dir", earlier])

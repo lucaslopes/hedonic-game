@@ -908,12 +908,12 @@ def decorate_baselines(node: qm.Node, plan: dict, results: dict[str, dict]) -> N
                 row.unknown = 1
             row.basis = "" if complete else "estimate"
             row.took = sum(r.get("detect_seconds", 0.0) + r.get("score_seconds", 0.0) for r in group) if complete else 0.0
-            if complete and group[0].get("status") in ("timeout", "failed", "unavailable"):
-                row.label += f"  ({group[0].get('status')})"
+            if complete and group[0].get("status") in ("timeout", "memory", "failed", "unavailable"):
+                row.label += f"  ({qs.status_text(group[0].get('status'))})"
             star = chosen and all(params.get(k) == v for k, v in chosen.items() if k in params)
             if scores:
                 row.label += f"  score {statistics.fmean(scores):.4f}" + ("  ★ chosen" if star and res else "")
-            elif group[0].get("status") in ("timeout", "failed", "unavailable"):
+            elif group[0].get("status") in ("timeout", "memory", "failed", "unavailable"):
                 row.label += "  no score"
             lines = [f"setting {index}: {', '.join(f'{k}={v}' for k, v in params.items())}"]
             for rec in group:
