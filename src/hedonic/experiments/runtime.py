@@ -74,6 +74,12 @@ CORE_CLASSES: dict[tuple[str, str, str], dict] = {
                             "convexity cannot settle; `make -C native test` compares it with the exhaustive search bit "
                             "for bit, and every audit of the overlap queue's ledger recomputed identically); the same "
                             "three fingerprints, measured on the rc9 and rc11 wheels"},
+            "19bc0c978909e803503bc40fa25de1f83ecc27784cb7c04c46ad77093ed33325": {
+                "tag": "v2.1.0.dev1", "releases": "2.1.0 (the Rust core)",
+                "evidence": "a port of the rc11 C core to Rust (native/rust): the crate's tests hold test_core.c's and "
+                            "test_audit.c's pins, test_differential.py compares every result, trace, verifier report "
+                            "and audit with the C core bit for bit, and the overlap queue's dry run reads the same; "
+                            "the same three fingerprints"},
         },
     },
 }
@@ -85,6 +91,9 @@ CORE_CLASSES: dict[tuple[str, str, str], dict] = {
 EQUIVALENT_CORES: dict[str, str] = {
     # 2.0.0rc10: only the stability audit's search changed (see CORE_CLASSES).
     "c86846640631141ecf334b1b34050110e8b93c1b1e9447596f31a49499f5dc3e":
+        "ead786fe4cede5140154d802b12e5d8efbf39278280b29f5a3d93a4e7a67b2a4",
+    # 2.1.0: the Rust core (see CORE_CLASSES).
+    "19bc0c978909e803503bc40fa25de1f83ecc27784cb7c04c46ad77093ed33325":
         "ead786fe4cede5140154d802b12e5d8efbf39278280b29f5a3d93a4e7a67b2a4",
 }
 
