@@ -4,7 +4,7 @@ Usage: python tools/rust_pyproject.py [PYPROJECT] > pyproject.toml
 
 Prints PYPROJECT (default: the repository's pyproject.toml) with its
 setuptools build (setup.py compiling native/ into hedonic._core) replaced by
-maturin compiling rust/ into the same module, hedonic._core (cargo feature
+maturin compiling native/rust/ into the same module, hedonic._core (cargo feature
 `core-module`). Everything above [build-system] — the name, version,
 dependencies, extras and entry points — is kept as it is, so both builds are
 one distribution. CI builds it in a checkout without native/ and setup.py and
@@ -18,13 +18,13 @@ from pathlib import Path
 
 MATURIN = """\
 [build-system]
-# maturin: the package compiles its Rust core (rust/) into the extension
+# maturin: the package compiles its Rust core (native/rust/) into the extension
 # hedonic._core.
 requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [tool.maturin]
-manifest-path = "rust/Cargo.toml"
+manifest-path = "native/rust/Cargo.toml"
 python-source = "src"
 module-name = "hedonic._core"
 features = ["core-module"]

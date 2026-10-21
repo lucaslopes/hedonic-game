@@ -1,14 +1,14 @@
 name: Rust core
 
-# The Rust port of the core (rust/): its own tests, the extension against the
-# C core, bit for bit, and hedonic built with the Rust core alone (native/ and
+# The Rust port of the core (native/rust/): its own tests, the extension against the
+# C core, bit for bit, and hedonic built with the Rust core alone (the C and
 # setup.py deleted) through its whole test suite, on every platform the wheels
 # cover. Nothing is published.
 on:
   push:
     branches: ['rust/**']
   pull_request:
-    paths: ['rust/**', 'native/**', 'tools/rust_pyproject.py', '.github/workflows/rust.yml']
+    paths: ['native/**', 'tools/rust_pyproject.py', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -50,14 +50,14 @@ jobs:
       # same with the soft fma everywhere; the debug build checks every
       # debug assertion the unchecked paths state.
       - name: Cargo tests (release, soft fma, debug)
-        working-directory: rust
+        working-directory: native/rust
         run: |
           cargo test --release --locked
           cargo test --release --locked --features force-soft-fma
           cargo test --locked
       - name: Cargo tests on x86_64 under Rosetta 2
         if: runner.os == 'macOS'
-        working-directory: rust
+        working-directory: native/rust
         run: |
           rustup target add x86_64-apple-darwin
           cargo test --release --locked --target x86_64-apple-darwin
@@ -67,9 +67,9 @@ jobs:
       - name: Build both cores
         run: |
           python -m pip install -U pip
-          python -m pip install . ./rust pytest
+          python -m pip install . ./native/rust pytest
       - name: Rust against C, bit for bit
-        run: HIG_DIFF_CASES=400 python -m pytest -x -q rust/tests/test_differential.py
+        run: HIG_DIFF_CASES=400 python -m pytest -x -q native/rust/tests/test_differential.py
       - name: The pinned Python tests on the Rust core
         run: HEDONIC_CORE=rust python tools/native_tests.py
       # The argument of native/tests/check_libm.py: no libm call, so no C
@@ -79,8 +79,8 @@ jobs:
         run: python native/tests/check_libm.py "$(python -c 'from hedonic_core_rs import hedonic_core_rs as m; print(m.__file__)')"
 
   # hedonic as it would ship without the C: tools/rust_pyproject.py swaps the
-  # setuptools build of native/ for maturin's of rust/ into hedonic._core, in a
-  # checkout without native/ and setup.py. Its pinned tests and its whole
+  # setuptools build of native/ for maturin's of native/rust/ into hedonic._core, in a
+  # checkout without the C core and setup.py. Its pinned tests and its whole
   # test suite must pass as they do on the C core.
   rust_only:
     name: hedonic on the Rust core alone (${{ matrix.name }})
@@ -112,7 +112,7 @@ jobs:
         run: |
           python tools/rust_pyproject.py > pyproject.rust.toml
           mv pyproject.rust.toml pyproject.toml
-          rm -rf native setup.py
+          rm -rf native/core native/include native/binding native/tests native/*.c native/Makefile setup.py
       - name: Build and install hedonic (the cli extra, with its platform markers)
         run: |
           python -m pip install -U pip

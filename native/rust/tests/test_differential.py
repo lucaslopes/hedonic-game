@@ -5,7 +5,7 @@ place), the Rust one as hedonic_core_rs (maturin develop). Every result, trace,
 verifier report, audit answer, error (type and message) and the caller's
 generator state after the call must be the same. Fast and fail-fast:
 
-    python -m pytest -x -q rust/tests/test_differential.py
+    python -m pytest -x -q native/rust/tests/test_differential.py
 """
 
 import math

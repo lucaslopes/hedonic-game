@@ -4,7 +4,7 @@ Each case runs detect() through both extensions in alternation, keeps the
 fastest of --reps runs of each, and checks that the results are identical.
 Ratio = C time / Rust time (above 1: Rust is faster).
 
-    python rust/bench/bench.py [--reps 7] [--filter NAME] [--quick]
+    python native/rust/bench/bench.py [--reps 7] [--filter NAME] [--quick]
 """
 
 import argparse

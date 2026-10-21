@@ -35,10 +35,10 @@ top5000 pruned, ties at 12 ms; YouTube uncapped and unpruned, the longest,
 
 **Without the C.** The cargo feature `core-module` names the module
 `hedonic._core`, and `tools/rust_pyproject.py` writes the repository's
-`pyproject.toml` with maturin building `rust/` into it in place of
+`pyproject.toml` with maturin building `native/rust/` into it in place of
 setuptools building `native/` (the `[project]` table is kept, so it is the
 same distribution). CI (`.github/workflows/rust.yml`, job `rust_only`)
-deletes `native/` and `setup.py`, builds and installs that package, and runs
+deletes the C core and `setup.py`, builds and installs that package, and runs
 the pinned tests and the whole test suite on every wheel platform.
 
 What is safer: the engines are safe Rust except the hot paths (the visits
@@ -80,7 +80,7 @@ What is faster (the same visits, moves and bits as C, in less time):
   20k), 65.8M against 67.4M (SBM 20k), 127M against 129M (BA 50k); the
   cover 561M against 566M (BA 50k, cap 3; it was 683M).
 
-`python rust/bench/bench.py [--quick] [--reps N]` times `detect` of both
+`python native/rust/bench/bench.py [--quick] [--reps N]` times `detect` of both
 cores, interleaved, on the same calls (and checks the results are equal);
 on an M1 Max (load average 8), every case is at least as fast in Rust:
 the mid-size games (BA 50k, SBM 20k, ER 100k) 1.01 to 1.08, the small
@@ -91,20 +91,20 @@ under a heavy load, where the mid-size partitions gain 1.15 to 1.6).
 ## Build and test
 
 ```bash
-cd rust
+cd native/rust
 cargo test --release                              # the C core's bit pins and tests (test_core.c, test_audit.c), soft fma vs the instruction
 cargo test --release --features force-soft-fma    # the same with the soft fma everywhere
 maturin develop --release                         # into the active venv
-cd ..
+cd ../..
 HEDONIC_CORE=rust python tools/native_tests.py    # the pinned Python tests on the Rust core
-python -m pytest -x -q rust/tests/test_differential.py   # C against Rust, bit for bit
+python -m pytest -x -q native/rust/tests/test_differential.py   # C against Rust, bit for bit
 ```
 
 hedonic with the Rust core alone, in a copy of the checkout:
 
 ```bash
 python tools/rust_pyproject.py > pyproject.rust.toml && mv pyproject.rust.toml pyproject.toml
-rm -rf native setup.py
+rm -rf native/core native/include native/binding native/tests native/*.c native/Makefile setup.py
 pip install ".[cli]" pytest && python tools/native_tests.py && python -m pytest -q
 ```
 

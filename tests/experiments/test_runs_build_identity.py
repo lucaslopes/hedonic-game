@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def rust_source_digest(crate: Path) -> str:
-    """rust/build.rs's digest of the Rust core: src/**/*.rs, build.rs and Cargo.toml, relative to the crate, in the
+    """native/rust/build.rs's digest of the Rust core: src/**/*.rs, build.rs and Cargo.toml, relative to the crate, in the
     format of setup.py's source_digest."""
     paths = sorted([str(p.relative_to(crate)).replace("\\", "/") for p in (crate / "src").rglob("*.rs")]
                    + ["build.rs", "Cargo.toml"])
@@ -30,7 +30,7 @@ def rust_source_digest(crate: Path) -> str:
 class TestBuildIdentity(unittest.TestCase):
     def test_the_core_carries_the_digest_of_the_sources_it_was_built_from(self):
         if getattr(_core, "backend", "c") == "rust":
-            crate = ROOT / "rust"
+            crate = ROOT / "native" / "rust"
             if not (crate / "build.rs").is_file():
                 self.skipTest("no source tree (an installed wheel)")
             digest = rust_source_digest(crate)
