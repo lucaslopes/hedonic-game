@@ -427,11 +427,18 @@ impl<'t> State<'t> {
 
     // ---- A visit -----------------------------------------------------------
 
+    #[inline(always)]
     fn reserve_candidates(&mut self, needed: usize) -> Result<()> {
-        let capacity = self.candidate.len();
-        if needed <= capacity {
+        if needed <= self.candidate.len() {
             return Ok(());
         }
+        self.grow_candidates(needed)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_candidates(&mut self, needed: usize) -> Result<()> {
+        let capacity = self.candidate.len();
         let grown = if capacity < 8 { 16 } else { 2 * capacity }.max(needed);
         self.candidate.try_reserve_exact(grown - capacity).map_err(|_| Error::nomem())?;
         self.value.try_reserve_exact(grown - capacity).map_err(|_| Error::nomem())?;
@@ -1045,9 +1052,11 @@ impl<'t> State<'t> {
 
     /// Prefetches, in stages, what the visits of the next queued vertices
     /// will read: adjacency offsets and rows 8 visits ahead, adjacency blocks
-    /// and own labels 4 ahead, the neighbours' rows 2 ahead, their labels 1
-    /// ahead and those labels' records for the next visit. Only cache hints:
-    /// no value depends on them.
+    /// and own labels 4 ahead, the neighbours' rows 2 ahead and their labels
+    /// 1 ahead. Only cache hints: no value depends on them. (A stage for the
+    /// labels' records, one hint per label of up to 16 neighbours before
+    /// each visit, cost more than it saved: DBLP top5000 M=3 and BA 300k M=3
+    /// ran 6% and 4.5% faster without it.)
     #[inline(always)]
     fn prefetch_ahead(&self) {
         let (g, q) = (&self.graph, &self.queue);
@@ -1071,14 +1080,6 @@ impl<'t> State<'t> {
         if let Some(u) = q.peek(PREFETCH_ONE) {
             for &w in neighbours(u) {
                 prefetch(&self.pool, self.row[w as usize].start);
-            }
-        }
-        if let Some(u) = q.peek(0) {
-            for &w in neighbours(u) {
-                let r = self.row[w as usize];
-                for &c in &self.pool[r.start..r.start + r.size as usize] {
-                    prefetch(&self.group, c as usize);
-                }
             }
         }
     }

@@ -63,8 +63,9 @@ What is faster (the same visits, moves and bits as C, in less time):
   `getstate`/`setstate` (otherwise, and on free-threaded builds, it uses the
   tuples). Small graphs run 1.5 to 2.4 times faster end to end.
 - **Prefetching ahead of the queue.** The next visits are known (the FIFO
-  queue), so both engines hint, in stages 8, 4, 2, 1 and 0 visits ahead, the
-  adjacency, the neighbours' labels or rows and those labels' records.
+  queue), so both engines hint, in stages 8, 4, 2, 1 (and, for the
+  partition, 0) visits ahead, the adjacency, the neighbours' labels or rows
+  and (partition) those labels' records.
   It pays only past the caches, so it runs when a game's working set
   exceeds 12 MB (the L2 of an M1 cluster): BA 300k runs 1.3 (partition) to
   1.6 (cover) times faster; below that it is off.

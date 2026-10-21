@@ -6,10 +6,11 @@ pub fn prefetch<T>(slice: &[T], index: usize) {
     if index < slice.len() {
         let p = slice.as_ptr().wrapping_add(index);
         #[cfg(target_arch = "aarch64")]
-        // SAFETY: prfm only hints the cache; it never faults or writes, and
-        // p points into `slice`.
+        // SAFETY: prfm only hints the cache; it never faults, reads or writes
+        // (so `nomem`: pending stores need not be flushed before it), and p
+        // points into `slice`.
         unsafe {
-            std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) p, options(nostack, readonly, preserves_flags));
+            std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) p, options(nostack, nomem, preserves_flags));
         }
         #[cfg(target_arch = "x86_64")]
         // SAFETY: as above (SSE is in the x86_64 baseline).
