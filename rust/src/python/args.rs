@@ -25,6 +25,13 @@ pub enum Kind8 {
     Double,
 }
 
+/// The struct-module prefix of the target's own byte order: a buffer in the
+/// other order would be read wrong, so it is refused like any other format.
+#[cfg(target_endian = "little")]
+const ORDER: u8 = b'<';
+#[cfg(target_endian = "big")]
+const ORDER: u8 = b'>';
+
 /// A C-contiguous buffer of 8-byte items, released on drop. The `Py_buffer`
 /// is boxed: exporters may point into it (`shape = &view->len`).
 pub struct Buffer {
@@ -41,8 +48,10 @@ impl Drop for Buffer {
 
 impl Buffer {
     /// `get_buffer` of arguments.c: the format must be an 8-byte integer
-    /// (`q`, `l`, `<q`, `=q`) or double (`d`, `<d`, `=d`), and with
-    /// `expected`, the length that many entries.
+    /// (`q`, `l`, `=q`, or `<q` on a little-endian target, `>q` on a big-endian
+    /// one) or double (`d`, `=d`, `<d` or `>d` likewise), and with `expected`,
+    /// the length that many entries. arguments.c takes `<q` and `<d`
+    /// everywhere; its wheels are all little-endian.
     pub fn get(obj: &Bound<'_, PyAny>, kind: Kind8, expected: Option<usize>, name: &str) -> PyResult<Buffer> {
         let mut view = Box::new(ffi::Py_buffer::new());
         // SAFETY: obj is a live object and view a writable Py_buffer.
@@ -59,8 +68,8 @@ impl Buffer {
         };
         let ok = buffer.view.itemsize == 8
             && match (kind, format) {
-                (Kind8::Int, Some(f)) => matches!(f, b"q" | b"l" | b"<q" | b"=q"),
-                (Kind8::Double, Some(f)) => matches!(f, b"d" | b"<d" | b"=d"),
+                (Kind8::Int, Some(f)) => matches!(f, b"q" | b"l" | b"=q") || f == [ORDER, b'q'],
+                (Kind8::Double, Some(f)) => matches!(f, b"d" | b"=d") || f == [ORDER, b'd'],
                 _ => false,
             };
         if !ok {
@@ -521,6 +530,11 @@ fn edge_matches(graph: &Bound<'_, PyAny>, e: i64, u: i64, v: i64) -> PyResult<Op
 }
 
 fn from_capsule<'py>(graph: &Bound<'py, PyAny>, n: i64, m: i64) -> PyResult<Option<GraphEdges<'py>>> {
+    // igraph's integers are as wide as a pointer (IGRAPH_INTEGER_SIZE): on a
+    // 32-bit target the head is not the one above, so the edges are copied.
+    if cfg!(not(target_pointer_width = "64")) {
+        return Ok(None);
+    }
     let Ok(capsule) = graph.call_method0("__graph_as_capsule") else { return Ok(None) };
     // SAFETY: a capsule's pointer is read only when its name is NULL, as
     // python-igraph makes it; anything else clears the error and falls back.

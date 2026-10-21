@@ -4,6 +4,10 @@ version = "2.0.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "The hedonic core in Rust: best-response local moving for the CPM hedonic game, bit-identical to native/."
+# Stated, not left to cargo's default: maturin's sdist writes the default into
+# its copy, and this file's bytes are part of the source digest (build.rs), so
+# a wheel built from the sdist would name another core.
+readme = "README.md"
 publish = false
 build = "build.rs"
 
