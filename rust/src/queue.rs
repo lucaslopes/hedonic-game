@@ -56,6 +56,22 @@ pub struct Queue {
 }
 
 impl Queue {
+    /// A queue of no vertex (no allocation, no draw): a placeholder until
+    /// `new` draws the visiting order.
+    pub fn empty() -> Queue {
+        Queue {
+            n: 0,
+            ring: Vec::new(),
+            queued: Vec::new(),
+            order: Vec::new(),
+            settled: Vec::new(),
+            head: 0,
+            count: 0,
+            moves: 0,
+            visits: 0,
+        }
+    }
+
     /// Every vertex, in a random order (Fisher-Yates).
     pub fn new(n: Id, cb: &mut Callbacks) -> Result<Queue> {
         let n_us = n as usize;

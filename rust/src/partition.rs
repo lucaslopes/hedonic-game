@@ -736,95 +736,134 @@ pub fn partition(
     options: &Options,
     start: Option<&[i64]>,
     cb: &mut Callbacks,
-    mut trace: Option<&mut Trace>,
+    trace: Option<&mut Trace>,
 ) -> Result<PartitionResult> {
-    let mut options = *options;
-    check_input(graph, &mut options, false)?;
-    let n = graph.vertex_count as Id;
-    let (membership, occupied) = start_labels(&options, n, start)?;
+    let mut call = PartitionCall::prepare(graph, options, start, trace)?;
+    call.run(cb)?;
+    call.finish(graph)
+}
 
-    let gamma = options.resolution;
-    let isolation = options.allow_isolation;
-    let exact = limit_set(options.n_communities);
-    let max_total = options.max_total_communities;
-    let adjacency = Adjacency::build(graph)?;
-    // The visits read it unchecked: build makes it so (n + 1 offsets that
-    // are prefix sums of the degrees, every neighbour an edge end it checked
-    // below n), and the state, private to this module, never changes it.
-    debug_assert!(adjacency.well_formed());
-    // N is a sum of n non-negative terms: N(1 + gamma_n) bounds the exact one,
-    // and every community's mass stays below twice that.
-    let total = adjacency.total_node_weight;
-    let total_up = up(2.0 * add_up(total, mul_up(gamma_k(n as f64), total)));
-    let mut group = filled(n as usize, Group::EMPTY)?;
-    for &c in &membership {
-        group[c as usize].members += 1;
+/// `partition` in three steps, for a caller that must not hold the graph
+/// while the visits run (the CPython binding runs them without the GIL):
+/// `prepare` reads the graph, the options and the start; `run` reads only
+/// what the call owns (and the callbacks); `finish` reads the graph again,
+/// for the quality, and refuses one of another size. The same draws, visits
+/// and bits as `partition`, which is these three calls.
+pub struct PartitionCall<'t> {
+    state: State<'t>,
+    options: Options,
+    edge_count: i64,
+}
+
+impl<'t> PartitionCall<'t> {
+    pub fn prepare(
+        graph: &Graph,
+        options: &Options,
+        start: Option<&[i64]>,
+        mut trace: Option<&'t mut Trace>,
+    ) -> Result<PartitionCall<'t>> {
+        let mut options = *options;
+        check_input(graph, &mut options, false)?;
+        let n = graph.vertex_count as Id;
+        let (membership, occupied) = start_labels(&options, n, start)?;
+
+        let gamma = options.resolution;
+        let isolation = options.allow_isolation;
+        let exact = limit_set(options.n_communities);
+        let max_total = options.max_total_communities;
+        let adjacency = Adjacency::build(graph)?;
+        // The visits read it unchecked: build makes it so (n + 1 offsets that
+        // are prefix sums of the degrees, every neighbour an edge end it checked
+        // below n), and the state, private to this module, never changes it.
+        debug_assert!(adjacency.well_formed());
+        // N is a sum of n non-negative terms: N(1 + gamma_n) bounds the exact one,
+        // and every community's mass stays below twice that.
+        let total = adjacency.total_node_weight;
+        let total_up = up(2.0 * add_up(total, mul_up(gamma_k(n as f64), total)));
+        let mut group = filled(n as usize, Group::EMPTY)?;
+        for &c in &membership {
+            group[c as usize].members += 1;
+        }
+        let mut free_ids = filled(0, 0 as Id)?;
+        free_ids.try_reserve_exact(n as usize).map_err(|_| Error::nomem())?;
+        let mut c = n - 1;
+        while c >= occupied as Id {
+            free_ids.push(c);
+            c -= 1;
+        }
+        let max_degree = adjacency.max_degree as usize;
+        // membership, group, tail, start, the queue's ring, flags, order and
+        // record per vertex; the adjacency (and weights) per half-edge.
+        let working_set = n as usize * 69 + adjacency.adj.len() * if adjacency.weighted { 12 } else { 4 };
+        let mut s = State {
+            gamma,
+            isolation,
+            exact,
+            max_total,
+            tail: filled(n as usize, Tail::default())?,
+            group,
+            membership,
+            theta: 0.0,
+            crowd: 0.0,
+            rebuild: false,
+            total_up,
+            free_ids,
+            occupied: occupied as Id,
+            use_heap: gamma < 0.0 || !isolation || limit_set(max_total) || exact,
+            heap_ready: false,
+            heap: Heap::new(gamma < 0.0),
+            candidate: filled(max_degree + 1, 0 as Id)?,
+            candidate_weight: filled(max_degree + 1, 0.0)?,
+            graph: adjacency,
+            queue: Queue::empty(), // the visiting order is drawn by `run`
+            slack: 0.0,
+            trace: None,
+            prefetch: wanted(working_set),
+        };
+        s.rebuild_masses(); // the masses, theta and the heap
+        if let Some(t) = trace.as_deref_mut() {
+            for v in 0..n as usize {
+                t.record_start(&[s.membership[v]]);
+            }
+        }
+        s.trace = trace;
+        Ok(PartitionCall { state: s, options, edge_count: graph.edge_count })
     }
-    let mut free_ids = filled(0, 0 as Id)?;
-    free_ids.try_reserve_exact(n as usize).map_err(|_| Error::nomem())?;
-    let mut c = n - 1;
-    while c >= occupied as Id {
-        free_ids.push(c);
-        c -= 1;
+
+    /// The visiting order, then the visits until every vertex is settled.
+    pub fn run(&mut self, cb: &mut Callbacks) -> Result<()> {
+        let s = &mut self.state;
+        s.queue = Queue::new(s.graph.n, cb)?;
+        s.run(cb)
     }
-    let max_degree = adjacency.max_degree as usize;
-    // membership, group, tail, start, the queue's ring, flags, order and
-    // record per vertex; the adjacency (and weights) per half-edge.
-    let working_set = n as usize * 69 + adjacency.adj.len() * if adjacency.weighted { 12 } else { 4 };
-    let mut s = State {
-        gamma,
-        isolation,
-        exact,
-        max_total,
-        tail: filled(n as usize, Tail::default())?,
-        group,
-        membership,
-        theta: 0.0,
-        crowd: 0.0,
-        rebuild: false,
-        total_up,
-        free_ids,
-        occupied: occupied as Id,
-        use_heap: gamma < 0.0 || !isolation || limit_set(max_total) || exact,
-        heap_ready: false,
-        heap: Heap::new(gamma < 0.0),
-        candidate: filled(max_degree + 1, 0 as Id)?,
-        candidate_weight: filled(max_degree + 1, 0.0)?,
-        graph: adjacency,
-        queue: Queue::new(0, cb)?, // replaced below, after the masses
-        slack: 0.0,
-        trace: None,
-        prefetch: wanted(working_set),
-    };
-    s.rebuild_masses(); // the masses, theta and the heap
-    s.queue = Queue::new(n, cb)?;
-    if let Some(t) = trace.as_deref_mut() {
+
+    /// Communities 0, 1, ... in order of first appearance, the quality in
+    /// `graph`'s edge order and the slack.
+    pub fn finish(self, graph: &Graph) -> Result<PartitionResult> {
+        let s = self.state;
+        let n = s.graph.n;
+        if graph.vertex_count != n as i64 || graph.edge_count != self.edge_count || !graph.ends_in_range() {
+            return Err(Error::inval("The graph changed during the call."));
+        }
+        let mut relabel = filled(n as usize, -1i64)?;
+        let mut next = 0i64;
+        let mut out = filled(n as usize, 0i64)?;
         for v in 0..n as usize {
-            t.record_start(&[s.membership[v]]);
+            let c = s.membership[v] as usize;
+            if relabel[c] < 0 {
+                relabel[c] = next;
+                next += 1;
+            }
+            out[v] = relabel[c];
         }
+        let q = quality(graph, self.options.resolution, &out, next)?;
+        let raw_slack = s.slack;
+        Ok(PartitionResult {
+            membership: out,
+            count: next,
+            quality: q,
+            raw_slack,
+            slack: normalized_slack(raw_slack, graph.total_edge_weight()),
+        })
     }
-    s.trace = trace;
-    s.run(cb)?;
-
-    // Communities 0, 1, ... in order of first appearance.
-    let mut relabel = filled(n as usize, -1i64)?;
-    let mut next = 0i64;
-    let mut out = filled(n as usize, 0i64)?;
-    for v in 0..n as usize {
-        let c = s.membership[v] as usize;
-        if relabel[c] < 0 {
-            relabel[c] = next;
-            next += 1;
-        }
-        out[v] = relabel[c];
-    }
-    let q = quality(graph, options.resolution, &out, next)?;
-    let raw_slack = s.slack;
-    Ok(PartitionResult {
-        membership: out,
-        count: next,
-        quality: q,
-        raw_slack,
-        slack: normalized_slack(raw_slack, graph.total_edge_weight()),
-    })
 }

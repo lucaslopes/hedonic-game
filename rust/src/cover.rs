@@ -1313,135 +1313,178 @@ pub fn cover(
     options: &Options,
     start: Option<&Cover>,
     cb: &mut Callbacks,
-    mut trace: Option<&mut Trace>,
+    trace: Option<&mut Trace>,
 ) -> Result<CoverResult> {
-    let mut options = *options;
-    check_input(graph, &mut options, true)?;
-    let n = graph.vertex_count as Id;
-    let nu = n as usize;
-    let gamma = options.resolution;
-    let cap = options.max_memberships as Id;
-    let isolation = options.allow_isolation;
-    let exact = limit_set(options.n_communities);
-    let max_total = options.max_total_communities;
-    let sqrt_cap_up = up((cap as f64).sqrt());
+    let mut call = CoverCall::prepare(graph, options, start, trace)?;
+    call.run(cb)?;
+    call.finish(graph)
+}
 
-    if let Some(start) = start {
-        if start.offset.len() == nu + 1 {
-            start.validate()?;
-        }
-    }
-    let (bounds, rows, distinct) = start_rows(&options, n, cap, start)?;
-    let adjacency = Adjacency::build(graph)?;
+/// `cover` in three steps, as `PartitionCall` for a partition: `prepare`
+/// reads the graph, the options and the start; `run` (the visits and the
+/// slack) reads only what the call owns; `finish` reads the graph again for
+/// the quality, and refuses one of another size.
+pub struct CoverCall<'t> {
+    state: State<'t>,
+    options: Options,
+    edge_count: i64,
+    result: Option<(Cover, i64)>,
+}
 
-    // Rows into the pool, each at the front of its own capacity.
-    let mut row = filled(nu, RowRef::default())?;
-    let mut pool_live = 0usize;
-    for v in 0..nu {
-        let size = (bounds[v + 1] - bounds[v]) as Id;
-        let capacity = row_capacity(cap, size);
-        row[v] = RowRef { start: pool_live, size, capacity };
-        pool_live += capacity as usize;
-    }
-    let mut pool: Vec<Id> = Vec::new();
-    pool.try_reserve_exact(pool_live + pool_live / 2 + 1024).map_err(|_| Error::nomem())?;
-    pool.resize(pool_live, 0);
-    for v in 0..nu {
-        let labels = &rows[bounds[v]..bounds[v + 1]];
-        pool[row[v].start..row[v].start + labels.len()].copy_from_slice(labels);
-    }
-    drop(rows);
-    drop(bounds);
+impl<'t> CoverCall<'t> {
+    pub fn prepare(
+        graph: &Graph,
+        options: &Options,
+        start: Option<&Cover>,
+        mut trace: Option<&'t mut Trace>,
+    ) -> Result<CoverCall<'t>> {
+        let mut options = *options;
+        check_input(graph, &mut options, true)?;
+        let n = graph.vertex_count as Id;
+        let nu = n as usize;
+        let gamma = options.resolution;
+        let cap = options.max_memberships as Id;
+        let isolation = options.allow_isolation;
+        let exact = limit_set(options.n_communities);
+        let max_total = options.max_total_communities;
+        let sqrt_cap_up = up((cap as f64).sqrt());
 
-    let mut inv_sqrt = filled(cap as usize + 1, 0.0f64)?;
-    for k in 1..=cap as usize {
-        inv_sqrt[k] = 1.0 / (k as f64).sqrt();
-    }
-    // Can a term n_u f_u or w f_u fall below DBL_MIN (and lose its relative
-    // accuracy)? f_u >= 1 / sqrt(cap) > 1 / (2 sqrt(cap)).
-    let smallest = 2.0 * DBL_MIN * 2.0 * sqrt_cap_up;
-    let mut tiny_mass = 0.0;
-    if adjacency.node_weighted {
-        for &w in &adjacency.node_weight {
-            if w > 0.0 && w < smallest {
-                tiny_mass = n as f64 * ETA;
-                break;
+        if let Some(start) = start {
+            if start.offset.len() == nu + 1 {
+                start.validate()?;
             }
         }
-    }
-    let tiny_support = adjacency.weighted && adjacency.weight.iter().any(|&w| w > 0.0 && w < smallest);
+        let (bounds, rows, distinct) = start_rows(&options, n, cap, start)?;
+        let adjacency = Adjacency::build(graph)?;
 
-    let mut s = State {
-        graph: adjacency,
-        gamma,
-        cap,
-        isolation,
-        exact,
-        max_total,
-        sqrt_cap_up,
-        row,
-        pool,
-        pool_live,
-        group: Vec::new(),
-        tail: Vec::new(),
-        theta: 0.0,
-        theta_below: 0.0,
-        rebuild: false,
-        tiny_mass,
-        tiny_support,
-        label_count: distinct as Id,
-        free_ids: Vec::new(),
-        occupied: 0,
-        inv_sqrt,
-        use_heap: gamma < 0.0 || !isolation || limit_set(max_total) || exact,
-        heap_ready: false,
-        heap: Heap::new(gamma < 0.0),
-        candidate: Vec::new(),
-        value: Vec::new(),
-        top: Vec::new(),
-        chosen: filled(0, 0 as Id)?,
-        queue: Queue::new(0, cb)?, // replaced below
-        own_support: filled(cap as usize + 1, 0.0)?,
-        slack: 0.0,
-        trace: None,
-        prefetch: false,
-    };
-    s.chosen.try_reserve_exact(cap as usize + 1).map_err(|_| Error::nomem())?;
-    s.reserve_labels(distinct as usize + nu + 16)?;
-    for v in 0..nu {
-        let r = s.row[v];
-        for i in 0..r.size as usize {
-            let c = s.pool[r.start + i] as usize;
-            s.group[c].members += 1;
+        // Rows into the pool, each at the front of its own capacity.
+        let mut row = filled(nu, RowRef::default())?;
+        let mut pool_live = 0usize;
+        for v in 0..nu {
+            let size = (bounds[v + 1] - bounds[v]) as Id;
+            let capacity = row_capacity(cap, size);
+            row[v] = RowRef { start: pool_live, size, capacity };
+            pool_live += capacity as usize;
         }
-    }
-    s.occupied = s.label_count;
-    s.rebuild_masses(); // the masses, theta and the heap
-    s.reserve_candidates(256)?;
-    s.queue = Queue::new(n, cb)?;
-    // row, start, the queue and records per vertex, the pool's labels, group,
-    // tail and heap entries per label, the adjacency (and weights).
-    let labels = s.group.len();
-    let working_set = nu * 72 + s.pool.len() * 4 + labels * 48
-        + s.graph.adj.len() * if s.graph.weighted { 12 } else { 4 };
-    s.prefetch = wanted(working_set);
-    if let Some(t) = trace.as_deref_mut() {
+        let mut pool: Vec<Id> = Vec::new();
+        pool.try_reserve_exact(pool_live + pool_live / 2 + 1024).map_err(|_| Error::nomem())?;
+        pool.resize(pool_live, 0);
+        for v in 0..nu {
+            let labels = &rows[bounds[v]..bounds[v + 1]];
+            pool[row[v].start..row[v].start + labels.len()].copy_from_slice(labels);
+        }
+        drop(rows);
+        drop(bounds);
+
+        let mut inv_sqrt = filled(cap as usize + 1, 0.0f64)?;
+        for k in 1..=cap as usize {
+            inv_sqrt[k] = 1.0 / (k as f64).sqrt();
+        }
+        // Can a term n_u f_u or w f_u fall below DBL_MIN (and lose its relative
+        // accuracy)? f_u >= 1 / sqrt(cap) > 1 / (2 sqrt(cap)).
+        let smallest = 2.0 * DBL_MIN * 2.0 * sqrt_cap_up;
+        let mut tiny_mass = 0.0;
+        if adjacency.node_weighted {
+            for &w in &adjacency.node_weight {
+                if w > 0.0 && w < smallest {
+                    tiny_mass = n as f64 * ETA;
+                    break;
+                }
+            }
+        }
+        let tiny_support = adjacency.weighted && adjacency.weight.iter().any(|&w| w > 0.0 && w < smallest);
+
+        let mut s = State {
+            graph: adjacency,
+            gamma,
+            cap,
+            isolation,
+            exact,
+            max_total,
+            sqrt_cap_up,
+            row,
+            pool,
+            pool_live,
+            group: Vec::new(),
+            tail: Vec::new(),
+            theta: 0.0,
+            theta_below: 0.0,
+            rebuild: false,
+            tiny_mass,
+            tiny_support,
+            label_count: distinct as Id,
+            free_ids: Vec::new(),
+            occupied: 0,
+            inv_sqrt,
+            use_heap: gamma < 0.0 || !isolation || limit_set(max_total) || exact,
+            heap_ready: false,
+            heap: Heap::new(gamma < 0.0),
+            candidate: Vec::new(),
+            value: Vec::new(),
+            top: Vec::new(),
+            chosen: filled(0, 0 as Id)?,
+            queue: Queue::empty(), // the visiting order is drawn by `run`
+            own_support: filled(cap as usize + 1, 0.0)?,
+            slack: 0.0,
+            trace: None,
+            prefetch: false,
+        };
+        s.chosen.try_reserve_exact(cap as usize + 1).map_err(|_| Error::nomem())?;
+        s.reserve_labels(distinct as usize + nu + 16)?;
         for v in 0..nu {
             let r = s.row[v];
-            t.record_start(&s.pool[r.start..r.start + r.size as usize]);
+            for i in 0..r.size as usize {
+                let c = s.pool[r.start + i] as usize;
+                s.group[c].members += 1;
+            }
         }
+        s.occupied = s.label_count;
+        s.rebuild_masses(); // the masses, theta and the heap
+        s.reserve_candidates(256)?;
+        // row, start, the queue and records per vertex, the pool's labels, group,
+        // tail and heap entries per label, the adjacency (and weights).
+        let labels = s.group.len();
+        let working_set = nu * 72 + s.pool.len() * 4 + labels * 48
+            + s.graph.adj.len() * if s.graph.weighted { 12 } else { 4 };
+        s.prefetch = wanted(working_set);
+        if let Some(t) = trace.as_deref_mut() {
+            for v in 0..nu {
+                let r = s.row[v];
+                t.record_start(&s.pool[r.start..r.start + r.size as usize]);
+            }
+        }
+        s.trace = trace;
+        Ok(CoverCall { state: s, options, edge_count: graph.edge_count, result: None })
     }
-    s.trace = trace;
-    s.run(cb)?;
-    s.compute_slack()?;
-    let (cover, count) = s.result()?;
-    let q = quality(graph, options.resolution, &cover, count, &s.inv_sqrt)?;
-    let raw_slack = s.slack;
-    Ok(CoverResult {
-        cover,
-        count,
-        quality: q,
-        raw_slack,
-        slack: normalized_slack(raw_slack, graph.total_edge_weight()),
-    })
+
+    /// The visiting order, the visits until every vertex is settled, then
+    /// the slack and the relabelled rows.
+    pub fn run(&mut self, cb: &mut Callbacks) -> Result<()> {
+        let s = &mut self.state;
+        s.queue = Queue::new(s.graph.n, cb)?;
+        s.run(cb)?;
+        s.compute_slack()?;
+        self.result = Some(s.result()?);
+        Ok(())
+    }
+
+    /// The rows, the quality in `graph`'s edge order and the slack.
+    pub fn finish(self, graph: &Graph) -> Result<CoverResult> {
+        let s = self.state;
+        let Some((cover, count)) = self.result else {
+            return Err(Error::inval("The call has not run."));
+        };
+        if graph.vertex_count != s.graph.n as i64 || graph.edge_count != self.edge_count || !graph.ends_in_range() {
+            return Err(Error::inval("The graph changed during the call."));
+        }
+        let q = quality(graph, self.options.resolution, &cover, count, &s.inv_sqrt)?;
+        let raw_slack = s.slack;
+        Ok(CoverResult {
+            cover,
+            count,
+            quality: q,
+            raw_slack,
+            slack: normalized_slack(raw_slack, graph.total_edge_weight()),
+        })
+    }
 }
